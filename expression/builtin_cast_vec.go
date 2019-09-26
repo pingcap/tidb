@@ -392,11 +392,38 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 }
 
 func (b *builtinCastTimeAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	arg0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(arg0)
+	if err := b.args[0].VecEvalTime(b.ctx, input, arg0); err != nil {
+		return err
+	}
+	arg0s := arg0.Times()
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(arg0)
+	ds := result.GoDurations()
+	for i, t := range arg0s {
+		if result.IsNull(i) {
+			continue
+		}
+		d, err := t.ConvertToDuration()
+		if err != nil {
+			return err
+		}
+		d, err = d.RoundFrac(int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		ds[i] = d.Duration
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsDurationSig) vectorized() bool {
