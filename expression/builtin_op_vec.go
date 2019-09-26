@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -107,11 +108,51 @@ func (b *builtinUnaryNotRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinLogicAndSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	arg1 := buf1.Int64s()
+
+	for i := 0; i < n; i++ {
+		isNull0 := result.IsNull(i)
+		if !isNull0 && i64s[i] == 0 {
+			result.SetNull(i, false)
+			continue
+		}
+
+		isNull1 := buf1.IsNull(i)
+		if !isNull1 && arg1[i] == 0 {
+			i64s[i] = 0
+			result.SetNull(i, false)
+			continue
+		}
+
+		if isNull0 || isNull1 {
+			result.SetNull(i, true)
+			continue
+		}
+
+		i64s[i] = 1
+	}
+
+	return nil
 }
 
 func (b *builtinBitXorSig) vectorized() bool {

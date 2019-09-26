@@ -144,6 +144,7 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 func (b *builtinCastRealAsRealSig) vectorized() bool {
 	return true
 }
+
 func (b *builtinCastTimeAsJSONSig) vectorized() bool {
 	return false
 }
@@ -385,11 +386,49 @@ func (b *builtinCastDurationAsStringSig) vecEvalString(input *chunk.Chunk, resul
 }
 
 func (b *builtinCastDecimalAsRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDecimalAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+	result.MergeNulls(buf)
+
+	d := buf.Decimals()
+	rs := result.Float64s()
+
+	inUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if inUnionAndUnsigned && d[i].IsNegative() {
+			rs[i] = 0
+			continue
+		}
+		res, err := d[i].ToFloat64()
+		if err != nil {
+			if types.ErrOverflow.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+			}
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		rs[i] = res
+	}
+	return nil
 }
 
 func (b *builtinCastDecimalAsTimeSig) vectorized() bool {
