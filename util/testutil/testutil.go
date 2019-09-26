@@ -189,7 +189,7 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	return res, err
 }
 
-// GetTestCases gets the test cases for a test function.
+// GetTestCasesByName gets the test cases for a test function by its name.
 func (t *TestData) GetTestCasesByName(caseName string, c *check.C, in interface{}, out interface{}) {
 	casesIdx, ok := t.funcMap[caseName]
 	c.Assert(ok, check.IsTrue, check.Commentf("Must get test %s", caseName))
