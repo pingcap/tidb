@@ -37,13 +37,13 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor:	newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
-		tblInfo:	p.TblInfo,
-		idxInfo:	p.IndexInfo,
-		idxVals:	p.IndexValues,
-		handle:		p.Handle,
-		startTS:	startTS,
-		lock:		p.Lock,
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		tblInfo:      p.TblInfo,
+		idxInfo:      p.IndexInfo,
+		idxVals:      p.IndexValues,
+		handle:       p.Handle,
+		startTS:      startTS,
+		lock:         p.Lock,
 	}
 	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
@@ -55,14 +55,14 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	tblInfo		*model.TableInfo
-	handle		int64
-	idxInfo		*model.IndexInfo
-	idxVals		[]types.Datum
-	startTS		uint64
-	snapshot	kv.Snapshot
-	done		bool
-	lock		bool
+	tblInfo  *model.TableInfo
+	handle   int64
+	idxInfo  *model.IndexInfo
+	idxVals  []types.Datum
+	startTS  uint64
+	snapshot kv.Snapshot
+	done     bool
+	lock     bool
 }
 
 // Open implements the Executor interface.
@@ -114,15 +114,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
 		// 3. Then point get retrieve data from backend after step 2 finished
 		// 4. Check the result
-		if _, ok := failpoint.EvalContext(ctx, _curpkg_("pointGetRepeatableReadTest-step1")); ok {
+		failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
 			if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
 				// Make `UPDATE` continue
 				close(ch)
 			}
-			failpoint.
 			// Wait `UPDATE` finished
-			EvalContext(ctx, _curpkg_("pointGetRepeatableReadTest-step2"))
-		}
+			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
+		})
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)

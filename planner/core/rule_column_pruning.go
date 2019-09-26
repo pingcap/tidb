@@ -36,11 +36,11 @@ func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPla
 }
 
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
-	if val, ok := failpoint.Eval(_curpkg_("enableGetUsedListErr")); ok {
+	failpoint.Inject("enableGetUsedListErr", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr")
+			failpoint.Return(nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr"))
 		}
-	}
+	})
 
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
@@ -129,9 +129,9 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		}
 		la.AggFuncs = []*aggregation.AggFuncDesc{one}
 		col := &expression.Column{
-			ColName:	model.NewCIStr("dummy_agg"),
-			UniqueID:	la.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:	types.NewFieldType(mysql.TypeLonglong),
+			ColName:  model.NewCIStr("dummy_agg"),
+			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
 		}
 		la.schema.Columns = []*expression.Column{col}
 	}
@@ -223,8 +223,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	var (
-		handleCol	*expression.Column
-		handleColInfo	*model.ColumnInfo
+		handleCol     *expression.Column
+		handleColInfo *model.ColumnInfo
 	)
 	for i := len(used) - 1; i >= 0; i-- {
 		if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(ds.Columns[i].Flag) {

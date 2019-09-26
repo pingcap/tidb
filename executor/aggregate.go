@@ -39,16 +39,16 @@ type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
-	finishCh	<-chan struct{}
-	aggFuncs	[]aggfuncs.AggFunc
-	maxChunkSize	int
+	finishCh     <-chan struct{}
+	aggFuncs     []aggfuncs.AggFunc
+	maxChunkSize int
 }
 
 func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
 	return baseHashAggWorker{
-		finishCh:	finishCh,
-		aggFuncs:	aggFuncs,
-		maxChunkSize:	maxChunkSize,
+		finishCh:     finishCh,
+		aggFuncs:     aggFuncs,
+		maxChunkSize: maxChunkSize,
 	}
 }
 
@@ -57,17 +57,17 @@ func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 
-	inputCh			chan *chunk.Chunk
-	outputChs		[]chan *HashAggIntermData
-	globalOutputCh		chan *AfFinalResult
-	giveBackCh		chan<- *HashAggInput
-	partialResultsMap	aggPartialResultMapper
-	groupByItems		[]expression.Expression
-	groupKey		[]byte
-	groupValDatums		[]types.Datum
+	inputCh           chan *chunk.Chunk
+	outputChs         []chan *HashAggIntermData
+	globalOutputCh    chan *AfFinalResult
+	giveBackCh        chan<- *HashAggInput
+	partialResultsMap aggPartialResultMapper
+	groupByItems      []expression.Expression
+	groupKey          []byte
+	groupValDatums    []types.Datum
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
-	chk	*chunk.Chunk
+	chk *chunk.Chunk
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
@@ -75,19 +75,19 @@ type HashAggPartialWorker struct {
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
-	rowBuffer		[]types.Datum
-	mutableRow		chunk.MutRow
-	partialResultMap	aggPartialResultMapper
-	groupSet		set.StringSet
-	inputCh			chan *HashAggIntermData
-	outputCh		chan *AfFinalResult
-	finalResultHolderCh	chan *chunk.Chunk
+	rowBuffer           []types.Datum
+	mutableRow          chunk.MutRow
+	partialResultMap    aggPartialResultMapper
+	groupSet            set.StringSet
+	inputCh             chan *HashAggIntermData
+	outputCh            chan *AfFinalResult
+	finalResultHolderCh chan *chunk.Chunk
 }
 
 // AfFinalResult indicates aggregation functions final result.
 type AfFinalResult struct {
-	chk	*chunk.Chunk
-	err	error
+	chk *chunk.Chunk
+	err error
 }
 
 // HashAggExec deals with all the aggregate functions.
@@ -134,51 +134,51 @@ type AfFinalResult struct {
 type HashAggExec struct {
 	baseExecutor
 
-	prepared		bool
-	sc			*stmtctx.StatementContext
-	PartialAggFuncs		[]aggfuncs.AggFunc
-	FinalAggFuncs		[]aggfuncs.AggFunc
-	partialResultMap	aggPartialResultMapper
-	groupSet		set.StringSet
-	groupKeys		[]string
-	cursor4GroupKey		int
-	GroupByItems		[]expression.Expression
-	groupKeyBuffer		[]byte
-	groupValDatums		[]types.Datum
+	prepared         bool
+	sc               *stmtctx.StatementContext
+	PartialAggFuncs  []aggfuncs.AggFunc
+	FinalAggFuncs    []aggfuncs.AggFunc
+	partialResultMap aggPartialResultMapper
+	groupSet         set.StringSet
+	groupKeys        []string
+	cursor4GroupKey  int
+	GroupByItems     []expression.Expression
+	groupKeyBuffer   []byte
+	groupValDatums   []types.Datum
 
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
-	isUnparallelExec	bool
+	isUnparallelExec bool
 
-	finishCh		chan struct{}
-	finalOutputCh		chan *AfFinalResult
-	finalInputCh		chan *chunk.Chunk
-	partialOutputChs	[]chan *HashAggIntermData
-	inputCh			chan *HashAggInput
-	partialInputChs		[]chan *chunk.Chunk
-	partialWorkers		[]HashAggPartialWorker
-	finalWorkers		[]HashAggFinalWorker
-	defaultVal		*chunk.Chunk
+	finishCh         chan struct{}
+	finalOutputCh    chan *AfFinalResult
+	finalInputCh     chan *chunk.Chunk
+	partialOutputChs []chan *HashAggIntermData
+	inputCh          chan *HashAggInput
+	partialInputChs  []chan *chunk.Chunk
+	partialWorkers   []HashAggPartialWorker
+	finalWorkers     []HashAggFinalWorker
+	defaultVal       *chunk.Chunk
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
-	isChildReturnEmpty	bool
+	isChildReturnEmpty bool
 
-	childResult	*chunk.Chunk
+	childResult *chunk.Chunk
 }
 
 // HashAggInput indicates the input of hash agg exec.
 type HashAggInput struct {
-	chk	*chunk.Chunk
+	chk *chunk.Chunk
 	// giveBackCh is bound with specific partial worker,
 	// it's used to reuse the `chk`,
 	// and tell the data-fetcher which partial worker it should send data to.
-	giveBackCh	chan<- *chunk.Chunk
+	giveBackCh chan<- *chunk.Chunk
 }
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
 type HashAggIntermData struct {
-	groupKeys		[]string
-	cursor			int
-	partialResultMap	aggPartialResultMapper
+	groupKeys        []string
+	cursor           int
+	partialResultMap aggPartialResultMapper
 }
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
@@ -267,35 +267,35 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker:	newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
-			inputCh:		e.partialInputChs[i],
-			outputChs:		e.partialOutputChs,
-			giveBackCh:		e.inputCh,
-			globalOutputCh:		e.finalOutputCh,
-			partialResultsMap:	make(aggPartialResultMapper),
-			groupByItems:		e.GroupByItems,
-			groupValDatums:		make([]types.Datum, 0, len(e.GroupByItems)),
-			chk:			newFirstChunk(e.children[0]),
+			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
+			inputCh:           e.partialInputChs[i],
+			outputChs:         e.partialOutputChs,
+			giveBackCh:        e.inputCh,
+			globalOutputCh:    e.finalOutputCh,
+			partialResultsMap: make(aggPartialResultMapper),
+			groupByItems:      e.GroupByItems,
+			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
+			chk:               newFirstChunk(e.children[0]),
 		}
 
 		e.partialWorkers[i] = w
 		e.inputCh <- &HashAggInput{
-			chk:		newFirstChunk(e.children[0]),
-			giveBackCh:	w.inputCh,
+			chk:        newFirstChunk(e.children[0]),
+			giveBackCh: w.inputCh,
 		}
 	}
 
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:	newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
-			partialResultMap:	make(aggPartialResultMapper),
-			groupSet:		set.NewStringSet(),
-			inputCh:		e.partialOutputChs[i],
-			outputCh:		e.finalOutputCh,
-			finalResultHolderCh:	e.finalInputCh,
-			rowBuffer:		make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:		chunk.MutRowFromTypes(retTypes(e)),
+			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
+			partialResultMap:    make(aggPartialResultMapper),
+			groupSet:            set.NewStringSet(),
+			inputCh:             e.partialOutputChs[i],
+			outputCh:            e.finalOutputCh,
+			finalResultHolderCh: e.finalInputCh,
+			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
+			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 		}
 	}
 }
@@ -310,8 +310,8 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 		}
 		w.chk.SwapColumns(chk)
 		w.giveBackCh <- &HashAggInput{
-			chk:		chk,
-			giveBackCh:	w.inputCh,
+			chk:        chk,
+			giveBackCh: w.inputCh,
 		}
 	}
 	return true
@@ -382,8 +382,8 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 			continue
 		}
 		w.outputChs[i] <- &HashAggIntermData{
-			groupKeys:		groupKeysSlice[i],
-			partialResultMap:	w.partialResultsMap,
+			groupKeys:        groupKeysSlice[i],
+			partialResultMap: w.partialResultsMap,
 		}
 	}
 }
@@ -433,11 +433,11 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
 	var (
-		input			*HashAggIntermData
-		ok			bool
-		intermDataBuffer	[][]aggfuncs.PartialResult
-		groupKeys		[]string
-		sc			= sctx.GetSessionVars().StmtCtx
+		input            *HashAggIntermData
+		ok               bool
+		intermDataBuffer [][]aggfuncs.PartialResult
+		groupKeys        []string
+		sc               = sctx.GetSessionVars().StmtCtx
 	)
 	for {
 		if input, ok = w.getPartialInput(); !ok {
@@ -532,10 +532,10 @@ func (e *HashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
 	var (
-		input	*HashAggInput
-		chk	*chunk.Chunk
-		ok	bool
-		err	error
+		input *HashAggInput
+		chk   *chunk.Chunk
+		ok    bool
+		err   error
 	)
 	defer func() {
 		if r := recover(); r != nil {
@@ -608,17 +608,17 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
-	if val, ok := failpoint.Eval(_curpkg_("parallelHashAggError")); ok {
+	failpoint.Inject("parallelHashAggError", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("HashAggExec.parallelExec error")
+			failpoint.Return(errors.New("HashAggExec.parallelExec error"))
 		}
-	}
+	})
 
 	for !chk.IsFull() {
 		e.finalInputCh <- chk
 		result, ok := <-e.finalOutputCh
-		if !ok {	// all finalWorkers exited
-			if chk.NumRows() > 0 {	// but there are some data left
+		if !ok { // all finalWorkers exited
+			if chk.NumRows() > 0 { // but there are some data left
 				return nil
 			}
 			if e.isChildReturnEmpty && e.defaultVal != nil {
@@ -686,11 +686,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
-		if val, ok := failpoint.Eval(_curpkg_("unparallelHashAggError")); ok {
+		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("HashAggExec.unparallelExec error")
+				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
 			}
-		}
+		})
 
 		// no more data.
 		if e.childResult.NumRows() == 0 {
@@ -754,17 +754,17 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 type StreamAggExec struct {
 	baseExecutor
 
-	executed	bool
+	executed bool
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
-	isChildReturnEmpty	bool
-	defaultVal		*chunk.Chunk
-	groupChecker		*groupChecker
-	inputIter		*chunk.Iterator4Chunk
-	inputRow		chunk.Row
-	aggFuncs		[]aggfuncs.AggFunc
-	partialResults		[]aggfuncs.PartialResult
-	groupRows		[]chunk.Row
-	childResult		*chunk.Chunk
+	isChildReturnEmpty bool
+	defaultVal         *chunk.Chunk
+	groupChecker       *groupChecker
+	inputIter          *chunk.Iterator4Chunk
+	inputRow           chunk.Row
+	aggFuncs           []aggfuncs.AggFunc
+	partialResults     []aggfuncs.PartialResult
+	groupRows          []chunk.Row
+	childResult        *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -908,16 +908,16 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 }
 
 type groupChecker struct {
-	StmtCtx		*stmtctx.StatementContext
-	GroupByItems	[]expression.Expression
-	curGroupKey	[]types.Datum
-	tmpGroupKey	[]types.Datum
+	StmtCtx      *stmtctx.StatementContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
 }
 
 func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
 	return &groupChecker{
-		StmtCtx:	stmtCtx,
-		GroupByItems:	items,
+		StmtCtx:      stmtCtx,
+		GroupByItems: items,
 	}
 }
 

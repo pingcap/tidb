@@ -70,87 +70,87 @@ import (
 )
 
 const (
-	connStatusDispatching	int32	= iota
+	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown	// Closed by server.
-	connStatusWaitShutdown	// Notified by server to close.
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
 )
 
 var (
-	queryTotalCounterComSleepOK		= metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK")
-	queryTotalCounterComSleepError		= metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error")
-	queryTotalCounterComQuitOK		= metrics.QueryTotalCounter.WithLabelValues("Quit", "OK")
-	queryTotalCounterComQuitError		= metrics.QueryTotalCounter.WithLabelValues("Quit", "Error")
-	queryTotalCounterComInitDBOK		= metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK")
-	queryTotalCounterComInitDBError		= metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error")
-	queryTotalCounterComQueryOK		= metrics.QueryTotalCounter.WithLabelValues("Query", "OK")
-	queryTotalCounterComQueryError		= metrics.QueryTotalCounter.WithLabelValues("Query", "Error")
-	queryTotalCounterComPingOK		= metrics.QueryTotalCounter.WithLabelValues("Ping", "OK")
-	queryTotalCounterComPingError		= metrics.QueryTotalCounter.WithLabelValues("Ping", "Error")
-	queryTotalCounterComFieldListOK		= metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK")
-	queryTotalCounterComFieldListError	= metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error")
-	queryTotalCounterComPrepareOK		= metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK")
-	queryTotalCounterComPrepareError	= metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error")
-	queryTotalCounterComExecuteOK		= metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK")
-	queryTotalCounterComExecuteError	= metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error")
-	queryTotalCounterComFetchOK		= metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK")
-	queryTotalCounterComFetchError		= metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error")
-	queryTotalCounterComCloseOK		= metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK")
-	queryTotalCounterComCloseError		= metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error")
-	queryTotalCounterComSendLongDataOK	= metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK")
-	queryTotalCounterComSendLongDataError	= metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error")
-	queryTotalCounterComResetOK		= metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK")
-	queryTotalCounterComResetError		= metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error")
-	queryTotalCounterComSetOptionOK		= metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK")
-	queryTotalCounterComSetOptionError	= metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error")
+	queryTotalCounterComSleepOK           = metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK")
+	queryTotalCounterComSleepError        = metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error")
+	queryTotalCounterComQuitOK            = metrics.QueryTotalCounter.WithLabelValues("Quit", "OK")
+	queryTotalCounterComQuitError         = metrics.QueryTotalCounter.WithLabelValues("Quit", "Error")
+	queryTotalCounterComInitDBOK          = metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK")
+	queryTotalCounterComInitDBError       = metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error")
+	queryTotalCounterComQueryOK           = metrics.QueryTotalCounter.WithLabelValues("Query", "OK")
+	queryTotalCounterComQueryError        = metrics.QueryTotalCounter.WithLabelValues("Query", "Error")
+	queryTotalCounterComPingOK            = metrics.QueryTotalCounter.WithLabelValues("Ping", "OK")
+	queryTotalCounterComPingError         = metrics.QueryTotalCounter.WithLabelValues("Ping", "Error")
+	queryTotalCounterComFieldListOK       = metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK")
+	queryTotalCounterComFieldListError    = metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error")
+	queryTotalCounterComPrepareOK         = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK")
+	queryTotalCounterComPrepareError      = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error")
+	queryTotalCounterComExecuteOK         = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK")
+	queryTotalCounterComExecuteError      = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error")
+	queryTotalCounterComFetchOK           = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK")
+	queryTotalCounterComFetchError        = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error")
+	queryTotalCounterComCloseOK           = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK")
+	queryTotalCounterComCloseError        = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error")
+	queryTotalCounterComSendLongDataOK    = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK")
+	queryTotalCounterComSendLongDataError = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error")
+	queryTotalCounterComResetOK           = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK")
+	queryTotalCounterComResetError        = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error")
+	queryTotalCounterComSetOptionOK       = metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK")
+	queryTotalCounterComSetOptionError    = metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error")
 
-	queryDurationHistogramUse	= metrics.QueryDurationHistogram.WithLabelValues("Use")
-	queryDurationHistogramShow	= metrics.QueryDurationHistogram.WithLabelValues("Show")
-	queryDurationHistogramBegin	= metrics.QueryDurationHistogram.WithLabelValues("Begin")
-	queryDurationHistogramCommit	= metrics.QueryDurationHistogram.WithLabelValues("Commit")
-	queryDurationHistogramRollback	= metrics.QueryDurationHistogram.WithLabelValues("Rollback")
-	queryDurationHistogramInsert	= metrics.QueryDurationHistogram.WithLabelValues("Insert")
-	queryDurationHistogramReplace	= metrics.QueryDurationHistogram.WithLabelValues("Replace")
-	queryDurationHistogramDelete	= metrics.QueryDurationHistogram.WithLabelValues("Delete")
-	queryDurationHistogramUpdate	= metrics.QueryDurationHistogram.WithLabelValues("Update")
-	queryDurationHistogramSelect	= metrics.QueryDurationHistogram.WithLabelValues("Select")
-	queryDurationHistogramExecute	= metrics.QueryDurationHistogram.WithLabelValues("Execute")
-	queryDurationHistogramSet	= metrics.QueryDurationHistogram.WithLabelValues("Set")
-	queryDurationHistogramGeneral	= metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
+	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
+	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
+	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
+	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
+	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
+	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
+	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
+	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
+	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
+	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
+	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
+	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
+	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
 )
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
 	return &clientConn{
-		server:		s,
-		connectionID:	atomic.AddUint32(&baseConnID, 1),
-		collation:	mysql.DefaultCollationID,
-		alloc:		arena.NewAllocator(32 * 1024),
-		status:		connStatusDispatching,
+		server:       s,
+		connectionID: atomic.AddUint32(&baseConnID, 1),
+		collation:    mysql.DefaultCollationID,
+		alloc:        arena.NewAllocator(32 * 1024),
+		status:       connStatusDispatching,
 	}
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt		*packetIO		// a helper to read and write data in packet format.
-	bufReadConn	*bufferedReadConn	// a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn		*tls.Conn		// TLS connection, nil if not TLS.
-	server		*Server			// a reference of server instance.
-	capability	uint32			// client capability affects the way server handles client request.
-	connectionID	uint32			// atomically allocated by a global variable, unique in process scope.
-	collation	uint8			// collation used by client, may be different from the collation used by database.
-	user		string			// user of the client.
-	dbname		string			// default database name.
-	salt		[]byte			// random bytes used for authentication.
-	alloc		arena.Allocator		// an memory allocator for reducing memory allocation.
-	lastCmd		string			// latest sql query string, currently used for logging error.
-	ctx		QueryCtx		// an interface to execute sql statements.
-	attrs		map[string]string	// attributes parsed from client handshake response, not used for now.
-	status		int32			// dispatching/reading/shutdown/waitshutdown
-	peerHost	string			// peer host
-	peerPort	string			// peer port
-	lastCode	uint16			// last error code
+	pkt          *packetIO         // a helper to read and write data in packet format.
+	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
+	server       *Server           // a reference of server instance.
+	capability   uint32            // client capability affects the way server handles client request.
+	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
+	collation    uint8             // collation used by client, may be different from the collation used by database.
+	user         string            // user of the client.
+	dbname       string            // default database name.
+	salt         []byte            // random bytes used for authentication.
+	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
+	lastCmd      string            // latest sql query string, currently used for logging error.
+	ctx          QueryCtx          // an interface to execute sql statements.
+	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	status       int32             // dispatching/reading/shutdown/waitshutdown
+	peerHost     string            // peer host
+	peerPort     string            // peer port
+	lastCode     uint16            // last error code
 }
 
 func (cc *clientConn) String() string {
@@ -264,11 +264,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
-	if _, ok := failpoint.Eval(_curpkg_("FakeClientConn")); ok {
+	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	return cc.pkt.writePacket(data)
 }
 
@@ -288,12 +288,12 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 }
 
 type handshakeResponse41 struct {
-	Capability	uint32
-	Collation	uint8
-	User		string
-	DBName		string
-	Auth		[]byte
-	Attrs		map[string]string
+	Capability uint32
+	Collation  uint8
+	User       string
+	DBName     string
+	Auth       []byte
+	Attrs      map[string]string
 }
 
 // parseOldHandshakeResponseHeader parses the old version handshake header HandshakeResponse320
@@ -885,7 +885,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return nil
 	case mysql.ComQuit:
 		return io.EOF
-	case mysql.ComQuery:	// Most frequently used command.
+	case mysql.ComQuery: // Most frequently used command.
 		// For issue 1989
 		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
 		// implementation accept that case. So trim the last '\0' here as if the payload an EOF string.
@@ -937,11 +937,11 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush() error {
-	if _, ok := failpoint.Eval(_curpkg_("FakeClientConn")); ok {
+	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	return cc.pkt.flush()
 }
 
@@ -980,9 +980,9 @@ func (cc *clientConn) writeOkWith(msg string, affectedRows, lastInsertID uint64,
 
 func (cc *clientConn) writeError(e error) error {
 	var (
-		m	*mysql.SQLError
-		te	*terror.Error
-		ok	bool
+		m  *mysql.SQLError
+		te *terror.Error
+		ok bool
 	)
 	originErr := errors.Cause(e)
 	if te, ok = originErr.(*terror.Error); ok {

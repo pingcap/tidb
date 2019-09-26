@@ -47,15 +47,15 @@ type reorgCtx struct {
 	// If the reorganization job is done, we will use this channel to notify outer.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
-	doneCh	chan error
+	doneCh chan error
 	// rowCount is used to simulate a job's row count.
-	rowCount	int64
+	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
 	// 0: job is not canceled.
 	// 1: job is canceled.
-	notifyCancelReorgJob	int32
+	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
-	doneHandle	int64
+	doneHandle int64
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -184,16 +184,16 @@ type reorgInfo struct {
 	*model.Job
 
 	// StartHandle is the first handle of the adding indices table.
-	StartHandle	int64
+	StartHandle int64
 	// EndHandle is the last handle of the adding indices table.
-	EndHandle	int64
-	d		*ddlCtx
-	first		bool
+	EndHandle int64
+	d         *ddlCtx
+	first     bool
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
-	PhysicalTableID	int64
+	PhysicalTableID int64
 }
 
 func (r *reorgInfo) String() string {
@@ -205,9 +205,9 @@ func (r *reorgInfo) String() string {
 
 func constructDescTableScanPB(physicalTableID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
-		TableId:	physicalTableID,
-		Columns:	pbColumnInfos,
-		Desc:		true,
+		TableId: physicalTableID,
+		Columns: pbColumnInfos,
+		Desc:    true,
 	}
 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
@@ -342,11 +342,11 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
-		err	error
-		start	int64
-		end	int64
-		pid	int64
-		info	reorgInfo
+		err   error
+		start int64
+		end   int64
+		pid   int64
+		info  reorgInfo
 	)
 
 	if job.SnapshotVer == 0 {
@@ -374,9 +374,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		}
 		logutil.Logger(ddlLogCtx).Info("[ddl] job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end))
 
-		if _, ok := failpoint.Eval(_curpkg_("errorUpdateReorgHandle")); ok {
+		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
-		}
+		})
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
 			return &info, errors.Trace(err)

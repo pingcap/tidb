@@ -59,20 +59,20 @@ import (
 )
 
 const (
-	pDBName		= "db"
-	pHexKey		= "hexKey"
-	pIndexName	= "index"
-	pHandle		= "handle"
-	pRegionID	= "regionID"
-	pStartTS	= "startTS"
-	pTableName	= "table"
-	pTableID	= "tableID"
-	pColumnID	= "colID"
-	pColumnTp	= "colTp"
-	pColumnFlag	= "colFlag"
-	pColumnLen	= "colLen"
-	pRowBin		= "rowBin"
-	pSnapshot	= "snapshot"
+	pDBName     = "db"
+	pHexKey     = "hexKey"
+	pIndexName  = "index"
+	pHandle     = "handle"
+	pRegionID   = "regionID"
+	pStartTS    = "startTS"
+	pTableName  = "table"
+	pTableID    = "tableID"
+	pColumnID   = "colID"
+	pColumnTp   = "colTp"
+	pColumnFlag = "colFlag"
+	pColumnLen  = "colLen"
+	pRowBin     = "rowBin"
+	pSnapshot   = "snapshot"
 )
 
 // For query string
@@ -80,8 +80,8 @@ const qTableID = "table_id"
 const qLimit = "limit"
 
 const (
-	headerContentType	= "Content-Type"
-	contentTypeJSON		= "application/json"
+	headerContentType = "Content-Type"
+	contentTypeJSON   = "application/json"
 )
 
 func writeError(w http.ResponseWriter, err error) {
@@ -125,16 +125,16 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 
 	return &tikvHandlerTool{
 		helper.Helper{
-			RegionCache:	regionCache,
-			Store:		tikvStore,
+			RegionCache: regionCache,
+			Store:       tikvStore,
 		},
 	}
 }
 
 type mvccKV struct {
-	Key		string				`json:"key"`
-	RegionID	uint64				`json:"region_id"`
-	Value		*kvrpcpb.MvccGetByKeyResponse	`json:"value"`
+	Key      string                        `json:"key"`
+	RegionID uint64                        `json:"region_id"`
+	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 }
 
 func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
@@ -168,7 +168,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 
 		tikvReq := &tikvrpc.Request{
-			Type:	tikvrpc.CmdMvccGetByStartTs,
+			Type: tikvrpc.CmdMvccGetByStartTs,
 			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
 				StartTs: startTS,
 			},
@@ -354,7 +354,7 @@ type regionHandler struct {
 // tableHandler is the handler for list table's regions.
 type tableHandler struct {
 	*tikvHandlerTool
-	op	string
+	op string
 }
 
 // ddlHistoryJobHandler is the handler for list job history.
@@ -380,23 +380,23 @@ type valueHandler struct {
 }
 
 const (
-	opTableRegions		= "regions"
-	opTableDiskUsage	= "disk-usage"
-	opTableScatter		= "scatter-table"
-	opStopTableScatter	= "stop-scatter-table"
+	opTableRegions     = "regions"
+	opTableDiskUsage   = "disk-usage"
+	opTableScatter     = "scatter-table"
+	opStopTableScatter = "stop-scatter-table"
 )
 
 // mvccTxnHandler is the handler for txn debugger.
 type mvccTxnHandler struct {
 	*tikvHandlerTool
-	op	string
+	op string
 }
 
 const (
-	opMvccGetByHex	= "hex"
-	opMvccGetByKey	= "key"
-	opMvccGetByIdx	= "idx"
-	opMvccGetByTxn	= "txn"
+	opMvccGetByHex = "hex"
+	opMvccGetByKey = "key"
+	opMvccGetByIdx = "idx"
+	opMvccGetByTxn = "txn"
 )
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -452,10 +452,10 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Construct field type.
 	defaultDecimal := 6
 	ft := &types.FieldType{
-		Tp:		byte(colTp),
-		Flag:		uint(colFlag),
-		Flen:		int(colLen),
-		Decimal:	defaultDecimal,
+		Tp:      byte(colTp),
+		Flag:    uint(colFlag),
+		Flen:    int(colLen),
+		Decimal: defaultDecimal,
 	}
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
@@ -479,34 +479,34 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // TableRegions is the response data for list table's regions.
 // It contains regions list for record and indices.
 type TableRegions struct {
-	TableName	string		`json:"name"`
-	TableID		int64		`json:"id"`
-	RecordRegions	[]RegionMeta	`json:"record_regions"`
-	Indices		[]IndexRegions	`json:"indices"`
+	TableName     string         `json:"name"`
+	TableID       int64          `json:"id"`
+	RecordRegions []RegionMeta   `json:"record_regions"`
+	Indices       []IndexRegions `json:"indices"`
 }
 
 // RegionMeta contains a region's peer detail
 type RegionMeta struct {
-	ID		uint64			`json:"region_id"`
-	Leader		*metapb.Peer		`json:"leader"`
-	Peers		[]*metapb.Peer		`json:"peers"`
-	RegionEpoch	*metapb.RegionEpoch	`json:"region_epoch"`
+	ID          uint64              `json:"region_id"`
+	Leader      *metapb.Peer        `json:"leader"`
+	Peers       []*metapb.Peer      `json:"peers"`
+	RegionEpoch *metapb.RegionEpoch `json:"region_epoch"`
 }
 
 // IndexRegions is the region info for one index.
 type IndexRegions struct {
-	Name	string		`json:"name"`
-	ID	int64		`json:"id"`
-	Regions	[]RegionMeta	`json:"regions"`
+	Name    string       `json:"name"`
+	ID      int64        `json:"id"`
+	Regions []RegionMeta `json:"regions"`
 }
 
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RegionID	uint64			`json:"region_id"`
-	StartKey	[]byte			`json:"start_key"`
-	EndKey		[]byte			`json:"end_key"`
-	Frames		[]*helper.FrameItem	`json:"frames"`
+	RegionID uint64              `json:"region_id"`
+	StartKey []byte              `json:"start_key"`
+	EndKey   []byte              `json:"end_key"`
+	Frames   []*helper.FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
@@ -545,21 +545,21 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 
 // FrameItem includes a index's or record's meta data with table's info.
 type FrameItem struct {
-	DBName		string		`json:"db_name"`
-	TableName	string		`json:"table_name"`
-	TableID		int64		`json:"table_id"`
-	IsRecord	bool		`json:"is_record"`
-	RecordID	int64		`json:"record_id,omitempty"`
-	IndexName	string		`json:"index_name,omitempty"`
-	IndexID		int64		`json:"index_id,omitempty"`
-	IndexValues	[]string	`json:"index_values,omitempty"`
+	DBName      string   `json:"db_name"`
+	TableName   string   `json:"table_name"`
+	TableID     int64    `json:"table_id"`
+	IsRecord    bool     `json:"is_record"`
+	RecordID    int64    `json:"record_id,omitempty"`
+	IndexName   string   `json:"index_name,omitempty"`
+	IndexID     int64    `json:"index_id,omitempty"`
+	IndexValues []string `json:"index_values,omitempty"`
 }
 
 // RegionFrameRange contains a frame range info which the region covered.
 type RegionFrameRange struct {
-	first	*FrameItem		// start frame of the region
-	last	*FrameItem		// end frame of the region
-	region	*tikv.KeyLocation	// the region
+	first  *FrameItem        // start frame of the region
+	last   *FrameItem        // end frame of the region
+	region *tikv.KeyLocation // the region
 }
 
 func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
@@ -570,20 +570,20 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 			return nil, errors.Trace(err)
 		}
 
-		if val, ok := failpoint.Eval(_curpkg_("errGetRegionByIDEmpty")); ok {
+		failpoint.Inject("errGetRegionByIDEmpty", func(val failpoint.Value) {
 			if val.(bool) {
 				meta = nil
 			}
-		}
+		})
 
 		if meta == nil {
 			return nil, errors.Errorf("region not found for regionID %q", regionID)
 		}
 		regions[i] = RegionMeta{
-			ID:		regionID,
-			Leader:		leader,
-			Peers:		meta.Peers,
-			RegionEpoch:	meta.RegionEpoch,
+			ID:          regionID,
+			Leader:      leader,
+			Peers:       meta.Peers,
+			RegionEpoch: meta.RegionEpoch,
 		}
 
 	}
@@ -875,10 +875,10 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 		return err
 	}
 	input := map[string]string{
-		"name":		"scatter-range",
-		"start_key":	url.QueryEscape(string(startKey)),
-		"end_key":	url.QueryEscape(string(endKey)),
-		"range_name":	name,
+		"name":       "scatter-range",
+		"start_key":  url.QueryEscape(string(startKey)),
+		"end_key":    url.QueryEscape(string(endKey)),
+		"range_name": name,
 	}
 	v, err := json.Marshal(input)
 	if err != nil {
@@ -1023,22 +1023,22 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 	}
 
 	return &TableRegions{
-		TableName:	name,
-		TableID:	id,
-		Indices:	indices,
-		RecordRegions:	recordRegions,
+		TableName:     name,
+		TableID:       id,
+		Indices:       indices,
+		RecordRegions: recordRegions,
 	}, nil
 }
 
 // pdRegionStats is the json response from PD.
 type pdRegionStats struct {
-	Count			int			`json:"count"`
-	EmptyCount		int			`json:"empty_count"`
-	StorageSize		int64			`json:"storage_size"`
-	StoreLeaderCount	map[uint64]int		`json:"store_leader_count"`
-	StorePeerCount		map[uint64]int		`json:"store_peer_count"`
-	StoreLeaderSize		map[uint64]int64	`json:"store_leader_size"`
-	StorePeerSize		map[uint64]int64	`json:"store_peer_size"`
+	Count            int              `json:"count"`
+	EmptyCount       int              `json:"empty_count"`
+	StorageSize      int64            `json:"storage_size"`
+	StoreLeaderCount map[uint64]int   `json:"store_leader_count"`
+	StorePeerCount   map[uint64]int   `json:"store_peer_count"`
+	StoreLeaderSize  map[uint64]int64 `json:"store_leader_size"`
+	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
 }
 
 func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
@@ -1139,8 +1139,8 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			writeData(w, map[string]interface{}{
-				"write":	hotWrite,
-				"read":		hotRead,
+				"write": hotWrite,
+				"read":  hotRead,
 			})
 			return
 		}
@@ -1169,9 +1169,9 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// create RegionDetail from RegionFrameRange
 	regionDetail := &RegionDetail{
-		RegionID:	regionID,
-		StartKey:	region.StartKey,
-		EndKey:		region.EndKey,
+		RegionID: regionID,
+		StartKey: region.StartKey,
+		EndKey:   region.EndKey,
 	}
 	schema, err := h.schema()
 	if err != nil {
@@ -1385,9 +1385,9 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 
 		if len(datas) > 0 {
 			re := map[string]interface{}{
-				"key":	resp.Key,
-				"info":	respValue.Info,
-				"data":	datas,
+				"key":  resp.Key,
+				"info": respValue.Info,
+				"data": datas,
 			}
 			if err != nil {
 				re["decode_error"] = err.Error()
@@ -1430,7 +1430,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
-	IsOwner	bool	`json:"is_owner"`
+	IsOwner bool `json:"is_owner"`
 	*domain.ServerInfo
 }
 
@@ -1450,11 +1450,11 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum			int				`json:"servers_num,omitempty"`
-	OwnerID				string				`json:"owner_id"`
-	IsAllServerVersionConsistent	bool				`json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions		[]domain.ServerVersionInfo	`json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo			map[string]*domain.ServerInfo	`json:"all_servers_info,omitempty"`
+	ServersNum                   int                           `json:"servers_num,omitempty"`
+	OwnerID                      string                        `json:"owner_id"`
+	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1490,11 +1490,11 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		allVersions = append(allVersions, v.ServerVersionInfo)
 	}
 	clusterInfo := clusterServerInfo{
-		ServersNum:	len(allServersInfo),
-		OwnerID:	ownerID,
+		ServersNum: len(allServersInfo),
+		OwnerID:    ownerID,
 		// len(allVersions) = 1 indicates there has only 1 tidb version in cluster, so all server versions are consistent.
-		IsAllServerVersionConsistent:	len(allVersions) == 1,
-		AllServersInfo:			allServersInfo,
+		IsAllServerVersionConsistent: len(allVersions) == 1,
+		AllServersInfo:               allServersInfo,
 	}
 	// if IsAllServerVersionConsistent is false, return the all tidb servers version.
 	if !clusterInfo.IsAllServerVersionConsistent {
@@ -1505,9 +1505,9 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 // dbTableInfo is used to report the database, table information and the current schema version.
 type dbTableInfo struct {
-	DBInfo		*model.DBInfo		`json:"db_info"`
-	TableInfo	*model.TableInfo	`json:"table_info"`
-	SchemaVersion	int64			`json:"schema_version"`
+	DBInfo        *model.DBInfo    `json:"db_info"`
+	TableInfo     *model.TableInfo `json:"table_info"`
+	SchemaVersion int64            `json:"schema_version"`
 }
 
 //ServeHTTP handles request of database information and table information by tableID.

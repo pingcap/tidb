@@ -32,9 +32,9 @@ import (
 )
 
 const (
-	minStep			= 1000
-	maxStep			= 2000000
-	defaultConsumeTime	= 10 * time.Second
+	minStep            = 1000
+	maxStep            = 2000000
+	defaultConsumeTime = 10 * time.Second
 )
 
 // Test needs to change it, so it's a variable.
@@ -61,15 +61,15 @@ type Allocator interface {
 }
 
 type allocator struct {
-	mu	sync.Mutex
-	base	int64
-	end	int64
-	store	kv.Storage
+	mu    sync.Mutex
+	base  int64
+	end   int64
+	store kv.Storage
 	// dbID is current database's ID.
-	dbID		int64
-	isUnsigned	bool
-	lastAllocTime	time.Time
-	step		int64
+	dbID          int64
+	isUnsigned    bool
+	lastAllocTime time.Time
+	step          int64
 }
 
 // GetStep is only used by tests
@@ -221,7 +221,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 }
 
 func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
-	if alloc.base == alloc.end {	// step
+	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
 		startTime := time.Now()
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
@@ -260,7 +260,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 }
 
 func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
-	if alloc.base == alloc.end {	// step
+	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
 		startTime := time.Now()
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
@@ -313,11 +313,11 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
-	if val, ok := failpoint.Eval(_curpkg_("mockAutoIDChange")); ok {
+	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
-			return step
+			failpoint.Return(step)
 		}
-	}
+	})
 
 	consumeRate := defaultConsumeTime.Seconds() / consumeDur.Seconds()
 	res := int64(float64(curStep) * consumeRate)
@@ -332,11 +332,11 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	return &allocator{
-		store:		store,
-		dbID:		dbID,
-		isUnsigned:	isUnsigned,
-		step:		step,
-		lastAllocTime:	time.Now(),
+		store:         store,
+		dbID:          dbID,
+		isUnsigned:    isUnsigned,
+		step:          step,
+		lastAllocTime: time.Now(),
 	}
 }
 

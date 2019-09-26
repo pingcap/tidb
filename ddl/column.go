@@ -163,11 +163,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	if val, ok := failpoint.Eval(_curpkg_("errorBeforeDecodeArgs")); ok {
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
 		if val.(bool) {
-			return ver, errors.New("occur an error before decode args")
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
 		}
-	}
+	})
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
@@ -375,13 +375,13 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	if val, ok := failpoint.Eval(_curpkg_("uninitializedOffsetAndState")); ok {
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
 		if val.(bool) {
 			if newCol.State != model.StatePublic {
-				return ver, errors.New("the column state is wrong")
+				failpoint.Return(ver, errors.New("the column state is wrong"))
 			}
 		}
-	}
+	})
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.

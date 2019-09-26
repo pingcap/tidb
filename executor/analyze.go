@@ -56,24 +56,24 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks	[]*analyzeTask
-	wg	*sync.WaitGroup
+	tasks []*analyzeTask
+	wg    *sync.WaitGroup
 }
 
 var (
 	// MaxSampleSize is the size of samples for once analyze.
 	// It's public for test.
-	MaxSampleSize	= int64(10000)
+	MaxSampleSize = int64(10000)
 	// RandSeed is the seed for randing package.
 	// It's public for test.
-	RandSeed	= int64(1)
+	RandSeed = int64(1)
 )
 
 const (
-	maxRegionSampleSize	= 1000
-	maxSketchSize		= 10000
-	defaultCMSketchDepth	= 5
-	defaultCMSketchWidth	= 2048
+	maxRegionSampleSize  = 1000
+	maxSketchSize        = 10000
+	defaultCMSketchDepth = 5
+	defaultCMSketchWidth = 2048
 )
 
 // Next implements the Executor Next interface.
@@ -145,7 +145,7 @@ func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 type taskType int
 
 const (
-	colTask	taskType	= iota
+	colTask taskType = iota
 	idxTask
 	fastTask
 	pkIncrementalTask
@@ -153,13 +153,13 @@ const (
 )
 
 type analyzeTask struct {
-	taskType		taskType
-	idxExec			*AnalyzeIndexExec
-	colExec			*AnalyzeColumnsExec
-	fastExec		*AnalyzeFastExec
-	idxIncrementalExec	*analyzeIndexIncrementalExec
-	colIncrementalExec	*analyzePKIncrementalExec
-	job			*statistics.AnalyzeJob
+	taskType           taskType
+	idxExec            *AnalyzeIndexExec
+	colExec            *AnalyzeColumnsExec
+	fastExec           *AnalyzeFastExec
+	idxIncrementalExec *analyzeIndexIncrementalExec
+	colIncrementalExec *analyzePKIncrementalExec
+	job                *statistics.AnalyzeJob
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -174,8 +174,8 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			logutil.Logger(context.Background()).Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- analyzeResult{
-				Err:	errAnalyzeWorkerPanic,
-				job:	task.job,
+				Err: errAnalyzeWorkerPanic,
+				job: task.job,
 			}
 		}
 		e.wg.Done()
@@ -229,11 +229,11 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	result := analyzeResult{
-		PhysicalTableID:	idxExec.physicalTableID,
-		Hist:			[]*statistics.Histogram{hist},
-		Cms:			[]*statistics.CMSketch{cms},
-		IsIndex:		1,
-		job:			idxExec.job,
+		PhysicalTableID: idxExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{cms},
+		IsIndex:         1,
+		job:             idxExec.job,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -244,16 +244,16 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
-	ctx		sessionctx.Context
-	physicalTableID	int64
-	idxInfo		*model.IndexInfo
-	concurrency	int
-	priority	int
-	analyzePB	*tipb.AnalyzeReq
-	result		distsql.SelectResult
-	countNullRes	distsql.SelectResult
-	maxNumBuckets	uint64
-	job		*statistics.AnalyzeJob
+	ctx             sessionctx.Context
+	physicalTableID int64
+	idxInfo         *model.IndexInfo
+	concurrency     int
+	priority        int
+	analyzePB       *tipb.AnalyzeReq
+	result          distsql.SelectResult
+	countNullRes    distsql.SelectResult
+	maxNumBuckets   uint64
+	job             *statistics.AnalyzeJob
 }
 
 // fetchAnalyzeResult builds and dispatches the `kv.Request` from given ranges, and stores the `SelectResult`
@@ -299,11 +299,11 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
-	if val, ok := failpoint.Eval(_curpkg_("buildStatsFromResult")); ok {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, nil, errors.New("mock buildStatsFromResult error")
+			failpoint.Return(nil, nil, errors.New("mock buildStatsFromResult error"))
 		}
-	}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	if needCMS {
@@ -378,10 +378,10 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	result := analyzeResult{
-		PhysicalTableID:	colExec.physicalTableID,
-		Hist:			hists,
-		Cms:			cms,
-		job:			colExec.job,
+		PhysicalTableID: colExec.physicalTableID,
+		Hist:            hists,
+		Cms:             cms,
+		job:             colExec.job,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -393,16 +393,16 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
-	ctx		sessionctx.Context
-	physicalTableID	int64
-	colsInfo	[]*model.ColumnInfo
-	pkInfo		*model.ColumnInfo
-	concurrency	int
-	priority	int
-	analyzePB	*tipb.AnalyzeReq
-	resultHandler	*tableResultHandler
-	maxNumBuckets	uint64
-	job		*statistics.AnalyzeJob
+	ctx             sessionctx.Context
+	physicalTableID int64
+	colsInfo        []*model.ColumnInfo
+	pkInfo          *model.ColumnInfo
+	concurrency     int
+	priority        int
+	analyzePB       *tipb.AnalyzeReq
+	resultHandler   *tableResultHandler
+	maxNumBuckets   uint64
+	job             *statistics.AnalyzeJob
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -462,10 +462,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 	collectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
-			IsMerger:	true,
-			FMSketch:	statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize:	atomic.LoadInt64(&MaxSampleSize),
-			CMSketch:	statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
+			IsMerger:      true,
+			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			MaxSampleSize: atomic.LoadInt64(&MaxSampleSize),
+			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 		}
 	}
 	for {
@@ -539,12 +539,12 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	if len(exec.idxsInfo) > 0 {
 		for i := hasPKInfo + len(exec.colsInfo); i < len(hists); i++ {
 			idxResult := analyzeResult{
-				PhysicalTableID:	exec.physicalTableID,
-				Hist:			[]*statistics.Histogram{hists[i]},
-				Cms:			[]*statistics.CMSketch{cms[i]},
-				IsIndex:		1,
-				Count:			hists[i].NullCount,
-				job:			exec.job,
+				PhysicalTableID: exec.physicalTableID,
+				Hist:            []*statistics.Histogram{hists[i]},
+				Cms:             []*statistics.CMSketch{cms[i]},
+				IsIndex:         1,
+				Count:           hists[i].NullCount,
+				job:             exec.job,
 			}
 			if hists[i].Len() > 0 {
 				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
@@ -554,11 +554,11 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	}
 	hist := hists[0]
 	colResult := analyzeResult{
-		PhysicalTableID:	exec.physicalTableID,
-		Hist:			hists[:hasPKInfo+len(exec.colsInfo)],
-		Cms:			cms[:hasPKInfo+len(exec.colsInfo)],
-		Count:			hist.NullCount,
-		job:			exec.job,
+		PhysicalTableID: exec.physicalTableID,
+		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
+		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
+		Count:           hist.NullCount,
+		job:             exec.job,
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
@@ -569,32 +569,32 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 
 // AnalyzeFastTask is the task for build stats.
 type AnalyzeFastTask struct {
-	Location	*tikv.KeyLocation
-	SampSize	uint64
-	BeginOffset	uint64
-	EndOffset	uint64
+	Location    *tikv.KeyLocation
+	SampSize    uint64
+	BeginOffset uint64
+	EndOffset   uint64
 }
 
 // AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
-	ctx		sessionctx.Context
-	physicalTableID	int64
-	pkInfo		*model.ColumnInfo
-	colsInfo	[]*model.ColumnInfo
-	idxsInfo	[]*model.IndexInfo
-	concurrency	int
-	maxNumBuckets	uint64
-	tblInfo		*model.TableInfo
-	cache		*tikv.RegionCache
-	wg		*sync.WaitGroup
-	sampLocs	chan *tikv.KeyLocation
-	rowCount	uint64
-	sampCursor	int32
-	sampTasks	[]*AnalyzeFastTask
-	scanTasks	[]*tikv.KeyLocation
-	collectors	[]*statistics.SampleCollector
-	randSeed	int64
-	job		*statistics.AnalyzeJob
+	ctx             sessionctx.Context
+	physicalTableID int64
+	pkInfo          *model.ColumnInfo
+	colsInfo        []*model.ColumnInfo
+	idxsInfo        []*model.IndexInfo
+	concurrency     int
+	maxNumBuckets   uint64
+	tblInfo         *model.TableInfo
+	cache           *tikv.RegionCache
+	wg              *sync.WaitGroup
+	sampLocs        chan *tikv.KeyLocation
+	rowCount        uint64
+	sampCursor      int32
+	sampTasks       []*AnalyzeFastTask
+	scanTasks       []*tikv.KeyLocation
+	collectors      []*statistics.SampleCollector
+	randSeed        int64
+	job             *statistics.AnalyzeJob
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
@@ -613,7 +613,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 			return
 		}
 		req := &tikvrpc.Request{
-			Type:	tikvrpc.CmdDebugGetRegionProperties,
+			Type: tikvrpc.CmdDebugGetRegionProperties,
 			DebugGetRegionProperties: &debugpb.GetRegionPropertiesRequest{
 				RegionId: loc.Region.GetID(),
 			},
@@ -642,9 +642,9 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 				}
 				newCount := atomic.AddUint64(&e.rowCount, cnt)
 				task := &AnalyzeFastTask{
-					Location:	loc,
-					BeginOffset:	newCount - cnt,
-					EndOffset:	newCount,
+					Location:    loc,
+					BeginOffset: newCount - cnt,
+					EndOffset:   newCount,
 				}
 				*sampTasks = append(*sampTasks, task)
 				break
@@ -1043,8 +1043,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.collectors = make([]*statistics.SampleCollector, length)
 	for i := range e.collectors {
 		e.collectors[i] = &statistics.SampleCollector{
-			MaxSampleSize:	int64(MaxSampleSize),
-			Samples:	make([]*statistics.SampleItem, MaxSampleSize),
+			MaxSampleSize: int64(MaxSampleSize),
+			Samples:       make([]*statistics.SampleItem, MaxSampleSize),
 		}
 	}
 
@@ -1149,14 +1149,14 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 // AnalyzeTestFastExec is for fast sample in unit test.
 type AnalyzeTestFastExec struct {
 	AnalyzeFastExec
-	Ctx		sessionctx.Context
-	PhysicalTableID	int64
-	PKInfo		*model.ColumnInfo
-	ColsInfo	[]*model.ColumnInfo
-	IdxsInfo	[]*model.IndexInfo
-	Concurrency	int
-	Collectors	[]*statistics.SampleCollector
-	TblInfo		*model.TableInfo
+	Ctx             sessionctx.Context
+	PhysicalTableID int64
+	PKInfo          *model.ColumnInfo
+	ColsInfo        []*model.ColumnInfo
+	IdxsInfo        []*model.IndexInfo
+	Concurrency     int
+	Collectors      []*statistics.SampleCollector
+	TblInfo         *model.TableInfo
 }
 
 // TestFastSample only test the fast sample in unit test.
@@ -1177,8 +1177,8 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 
 type analyzeIndexIncrementalExec struct {
 	AnalyzeIndexExec
-	oldHist	*statistics.Histogram
-	oldCMS	*statistics.CMSketch
+	oldHist *statistics.Histogram
+	oldCMS  *statistics.CMSketch
 }
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
@@ -1203,11 +1203,11 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		}
 	}
 	result := analyzeResult{
-		PhysicalTableID:	idxExec.physicalTableID,
-		Hist:			[]*statistics.Histogram{hist},
-		Cms:			[]*statistics.CMSketch{cms},
-		IsIndex:		1,
-		job:			idxExec.job,
+		PhysicalTableID: idxExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{cms},
+		IsIndex:         1,
+		job:             idxExec.job,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -1218,7 +1218,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 
 type analyzePKIncrementalExec struct {
 	AnalyzeColumnsExec
-	oldHist	*statistics.Histogram
+	oldHist *statistics.Histogram
 }
 
 func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
@@ -1240,10 +1240,10 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	result := analyzeResult{
-		PhysicalTableID:	colExec.physicalTableID,
-		Hist:			[]*statistics.Histogram{hist},
-		Cms:			[]*statistics.CMSketch{nil},
-		job:			colExec.job,
+		PhysicalTableID: colExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{nil},
+		job:             colExec.job,
 	}
 	if hist.Len() > 0 {
 		result.Count += hist.Buckets[hist.Len()-1].Count
@@ -1254,11 +1254,11 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 // analyzeResult is used to represent analyze result.
 type analyzeResult struct {
 	// PhysicalTableID is the id of a partition or a table.
-	PhysicalTableID	int64
-	Hist		[]*statistics.Histogram
-	Cms		[]*statistics.CMSketch
-	Count		int64
-	IsIndex		int
-	Err		error
-	job		*statistics.AnalyzeJob
+	PhysicalTableID int64
+	Hist            []*statistics.Histogram
+	Cms             []*statistics.CMSketch
+	Count           int64
+	IsIndex         int
+	Err             error
+	job             *statistics.AnalyzeJob
 }

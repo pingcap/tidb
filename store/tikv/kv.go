@@ -40,7 +40,7 @@ import (
 
 type storeCache struct {
 	sync.Mutex
-	cache	map[string]*tikvStore
+	cache map[string]*tikvStore
 }
 
 var mc storeCache
@@ -51,10 +51,10 @@ type Driver struct {
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:		addrs,
-		AutoSyncInterval:	30 * time.Second,
-		DialTimeout:		5 * time.Second,
-		TLS:			tlsConfig,
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		TLS:              tlsConfig,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -76,9 +76,9 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	}
 
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:		security.ClusterSSLCA,
-		CertPath:	security.ClusterSSLCert,
-		KeyPath:	security.ClusterSSLKey,
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
 	})
 
 	if err != nil {
@@ -126,25 +126,25 @@ type EtcdBackend interface {
 var oracleUpdateInterval = 2000
 
 type tikvStore struct {
-	clusterID	uint64
-	uuid		string
-	oracle		oracle.Oracle
-	client		Client
-	pdClient	pd.Client
-	regionCache	*RegionCache
-	lockResolver	*LockResolver
-	txnLatches	*latch.LatchesScheduler
-	gcWorker	GCHandler
-	etcdAddrs	[]string
-	tlsConfig	*tls.Config
-	mock		bool
-	enableGC	bool
+	clusterID    uint64
+	uuid         string
+	oracle       oracle.Oracle
+	client       Client
+	pdClient     pd.Client
+	regionCache  *RegionCache
+	lockResolver *LockResolver
+	txnLatches   *latch.LatchesScheduler
+	gcWorker     GCHandler
+	etcdAddrs    []string
+	tlsConfig    *tls.Config
+	mock         bool
+	enableGC     bool
 
-	kv		SafePointKV
-	safePoint	uint64
-	spTime		time.Time
-	spMutex		sync.RWMutex	// this is used to update safePoint and spTime
-	closed		chan struct{}	// this is used to nofity when the store is closed
+	kv        SafePointKV
+	safePoint uint64
+	spTime    time.Time
+	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
+	closed    chan struct{} // this is used to nofity when the store is closed
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -180,16 +180,16 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		return nil, errors.Trace(err)
 	}
 	store := &tikvStore{
-		clusterID:	pdClient.GetClusterID(context.TODO()),
-		uuid:		uuid,
-		oracle:		o,
-		client:		client,
-		pdClient:	pdClient,
-		regionCache:	NewRegionCache(pdClient),
-		kv:		spkv,
-		safePoint:	0,
-		spTime:		time.Now(),
-		closed:		make(chan struct{}),
+		clusterID:   pdClient.GetClusterID(context.TODO()),
+		uuid:        uuid,
+		oracle:      o,
+		client:      client,
+		pdClient:    pdClient,
+		regionCache: NewRegionCache(pdClient),
+		kv:          spkv,
+		safePoint:   0,
+		spTime:      time.Now(),
+		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -320,11 +320,11 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
-		if val, ok := failpoint.Eval(_curpkg_("mockGetTSErrorInRetry")); ok {
+		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
 			if val.(bool) && !kv.IsMockCommitErrorEnable() {
 				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
-		}
+		})
 
 		if err == nil {
 			return startTS, nil
