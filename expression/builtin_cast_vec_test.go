@@ -28,6 +28,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
