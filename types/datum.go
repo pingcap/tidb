@@ -341,6 +341,50 @@ func (d *Datum) SetAutoID(id int64, flag uint) {
 	}
 }
 
+// String returns a human-readable description of Datum. It is intended only for debugging.
+func (d Datum) String() string {
+	var t string
+	switch d.k {
+	case KindNull:
+		t = "KindNull"
+	case KindInt64:
+		t = "KindInt64"
+	case KindUint64:
+		t = "KindUint64"
+	case KindFloat32:
+		t = "KindFloat32"
+	case KindFloat64:
+		t = "KindFloat64"
+	case KindString:
+		t = "KindString"
+	case KindBytes:
+		t = "KindBytes"
+	case KindMysqlDecimal:
+		t = "KindMysqlDecimal"
+	case KindMysqlDuration:
+		t = "KindMysqlDuration"
+	case KindMysqlEnum:
+		t = "KindMysqlEnum"
+	case KindBinaryLiteral:
+		t = "KindBinaryLiteral"
+	case KindMysqlBit:
+		t = "KindMysqlBit"
+	case KindMysqlSet:
+		t = "KindMysqlSet"
+	case KindMysqlJSON:
+		t = "KindMysqlJSON"
+	case KindMysqlTime:
+		t = "KindMysqlTime"
+	default:
+		t = "Unknown"
+	}
+	v := d.GetValue()
+	if b, ok := v.([]byte); ok && d.k == KindBytes {
+		v = string(b)
+	}
+	return fmt.Sprintf("%v %v", t, v)
+}
+
 // GetValue gets the value of the datum of any kind.
 func (d *Datum) GetValue() interface{} {
 	switch d.k {

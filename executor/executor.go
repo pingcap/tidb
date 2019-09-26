@@ -53,10 +53,15 @@ import (
 
 var (
 	_ Executor = &baseExecutor{}
+	_ Executor = &CheckIndexExec{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &HashAggExec{}
+	_ Executor = &HashJoinExec{}
+	_ Executor = &IndexLookUpExecutor{}
+	_ Executor = &IndexReaderExecutor{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
+	_ Executor = &MergeJoinExec{}
 	_ Executor = &ProjectionExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
@@ -67,13 +72,10 @@ var (
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
+	_ Executor = &TableReaderExecutor{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
-	_ Executor = &HashJoinExec{}
-	_ Executor = &IndexLookUpExecutor{}
-	_ Executor = &MergeJoinExec{}
 )
 
 type baseExecutor struct {
@@ -1383,52 +1385,56 @@ func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) []*ast.TableOptimizerHi
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
-	var memoryQuotaHintList, noIndexMergeHintList, useToJAHintList, readReplicaHintList []*ast.TableOptimizerHint
+	if len(hints) == 0 {
+		return
+	}
+	var memoryQuotaHint, useToJAHint *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt int
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
-			memoryQuotaHintList = append(memoryQuotaHintList, hint)
-		case "no_index_merge":
-			noIndexMergeHintList = append(noIndexMergeHintList, hint)
+			memoryQuotaHint = hint
+			memoryQuotaHintCnt++
 		case "use_toja":
-			useToJAHintList = append(useToJAHintList, hint)
+			useToJAHint = hint
+			useToJAHintCnt++
+		case "no_index_merge":
+			noIndexMergeHintCnt++
 		case "read_consistent_replica":
-			readReplicaHintList = append(readReplicaHintList, hint)
+			readReplicaHintCnt++
 		}
 	}
 	// Handle MEMORY_QUOTA
-	if len(memoryQuotaHintList) != 0 {
-		if len(memoryQuotaHintList) > 1 {
+	if memoryQuotaHintCnt != 0 {
+		if memoryQuotaHintCnt > 1 {
 			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}
-		hint := memoryQuotaHintList[len(memoryQuotaHintList)-1]
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
-		if hint.MemoryQuota < 0 {
+		if memoryQuotaHint.MemoryQuota < 0 {
 			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
 			stmtHints.HasMemQuotaHint = true
-			stmtHints.MemQuotaQuery = hint.MemoryQuota
-			if hint.MemoryQuota == 0 {
+			stmtHints.MemQuotaQuery = memoryQuotaHint.MemoryQuota
+			if memoryQuotaHint.MemoryQuota == 0 {
 				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
 				warns = append(warns, warn)
 			}
 		}
 	}
 	// Handle USE_TOJA
-	if len(useToJAHintList) != 0 {
-		if len(useToJAHintList) > 1 {
+	if useToJAHintCnt != 0 {
+		if useToJAHintCnt > 1 {
 			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}
-		hint := useToJAHintList[len(useToJAHintList)-1]
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
-		stmtHints.AllowInSubqToJoinAndAgg = hint.HintFlag
+		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintFlag
 	}
 	// Handle NO_INDEX_MERGE
-	if len(noIndexMergeHintList) != 0 {
-		if len(noIndexMergeHintList) > 1 {
+	if noIndexMergeHintCnt != 0 {
+		if noIndexMergeHintCnt > 1 {
 			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}
@@ -1436,8 +1442,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.EnableIndexMerge = false
 	}
 	// Handle READ_CONSISTENT_REPLICA
-	if len(readReplicaHintList) != 0 {
-		if len(readReplicaHintList) > 1 {
+	if readReplicaHintCnt != 0 {
+		if readReplicaHintCnt > 1 {
 			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}

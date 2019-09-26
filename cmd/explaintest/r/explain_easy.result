@@ -44,31 +44,33 @@ IndexReader_6	10.00	root	index:IndexScan_5
 └─IndexScan_5	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-HashLeftJoin_19	4166.67	root	left outer join, inner:TableReader_32, equal:[eq(Column#2, Column#4)]
-├─TableReader_29	3333.33	root	data:TableScan_28
-│ └─TableScan_28	3333.33	cop	table:t1, range:(1,+inf], keep order:false, stats:pseudo
-└─TableReader_32	9990.00	root	data:Selection_31
-  └─Selection_31	9990.00	cop	not(isnull(Column#4))
-    └─TableScan_30	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+HashLeftJoin_21	4166.67	root	left outer join, inner:TableReader_34, equal:[eq(Column#2, Column#4)]
+├─TableReader_31	3333.33	root	data:TableScan_30
+│ └─TableScan_30	3333.33	cop	table:t1, range:(1,+inf], keep order:false, stats:pseudo
+└─TableReader_34	9990.00	root	data:Selection_33
+  └─Selection_33	9990.00	cop	not(isnull(Column#4))
+    └─TableScan_32	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t1, handle:1
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-IndexLookUp_9	10.00	root	
-├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-└─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
+Delete_3	N/A	root	N/A
+└─IndexLookUp_9	10.00	root	
+  ├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(Column#9)
-└─HashLeftJoin_19	9990.00	root	inner join, inner:HashAgg_26, equal:[eq(Column#1, Column#5)]
-  ├─IndexReader_34	10000.00	root	index:IndexScan_33
-  │ └─IndexScan_33	10000.00	cop	table:a, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-  └─HashAgg_26	7992.00	root	group by:Column#12, funcs:count(Column#10), firstrow(Column#12)
-    └─TableReader_27	7992.00	root	data:HashAgg_21
-      └─HashAgg_21	7992.00	cop	group by:Column#5, funcs:count(Column#5)
-        └─Selection_25	9990.00	cop	not(isnull(Column#5))
-          └─TableScan_24	10000.00	cop	table:b, range:[-inf,+inf], keep order:false, stats:pseudo
+└─HashLeftJoin_21	9990.00	root	inner join, inner:HashAgg_28, equal:[eq(Column#1, Column#5)]
+  ├─IndexReader_36	10000.00	root	index:IndexScan_35
+  │ └─IndexScan_35	10000.00	cop	table:a, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
+  └─HashAgg_28	7992.00	root	group by:Column#12, funcs:count(Column#10), firstrow(Column#12)
+    └─TableReader_29	7992.00	root	data:HashAgg_23
+      └─HashAgg_23	7992.00	cop	group by:Column#5, funcs:count(Column#5)
+        └─Selection_27	9990.00	cop	not(isnull(Column#5))
+          └─TableScan_26	10000.00	cop	table:b, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	count	task	operator info
 TopN_7	1.00	root	Column#2:asc, offset:0, count:1
@@ -98,13 +100,13 @@ StreamAgg_12	1.00	root	funcs:sum(Column#0)
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
 Projection_9	9990.00	root	Column#1
-└─HashLeftJoin_17	9990.00	root	inner join, inner:HashAgg_21, equal:[eq(Column#1, Column#5)]
-  ├─IndexReader_32	10000.00	root	index:IndexScan_31
-  │ └─IndexScan_31	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-  └─HashAgg_21	7992.00	root	group by:Column#5, funcs:firstrow(Column#5)
-    └─TableReader_28	9990.00	root	data:Selection_27
-      └─Selection_27	9990.00	cop	not(isnull(Column#5))
-        └─TableScan_26	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+└─HashLeftJoin_19	9990.00	root	inner join, inner:HashAgg_23, equal:[eq(Column#1, Column#5)]
+  ├─IndexReader_34	10000.00	root	index:IndexScan_33
+  │ └─IndexScan_33	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
+  └─HashAgg_23	7992.00	root	group by:Column#5, funcs:firstrow(Column#5)
+    └─TableReader_30	9990.00	root	data:Selection_29
+      └─Selection_29	9990.00	cop	not(isnull(Column#5))
+        └─TableScan_28	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
 Projection_12	10000.00	root	ifnull(Column#7, 0)
@@ -120,15 +122,14 @@ MemTableScan_4	10000.00	root
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	count	task	operator info
 Projection_12	10000.00	root	eq(Column#2, Column#5)
-└─Apply_14	10000.00	root	CARTESIAN left outer join, inner:Limit_23
+└─Apply_14	10000.00	root	CARTESIAN left outer join, inner:Projection_43
   ├─IndexReader_18	10000.00	root	index:IndexScan_17
   │ └─IndexScan_17	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-  └─Limit_23	1.00	root	offset:0, count:1
-    └─Projection_43	1.00	root	Column#4, Column#5
-      └─IndexLookUp_42	1.00	root	
-        ├─Limit_41	1.00	cop	offset:0, count:1
-        │ └─IndexScan_39	1.00	cop	table:t2, index:c1, range: decided by [eq(Column#1, Column#4)], keep order:true, stats:pseudo
-        └─TableScan_40	1.00	cop	table:t2, keep order:false, stats:pseudo
+  └─Projection_43	1.00	root	Column#4, Column#5
+    └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
+      ├─Limit_41	1.00	cop	offset:0, count:1
+      │ └─IndexScan_39	1.00	cop	table:t2, index:c1, range: decided by [eq(Column#1, Column#4)], keep order:true, stats:pseudo
+      └─TableScan_40	1.00	cop	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
@@ -309,11 +310,11 @@ Projection_11	10000.00	root	Column#12
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─MergeJoin_50	12.50	root	inner join, left key:Column#4, right key:Column#7
-      ├─TableReader_43	1.00	root	data:TableScan_42
-      │ └─TableScan_42	1.00	cop	table:s, range: decided by [eq(Column#4, Column#1)], keep order:true, stats:pseudo
-      └─TableReader_45	1.00	root	data:TableScan_44
-        └─TableScan_44	1.00	cop	table:t1, range: decided by [eq(Column#7, Column#1)], keep order:true, stats:pseudo
+    └─MergeJoin_54	12.50	root	inner join, left key:Column#4, right key:Column#7
+      ├─TableReader_47	1.00	root	data:TableScan_46
+      │ └─TableScan_46	1.00	cop	table:s, range: decided by [eq(Column#4, Column#1)], keep order:true, stats:pseudo
+      └─TableReader_49	1.00	root	data:TableScan_48
+        └─TableScan_48	1.00	cop	table:t1, range: decided by [eq(Column#7, Column#1)], keep order:true, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	Column#12
@@ -321,11 +322,11 @@ Projection_11	10000.00	root	Column#12
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexMergeJoin_42	12.50	root	inner join, inner:TableReader_40, outer key:Column#4, inner key:Column#7
-      ├─IndexReader_31	10.00	root	index:IndexScan_30
-      │ └─IndexScan_30	10.00	cop	table:s, index:b, range: decided by [eq(Column#5, Column#1)], keep order:false, stats:pseudo
-      └─TableReader_40	1.00	root	data:TableScan_39
-        └─TableScan_39	1.00	cop	table:t1, range: decided by [Column#4], keep order:true, stats:pseudo
+    └─IndexMergeJoin_44	12.50	root	inner join, inner:TableReader_42, outer key:Column#4, inner key:Column#7
+      ├─IndexReader_33	10.00	root	index:IndexScan_32
+      │ └─IndexScan_32	10.00	cop	table:s, index:b, range: decided by [eq(Column#5, Column#1)], keep order:false, stats:pseudo
+      └─TableReader_42	1.00	root	data:TableScan_41
+        └─TableScan_41	1.00	cop	table:t1, range: decided by [Column#4], keep order:true, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	Column#12
@@ -333,13 +334,13 @@ Projection_11	10000.00	root	Column#12
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexMergeJoin_44	12.49	root	inner join, inner:TableReader_42, outer key:Column#6, inner key:Column#7
-      ├─IndexLookUp_33	9.99	root	
-      │ ├─IndexScan_30	10.00	cop	table:s, index:b, range: decided by [eq(Column#5, Column#1)], keep order:false, stats:pseudo
-      │ └─Selection_32	9.99	cop	not(isnull(Column#6))
-      │   └─TableScan_31	10.00	cop	table:s, keep order:false, stats:pseudo
-      └─TableReader_42	1.00	root	data:TableScan_41
-        └─TableScan_41	1.00	cop	table:t1, range: decided by [Column#6], keep order:true, stats:pseudo
+    └─IndexMergeJoin_46	12.49	root	inner join, inner:TableReader_44, outer key:Column#6, inner key:Column#7
+      ├─IndexLookUp_35	9.99	root	
+      │ ├─IndexScan_32	10.00	cop	table:s, index:b, range: decided by [eq(Column#5, Column#1)], keep order:false, stats:pseudo
+      │ └─Selection_34	9.99	cop	not(isnull(Column#6))
+      │   └─TableScan_33	10.00	cop	table:s, keep order:false, stats:pseudo
+      └─TableReader_44	1.00	root	data:TableScan_43
+        └─TableScan_43	1.00	cop	table:t1, range: decided by [Column#6], keep order:true, stats:pseudo
 insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);
 analyze table t;
 explain select t.c in (select count(*) from t s, t t1 where s.b = t.a and s.b = 3 and s.a = t1.a) from t;
@@ -349,13 +350,13 @@ Projection_11	5.00	root	Column#12
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─MergeJoin_58	2.40	root	inner join, left key:Column#4, right key:Column#7
-      ├─IndexReader_45	2.40	root	index:Selection_44
-      │ └─Selection_44	2.40	cop	eq(3, Column#1)
-      │   └─IndexScan_43	3.00	cop	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_48	4.00	root	data:Selection_47
-        └─Selection_47	4.00	cop	eq(3, Column#1)
-          └─TableScan_46	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
+    └─MergeJoin_51	2.40	root	inner join, left key:Column#4, right key:Column#7
+      ├─IndexReader_38	2.40	root	index:Selection_37
+      │ └─Selection_37	2.40	cop	eq(3, Column#1)
+      │   └─IndexScan_36	3.00	cop	table:s, index:b, range:[3,3], keep order:true
+      └─TableReader_41	4.00	root	data:Selection_40
+        └─Selection_40	4.00	cop	eq(3, Column#1)
+          └─TableScan_39	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#12
@@ -363,13 +364,13 @@ Projection_10	5.00	root	Column#12
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-    └─MergeJoin_47	2.40	root	left outer join, left key:Column#4, right key:Column#7
-      ├─IndexReader_34	2.40	root	index:Selection_33
-      │ └─Selection_33	2.40	cop	eq(3, Column#1)
-      │   └─IndexScan_32	3.00	cop	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_37	4.00	root	data:Selection_36
-        └─Selection_36	4.00	cop	eq(3, Column#1)
-          └─TableScan_35	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
+    └─MergeJoin_49	2.40	root	left outer join, left key:Column#4, right key:Column#7
+      ├─IndexReader_36	2.40	root	index:Selection_35
+      │ └─Selection_35	2.40	cop	eq(3, Column#1)
+      │   └─IndexScan_34	3.00	cop	table:s, index:b, range:[3,3], keep order:true
+      └─TableReader_39	4.00	root	data:Selection_38
+        └─Selection_38	4.00	cop	eq(3, Column#1)
+          └─TableScan_37	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#12
@@ -377,13 +378,13 @@ Projection_10	5.00	root	Column#12
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-    └─MergeJoin_46	2.40	root	right outer join, left key:Column#4, right key:Column#7
-      ├─TableReader_33	4.00	root	data:Selection_32
-      │ └─Selection_32	4.00	cop	eq(3, Column#1)
-      │   └─TableScan_31	5.00	cop	table:s, range:[-inf,+inf], keep order:true
-      └─IndexReader_36	2.40	root	index:Selection_35
-        └─Selection_35	2.40	cop	eq(3, Column#1)
-          └─IndexScan_34	3.00	cop	table:t1, index:b, range:[3,3], keep order:true
+    └─MergeJoin_48	2.40	root	right outer join, left key:Column#4, right key:Column#7
+      ├─TableReader_35	4.00	root	data:Selection_34
+      │ └─Selection_34	4.00	cop	eq(3, Column#1)
+      │   └─TableScan_33	5.00	cop	table:s, range:[-inf,+inf], keep order:true
+      └─IndexReader_38	2.40	root	index:Selection_37
+        └─Selection_37	2.40	cop	eq(3, Column#1)
+          └─IndexScan_36	3.00	cop	table:t1, index:b, range:[3,3], keep order:true
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
@@ -658,7 +659,8 @@ begin;
 insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t, index:i j
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t, index:i j
 rollback;
 drop table if exists t;
 create table t(a int);
@@ -721,4 +723,25 @@ Projection_8	2666.67	root	Column#1, Column#2
       └─TableReader_13	3333.33	root	data:Selection_12
         └─Selection_12	3333.33	cop	gt(Column#1, 10)
           └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+dot contents
+
+digraph TableReader_7 {
+subgraph cluster7{
+node [style=filled, color=lightgrey]
+color=black
+label = "root"
+"TableReader_7"
+}
+subgraph cluster6{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"Selection_6" -> "TableScan_5"
+}
+"TableReader_7" -> "Selection_6"
+}
+
 drop table if exists t;

@@ -93,7 +93,8 @@ const (
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
-	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
@@ -365,7 +366,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBEnableStmtSummary           = false
 )
 
 // Process global variables.
@@ -385,5 +385,4 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )

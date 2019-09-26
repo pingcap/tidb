@@ -23,8 +23,11 @@ import (
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
-		{types.ETInt, []types.EvalType{types.ETInt}, nil},
-		{types.ETDuration, []types.EvalType{types.ETInt}, []dataGenerator{new(randDurInt)}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
 	},
 }
 
