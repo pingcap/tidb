@@ -749,14 +749,6 @@ func (b *builtinFloorRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinLog2ArgsSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinConvSig) vectorized() bool {
 	return false
 }
