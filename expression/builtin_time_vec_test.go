@@ -34,7 +34,6 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Second:           {},
 	ast.MicroSecond:      {},
 	ast.Now:              {},
-	ast.DayOfMonth:       {},
 	ast.DayOfWeek:        {},
 	ast.DayOfYear:        {},
 	ast.Day:              {},
@@ -53,7 +52,24 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.SubDate:          {},
 	ast.AddDate:          {},
 	ast.SubTime:          {},
-	ast.AddTime:          {},
+	ast.AddTime: {
+		// builtinAddStringAndStringSig, a special case written by hand.
+		// arg1 has BinaryFlag here.
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {
+				Tp:      mysql.TypeString,
+				Flen:    types.UnspecifiedLength,
+				Decimal: types.UnspecifiedLength,
+				Flag:    mysql.BinaryFlag,
+			}},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+	},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
@@ -77,6 +93,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.MonthName: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.DayOfMonth: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
