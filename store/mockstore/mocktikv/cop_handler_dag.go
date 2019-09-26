@@ -556,21 +556,19 @@ func (h *rpcHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, c
 	for i := range warnings {
 		selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
 	}
-
 	return selResp
 }
 
 func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
-	colTypes := h.constructRespSchema(dagCtx)
-	loc := dagCtx.evalCtx.sc.TimeZone
-
 	switch dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeArrow:
+		colTypes := h.constructRespSchema(dagCtx)
+		loc := dagCtx.evalCtx.sc.TimeZone
 		err := h.encodeArrow(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -578,36 +576,27 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 
 func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
 	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
-	if root.Aggregation != nil {
-		hashAgg := root.Aggregation
-		schema := make([]*types.FieldType, 0, len(hashAgg.AggFunc)+len(hashAgg.GroupBy))
-		for i := range hashAgg.AggFunc {
-			if hashAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
-				// Avg function requests two columns : Count , Sum
-				// This line addend the Count(TypeLonglong) to the schema.
-				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
-			}
-			schema = append(schema, expression.PbTypeToFieldType(hashAgg.AggFunc[i].FieldType))
-		}
-		for i := range hashAgg.GroupBy {
-			schema = append(schema, expression.PbTypeToFieldType(hashAgg.GroupBy[i].FieldType))
-		}
-		return schema
-	} else if root.StreamAgg != nil {
-		streamAgg := root.StreamAgg
-		schema := make([]*types.FieldType, 0, len(streamAgg.AggFunc)+len(streamAgg.GroupBy))
-		for i := range streamAgg.AggFunc {
-			if streamAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
-				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
-			}
-			schema = append(schema, expression.PbTypeToFieldType(streamAgg.AggFunc[i].FieldType))
-		}
-		for i := range streamAgg.GroupBy {
-			schema = append(schema, expression.PbTypeToFieldType(streamAgg.GroupBy[i].FieldType))
-		}
-		return schema
+	agg := root.Aggregation
+	if root.StreamAgg != nil {
+		agg = root.StreamAgg
 	}
-	return dagCtx.evalCtx.fieldTps
+	if agg == nil {
+		return dagCtx.evalCtx.fieldTps
+	}
+
+	schema := make([]*types.FieldType, 0, len(agg.AggFunc)+len(agg.GroupBy))
+	for i := range agg.AggFunc {
+		if agg.AggFunc[i].Tp == tipb.ExprType_Avg {
+			// Avg function requests two columns : Count , Sum
+			// This line addend the Count(TypeLonglong) to the schema.
+			schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+		}
+		schema = append(schema, expression.PbTypeToFieldType(agg.AggFunc[i].FieldType))
+	}
+	for i := range agg.GroupBy {
+		schema = append(schema, expression.PbTypeToFieldType(agg.GroupBy[i].FieldType))
+	}
+	return schema
 }
 
 func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte, colOrdinal []uint32) {
@@ -628,7 +617,6 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
-
 	chk := chunk.NewChunkWithCapacity(respColTypes, rowsPerChunk)
 	encoder := chunk.NewCodec(respColTypes)
 	decoder := codec.NewDecoder(chk, loc)
@@ -636,7 +624,7 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 		for j, ordinal := range colOrdinal {
 			_, err := decoder.DecodeOne(rows[i][ordinal], j, colTypes[ordinal])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		if i%rowsPerChunk == rowsPerChunk-1 {
