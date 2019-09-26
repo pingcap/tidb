@@ -2024,3 +2024,27 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("drop table t4")
 	tk.MustExec("drop table t5")
 }
+
+func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	// Notes: For all test cases, check them in `mysql_test`
+
+	// In generated columns expression, these items are not allowed:
+	// 1. Blocked function
+	tk.MustGetErrCode("create table t (a int, b int as (sysdate()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 2. Non-builtin function
+	tk.MustGetErrCode("create table t (a int, b int as (non_exist_funcA()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 3. values(x) function
+	tk.MustGetErrCode("create table t (a int, b int as (values(a)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 4. Subquery
+	tk.MustGetErrCode("create table t (a int, b int as ((SELECT 1 FROM t1 UNION SELECT 1 FROM t1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 5. Aggregate function
+	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
+
+	// Determinate functions are allowed:
+	tk.MustExec("create table t1 (a int, b int generated always as (abs(a)) virtual)")
+	tk.MustExec("insert into t1 values (-1, default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("-1 1"))
+}
