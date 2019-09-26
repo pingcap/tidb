@@ -1313,16 +1313,15 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
-	var err error
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
-	if err = cc.writePacket(data); err != nil {
+	if err := cc.writePacket(data); err != nil {
 		return err
 	}
 	for _, v := range columns {
 		data = data[0:4]
 		data = v.Dump(data)
-		if err = cc.writePacket(data); err != nil {
+		if err := cc.writePacket(data); err != nil {
 			return err
 		}
 	}
@@ -1345,7 +1344,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
-			err = cc.writeColumnInfo(rs.Columns(), serverStatus)
+			columns := rs.Columns()
+			err = cc.writeColumnInfo(columns, serverStatus)
 			if err != nil {
 				return err
 			}
