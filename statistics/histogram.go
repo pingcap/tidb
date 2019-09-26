@@ -227,7 +227,8 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 		return value.ToString()
 	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, _ := codec.DecodeRange(value.GetBytes(), idxCols)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	_ = err
 	if len(remained) > 0 {
 		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
 	}
