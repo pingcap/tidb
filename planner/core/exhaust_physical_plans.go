@@ -243,7 +243,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		OtherConditions: p.OtherConditions,
 	}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
-	enforcedPhysicalMergeJoin.SetSchema(p.schema)
+	enforcedPhysicalMergeJoin.SetSchema(p.schema.Clone())
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
@@ -296,7 +296,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		EqualConditions:  p.EqualConditions,
 		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
-	hashJoin.SetSchema(p.schema)
+	hashJoin.SetSchema(p.schema.Clone())
 	return hashJoin
 }
 
@@ -363,7 +363,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	if path != nil {
 		join.IdxColLens = path.idxColLens
 	}
-	join.SetSchema(p.schema)
+	join.SetSchema(p.schema.Clone())
 	return []PhysicalPlan{join}
 }
 

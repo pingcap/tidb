@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/prometheus/common/log"
 	"math"
 	"sort"
 	"strings"
@@ -1846,22 +1845,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 
-	//log.Warnf("In buildNoRangeTableReader", v.Schema())
-	//for _, col := range v.Schema().Columns {
-	//	log.Warnf("ssssssssss111111111111111", col.UniqueID)
-	//	if col.VirtualExpr != nil {
-	//
-	//		log.Warnf("In buildNoRangeTableReader have virtual expr", col.VirtualExpr.String())
-	//		scalar := col.VirtualExpr.(*expression.ScalarFunction)
-	//		log.Warnf("In buildNoRangeTableReader have virtual expr", scalar.GetArgs()[0].(*expression.Column).Index)
-	//		log.Warnf("In buildNoRangeTableReader have virtual expr uniqueID", scalar.GetArgs()[0].(*expression.Column).UniqueID)
-	//		log.Warnf("In buildNoRangeTableReader have virtual expr", scalar.GetArgs()[1].(*expression.Column).Index)
-	//		log.Warnf("In buildNoRangeTableReader have virtual expr uniqueID", scalar.GetArgs()[1].(*expression.Column).UniqueID)
-	//	} else {
-	//		log.Warnf("In buildNoRangeTableReader no virtual expr", col.UniqueID)
-	//	}
-	//}
-
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
@@ -1894,10 +1877,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-
-	log.Warnf("aaaaaaaaaaaa", e.schema.String())
-	log.Warnf("ccccccccccccccccc c    ", len(e.columns))
-	log.Warnf("bbbbbbbbbbbbbbb", dagReq.OutputOffsets)
 
 	return e, nil
 }
