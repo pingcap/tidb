@@ -470,3 +470,16 @@ HashLeftJoin_10	7984.01	root	semi join, inner:TableReader_16, equal:[eq(Column#1
 └─TableReader_16	9980.01	root	data:Selection_15
   └─Selection_15	9980.01	cop	not(isnull(Column#4)), not(isnull(Column#5))
     └─TableScan_14	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
+i int(10) unsigned DEFAULT NULL,
+x int(10) unsigned DEFAULT 0,
+PRIMARY KEY (`id`)
+);
+explain select row_number() over( partition by i ) - x as rnk from t;
+id	count	task	operator info
+Projection_7	10000.00	root	minus(Column#7, Column#3)
+└─Window_8	10000.00	root	row_number() over(partition by Column#2)
+  └─Sort_11	10000.00	root	Column#2:asc
+    └─TableReader_10	10000.00	root	data:TableScan_9
+      └─TableScan_9	10000.00	cop	table:t, range:[0,+inf], keep order:false, stats:pseudo
