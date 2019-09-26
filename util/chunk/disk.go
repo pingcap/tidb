@@ -47,8 +47,11 @@ var bufReaderPool = sync.Pool{
 var tmpDir = path.Join(os.TempDir(), "tidb-server-"+path.Base(os.Args[0]))
 
 func init() {
-	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	err := os.Mkdir(tmpDir, 0755)
+	err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
+	if err != nil {
+		log.Warn("Remove temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
+	}
+	err = os.Mkdir(tmpDir, 0755)
 	if err != nil {
 		log.Warn("Mkdir temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
 	}
