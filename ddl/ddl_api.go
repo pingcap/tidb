@@ -724,7 +724,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	}
 
 	valMap := make(map[string]struct{}, len(col.Elems))
-	dVals := strings.SplitN(strings.ToLower(str), ",", -1)
+	dVals := strings.Split(strings.ToLower(str), ",")
 	for _, dv := range dVals {
 		valMap[dv] = struct{}{}
 	}
