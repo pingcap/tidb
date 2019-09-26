@@ -58,6 +58,22 @@
         "Result": [
           "3"
         ]
+      },
+      {
+        "SQL": "explain select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
+        "Result": [
+          "Projection_10 3.20 root Column#1",
+          "└─Selection_11 3.20 root lt(sin(cast(Column#1)), 0.5)",
+          "  └─TableReader_12 4.00 root data:Selection_13",
+          "    └─Selection_13 4.00 cop gt(plus(mul(Column#1, 3), 1), 9)",
+          "      └─TableScan_14 5.00 cop table:t, range:[-inf,5), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
+        "Result": [
+          "3"
+        ]
       }
     ]
   }
