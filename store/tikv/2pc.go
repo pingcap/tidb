@@ -594,10 +594,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			isPrimary := bytes.Equal(batch.keys[0], c.primary())
-			if isPrimary && c.isPessimistic {
-				c.ttlManager.run(c)
-			}
 			return nil
 		}
 		var locks []*Lock
@@ -682,7 +678,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
 				if err1 != nil {
-					logutil.BgLogger().Warn("keepAlive get tso fail",
+					logutil.Logger(context.Background()).Warn("keepAlive get tso fail",
 						zap.Error(err))
 					return
 				}
@@ -694,7 +690,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if uptime > c10min {
 				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
-				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+				logutil.Logger(context.Background()).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
 				return
 			}
@@ -704,7 +700,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
-				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+				logutil.Logger(context.Background()).Warn("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return
@@ -766,10 +762,6 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		}
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
-			isPrimary := bytes.Equal(batch.keys[0], c.primary())
-			if isPrimary { // No need to check isPessimistic because this function is only called in that case.
-				c.ttlManager.run(c)
-			}
 			return nil
 		}
 		var locks []*Lock

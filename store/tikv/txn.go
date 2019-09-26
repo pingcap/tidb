@@ -414,6 +414,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 			}
 			return err
 		}
+		if assignedPrimaryKey {
+			txn.committer.ttlManager.run(txn.committer)
+		}
 	}
 	txn.mu.Lock()
 	txn.lockKeys = append(txn.lockKeys, keys...)
