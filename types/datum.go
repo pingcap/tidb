@@ -1206,12 +1206,16 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	switch d.k {
 	case KindString, KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+	case KindInt64:
+		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
+		d.k = KindUint64
+		fallthrough
 	default:
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
 	}
 	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
-		return Datum{}, errors.Trace(ErrOverflow.GenWithStackByArgs("BIT", fmt.Sprintf("(%d)", target.Flen)))
+		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
 	}
 	byteSize := (target.Flen + 7) >> 3
 	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))
