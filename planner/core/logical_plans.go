@@ -843,7 +843,8 @@ func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expr
 	return resultCorCols[:length]
 }
 
-type baseShowContent struct {
+// ShowContents stores the contents for the `SHOW` statement.
+type ShowContents struct {
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
 	Table       *ast.TableName  // Used for showing columns.
@@ -861,5 +862,5 @@ type baseShowContent struct {
 // LogicalShow represents a show plan.
 type LogicalShow struct {
 	logicalSchemaProducer
-	baseShowContent
+	ShowContents
 }

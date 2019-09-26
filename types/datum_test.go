@@ -14,6 +14,7 @@
 package types
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -47,6 +48,7 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 		d.SetCollation(d.Collation())
 		c.Assert(d.Collation(), NotNil)
 		c.Assert(d.Length(), Equals, int(d.length))
+		c.Assert(fmt.Sprint(d), Equals, d.String())
 	}
 }
 

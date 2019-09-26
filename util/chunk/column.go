@@ -549,6 +549,14 @@ func (c *Column) GetRaw(rowID int) []byte {
 	return data
 }
 
+// SetRaw sets the raw bytes for the rowIdx-th element.
+// NOTE: Two conditions must be satisfied before calling this function:
+// 1. The column should be stored with variable-length elements.
+// 2. The length of the new element should be exactly the same as the old one.
+func (c *Column) SetRaw(rowID int, bs []byte) {
+	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
+}
+
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
 func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
@@ -612,12 +620,17 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 
 	if c.isFixed() {
 		elemLen := len(c.elemBuf)
+		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
 			dst.length++
 		}
 	} else {
+		dst.elemBuf = nil
+		if len(dst.offsets) == 0 {
+			dst.offsets = append(dst.offsets, 0)
+		}
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			start, end := c.offsets[i], c.offsets[i+1]

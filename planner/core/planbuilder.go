@@ -161,7 +161,6 @@ const (
 	onClause
 	orderByClause
 	whereClause
-	windowClause
 	groupByClause
 	showStatement
 	globalOrderByClause
@@ -177,7 +176,6 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
-	windowClause:        "field list", // For window functions that in field list.
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -1385,7 +1383,7 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
 	p := LogicalShow{
-		baseShowContent: baseShowContent{
+		ShowContents: ShowContents{
 			Tp:          show.Tp,
 			DBName:      show.DBName,
 			Table:       show.Table,
@@ -2354,30 +2352,14 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
-	pp, ok := targetPlan.(PhysicalPlan)
-	if !ok {
-		switch x := targetPlan.(type) {
-		case *Delete:
-			pp = x.SelectPlan
-		case *Update:
-			pp = x.SelectPlan
-		case *Insert:
-			if x.SelectPlan != nil {
-				pp = x.SelectPlan
-			}
-		}
-		if pp == nil {
-			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
-		}
+	p := &Explain{
+		TargetPlan: targetPlan,
+		Format:     format,
+		Analyze:    analyze,
+		ExecStmt:   execStmt,
 	}
-
-	p := &Explain{StmtPlan: pp, Analyze: analyze, Format: format, ExecStmt: execStmt, ExecPlan: targetPlan}
 	p.ctx = b.ctx
-	err := p.prepareSchema()
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
+	return p, p.prepareSchema()
 }
 
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.

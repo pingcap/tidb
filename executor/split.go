@@ -43,13 +43,14 @@ import (
 type SplitIndexRegionExec struct {
 	baseExecutor
 
-	tableInfo      *model.TableInfo
+	tableInfo    *model.TableInfo
 	partitionNames []model.CIStr
-	indexInfo      *model.IndexInfo
-	lower          []types.Datum
-	upper          []types.Datum
-	num            int
-	valueLists     [][]types.Datum
+	indexInfo    *model.IndexInfo
+	lower        []types.Datum
+	upper        []types.Datum
+	num          int
+	valueLists   [][]types.Datum
+	splitIdxKeys [][]byte
 
 	done bool
 	splitRegionResult
@@ -61,8 +62,9 @@ type splitRegionResult struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *SplitIndexRegionExec) Open(ctx context.Context) error {
-	return e.splitIndexRegion(ctx)
+func (e *SplitIndexRegionExec) Open(ctx context.Context) (err error) {
+	e.splitIdxKeys, err = e.getSplitIdxKeys()
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -71,8 +73,12 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	if e.done {
 		return nil
 	}
-	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
 	e.done = true
+	if err := e.splitIndexRegion(ctx); err != nil {
+		return err
+	}
+
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
 	return nil
 }
 
@@ -86,15 +92,11 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	splitIdxKeys, err := e.getSplitIdxKeys()
-	if err != nil {
-		return err
-	}
 
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs, err := s.SplitRegions(context.Background(), splitIdxKeys, true)
+	regionIDs, err := s.SplitRegions(context.Background(), e.splitIdxKeys, true)
 	if err != nil {
 		logutil.BgLogger().Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -335,20 +337,22 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 type SplitTableRegionExec struct {
 	baseExecutor
 
-	tableInfo      *model.TableInfo
+	tableInfo  *model.TableInfo
 	partitionNames []model.CIStr
-	lower          types.Datum
-	upper          types.Datum
-	num            int
-	valueLists     [][]types.Datum
+	lower      types.Datum
+	upper      types.Datum
+	num        int
+	valueLists [][]types.Datum
+	splitKeys  [][]byte
 
 	done bool
 	splitRegionResult
 }
 
 // Open implements the Executor Open interface.
-func (e *SplitTableRegionExec) Open(ctx context.Context) error {
-	return e.splitTableRegion(ctx)
+func (e *SplitTableRegionExec) Open(ctx context.Context) (err error) {
+	e.splitKeys, err = e.getSplitTableKeys()
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -357,8 +361,12 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	if e.done {
 		return nil
 	}
-	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
 	e.done = true
+
+	if err := e.splitTableRegion(ctx); err != nil {
+		return err
+	}
+	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
 	return nil
 }
 
@@ -373,11 +381,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 
-	splitKeys, err := e.getSplitTableKeys()
-	if err != nil {
-		return err
-	}
-	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitKeys, true)
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true)
 	if err != nil {
 		logutil.BgLogger().Warn("split table region failed",
 			zap.String("table", e.tableInfo.Name.L),

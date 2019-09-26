@@ -24,7 +24,10 @@ type baseImpl struct {
 }
 
 func (impl *baseImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
-	impl.cost = childCosts[0]
+	impl.cost = 0
+	for _, childCost := range childCosts {
+		impl.cost += childCost
+	}
 	return impl.cost
 }
 

@@ -34,10 +34,16 @@ import (
 type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
+
 	// Get the ID.
 	ID() int
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -48,6 +54,7 @@ type Plan interface {
 
 	// OutputNames returns the outputting names of each column.
 	OutputNames() []*types.FieldName
+
 	SelectBlockOffset() int
 }
 
@@ -133,9 +140,6 @@ type PhysicalPlan interface {
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
-
-	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
 
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
@@ -282,6 +286,10 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) ExplainInfo() string {
+	return "N/A"
 }
 
 func (p *basePlan) SelectBlockOffset() int {

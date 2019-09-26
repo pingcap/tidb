@@ -42,6 +42,10 @@ func (s *testEvalSuite) allocColID() int64 {
 	return s.colID
 }
 
+func (s *testEvalSuite) TearDownTest(c *C) {
+	s.colID = 0
+}
+
 func (s *testEvalSuite) TestPBToExpr(c *C) {
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
