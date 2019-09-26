@@ -38,6 +38,9 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 
+	// TP get the plan type.
+	TP() string
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
 
@@ -286,6 +289,10 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) TP() string {
+	return p.tp
 }
 
 func (p *basePlan) ExplainInfo() string {

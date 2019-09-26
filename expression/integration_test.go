@@ -4123,6 +4123,17 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
+func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustQuery("select tidb_decode_plan('')").Check(testkit.Rows(""))
+	tk.MustQuery("select tidb_decode_plan('eNpcjLvKwjAUgOeTpwj8y1/MkNNQLdnEtbiIk0iIzWkptknJBX18UTfn7yKhMWoLEhCG4vuk+1B8/j+EuSz+D5uKIajaqN1Hmbyjpz7lSHbZj6NpWQ2NaQF/cqyYAlRGvQFKKSVke5tJZ/OYHAn+HfVS8Gj9SPpyPHed2Ex+uAp+J1p5iI6iHuycSPCUbU56TVRcYK8AAAD//2wgNNU=')").Check(testkit.Rows("" +
+		"StreamAgg_36\troot\t1\tfuncs:count(Column#15)\n" +
+		"└─TableReader_37\troot\t1\tindex:StreamAgg_8\n" +
+		"  └─StreamAgg_8\tcop\t1\tfuncs:count(1)\n" +
+		"    └─IndexScan_31\tcop\t10000\ttable:t_wide, index:c0, range:[NULL,+inf], keep order:false, stats:pseudo"))
+}
+
 func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
