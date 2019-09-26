@@ -173,12 +173,22 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 	return p.maxOneRow
 }
 
+// ExplainInfo implements Plan interface.
+func (p *baseLogicalPlan) ExplainInfo() string {
+	return ""
+}
+
 type basePhysicalPlan struct {
 	basePlan
 
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+}
+
+// ExplainInfo implements Plan interface.
+func (p *basePhysicalPlan) ExplainInfo() string {
+	return ""
 }
 
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
