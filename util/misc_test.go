@@ -168,7 +168,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row[8], Equals, int64(0))
 
 	row3 := pi.ToRow(time.UTC)
-	c.Assert(row3[:8], DeepEquals, row)
+	c.Assert(row3[:9], DeepEquals, row)
 	c.Assert(row3[8], Equals, int64(0))
 
 	// Test for RandomBuf.
