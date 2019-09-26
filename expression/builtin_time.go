@@ -2168,7 +2168,7 @@ func (b *builtinTimeSig) evalDuration(row chunk.Row) (res types.Duration, isNull
 		fsp = len(expr) - idx - 1
 	}
 
-	tmpFsp := int8(0)
+	var tmpFsp int8
 	if tmpFsp, err = types.CheckFsp(fsp); err != nil {
 		return res, isNull, err
 	}

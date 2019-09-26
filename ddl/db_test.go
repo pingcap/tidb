@@ -3232,7 +3232,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("lock tables t1 write")
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
+	c.Assert(err.Error(), Equals, "previous statement: insert into t1 set a=1: [domain:2]Information schema is changed. [try again later]")
 
 	// Test lock table by other session in transaction and commit with retry.
 	tk.MustExec("unlock tables")
