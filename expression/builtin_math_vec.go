@@ -18,7 +18,7 @@ import (
 	"math"
 	"strconv"
 
-    "github.com/cznic/mathutil"
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
