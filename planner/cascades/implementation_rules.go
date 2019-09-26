@@ -177,9 +177,9 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp)
 	switch expr.Group.EngineType {
-	case memo.TiDBRoot:
+	case memo.EngineTiDB:
 		return impl.NewRootSelectionImpl(physicalSel), nil
-	case memo.TiKVCop:
+	case memo.EngineTiKV:
 		return impl.NewTiKVCopSelectionImpl(physicalSel), nil
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())

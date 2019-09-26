@@ -21,29 +21,51 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 )
 
-// EngineType is used to determine which implementation the plan should use.
-// Different engine should use different implementations which also have
-// different cost estimation.
+// EngineType is determined by whether it's above or below `Gather`s.
+// Plan will choose the different engine to be implemented/executed on according to its EngineType.
+// Different engine may support different operators with different cost, so we should design
+// different transformation and implementation rules for each engine.
 type EngineType uint
 
 const (
-	// TiDBRoot stands for groups on top of `Gather`s which will be executed in TiDB layer.
-	TiDBRoot EngineType = iota
-	// TiKVCop stands for groups below `Gather`s which will be executed in TiKV coprocessor.
-	TiKVCop
-	// TiFlashCop stands for groups below `Gather`s which will be executed in TiFlash coprocessor.
-	TiFlashCop
+	// EngineTiDB stands for groups which is above `Gather`s and will be executed in TiDB layer.
+	EngineTiDB EngineType = 1 << iota
+	// EngineTiKV stands for groups which is below `Gather`s and will be executed in TiKV layer.
+	EngineTiKV
+	// EngineTiFlash stands for groups which is below `Gather`s and will be executed in TiFlash layer.
+	EngineTiFlash
 )
+
+// EngineTypeSet is the bit set of EngineTypes.
+type EngineTypeSet uint
+
+const (
+	// EngineTiDBOnly is the EngineTypeSet for EngineTiDB only.
+	EngineTiDBOnly = EngineTypeSet(EngineTiDB)
+	// EngineTiKVOnly is the EngineTypeSet for EngineTiKV only.
+	EngineTiKVOnly = EngineTypeSet(EngineTiKV)
+	// EngineTiFlashOnly is the EngineTypeSet for EngineTiFlash only.
+	EngineTiFlashOnly = EngineTypeSet(EngineTiFlash)
+	// EngineTiKVORTiFlash is the EngineTypeSet for (EngineTiKV | EngineTiFlash).
+	EngineTiKVOrTiFlash = EngineTypeSet(EngineTiKV | EngineTiFlash)
+	// EngineAll is the EngineTypeSet for all of the EngineTypes.
+	EngineAll = EngineTypeSet(EngineTiDB | EngineTiKV | EngineTiFlash)
+)
+
+// Contain checks whether the EngineTypeSet contains the EngineType.
+func (e EngineTypeSet) Contain(tp EngineType) bool {
+	return uint(e)&uint(tp) != 0
+}
 
 // String implements fmt.Stringer interface.
 func (e EngineType) String() string {
 	switch e {
-	case TiDBRoot:
-		return "TiDBRoot"
-	case TiKVCop:
-		return "TiKVCop"
-	case TiFlashCop:
-		return "TiFlashCop"
+	case EngineTiDB:
+		return "EngineTiDB"
+	case EngineTiKV:
+		return "EngineTiKV"
+	case EngineTiFlash:
+		return "EngineTiFlash"
 	}
 	return "UnknownEngineType"
 }
@@ -74,7 +96,7 @@ func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 		FirstExpr:    make(map[Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
 		Prop:         prop,
-		EngineType:   TiDBRoot,
+		EngineType:   EngineTiDB,
 	}
 	g.Insert(e)
 	return g

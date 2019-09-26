@@ -139,3 +139,25 @@ func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 	newImpl = g.GetImpl(orderProp)
 	c.Assert(newImpl, IsNil)
 }
+
+func (s *testMemoSuite) TestEngineTypeSet(c *C) {
+	c.Assert(EngineAll.Contain(EngineTiDB), IsTrue)
+	c.Assert(EngineAll.Contain(EngineTiKV), IsTrue)
+	c.Assert(EngineAll.Contain(EngineTiFlash), IsTrue)
+
+	c.Assert(EngineTiDBOnly.Contain(EngineTiDB), IsTrue)
+	c.Assert(EngineTiDBOnly.Contain(EngineTiKV), IsFalse)
+	c.Assert(EngineTiDBOnly.Contain(EngineTiFlash), IsFalse)
+
+	c.Assert(EngineTiKVOnly.Contain(EngineTiDB), IsFalse)
+	c.Assert(EngineTiKVOnly.Contain(EngineTiKV), IsTrue)
+	c.Assert(EngineTiKVOnly.Contain(EngineTiFlash), IsFalse)
+
+	c.Assert(EngineTiFlashOnly.Contain(EngineTiDB), IsFalse)
+	c.Assert(EngineTiFlashOnly.Contain(EngineTiKV), IsFalse)
+	c.Assert(EngineTiFlashOnly.Contain(EngineTiFlash), IsTrue)
+
+	c.Assert(EngineTiKVOrTiFlash.Contain(EngineTiDB), IsFalse)
+	c.Assert(EngineTiKVOrTiFlash.Contain(EngineTiKV), IsTrue)
+	c.Assert(EngineTiKVOrTiFlash.Contain(EngineTiFlash), IsTrue)
+}

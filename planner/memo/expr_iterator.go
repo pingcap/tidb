@@ -28,9 +28,10 @@ type ExprIter struct {
 	// iterator matches the pattern after the creation or iteration.
 	matched bool
 
-	// Operand is the node of the pattern tree. The Operand type of the Group
-	// expression must be matched with it.
+	// Operand and EngineTypeSet describe the node of pattern tree.
+	// The Operand type and EngineTypeSet of the Group expression must be matched with it.
 	Operand
+	EngineTypeSet
 
 	// Children is used to iterate the child expressions.
 	Children []*ExprIter
@@ -71,7 +72,23 @@ func (iter *ExprIter) Next() (found bool) {
 			return false
 		}
 
+		if len(iter.Children) == 0 {
+			iter.Element = elem
+			return true
+		}
 		if len(iter.Children) != len(expr.Children) {
+			continue
+		}
+
+		engineTypeMatched := true
+		// Check children's EngineType.
+		for i := range expr.Children {
+			if !iter.Children[i].EngineTypeSet.Contain(expr.Children[i].EngineType) {
+				engineTypeMatched = false
+				break
+			}
+		}
+		if !engineTypeMatched {
 			continue
 		}
 
@@ -113,7 +130,23 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 			break
 		}
 
+		if len(iter.Children) == 0 {
+			iter.Element = elem
+			return true
+		}
 		if len(expr.Children) != len(iter.Children) {
+			continue
+		}
+
+		engineTypeMatched := true
+		// Check children's EngineType.
+		for i := range expr.Children {
+			if !iter.Children[i].EngineTypeSet.Contain(expr.Children[i].EngineType) {
+				engineTypeMatched = false
+				break
+			}
+		}
+		if !engineTypeMatched {
 			continue
 		}
 
@@ -141,7 +174,7 @@ func (iter *ExprIter) GetExpr() *GroupExpr {
 // NewExprIterFromGroupElem creates the iterator on the Group Element.
 func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 	expr := elem.Value.(*GroupExpr)
-	if !p.Operand.Match(GetOperand(expr.ExprNode)) {
+	if !p.Operand.Match(GetOperand(expr.ExprNode)) || !p.EngineTypeSet.Contain(expr.Group.EngineType) {
 		return nil
 	}
 	iter := newExprIterFromGroupExpr(expr, p)
@@ -153,10 +186,10 @@ func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 
 // newExprIterFromGroupExpr creates the iterator on the Group expression.
 func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
-	if len(p.Children) != len(expr.Children) {
+	if len(p.Children) != 0 && len(p.Children) != len(expr.Children) {
 		return nil
 	}
-	iter := &ExprIter{Operand: p.Operand, matched: true}
+	iter := &ExprIter{Operand: p.Operand, EngineTypeSet: p.EngineTypeSet, matched: true}
 	for i := range p.Children {
 		childIter := newExprIterFromGroup(expr.Children[i], p.Children[i])
 		if childIter == nil {
@@ -169,8 +202,11 @@ func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 
 // newExprIterFromGroup creates the iterator on the Group.
 func newExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
+	if !p.EngineTypeSet.Contain(g.EngineType) {
+		return nil
+	}
 	if p.Operand == OperandAny {
-		return &ExprIter{Group: g, Operand: OperandAny, matched: true}
+		return &ExprIter{Group: g, Operand: OperandAny, EngineTypeSet: p.EngineTypeSet, matched: true}
 	}
 	for elem := g.GetFirstElem(p.Operand); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
