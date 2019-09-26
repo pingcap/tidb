@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -620,11 +621,28 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
-	// Parse partitioning key, extract the column names in the partitioning key to slice.
-	partCols, err := extractPartitionColumns(partExpr, tblInfo)
-	if err != nil {
-		return err
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
+	var (
+		partCols []*model.ColumnInfo
+		err      error
+	)
+	// The expr will be an empty string if the partition is defined by:
+	// CREATE TABLE t (...) PARTITION BY RANGE COLUMNS(...)
+	if partExpr := pi.Expr; partExpr != "" {
+		// Parse partitioning key, extract the column names in the partitioning key to slice.
+		partCols, err = extractPartitionColumns(partExpr, tblInfo)
+		if err != nil {
+			return err
+		}
+	} else {
+		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
+		for _, col := range pi.Columns {
+			colInfo := getColumnInfoByName(tblInfo, col.L)
+			if colInfo == nil {
+				return infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
+			}
+			partCols = append(partCols, colInfo)
+		}
 	}
 
 	// Every unique key on the table must use every column in the table's partitioning expression.

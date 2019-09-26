@@ -50,7 +50,7 @@ func (s *testImplSuite) TearDownSuite(c *C) {
 }
 
 func (s *testImplSuite) TestBaseImplementation(c *C) {
-	p := plannercore.PhysicalLimit{}.Init(s.sctx, nil, nil)
+	p := plannercore.PhysicalLimit{}.Init(s.sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}
 	c.Assert(impl.GetPlan(), Equals, p)
 

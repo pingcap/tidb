@@ -2168,7 +2168,7 @@ func (b *builtinTimeSig) evalDuration(row chunk.Row) (res types.Duration, isNull
 		fsp = len(expr) - idx - 1
 	}
 
-	tmpFsp := int8(0)
+	var tmpFsp int8
 	if tmpFsp, err = types.CheckFsp(fsp); err != nil {
 		return res, isNull, err
 	}
@@ -4399,7 +4399,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		isFloat = true
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime, evalTps...)
-	bf.tp.Decimal, bf.tp.Flen = int(fsp), 19
+	bf.tp.Decimal, bf.tp.Flen = -1, 19
 	if fsp != 0 {
 		bf.tp.Flen += 1 + int(fsp)
 	}

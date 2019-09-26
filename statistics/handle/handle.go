@@ -150,7 +150,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		lastVersion = 0
 	}
 	sql := fmt.Sprintf("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %d order by version", lastVersion)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -332,9 +332,9 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64, history
 	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	var rows []chunk.Row
 	if historyStatsExec != nil {
-		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(selSQL)
 	} else {
-		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+		rows, _, err = h.restrictedExec.ExecRestrictedSQL(selSQL)
 	}
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -494,9 +494,9 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %d", physicalID)
 	var rows []chunk.Row
 	if historyStatsExec != nil {
-		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(selSQL)
 	} else {
-		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+		rows, _, err = h.restrictedExec.ExecRestrictedSQL(selSQL)
 	}
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
@@ -616,9 +616,9 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 		fields []*ast.ResultField
 	)
 	if historyStatsExec != nil {
-		rows, fields, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+		rows, fields, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(selSQL)
 	} else {
-		rows, fields, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+		rows, fields, err = h.restrictedExec.ExecRestrictedSQL(selSQL)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -656,7 +656,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 
 func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(selSQL)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -670,9 +670,9 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec s
 	selSQL := fmt.Sprintf("SELECT version, modify_count, count from mysql.stats_meta where table_id = %d order by version", tableID)
 	var rows []chunk.Row
 	if historyStatsExec == nil {
-		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+		rows, _, err = h.restrictedExec.ExecRestrictedSQL(selSQL)
 	} else {
-		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(selSQL)
 	}
 	if err != nil || len(rows) == 0 {
 		return

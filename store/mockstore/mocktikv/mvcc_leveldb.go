@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlock"
 	"github.com/pingcap/tidb/util/logutil"
@@ -589,6 +590,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	primary := req.PrimaryLock
 	startTS := req.StartVersion
 	ttl := req.LockTtl
+	minCommitTS := req.MinCommitTs
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -616,7 +618,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 			}
 		}
 		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
-		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, txnSize, isPessimisticLock)
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, txnSize, isPessimisticLock, minCommitTS)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -679,7 +681,10 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 	return nil
 }
 
-func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64, txnSize uint64, isPessimisticLock bool) error {
+func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
+	mutation *kvrpcpb.Mutation, startTS uint64,
+	primary []byte, ttl uint64, txnSize uint64,
+	isPessimisticLock bool, minCommitTS uint64) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(db, &util.Range{
 		Start: startKey,
@@ -695,6 +700,12 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	}
 	if ok {
 		if dec.lock.startTS != startTS {
+			if isPessimisticLock {
+				// NOTE: A special handling.
+				// When pessimistic txn prewrite meets lock, set the TTL = 0 means
+				// telling TiDB to rollback the transaction **unconditionly**.
+				dec.lock.ttl = 0
+			}
 			return dec.lock.lockErr(mutation.Key)
 		}
 		if dec.lock.op != kvrpcpb.Op_PessimisticLock {
@@ -723,6 +734,11 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		ttl:     ttl,
 		txnSize: txnSize,
 	}
+	// Write minCommitTS on the primary lock.
+	if bytes.Equal(primary, mutation.GetKey()) {
+		lock.minCommitTS = minCommitTS
+	}
+
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
 	if err != nil {
@@ -916,7 +932,8 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 }
 
 // Cleanup implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
+// Cleanup API is deprecated, use CheckTxnStatus instead.
+func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 	mvcc.mu.Lock()
 	defer func() {
 		mvcc.mu.Unlock()
@@ -924,11 +941,204 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	}()
 
 	batch := &leveldb.Batch{}
-	err := rollbackKey(mvcc.db, batch, key, startTS)
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	if iter.Valid() {
+		dec := lockDecoder{
+			expectKey: key,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return err
+		}
+		// If current transaction's lock exists.
+		if ok && dec.lock.startTS == startTS {
+			// If the lock has already outdated, clean up it.
+			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
+				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+					return err
+				}
+				return mvcc.db.Write(batch, nil)
+			}
+
+			// Otherwise, return a locked error with the TTL information.
+			return dec.lock.lockErr(key)
+		}
+
+		// If current transaction's lock does not exist.
+		// If the commit information of the current transaction exist.
+		c, ok, err := getTxnCommitInfo(iter, key, startTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			// If the current transaction has already committed.
+			if c.valueType != typeRollback {
+				return ErrAlreadyCommitted(c.commitTS)
+			}
+			// If the current transaction has already rollbacked.
+			return nil
+		}
+	}
+
+	// If current transaction is not prewritted before.
+	value := mvccValue{
+		valueType: typeRollback,
+		startTS:   startTS,
+		commitTS:  startTS,
+	}
+	writeKey := mvccEncode(key, startTS)
+	writeValue, err := value.MarshalBinary()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mvcc.db.Write(batch, nil)
+	batch.Put(writeKey, writeValue)
+	return nil
+}
+
+// CheckTxnStatus checks the primary lock of a transaction to decide its status.
+// The return values are (ttl, commitTS, err):
+// If the transaction is active, this function returns the ttl of the lock;
+// If the transaction is committed, this function returns the commitTS;
+// If the transaction is rollbacked, this function returns (0, 0, nil)
+// Note that CheckTxnStatus may also push forward the `minCommitTS` of the
+// transaction, so it's not simply a read-only operation.
+//
+// primaryKey + lockTS together could locate the primary lock.
+// callerStartTS is the start ts of reader transaction.
+// currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
+func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64) (uint64, uint64, error) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	startKey := mvccEncode(primaryKey, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	if iter.Valid() {
+		dec := lockDecoder{
+			expectKey: primaryKey,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		// If current transaction's lock exists.
+		if ok && dec.lock.startTS == lockTS {
+			lock := dec.lock
+			batch := &leveldb.Batch{}
+
+			// If the lock has already outdated, clean up it.
+			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
+				if err = rollbackLock(batch, lock, primaryKey, lockTS); err != nil {
+					return 0, 0, errors.Trace(err)
+				}
+				if err = mvcc.db.Write(batch, nil); err != nil {
+					return 0, 0, errors.Trace(err)
+				}
+				return 0, 0, nil
+			}
+
+			// If this is a large transaction and the lock is active, push forward the minCommitTS.
+			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction.
+			if lock.minCommitTS > 0 {
+				// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
+				if lock.minCommitTS < callerStartTS+1 {
+					lock.minCommitTS = callerStartTS + 1
+
+					// Remove this condition should not affect correctness.
+					// We do it because pushing forward minCommitTS as far as possible could avoid
+					// the lock been pushed again several times, and thus reduce write operations.
+					if lock.minCommitTS < currentTS {
+						lock.minCommitTS = currentTS
+					}
+
+					writeKey := mvccEncode(primaryKey, lockVer)
+					writeValue, err := lock.MarshalBinary()
+					if err != nil {
+						return 0, 0, errors.Trace(err)
+					}
+					batch.Put(writeKey, writeValue)
+					if err = mvcc.db.Write(batch, nil); err != nil {
+						return 0, 0, errors.Trace(err)
+					}
+				}
+			}
+
+			return lock.ttl, 0, nil
+		}
+
+		// If current transaction's lock does not exist.
+		// If the commit info of the current transaction exists.
+		c, ok, err := getTxnCommitInfo(iter, primaryKey, lockTS)
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		if ok {
+			// If current transaction is already committed.
+			if c.valueType != typeRollback {
+				return 0, c.commitTS, nil
+			}
+			// If current transaction is already rollback.
+			return 0, 0, nil
+		}
+	}
+
+	// If current transaction is not prewritted before, it may be pessimistic lock.
+	// When pessimistic lock rollback, it may not leave a 'rollbacked' tombstone.
+	logutil.BgLogger().Debug("CheckTxnStatus can't find the primary lock, pessimistic rollback?")
+	return 0, 0, nil
+}
+
+// TxnHeartBeat implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) TxnHeartBeat(key []byte, startTS uint64, adviseTTL uint64) (uint64, error) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	if iter.Valid() {
+		dec := lockDecoder{
+			expectKey: key,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if ok && dec.lock.startTS == startTS {
+			if !bytes.Equal(dec.lock.primary, key) {
+				return 0, errors.New("txnHeartBeat on non-primary key, the code should not run here")
+			}
+
+			lock := dec.lock
+			batch := &leveldb.Batch{}
+			// Increase the ttl of this transaction.
+			if adviseTTL > lock.ttl {
+				lock.ttl = adviseTTL
+				writeKey := mvccEncode(key, lockVer)
+				writeValue, err := lock.MarshalBinary()
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				batch.Put(writeKey, writeValue)
+				if err = mvcc.db.Write(batch, nil); err != nil {
+					return 0, errors.Trace(err)
+				}
+			}
+			return lock.ttl, nil
+		}
+	}
+	return 0, errors.New("lock doesn't exist")
 }
 
 // ScanLock implements the MVCCStore interface.
@@ -1272,4 +1482,108 @@ func (mvcc *MVCCLevelDB) doRawDeleteRange(startKey, endKey []byte) error {
 	}
 
 	return mvcc.db.Write(batch, nil)
+}
+
+// MvccGetByStartTS implements the MVCCDebugger interface.
+func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	var key []byte
+	iter := newIterator(mvcc.db, nil)
+	defer iter.Release()
+
+	// find the first committed key for which `start_ts` equals to `ts`
+	for iter.Valid() {
+		var value mvccValue
+		err := value.UnmarshalBinary(iter.Value())
+		if err == nil && value.startTS == starTS {
+			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			break
+		}
+		iter.Next()
+	}
+	if key == nil {
+		return nil, nil
+	}
+
+	return mvcc.MvccGetByKey(key), key
+}
+
+var valueTypeOpMap = [...]kvrpcpb.Op{
+	typePut:      kvrpcpb.Op_Put,
+	typeDelete:   kvrpcpb.Op_Del,
+	typeRollback: kvrpcpb.Op_Rollback,
+}
+
+// MvccGetByKey implements the MVCCDebugger interface.
+func (mvcc *MVCCLevelDB) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	info := &kvrpcpb.MvccInfo{}
+
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	dec1 := lockDecoder{expectKey: key}
+	ok, err := dec1.Decode(iter)
+	if err != nil {
+		return nil
+	}
+	if ok {
+		var shortValue []byte
+		if isShortValue(dec1.lock.value) {
+			shortValue = dec1.lock.value
+		}
+		info.Lock = &kvrpcpb.MvccLock{
+			Type:       dec1.lock.op,
+			StartTs:    dec1.lock.startTS,
+			Primary:    dec1.lock.primary,
+			ShortValue: shortValue,
+		}
+	}
+
+	dec2 := valueDecoder{expectKey: key}
+	var writes []*kvrpcpb.MvccWrite
+	var values []*kvrpcpb.MvccValue
+	for iter.Valid() {
+		ok, err := dec2.Decode(iter)
+		if err != nil {
+			return nil
+		}
+		if !ok {
+			iter.Next()
+			break
+		}
+		var shortValue []byte
+		if isShortValue(dec2.value.value) {
+			shortValue = dec2.value.value
+		}
+		write := &kvrpcpb.MvccWrite{
+			Type:       valueTypeOpMap[dec2.value.valueType],
+			StartTs:    dec2.value.startTS,
+			CommitTs:   dec2.value.commitTS,
+			ShortValue: shortValue,
+		}
+		writes = append(writes, write)
+		value := &kvrpcpb.MvccValue{
+			StartTs: dec2.value.startTS,
+			Value:   dec2.value.value,
+		}
+		values = append(values, value)
+	}
+	info.Writes = writes
+	info.Values = values
+
+	return info
+}
+
+const shortValueMaxLen = 64
+
+func isShortValue(value []byte) bool {
+	return len(value) <= shortValueMaxLen
 }

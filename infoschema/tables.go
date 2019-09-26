@@ -590,12 +590,12 @@ var tableTiKVStoreStatusCols = []columnInfo{
 	{"CAPACITY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LEADER_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"LEADER_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"LEADER_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_WEIGHT", mysql.TypeDouble, 22, 0, nil, nil},
+	{"LEADER_SCORE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"LEADER_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"REGION_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"REGION_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_WEIGHT", mysql.TypeDouble, 22, 0, nil, nil},
+	{"REGION_SCORE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"REGION_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"START_TS", mysql.TypeDatetime, 0, 0, nil, nil},
 	{"LAST_HEARTBEAT_TS", mysql.TypeDatetime, 0, 0, nil, nil},
@@ -818,12 +818,12 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[6].SetString(storeStat.Status.Capacity)
 		row[7].SetString(storeStat.Status.Available)
 		row[8].SetInt64(storeStat.Status.LeaderCount)
-		row[9].SetInt64(storeStat.Status.LeaderWeight)
-		row[10].SetInt64(storeStat.Status.LeaderScore)
+		row[9].SetFloat64(storeStat.Status.LeaderWeight)
+		row[10].SetFloat64(storeStat.Status.LeaderScore)
 		row[11].SetInt64(storeStat.Status.LeaderSize)
 		row[12].SetInt64(storeStat.Status.RegionCount)
-		row[13].SetInt64(storeStat.Status.RegionWeight)
-		row[14].SetInt64(storeStat.Status.RegionScore)
+		row[13].SetFloat64(storeStat.Status.RegionWeight)
+		row[14].SetFloat64(storeStat.Status.RegionScore)
 		row[15].SetInt64(storeStat.Status.RegionSize)
 		startTs := types.Time{
 			Time: types.FromGoTime(storeStat.Status.StartTs),
@@ -1030,7 +1030,7 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, count from mysql.stats_meta")
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
@@ -1049,7 +1049,7 @@ type tableHistID struct {
 }
 
 func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}

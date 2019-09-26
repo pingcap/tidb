@@ -407,7 +407,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
 	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
 	startTime := time.Now()
-	assertErrorCode(c, tk, "alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
 	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
 }

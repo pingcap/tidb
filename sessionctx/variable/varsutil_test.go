@@ -70,7 +70,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
-	c.Assert(vars.MemQuotaQuery, Equals, int64(config.GetGlobalConfig().MemQuotaQuery))
+	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
@@ -300,12 +300,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "follower")
-	c.Assert(v.ReplicaRead, Equals, kv.ReplicaReadFollower)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
-	c.Assert(v.ReplicaRead, Equals, kv.ReplicaReadLeader)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -375,6 +375,10 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBOptJoinReorderThreshold, "a", true},
 		{TiDBOptJoinReorderThreshold, "-1", true},
 		{TiDBReplicaRead, "invalid", true},
+		{TiDBTxnMode, "invalid", true},
+		{TiDBTxnMode, "pessimistic", false},
+		{TiDBTxnMode, "optimistic", false},
+		{TiDBTxnMode, "", false},
 	}
 
 	for _, t := range tests {

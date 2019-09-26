@@ -353,6 +353,22 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 			`select * from t1 where id = 9`,
 			testkit.Rows(`9 9`),
 		},
+		// test last insert id
+		{
+			`insert into t1 values(3000, -1), (null, -2)`,
+			`select * from t1 where id = 3000`,
+			testkit.Rows(`3000 -1`),
+		},
+		{
+			`;`,
+			`select * from t1 where id = 3001`,
+			testkit.Rows(`3001 -2`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`3001`),
+		},
 		{
 			`insert into t2(id, n) values(1, 1)`,
 			`select * from t2 where id = 1`,
@@ -545,4 +561,15 @@ func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
 	tk.MustExec(`insert into t2 set a=1,b=1 on duplicate key update a=1,b=1`)
 	tk.MustQuery(`select * from t2`).Check(testkit.Rows("1 1"))
 
+	tk.MustExec(`CREATE TABLE t3 (a int, b int, c int, d int, e int,
+  PRIMARY KEY (a,b),
+  UNIQUE KEY (b,c,d)
+) PARTITION BY RANGE ( b ) (
+  PARTITION p0 VALUES LESS THAN (4),
+  PARTITION p1 VALUES LESS THAN (7),
+  PARTITION p2 VALUES LESS THAN (11)
+)`)
+	tk.MustExec("insert into t3 values (1,2,3,4,5)")
+	tk.MustExec("insert into t3 values (1,2,3,4,5),(6,2,3,4,6) on duplicate key update e = e + values(e)")
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1 2 3 4 16"))
 }

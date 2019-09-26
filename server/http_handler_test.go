@@ -14,10 +14,8 @@
 package server
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,7 +28,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -329,14 +326,16 @@ func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
 	decoder := json.NewDecoder(closer)
-	var data kvrpcpb.MvccGetByKeyResponse
+	var data mvccKV
 	err := decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	if valid {
-		c.Assert(data.Info, NotNil)
-		c.Assert(len(data.Info.Writes), Greater, 0)
+		c.Assert(data.Value.Info, NotNil)
+		c.Assert(len(data.Value.Info.Writes), Greater, 0)
 	} else {
-		c.Assert(data.Info, IsNil)
+		c.Assert(data.Value.Info.Lock, IsNil)
+		c.Assert(data.Value.Info.Writes, IsNil)
+		c.Assert(data.Value.Info.Values, IsNil)
 	}
 }
 
@@ -345,45 +344,35 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
-	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data kvrpcpb.MvccGetByKeyResponse
+	var data mvccKV
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(data.Info, NotNil)
-	c.Assert(len(data.Info.Writes), Greater, 0)
-	startTs := data.Info.Writes[0].StartTs
-
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/%d", startTs))
-	c.Assert(err, IsNil)
-	var p1 kvrpcpb.MvccGetByStartTsResponse
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&p1)
-	c.Assert(err, IsNil)
+	c.Assert(data.Value, NotNil)
+	info := data.Value.Info
+	c.Assert(info, NotNil)
+	c.Assert(len(info.Writes), Greater, 0)
+	startTs := info.Writes[0].StartTs
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)
-	var p2 kvrpcpb.MvccGetByStartTsResponse
+	var p2 mvccKV
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&p2)
 	c.Assert(err, IsNil)
 
-	for id, expect := range data.Info.Values {
-		v1 := p1.Info.Values[id].Value
-		v2 := p2.Info.Values[id].Value
-		c.Assert(bytes.Equal(v1, expect.Value), IsTrue)
-		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
+	for i, expect := range info.Values {
+		v2 := p2.Value.Info.Values[i].Value
+		c.Assert(v2, BytesEquals, expect.Value)
 	}
 
-	_, key, err := codec.DecodeBytes(p1.Key, nil)
-	c.Assert(err, IsNil)
-	hexKey := hex.EncodeToString(key)
+	hexKey := p2.Key
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/hex/" + hexKey)
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
-	var data2 kvrpcpb.MvccGetByKeyResponse
+	var data2 mvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
@@ -396,19 +385,12 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1234"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data kvrpcpb.MvccGetByKeyResponse
+	var data mvccKV
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(data.Info, IsNil)
-
-	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/0"))
-	c.Assert(err, IsNil)
-	var p kvrpcpb.MvccGetByStartTsResponse
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&p)
-	c.Assert(err, IsNil)
-	c.Assert(p.Info, IsNil)
+	c.Assert(data.Value.Info.Lock, IsNil)
+	c.Assert(data.Value.Info.Writes, IsNil)
+	c.Assert(data.Value.Info.Values, IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
@@ -479,7 +461,6 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
-	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	// tests for normal index key
 	resp, err := http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1&b=2")
 	c.Assert(err, IsNil)
@@ -520,14 +501,14 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data1 kvrpcpb.MvccGetByKeyResponse
+	var data1 mvccKV
 	err = decoder.Decode(&data1)
 	c.Assert(err, NotNil)
 
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/1?a=1")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
-	var data2 kvrpcpb.MvccGetByKeyResponse
+	var data2 mvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
 }

@@ -29,7 +29,8 @@ import (
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Use this variable to control the behavior in code.
+	8. Update ValidateSetSystemVar if the variable's value need to be validated.
+	9. Use this variable to control the behavior in code.
 */
 
 // TiDB system variable names that only in session scope.
@@ -92,7 +93,8 @@ const (
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
-	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
@@ -144,6 +146,9 @@ const (
 
 	// TiDBReplicaRead is used for reading data from replicas, followers for example.
 	TiDBReplicaRead = "tidb_replica_read"
+
+	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -275,6 +280,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
+	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
+
 	// TIDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
@@ -293,6 +301,9 @@ const (
 
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
+
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
+	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 )
 
 // Default TiDB system variable values.
@@ -349,6 +360,7 @@ const (
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
@@ -358,6 +370,7 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
+	DefTiDBAllowRemoveAutoInc          = false
 )
 
 // Process global variables.

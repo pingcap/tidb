@@ -632,22 +632,22 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	return notNull
 }
 
-// isMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
-func isMutableEffectsExpr(expr Expression) bool {
+// IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
+func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
 			return true
 		}
 		for _, arg := range x.GetArgs() {
-			if isMutableEffectsExpr(arg) {
+			if IsMutableEffectsExpr(arg) {
 				return true
 			}
 		}
 	case *Column:
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return isMutableEffectsExpr(x.DeferredExpr)
+			return IsMutableEffectsExpr(x.DeferredExpr)
 		}
 	}
 	return false
@@ -661,7 +661,7 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
 		key := string(expr.HashCode(sc))
-		if _, ok := exists[key]; !ok || isMutableEffectsExpr(expr) {
+		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
 			exists[key] = struct{}{}
 		}

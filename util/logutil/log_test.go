@@ -234,6 +234,8 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, patter
 			break
 		}
 		c.Assert(str, Matches, pattern)
+		c.Assert(strings.Contains(str, "stack"), IsFalse)
+		c.Assert(strings.Contains(str, "errorVerbose"), IsFalse)
 	}
 	c.Assert(err, Equals, io.EOF)
 }

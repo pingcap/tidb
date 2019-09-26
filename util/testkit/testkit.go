@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -249,6 +250,17 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
 	return err
+}
+
+// MustGetErrCode executes a sql statement and assert it's error code.
+func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	tk.c.Assert(err, check.NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
+	sqlErr := tErr.ToSQLError()
+	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.

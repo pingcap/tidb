@@ -42,7 +42,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		p.Children()[chIdx] = dual
 		return
 	}
-	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx())
+	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.SelectBlockOffset())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 }
@@ -270,7 +270,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.ctx)
+	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.ctx, child.SelectBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
@@ -344,6 +344,12 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			_, child := p.baseLogicalPlan.PredicatePushDown(nil)
+			return predicates, child
+		}
+	}
 	for _, cond := range predicates {
 		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
 		if !expression.HasGetSetVarFunc(newFilter) {
@@ -500,7 +506,7 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx())
+		dual := LogicalTableDual{}.Init(p.SCtx(), p.SelectBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
 	}
@@ -532,11 +538,31 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	return predicates
 }
 
+// getPartitionByCols extracts 'partition by' columns from the Window.
+func (p *LogicalWindow) getPartitionByCols() []*expression.Column {
+	partitionCols := make([]*expression.Column, 0, len(p.PartitionBy))
+	for _, partitionItem := range p.PartitionBy {
+		partitionCols = append(partitionCols, partitionItem.Col)
+	}
+	return partitionCols
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	// Window function forbids any condition to push down.
-	p.baseLogicalPlan.PredicatePushDown(nil)
-	return predicates, p
+	canBePushed := make([]expression.Expression, 0, len(predicates))
+	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+	partitionCols := expression.NewSchema(p.getPartitionByCols()...)
+	for _, cond := range predicates {
+		// We can push predicate beneath Window, only if all of the
+		// extractedCols are part of partitionBy columns.
+		if expression.ExprFromSchema(cond, partitionCols) {
+			canBePushed = append(canBePushed, cond)
+		} else {
+			canNotBePushed = append(canNotBePushed, cond)
+		}
+	}
+	p.baseLogicalPlan.PredicatePushDown(canBePushed)
+	return canNotBePushed, p
 }
 
 func (*ppdSolver) name() string {

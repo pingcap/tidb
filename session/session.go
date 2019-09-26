@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -265,16 +266,21 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var preparedAst *ast.Prepared
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-		cacheKey = plannercore.NewPSTMTPlanCacheKey(
-			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
-		)
+		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
+			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+			if ok {
+				preparedAst = preparedObj.PreparedAst
+				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+			}
+		}
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			if i > 0 {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
+			if i > 0 && preparedAst != nil {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -666,7 +672,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
+					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -743,7 +749,7 @@ func (s *session) sysSessionPool() sessionPool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx := context.TODO()
 
 	// Use special session to execute the sql.
@@ -762,7 +768,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 // This is used for executing some restricted sql statements with snapshot.
 // If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 // Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx := context.TODO()
 
 	// Use special session to execute the sql.
@@ -887,7 +893,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := s.ExecRestrictedSQL(sql)
 	if err != nil {
 		return "", err
 	}
@@ -909,7 +915,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	}
 	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
 	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(s, sql)
+	rows, _, err := s.ExecRestrictedSQL(sql)
 	if err != nil {
 		return nil, err
 	}
@@ -959,7 +965,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	name = strings.ToLower(name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
-	_, _, err = s.ExecRestrictedSQL(s, sql)
+	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
 }
 
@@ -974,6 +980,16 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	// If command == mysql.ComSleep, it means the SQL execution is finished. The processinfo is reset to SLEEP.
+	// If the SQL finished and the session is not in transaction, the current start timestamp need to reset to 0.
+	// Otherwise, it should be set to the transaction start timestamp.
+	// Why not reset the transaction start timestamp to 0 when transaction committed?
+	// Because the select statement and other statements need this timestamp to read data,
+	// after the transaction is committed. e.g. SHOW MASTER STATUS;
+	var curTxnStartTS uint64
+	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
+		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
@@ -982,7 +998,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
-		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		CurTxnStartTS:    curTxnStartTS,
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
@@ -1006,7 +1022,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("run statement error",
+			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
 				zap.Error(err),
 				zap.String("session", s.String()))
@@ -1064,9 +1080,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("parse sql error",
+		logutil.Logger(ctx).Warn("parse SQL failed",
 			zap.Error(err),
-			zap.String("sql", sql))
+			zap.String("SQL", sql))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(startTS)
@@ -1092,9 +1108,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile sql error",
+			logutil.Logger(ctx).Warn("compile SQL failed",
 				zap.Error(err),
-				zap.String("sql", sql))
+				zap.String("SQL", sql))
 			return nil, err
 		}
 		durCompile := time.Since(startTS)
@@ -1146,6 +1162,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
+	s.PrepareTxnFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1158,10 +1175,78 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+// CachedPlanExec short path currently ONLY for cached "point select plan" execution
+func (s *session) CachedPlanExec(ctx context.Context,
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	prepared := prepareStmt.PreparedAst
+	// compile ExecStmt
+	is := executor.GetInfoSchema(s)
+	execAst := &ast.ExecuteStmt{ExecID: stmtID}
+	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
+		return nil, err
+	}
+	execAst.BinaryArgs = args
+	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
+	if err != nil {
+		return nil, err
+	}
+	stmt := &executor.ExecStmt{
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    prepared.Stmt,
+		Ctx:         s,
+		OutputNames: execPlan.OutputNames(),
+	}
+	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
+	stmt.Text = prepared.Stmt.Text()
+	s.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+	logQuery(stmt.OriginText(), s.sessionVars)
+
+	// run ExecStmt
+	rs, err := stmt.GetPointRecord(ctx, is)
+	s.txn.changeToInvalid()
+	return rs, err
+}
+
+// IsCachedExecOk check if we can execute using plan cached in prepared structure
+// Be careful for the short path, current precondition is ths cached plan satisfying
+// IsPointGetWithPKOrUniqueKeyByAutoCommit
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
+	prepared := preparedStmt.PreparedAst
+	if prepared.CachedPlan == nil {
+		return false, nil
+	}
+	// check auto commit
+	if !s.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+	// maybe we'd better check cached plan type here, current
+	// only point select will be cached, see "getPhysicalPlan" func
+	return true, nil
+}
+
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
-	s.PrepareTxnCtx(ctx)
+	var err error
 	s.sessionVars.StartTime = time.Now()
+	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
+	if !ok {
+		err = plannercore.ErrStmtNotFound
+		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
+		return nil, err
+	}
+	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
+	}
+	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
@@ -1201,7 +1286,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
-		if s.sessionVars.ReplicaRead.IsFollowerRead() {
+		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
@@ -1264,7 +1349,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
-	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
+	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
@@ -1703,10 +1788,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRetryLimit,
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
+	variable.TiDBEnableVectorizedExpression,
 	variable.TiDBEnableFastAnalyze,
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
+	variable.TiDBTxnMode,
+	variable.TiDBEnableStmtSummary,
 	variable.TiDBMaxDeltaSchemaCount,
 }
 
@@ -1745,7 +1833,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if !succ {
 		// Set the variable to true to prevent cyclic recursive call.
 		vars.CommonGlobalLoaded = true
-		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+		rows, fields, err = s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
 			logutil.BgLogger().Error("failed to load common global variables.")
@@ -1785,8 +1873,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1796,15 +1882,21 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
 		if pessTxnConf.Enable {
-			txnMode := s.sessionVars.TxnMode
-			if txnMode == "" && pessTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
-			if txnMode == ast.Pessimistic {
+			if s.sessionVars.TxnMode == ast.Pessimistic {
 				s.sessionVars.TxnCtx.IsPessimistic = true
 			}
 		}
 	}
+}
+
+// PrepareTxnFuture uses to try to get txn future.
+func (s *session) PrepareTxnFuture(ctx context.Context) {
+	if s.txn.validOrPending() {
+		return
+	}
+
+	txnFuture := s.getTxnFuture(ctx)
+	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -1887,7 +1979,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
-			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
+			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
 

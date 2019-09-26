@@ -420,8 +420,12 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
+	ticker := time.NewTicker(time.Second * time.Duration(InfoSessionTTL) / 2)
+	defer ticker.Stop()
 	for {
 		select {
+		case <-ticker.C:
+			do.info.ReportMinStartTS()
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {
@@ -547,6 +551,7 @@ func (do *Domain) Close() {
 	}
 	if do.info != nil {
 		do.info.RemoveServerInfo()
+		do.info.RemoveMinStartTS()
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
@@ -633,7 +638,15 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
 	d := do.ddl
-	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	do.ddl = ddl.NewDDL(
+		ctx,
+		ddl.WithEtcdClient(do.etcdClient),
+		ddl.WithStore(do.store),
+		ddl.WithInfoHandle(do.infoHandle),
+		ddl.WithHook(callback),
+		ddl.WithLease(ddlLease),
+		ddl.WithResourcePool(sysCtxPool),
+	)
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			if err := do.ddl.Stop(); err != nil {
@@ -1060,7 +1073,7 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, `FLUSH PRIVILEGES`)
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`FLUSH PRIVILEGES`)
 	if err != nil {
 		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
 	}

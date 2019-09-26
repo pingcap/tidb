@@ -89,19 +89,19 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 		},
 		{
 			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7)",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7))]}," +
-				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2))]}]",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(Column#3, 5), lt(Column#9, 7))]}," +
+				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2))]}]",
 		},
 		{
 			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (c < 1 or g > 2)",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.c, 1), gt(test.t.g, 2))]}," +
-				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.c, 1), gt(test.t.g, 2))]}," +
-				"{Idxs:[c_d_e,g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(gt(test.t.c, 5), lt(test.t.f, 7))]}]",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(Column#3, 5), lt(Column#9, 7)),or(lt(Column#3, 1), gt(Column#10, 2))]}," +
+				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2)),or(lt(Column#3, 1), gt(Column#10, 2))]}," +
+				"{Idxs:[c_d_e,g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2)),or(gt(Column#3, 5), lt(Column#9, 7))]}]",
 		},
 		{
 			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (e < 1 or f > 2)",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}," +
-				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}]",
+			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(Column#3, 5), lt(Column#9, 7)),or(lt(Column#5, 1), gt(Column#9, 2))]}," +
+				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2)),or(lt(Column#5, 1), gt(Column#9, 2))]}]",
 		},
 	}
 	ctx := context.TODO()
@@ -110,7 +110,7 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 		stmt, err := s.ParseOneStmt(tc.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is)
+		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tc.idxMergeDigest, comment)
@@ -130,10 +130,10 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 				lp = lp.Children()[0]
 			}
 		}
-		ds.ctx.GetSessionVars().EnableIndexMerge = true
+		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
 		_, err = lp.recursiveDeriveStats()
 		c.Assert(err, IsNil)
-		c.Assert(getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex), Equals, tc.idxMergeDigest)
+		c.Assert(getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex), Equals, tc.idxMergeDigest, comment)
 	}
 }

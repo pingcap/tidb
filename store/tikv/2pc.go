@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -52,11 +53,13 @@ const (
 var (
 	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
+	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
 )
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64
+	PessimisticLockTTL uint64 = 15000 // 15s ~ 40s
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -113,6 +116,8 @@ type twoPhaseCommitter struct {
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
+	// Used by pessimistic transaction and large transaction.
+	ttlManager
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -142,7 +147,47 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		startTS:       txn.StartTS(),
 		connID:        connID,
 		regionTxnSize: map[uint64]int{},
+		ttlManager: ttlManager{
+			ch: make(chan struct{}),
+		},
 	}, nil
+}
+
+func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, ttl uint64) (uint64, error) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
+		PrimaryLock:   primary,
+		StartVersion:  startTS,
+		AdviseLockTtl: ttl,
+	})
+	for {
+		loc, err := store.GetRegionCache().LocateKey(bo, primary)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return 0, errors.Trace(ErrBodyMissing)
+		}
+		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
+		if keyErr := cmdResp.GetError(); keyErr != nil {
+			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, primary, keyErr.Abort)
+		}
+		return cmdResp.GetLockTtl(), nil
+	}
 }
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
@@ -168,6 +213,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
+			if tablecodec.IsUntouchedIndexKValue(k, v) {
+				return nil
+			}
 			op := pb.Op_Put
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
@@ -331,7 +379,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -537,6 +585,80 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+	}
+}
+
+type ttlManagerState uint32
+
+const (
+	stateUninitialized ttlManagerState = iota
+	stateRunning
+	stateClosed
+)
+
+type ttlManager struct {
+	state ttlManagerState
+	ch    chan struct{}
+}
+
+func (tm *ttlManager) run(c *twoPhaseCommitter) {
+	// Run only once.
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
+		return
+	}
+	go tm.keepAlive(c)
+}
+
+func (tm *ttlManager) close() {
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateRunning), uint32(stateClosed)) {
+		return
+	}
+	close(tm.ch)
+}
+
+func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
+	// Ticker is set to 1/3 of the PessimisticLockTTL.
+	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tm.ch:
+			return
+		case <-ticker.C:
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			if err != nil {
+				err1 := bo.Backoff(BoPDRPC, err)
+				if err1 != nil {
+					logutil.BgLogger().Warn("keepAlive get tso fail",
+						zap.Error(err))
+					return
+				}
+				continue
+			}
+
+			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
+			const c10min = 10 * 60 * 1000
+			if uptime > c10min {
+				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+				// the key will not be locked forever.
+				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+
+			newTTL := uptime + PessimisticLockTTL
+			startTime := time.Now()
+			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			if err != nil {
+				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
+				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+			tiKVTxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
 		}
 	}
 }
@@ -948,7 +1070,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(err)
 		}
-		logutil.Logger(ctx).Debug("2PC succeed with error",
+		logutil.Logger(ctx).Debug("got some exceptions, but 2PC was still successful",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 	}
@@ -1062,6 +1184,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
+				defer batchExe.rateLimiter.putToken()
 				var singleBatchBackoffer *Backoffer
 				if batchExe.action == actionCommit {
 					// Because the secondary batches of the commit actions are implemented to be

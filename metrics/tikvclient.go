@@ -74,7 +74,7 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
-		}, []string{LblType, "store"})
+		}, []string{LblType, LblStore})
 
 	TiKVCoprocessorHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -231,4 +231,13 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1ns ~ 1s
 			Help:      "tidb txn token wait duration to process batches",
 		})
+
+	TiKVTxnHeartBeatHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_heart_beat",
+			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 18), // 1ms ~ 292s
+		}, []string{LblType})
 )

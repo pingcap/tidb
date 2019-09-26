@@ -219,6 +219,7 @@ const (
 	deleteRangeOneRegionMaxBackoff = 100000
 	rawkvMaxBackoff                = 20000
 	splitRegionBackoff             = 20000
+	maxSplitRegionsBackoff         = 120000
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
