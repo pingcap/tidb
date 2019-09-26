@@ -84,10 +84,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 
 	selResp := h.initSelectResponse(err, dagCtx.evalCtx.sc.GetWarnings(), e.Counts())
 	if err == nil {
-		err = h.supplementSelectResponse(selResp, dagReq, dagCtx, rows)
-		if err != nil {
-			terror.Log(err)
-		}
+		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
 
 	return buildResp(selResp, execDetails, err)
@@ -563,7 +560,7 @@ func (h *rpcHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, c
 	return selResp
 }
 
-func (h *rpcHandler) supplementSelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
+func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
 	colTypes := h.constructRespSchema(dagCtx)
 	loc := dagCtx.evalCtx.sc.TimeZone
 
