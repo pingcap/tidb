@@ -169,21 +169,21 @@ LIMIT 0, 5;
 id	count	task	operator info
 Projection_13	0.00	root	Column#47
 └─Limit_19	0.00	root	offset:0, count:5
-  └─IndexJoin_99	0.00	root	left outer join, inner:IndexReader_98, outer key:Column#1, inner key:Column#97
-    ├─TopN_106	0.00	root	Column#47:asc, offset:0, count:5
-    │ └─IndexMergeJoin_47	0.00	root	inner join, inner:IndexLookUp_45, outer key:Column#1, inner key:Column#41
-    │   ├─IndexLookUp_81	0.00	root	
-    │   │ ├─Selection_79	0.00	cop	eq(Column#4, 18), eq(Column#5, 1)
-    │   │ │ └─IndexScan_77	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
-    │   │ └─Selection_80	0.00	cop	eq(Column#21, 32314), eq(Column#3, 2)
-    │   │   └─TableScan_78	0.00	cop	table:tr, keep order:false, stats:pseudo
-    │   └─IndexLookUp_45	0.03	root	
-    │     ├─IndexScan_42	1.25	cop	table:te, index:trade_id, range: decided by [eq(Column#41, Column#1)], keep order:true, stats:pseudo
-    │     └─Selection_44	0.03	cop	ge(Column#47, 2018-04-23 00:00:00.000000), le(Column#47, 2018-04-23 23:59:59.000000)
-    │       └─TableScan_43	1.25	cop	table:te, keep order:false, stats:pseudo
-    └─IndexReader_98	1.25	root	index:Selection_97
-      └─Selection_97	1.25	cop	not(isnull(Column#97))
-        └─IndexScan_96	1.25	cop	table:p, index:relate_id, range: decided by [eq(Column#97, Column#1)], keep order:false, stats:pseudo
+  └─IndexJoin_100	0.00	root	left outer join, inner:IndexReader_99, outer key:Column#1, inner key:Column#97
+    ├─TopN_107	0.00	root	Column#47:asc, offset:0, count:5
+    │ └─IndexMergeJoin_48	0.00	root	inner join, inner:IndexLookUp_46, outer key:Column#1, inner key:Column#41
+    │   ├─IndexLookUp_82	0.00	root	
+    │   │ ├─Selection_80	0.00	cop	eq(Column#4, 18), eq(Column#5, 1)
+    │   │ │ └─IndexScan_78	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │   │ └─Selection_81	0.00	cop	eq(Column#21, 32314), eq(Column#3, 2)
+    │   │   └─TableScan_79	0.00	cop	table:tr, keep order:false, stats:pseudo
+    │   └─IndexLookUp_46	0.03	root	
+    │     ├─IndexScan_43	1.25	cop	table:te, index:trade_id, range: decided by [eq(Column#41, Column#1)], keep order:true, stats:pseudo
+    │     └─Selection_45	0.03	cop	ge(Column#47, 2018-04-23 00:00:00.000000), le(Column#47, 2018-04-23 23:59:59.000000)
+    │       └─TableScan_44	1.25	cop	table:te, keep order:false, stats:pseudo
+    └─IndexReader_99	1.25	root	index:Selection_98
+      └─Selection_98	1.25	cop	not(isnull(Column#97))
+        └─IndexScan_97	1.25	cop	table:p, index:relate_id, range: decided by [eq(Column#97, Column#1)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	count	task	operator info
 Projection_6	1.00	root	1
@@ -265,8 +265,8 @@ explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a 
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(Column#3)
-  └─HashLeftJoin_22	5.00	root	left outer join, inner:IndexReader_30, equal:[eq(Column#1, Column#3)]
-    ├─IndexReader_26	4.00	root	index:IndexScan_25
-    │ └─IndexScan_25	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
-    └─IndexReader_30	10000.00	root	index:IndexScan_29
-      └─IndexScan_29	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+  └─HashLeftJoin_23	5.00	root	left outer join, inner:IndexReader_31 (REVERSED), equal:[eq(Column#1, Column#3)]
+    ├─IndexReader_27	4.00	root	index:IndexScan_26
+    │ └─IndexScan_26	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+    └─IndexReader_31	10000.00	root	index:IndexScan_30
+      └─IndexScan_30	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
