@@ -61,8 +61,6 @@ type InsertValues struct {
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 
-	// cacheHasValue cache haveValue for consecutive autoid batch alloc.
-	cacheHasValue []bool
 	// Fill the autoID lazily to datum.
 	// This is used for being compatible with JDBC using getGeneratedKeys().
 	// By now in insert multiple values, TiDB can guarantee consecutive autoID in a batch.
@@ -216,7 +214,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
-	e.cacheHasValue = make([]bool, 0, len(e.Lists))
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -231,7 +228,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
-			e.cacheHasValue = e.cacheHasValue[:0]
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
@@ -500,8 +496,10 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 			if e.colIdx == -1 {
 				e.colIdx = idx
 			}
-			// cache the hasValue of autoIncrement column for lazy handle.
-			e.cacheHasValue = append(e.cacheHasValue, hasValue)
+			// Handle hasValue info in autoIncrement column previously for lazy handle.
+			if !hasValue {
+				datum.SetNull()
+			}
 			// Store the plain datum of autoIncrement column directly for lazy handle.
 			return datum, nil
 		}
@@ -565,16 +563,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
 // This used to help lazyFillAutoIncrement to find consecutive N datum backwards for batch autoID alloc.
-func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table.Column, hasValue bool) bool {
+func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table.Column) bool {
 	// autoID can find in RetryInfo.
 	if e.ctx.GetSessionVars().RetryInfo.Retrying {
 		return false
 	}
 	var err error
 	var recordID int64
-	if !hasValue {
-		d.SetNull()
-	}
 	if !d.IsNull() {
 		recordID, err = getAutoRecordID(d, &col.FieldType, true)
 		if err != nil {
@@ -606,7 +601,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	length := len(rows)
 	for i := 0; i < length; i++ {
 		autoDatum := rows[i][e.colIdx]
-		hasValue := e.cacheHasValue[i]
 
 		// autoID can find in RetryInfo.
 		retryInfo := e.ctx.GetSessionVars().RetryInfo
@@ -627,9 +621,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 
 		var err error
 		var recordID int64
-		if !hasValue {
-			autoDatum.SetNull()
-		}
 		if !autoDatum.IsNull() {
 			recordID, err = getAutoRecordID(autoDatum, &col.FieldType, true)
 			if err != nil {
@@ -659,7 +650,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Find consecutive num.
 			start := i
 			cnt := 1
-			for i+1 < length && e.isAutoNull(ctx, rows[i+1][e.colIdx], col, e.cacheHasValue[i+1]) {
+			for i+1 < length && e.isAutoNull(ctx, rows[i+1][e.colIdx], col) {
 				i++
 				cnt++
 			}
