@@ -943,10 +943,11 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
+	rowIDs, err := t.Allocator(ctx).Alloc(t.tableID, 1)
 	if err != nil {
 		return 0, err
 	}
+	rowID := rowIDs[0]
 	if t.meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
 		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits) {

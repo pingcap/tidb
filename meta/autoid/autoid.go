@@ -45,9 +45,10 @@ var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid Tabl
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
-	// Alloc allocs the next autoID for table with tableID.
+	// Alloc allocs N consecutive autoID for table with tableID.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
-	Alloc(tableID int64) (int64, error)
+	// The consecutive feature is used to insert multiple rows in a statement, cause JDBC will presume the id of these rows are consecutive.
+	Alloc(tableID int64, N uint64) ([]int64, error)
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
@@ -58,9 +59,6 @@ type Allocator interface {
 	End() int64
 	// NextGlobalAutoID returns the next global autoID.
 	NextGlobalAutoID(tableID int64) (int64, error)
-	// AllocN allocates N consecutive autoID for table with tableID. It is used to insert multiple
-	// rows in a statement, cause JDBC will presume the id of these rows are consecutive.
-	AllocN(tableID int64, N uint64) ([]int64, error)
 }
 
 type allocator struct {
@@ -223,97 +221,6 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 	return alloc.rebase4Signed(tableID, requiredBase, allocIDs)
 }
 
-func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
-	if alloc.base == alloc.end { // step
-		var newBase, newEnd int64
-		startTime := time.Now()
-		consumeDur := startTime.Sub(alloc.lastAllocTime)
-		alloc.step = NextStep(alloc.step, consumeDur)
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
-			var err1 error
-			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
-			if err1 != nil {
-				return err1
-			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
-			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
-			return err1
-		})
-		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		if err != nil {
-			return 0, err
-		}
-		alloc.lastAllocTime = time.Now()
-		if uint64(newBase) == math.MaxUint64 {
-			return 0, ErrAutoincReadFailed
-		}
-		alloc.base, alloc.end = newBase, newEnd
-	}
-
-	if uint64(alloc.base)+uint64(1) == math.MaxUint64 {
-		return 0, ErrAutoincReadFailed
-	}
-	alloc.base = int64(uint64(alloc.base) + 1)
-	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
-		zap.Uint64("ID", uint64(alloc.base)),
-		zap.Int64("table ID", tableID),
-		zap.Int64("database ID", alloc.dbID))
-	return alloc.base, nil
-}
-
-func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
-	if alloc.base == alloc.end { // step
-		var newBase, newEnd int64
-		startTime := time.Now()
-		consumeDur := startTime.Sub(alloc.lastAllocTime)
-		alloc.step = NextStep(alloc.step, consumeDur)
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
-			var err1 error
-			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
-			if err1 != nil {
-				return err1
-			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
-			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
-			return err1
-		})
-		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		if err != nil {
-			return 0, err
-		}
-		alloc.lastAllocTime = time.Now()
-		if newBase == math.MaxInt64 {
-			return 0, ErrAutoincReadFailed
-		}
-		alloc.base, alloc.end = newBase, newEnd
-	}
-
-	if alloc.base+1 == math.MaxInt64 {
-		return 0, ErrAutoincReadFailed
-	}
-	alloc.base++
-	logutil.Logger(context.TODO()).Debug("alloc signed ID",
-		zap.Uint64("ID", uint64(alloc.base)),
-		zap.Int64("table ID", tableID),
-		zap.Int64("database ID", alloc.dbID))
-	return alloc.base, nil
-}
-
-// Alloc implements autoid.Allocator Alloc interface.
-func (alloc *allocator) Alloc(tableID int64) (int64, error) {
-	if tableID == 0 {
-		return 0, errInvalidTableID.GenWithStack("Invalid tableID")
-	}
-	alloc.mu.Lock()
-	defer alloc.mu.Unlock()
-	if alloc.isUnsigned {
-		return alloc.alloc4Unsigned(tableID)
-	}
-	return alloc.alloc4Signed(tableID)
-}
-
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
@@ -354,7 +261,7 @@ func GenLocalSchemaID() int64 {
 }
 
 // AllocN implements autoid.Allocator Alloc interface.
-func (alloc *allocator) AllocN(tableID int64, N uint64) ([]int64, error) {
+func (alloc *allocator) Alloc(tableID int64, N uint64) ([]int64, error) {
 	if tableID == 0 {
 		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}

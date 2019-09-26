@@ -192,7 +192,11 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	return t.Allocator(sctx).Alloc(t.Meta().ID)
+	ids, err := t.Allocator(sctx).Alloc(t.Meta().ID, uint64(1))
+	if err != nil {
+		return 0, err
+	}
+	return ids[0], err
 }
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows.
@@ -201,7 +205,7 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	return t.Allocator(sctx).AllocN(t.Meta().ID, uint64(N))
+	return t.Allocator(sctx).Alloc(t.Meta().ID, uint64(N))
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
