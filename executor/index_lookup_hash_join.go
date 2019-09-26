@@ -157,7 +157,9 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
 		logutil.BgLogger().Error("IndexNestedLoopHashJoin failed", zap.Error(errors.Errorf("%v", r)))
-		e.cancelFunc()
+		if e.cancelFunc != nil {
+			e.cancelFunc()
+		}
 	}
 	e.workerWg.Done()
 }
@@ -375,7 +377,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	}
 	h, resultCh := fnv.New64(), iw.resultCh
 	defer func() {
-		if task != nil && task.keepOuterOrder && resultCh != nil {
+		if resultCh != iw.resultCh {
 			close(resultCh)
 		}
 	}()
@@ -415,9 +417,6 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		case resultCh <- joinResult:
 		case <-ctx.Done():
 			return
-		}
-		if resultCh != iw.resultCh {
-			close(resultCh)
 		}
 	}
 }
