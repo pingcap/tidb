@@ -1238,7 +1238,13 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	case *plannercore.PointGetPlan:
 		ok = true
 	case *plannercore.Update:
-		ok = true
+		pointUpdate := prepared.CachedPlan.(*plannercore.Update)
+		_, ok = pointUpdate.SelectPlan.(*plannercore.PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			prepared.CachedPlan = nil
+			return false, err
+		}
 	default:
 		ok = false
 	}
