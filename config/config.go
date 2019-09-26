@@ -88,9 +88,8 @@ type Config struct {
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
-	TreatOldVersionUTF8AsUTF8MB4 bool        `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	SplitRegionMaxNum            uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
-	StmtSummary                  StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TreatOldVersionUTF8AsUTF8MB4 bool   `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	SplitRegionMaxNum            uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 }
 
 // Log is the log section of config.
@@ -307,14 +306,6 @@ type PessimisticTxn struct {
 	TTL string `toml:"ttl" json:"ttl"`
 }
 
-// StmtSummary is the config for statement summary.
-type StmtSummary struct {
-	// The maximum number of statements kept in memory.
-	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
-	// The maximum length of displayed normalized SQL and sample SQL.
-	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
-}
-
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -404,10 +395,6 @@ var defaultConf = Config{
 		Enable:        true,
 		MaxRetryCount: 256,
 		TTL:           "40s",
-	},
-	StmtSummary: StmtSummary{
-		MaxStmtCount: 100,
-		MaxSQLLength: 4096,
 	},
 }
 
