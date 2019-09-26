@@ -121,7 +121,7 @@ const (
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
-	// tidb_enable_arrow enables TiDB to use arrow API for coprocessor requests.
+	// tidb_enable_arrow enables TiDB to use Chunk format for coprocessor requests.
 	TiDBEnableArrow = "tidb_enable_arrow"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
