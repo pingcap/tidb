@@ -199,11 +199,40 @@ func (b *builtinBitXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinLogicXorSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	arg1s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		arg0 := i64s[i]
+		arg1 := arg1s[i]
+		isNull := result.IsNull(i) || buf.IsNull(i)
+		if !isNull {
+			if (arg0 != 0 && arg1 != 0) || (arg0 == 0 && arg1 == 0) {
+				i64s[i] = 0
+			} else {
+				i64s[i] = 1
+			}
+		}
+		result.SetNull(i, isNull)
+	}
+	return nil
 }
 
 func (b *builtinBitAndSig) vectorized() bool {
