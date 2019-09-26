@@ -173,8 +173,8 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	virCols := chunk.NewChunkWithCapacity(virColTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		for i, col := range virColDef {
+	for i, col := range virColDef {
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			datum, err := col.EvalVirtualColumn(row)
 			if err != nil {
 				return err
@@ -185,9 +185,6 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			}
 			virCols.AppendDatum(i, &castDatum)
 		}
-	}
-
-	for i := 0; i < virCols.NumCols(); i++ {
 		req.SetCol(virColIndex[i], virCols.Column(i))
 	}
 

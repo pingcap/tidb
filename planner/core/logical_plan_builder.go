@@ -2434,11 +2434,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
 	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
 	// it's safe to iterate in index-ascending order.
-	for _, col := range ds.schema.Columns {
-		if col.VirtualExpr != nil {
-			col.VirtualExpr = expression.ColumnSubstituteForVirCol(col.VirtualExpr, ds.schema)
-		}
-	}
+	//for _, col := range ds.schema.Columns {
+	//	if col.VirtualExpr != nil {
+	//		col.VirtualExpr = expression.ColumnSubstituteForVirCol(col.VirtualExpr, ds.schema)
+	//	}
+	//}
 
 	return result, nil
 }

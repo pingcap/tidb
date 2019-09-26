@@ -100,6 +100,9 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 		if filter == nil || filter(v) {
 			result = append(result, v)
 		}
+		if v.VirtualExpr != nil {
+			result = extractColumns(result, v.VirtualExpr, filter)
+		}
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
 			result = extractColumns(result, arg, filter)
