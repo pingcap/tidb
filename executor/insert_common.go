@@ -592,10 +592,7 @@ func (e *InsertValues) hasAutoIncrementColumn() (int, bool) {
 			break
 		}
 	}
-	if colIdx == -1 {
-		return -1, false
-	}
-	return colIdx, true
+	return colIdx, colIdx != -1
 }
 
 // lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
