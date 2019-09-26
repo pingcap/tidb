@@ -61,12 +61,11 @@ type InsertValues struct {
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 
-	// Fill the autoID lazily to datum.
-	// This is used for being compatible with JDBC using getGeneratedKeys().
-	// By now in insert multiple values, TiDB can guarantee consecutive autoID in a batch.
+	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
+	// `insert|replace values` can guarantee consecutive autoID in a batch.
+	// Other statements like `insert select from` don't guarantee consecutive autoID.
+	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
-	// colIdx will cache the index of autoIncrement column in a row.
-	colIdx int
 }
 
 type defaultVal struct {
@@ -207,7 +206,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	batchSize := sessVars.DMLBatchSize
 
 	e.lazyFillAutoID = true
-	e.colIdx = -1
 	evalRowFunc := e.fastEvalRow
 	if !e.allAssignmentsAreConstant {
 		evalRowFunc = e.evalRow
@@ -492,10 +490,6 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 	error) {
 	if mysql.HasAutoIncrementFlag(column.Flag) {
 		if e.lazyFillAutoID {
-			// cache the colIdx of autoIncrement column for lazy handle.
-			if e.colIdx == -1 {
-				e.colIdx = idx
-			}
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
 				datum.SetNull()
@@ -588,19 +582,38 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 	return false
 }
 
+func (e *InsertValues) hasAutoIncrementColumn() (int, bool) {
+	colIdx := -1
+	for i, c := range e.Table.Cols() {
+		if mysql.HasAutoIncrementFlag(c.Flag) {
+			colIdx = i
+			break
+		}
+	}
+	if colIdx == -1 {
+		return -1, false
+	}
+	return colIdx, true
+}
+
 // lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
 // except it will cache auto increment datum previously for lazy batch allocation of autoID.
 func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
-	// Not in lazyFillAutoID mode or no autoIncrement column means no need to fill.
-	if !e.lazyFillAutoID || e.colIdx == -1 {
+	// Not in lazyFillAutoID mode means no need to fill.
+	if !e.lazyFillAutoID {
+		return rows, nil
+	}
+	// No autoIncrement column means no need to fill.
+	colIdx, ok := e.hasAutoIncrementColumn()
+	if !ok {
 		return rows, nil
 	}
 	// Get the autoIncrement column.
-	col := e.Table.Cols()[e.colIdx]
+	col := e.Table.Cols()[colIdx]
 	// Consider the colIdx of autoIncrement in row are same.
 	length := len(rows)
 	for i := 0; i < length; i++ {
-		autoDatum := rows[i][e.colIdx]
+		autoDatum := rows[i][colIdx]
 
 		// autoID can find in RetryInfo.
 		retryInfo := e.ctx.GetSessionVars().RetryInfo
@@ -615,7 +628,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 				return nil, err
 			}
-			rows[i][e.colIdx] = autoDatum
+			rows[i][colIdx] = autoDatum
 			continue
 		}
 
@@ -640,7 +653,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 				return nil, err
 			}
-			rows[i][e.colIdx] = autoDatum
+			rows[i][colIdx] = autoDatum
 			continue
 		}
 
@@ -650,7 +663,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Find consecutive num.
 			start := i
 			cnt := 1
-			for i+1 < length && e.isAutoNull(ctx, rows[i+1][e.colIdx], col) {
+			for i+1 < length && e.isAutoNull(ctx, rows[i+1][colIdx], col) {
 				i++
 				cnt++
 			}
@@ -662,7 +675,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
-				d := rows[offset][e.colIdx]
+				d := rows[offset][colIdx]
 
 				// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 				// Cause autoID may be specified by user, judge only the first row is not suitable.
@@ -682,7 +695,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if d, err = col.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
-				rows[offset][e.colIdx] = d
+				rows[offset][colIdx] = d
 			}
 			continue
 		}
@@ -699,7 +712,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 			return nil, err
 		}
-		rows[i][e.colIdx] = autoDatum
+		rows[i][colIdx] = autoDatum
 	}
 	return rows, nil
 }
