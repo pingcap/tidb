@@ -2029,6 +2029,7 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	// Notes: For all test cases, check them in `mysql_test`
 
 	// In generated columns expression, these items are not allowed:
