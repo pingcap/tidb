@@ -158,8 +158,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	//log.Warnf("dcdsfdsfds ", req.NumCols())
-	// TODO: If e.schema contain virtual column, compute the virtual column and rebuild the chunk
+	// TODO: If e.schema contains virtual column, compute the virtual column and rebuild the chunk
 	virColTypes := make([]*types.FieldType, 0)
 	virColDef := make([]*expression.Column, 0)
 	virColIndex := make([]int, 0)
@@ -173,8 +172,6 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	virCols := chunk.NewChunkWithCapacity(virColTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 
-	//log.Warnf("111111111111111", len(e.columns))
-	//log.Warnf("2222222222", virColIndex)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		for i, col := range virColDef {
 			datum, err := col.EvalVirtaulColumn(row)

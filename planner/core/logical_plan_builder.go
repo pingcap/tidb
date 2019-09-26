@@ -2423,7 +2423,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// the generated column, we should wrap a CAST on the result.
 				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 				colExpr.VirtualExpr = expr
-				//log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", ds.schema.Columns[i].VirtualExpr.String())
 			}
 		}
 	}
