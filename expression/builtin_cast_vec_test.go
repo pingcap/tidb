@@ -34,6 +34,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 				fsp:          1,
 			}},
 		},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 }
 

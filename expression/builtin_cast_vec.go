@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"strconv"
 )
 
 func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -242,11 +243,52 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastIntAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		var str string
+		if buf.IsNull(i) {
+			result.AppendString("")
+			result.SetNull(i, true)
+			continue
+		}
+		if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+			str = strconv.FormatInt(i64s[i], 10)
+		} else {
+			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+		if err == nil {
+			var d bool
+			str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
+			if err != nil {
+				return err
+			}
+			if d {
+				result.AppendString("")
+				result.SetNull(i, true)
+			} else {
+				result.AppendString(str)
+			}
+		} else {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsIntSig) vectorized() bool {
