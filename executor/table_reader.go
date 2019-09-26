@@ -159,7 +159,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	}
 
 	// If e.schema contains virtual column, compute the virtual column and put them into the chunk
-	// TODO: move them to other place so that we don't need to computer every Next()
+	// TODO: move them to other place so that we don't need to compute every Next()
 	virColTypes := make([]*types.FieldType, 0)
 	virColDef := make([]*expression.Column, 0)
 	virColIndex := make([]int, 0)

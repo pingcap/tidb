@@ -560,32 +560,30 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		if ts, ok := p.tablePlan.(*PhysicalTableScan); ok {
-			var saveHandleColumn *model.ColumnInfo
-			if t.doubleReadNeedProj {
-				saveHandleColumn = ts.Columns[len(ts.Columns)-1]
-				ts.Columns = ts.Columns[:len(ts.Columns)-1]
-			}
-			for _, col := range ts.schema.Columns {
-				if col.VirtualExpr != nil {
-					baseCols := expression.ExtractColumns(col.VirtualExpr)
-					for _, baseCol := range baseCols {
-						if !p.schema.Contains(baseCol) {
-							p.schema.Columns = append(p.schema.Columns, baseCol)
-							for _, infoCol := range ts.Table.Columns {
-								if baseCol.OrigColName == infoCol.Name {
-									ts.Columns = append(ts.Columns, infoCol)
-									break
-								}
-							}
-						}
-					}
-				}
-			}
-			if saveHandleColumn != nil {
-				ts.Columns = append(ts.Columns, saveHandleColumn)
-			}
-		}
+		//if ts, ok := p.tablePlan.(*PhysicalTableScan); ok {
+		//	if t.doubleReadNeedProj {
+		//		ts.Columns = ts.Columns[:len(ts.Columns)-1]
+		//	}
+		//	for _, col := range ts.schema.Columns {
+		//		if col.VirtualExpr != nil {
+		//			baseCols := expression.ExtractColumns(col.VirtualExpr)
+		//			for _, baseCol := range baseCols {
+		//				if !p.schema.Contains(baseCol) {
+		//					p.schema.Columns = append(p.schema.Columns, baseCol)
+		//					for _, infoCol := range ts.Table.Columns {
+		//						if baseCol.OrigColName == infoCol.Name {
+		//							ts.Columns = append(ts.Columns, infoCol)
+		//							break
+		//						}
+		//					}
+		//				}
+		//			}
+		//		}
+		//	}
+		//	if t.doubleReadNeedProj {
+		//		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		//	}
+		//}
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
