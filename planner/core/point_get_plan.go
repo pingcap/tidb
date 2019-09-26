@@ -143,8 +143,8 @@ func (p *PointGetPlan) OutputNames() []*types.FieldName {
 	return p.outputNames
 }
 
-// BatchPointGetPlan represents a physical plan which all children are PointGet and
-// all of them reference the same table and use the same `unique key`
+// BatchPointGetPlan represents a physical plan which contains a bunch of
+// keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
 	baseSchemaProducer
 
@@ -261,7 +261,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	return nil
 }
 
-func getBatchPointGetPlan(
+func newBatchPointGetPlan(
 	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
 	tryHandle bool, fieldType *types.FieldType,
 	tbl *model.TableInfo, schema *expression.Schema,
@@ -311,6 +311,7 @@ func getBatchPointGetPlan(
 
 	// The columns in where clause should be covered by unique index
 	var matchIdxInfo *model.IndexInfo
+	permutations := make([]int, len(whereColNames))
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic {
 			continue
@@ -320,10 +321,11 @@ func getBatchPointGetPlan(
 		}
 		// TODO: not sure is there any function to reuse
 		matched := true
-		for _, col := range idxInfo.Columns {
+		for whereColIndex, innerCol := range whereColNames {
 			var found bool
-			for _, innerCol := range whereColNames {
+			for i, col := range idxInfo.Columns {
 				if innerCol == col.Name.L {
+					permutations[whereColIndex] = i
 					found = true
 					break
 				}
@@ -356,12 +358,13 @@ func getBatchPointGetPlan(
 			values = make([]types.Datum, len(x.Values))
 			valuesParams = make([]*driver.ParamMarkerExpr, len(x.Values))
 			for index, inner := range x.Values {
+				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
-					values[index] = innerX.Datum
+					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
-					values[index] = innerX.Datum
-					valuesParams[index] = innerX
+					values[permIndex] = innerX.Datum
+					valuesParams[permIndex] = innerX
 				default:
 					return nil
 				}
@@ -470,7 +473,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		return nil
 	}
 
-	return getBatchPointGetPlan(ctx, in, tryHandle, fieldType, tbl, schema, names, whereColNames)
+	return newBatchPointGetPlan(ctx, in, tryHandle, fieldType, tbl, schema, names, whereColNames)
 }
 
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
