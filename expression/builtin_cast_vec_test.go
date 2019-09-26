@@ -35,9 +35,6 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 			}},
 		},
 	},
-	ast.Bin: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
-	},
 }
 
 type dateTimeGenerWithFsp struct {
