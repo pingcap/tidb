@@ -676,14 +676,6 @@ func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinDayOfMonthSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinStrToDateDatetimeSig) vectorized() bool {
 	return false
 }
@@ -1241,5 +1233,43 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinTimestamp2ArgsSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if ds[i].IsZero() {
+			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
+			i64s[i] = 0
+			continue
+		}
+		i64s[i] = int64(ds[i].Time.Day())
+	}
+	return nil
+}
+
+func (b *builtinDayOfMonthSig) vectorized() bool {
 	return true
 }
