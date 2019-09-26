@@ -114,11 +114,11 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	RecordPlanInSlowLog  uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 // Security is the security section of the config.
@@ -353,15 +353,15 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		DisableErrorStack:  true,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
-		RecordPlanInSlowLog:  0,
+		Level:               "info",
+		Format:              "text",
+		File:                logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:       "tidb-slow.log",
+		SlowThreshold:       logutil.DefaultSlowThreshold,
+		ExpensiveThreshold:  10000,
+		DisableErrorStack:   true,
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog: 0,
 	},
 	Status: Status{
 		ReportStatus:    true,
