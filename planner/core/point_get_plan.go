@@ -38,6 +38,7 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
+	dbName           string
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
@@ -160,7 +161,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual := PhysicalTableDual{}
 				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
-				return tableDual.Init(ctx, &property.StatsInfo{})
+				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
 			if x.LockTp == ast.SelectLockForUpdate {
 				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
@@ -269,7 +270,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 
 	ua := PhysicalUnionAll{
 		IsPointGetUnion: true,
-	}.Init(ctx, children[0].statsInfo().Scale(float64(len(children))), chReqProps...)
+	}.Init(ctx, children[0].statsInfo().Scale(float64(len(children))), 0, chReqProps...)
 	ua.SetSchema(children[0].Schema())
 	ua.SetChildren(children...)
 	return ua
@@ -299,10 +300,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
-	dbName := tblName.Schema
-	if dbName.L == "" {
-		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	}
 	// Do not handle partitioned table.
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
@@ -331,7 +328,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl, names)
+		dbName := tblName.Schema.L
+		if dbName == "" {
+			dbName = ctx.GetSessionVars().CurrentDB
+		}
+		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
@@ -371,7 +372,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl, names)
+		dbName := tblName.Schema.L
+		if dbName == "" {
+			dbName = ctx.GetSessionVars().CurrentDB
+		}
+		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
@@ -380,9 +385,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:    newBasePlan(ctx, "Point_Get"),
+		basePlan:    newBasePlan(ctx, "Point_Get", 0),
+		dbName:      dbName,
 		schema:      schema,
 		TblInfo:     tbl,
 		outputNames: names,
@@ -396,9 +402,8 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	if pm == nil {
 		return nil
 	}
-	dbName := ctx.GetSessionVars().CurrentDB
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, fastPlan.TblInfo.Name.L, "", checkType) {
+		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, fastPlan.dbName, fastPlan.TblInfo.Name.L, "", checkType) {
 			return errors.New("privilege check fail")
 		}
 	}
@@ -612,7 +617,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if fastSelect.IsTableDual {
 		return PhysicalTableDual{
 			names: fastSelect.outputNames,
-		}.Init(ctx, &property.StatsInfo{})
+		}.Init(ctx, &property.StatsInfo{}, 0)
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true
@@ -691,7 +696,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if fastSelect.IsTableDual {
 		return PhysicalTableDual{
 			names: fastSelect.outputNames,
-		}.Init(ctx, &property.StatsInfo{})
+		}.Init(ctx, &property.StatsInfo{}, 0)
 	}
 	if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		fastSelect.Lock = true

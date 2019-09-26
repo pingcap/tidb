@@ -254,8 +254,8 @@ type LogicalAggregation struct {
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
-	// preferAggType stores preferred aggregation algorithm type.
-	preferAggType uint
+	// aggHints stores aggregation hint information.
+	aggHints aggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -423,9 +423,9 @@ func getTablePath(paths []*accessPath) *accessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx)
+	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
-	tg := TableGather{Source: ds}.Init(ds.ctx)
+	tg := TableGather{Source: ds}.Init(ds.ctx, ds.blockOffset)
 	tg.SetSchema(ds.Schema())
 	tg.SetChildren(ts)
 	return tg
@@ -445,7 +445,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 
 // deriveTablePathStats will fulfill the information that the accessPath need.
 // And it will check whether the primary key is covered only by point query.
-func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.Expression) (bool, error) {
+// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
@@ -513,7 +514,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.countAfterAccess < ds.stats.RowCount {
+	if path.countAfterAccess < ds.stats.RowCount && !isIm {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	// Check whether the primary key is covered by point query.
@@ -531,12 +532,12 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
 // conds is the conditions used to generate the DetachRangeResult for path.
-func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.Expression) (bool, error) {
+// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.schema.Columns, path.index)
-	path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
@@ -584,7 +585,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.countAfterAccess < ds.stats.RowCount {
+	if path.countAfterAccess < ds.stats.RowCount && !isIm {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
@@ -593,7 +594,11 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
+		if isIm {
+			path.countAfterIndex = path.countAfterAccess * selectivity
+		} else {
+			path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
+		}
 	}
 	// Check whether there's only point query.
 	noIntervalRanges := true
@@ -838,7 +843,8 @@ func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expr
 	return resultCorCols[:length]
 }
 
-type baseShowContent struct {
+// ShowContents stores the contents for the `SHOW` statement.
+type ShowContents struct {
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
 	Table       *ast.TableName  // Used for showing columns.
@@ -856,5 +862,5 @@ type baseShowContent struct {
 // LogicalShow represents a show plan.
 type LogicalShow struct {
 	logicalSchemaProducer
-	baseShowContent
+	ShowContents
 }

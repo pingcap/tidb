@@ -1845,8 +1845,9 @@ func (s *testSuite4) TestLoadData(c *C) {
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
-	err = ld.CheckAndInsertOneBatch(context.Background())
+	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	c.Assert(err, IsNil)
+	ld.SetMaxRowsInBatch(20000)
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
@@ -2096,8 +2097,9 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	c.Assert(err, IsNil)
-	err = ld.CheckAndInsertOneBatch(context.Background())
+	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	c.Assert(err, IsNil)
+	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
 	err = ctx.StmtCommit()
 	c.Assert(err, IsNil)
@@ -2449,11 +2451,17 @@ func (s *testSuite4) TestRebaseIfNeeded(c *C) {
 func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists t;create table t (a int primary key, b int);`)
+	tk.MustExec(`insert into t values (1,2),(2,2)`)
+	_, err := tk.Exec("update t set a=a+1 where b=2")
+	c.Assert(err, NotNil)
+
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
 	tk.MustExec(`insert t values (1);`)
 	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`begin;`)
-	_, err := tk.Exec(`insert t values (1);`)
+	_, err = tk.Exec(`insert t values (1);`)
 	c.Assert(err, NotNil)
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)

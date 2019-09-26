@@ -16,12 +16,12 @@ package executor
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
@@ -119,8 +119,8 @@ func (e *HashJoinExec) Close() error {
 		}
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
+		terror.Call(e.rowContainer.Close)
 	}
-	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return err
@@ -133,7 +133,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.closeCh = make(chan struct{})
@@ -213,7 +213,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	return false, nil
 }
 
-var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
+var innerResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.innerResult")
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
@@ -334,8 +334,6 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 	hCtx := &hashContext{
 		allTypes:  retTypes(e.outerExec),
 		keyColIdx: outerKeyColIdx,
-		h:         fnv.New64(),
-		buf:       make([]byte, 1),
 	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
@@ -378,7 +376,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	iter := chunk.NewIterator4Slice(innerRows)
 	hasMatch, hasNull := false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatch(outerRow, iter, joinResult.chk)
+		matched, isNull, err := e.joiners[workerID].tryToMatchInners(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -506,13 +504,14 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	hCtx := &hashContext{
 		allTypes:  allTypes,
 		keyColIdx: innerKeyColIdx,
-		h:         fnv.New64(),
-		buf:       make([]byte, 1),
 	}
-	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
-	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := e.rowContainer.ActionSpill()
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+	}
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
 			return nil
@@ -673,7 +672,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.innerIter.Begin()
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req)
+		matched, isNull, err := e.joiner.tryToMatchInners(*e.outerRow, e.innerIter, req)
 		e.hasMatch = e.hasMatch || matched
 		e.hasNull = e.hasNull || isNull
 

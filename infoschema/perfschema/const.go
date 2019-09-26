@@ -39,6 +39,7 @@ var perfSchemaTables = []string{
 	tableStagesCurrent,
 	tableStagesHistory,
 	tableStagesHistoryLong,
+	tableEventsStatementsSummaryByDigest,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -374,3 +375,19 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 	"WORK_ESTIMATED	BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_ID		BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
+
+// tableEventsStatementsSummaryByDigest contains the column name definitions for table
+// events_statements_summary_by_digest, same as MySQL.
+const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
+	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
+	"DIGEST VARCHAR(64) DEFAULT NULL," +
+	"DIGEST_TEXT LONGTEXT DEFAULT NULL," +
+	"EXEC_COUNT BIGINT(20) UNSIGNED NOT NULL," +
+	"SUM_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"MIN_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"SUM_ROWS_AFFECTED BIGINT(20) UNSIGNED NOT NULL," +
+	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
+	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
+	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"

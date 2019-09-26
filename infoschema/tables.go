@@ -590,8 +590,8 @@ var tableTiKVStoreStatusCols = []columnInfo{
 	{"CAPACITY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LEADER_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"LEADER_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"LEADER_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_WEIGHT", mysql.TypeDouble, 22, 0, nil, nil},
+	{"LEADER_SCORE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"LEADER_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_WEIGHT", mysql.TypeDouble, 22, 0, nil, nil},
@@ -818,8 +818,8 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[6].SetString(storeStat.Status.Capacity)
 		row[7].SetString(storeStat.Status.Available)
 		row[8].SetInt64(storeStat.Status.LeaderCount)
-		row[9].SetInt64(storeStat.Status.LeaderWeight)
-		row[10].SetInt64(storeStat.Status.LeaderScore)
+		row[9].SetFloat64(storeStat.Status.LeaderWeight)
+		row[10].SetFloat64(storeStat.Status.LeaderScore)
 		row[11].SetInt64(storeStat.Status.LeaderSize)
 		row[12].SetInt64(storeStat.Status.RegionCount)
 		row[13].SetFloat64(storeStat.Status.RegionWeight)

@@ -15,6 +15,7 @@ package autoid_test
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -133,6 +134,14 @@ func (*testSuite) TestT(c *C) {
 	id, err = alloc.Alloc(3)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
+
+	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
+	err = alloc.Rebase(3, int64(math.MaxInt64-1), true)
+	c.Assert(err, IsNil)
+	_, err = alloc.Alloc(3)
+	c.Assert(alloc, NotNil)
+	err = alloc.Rebase(3, int64(math.MaxInt64), true)
+	c.Assert(err, IsNil)
 }
 
 func (*testSuite) TestUnsignedAutoid(c *C) {
@@ -229,6 +238,17 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	id, err = alloc.Alloc(3)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
+
+	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
+	var n uint64 = math.MaxUint64 - 1
+	un := int64(n)
+	err = alloc.Rebase(3, un, true)
+	c.Assert(err, IsNil)
+	_, err = alloc.Alloc(3)
+	c.Assert(err, NotNil)
+	un = int64(n + 1)
+	err = alloc.Rebase(3, un, true)
+	c.Assert(err, IsNil)
 }
 
 // TestConcurrentAlloc is used for the test that

@@ -10,8 +10,7 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
-- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
-- Community [**Slack Channel**](https://pingcap.com/tidbslack/)
+- [**Slack Channel**](https://pingcap.com/tidbslack/)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
@@ -61,6 +60,11 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 ## Quick start
 
 Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
+
+## Getting Help
+
+- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
+- [**User Group (Chinese)**](https://asktug.com)
 
 ## Documentation
 

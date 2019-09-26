@@ -34,10 +34,16 @@ import (
 type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
+
 	// Get the ID.
 	ID() int
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -48,6 +54,8 @@ type Plan interface {
 
 	// OutputNames returns the outputting names of each column.
 	OutputNames() []*types.FieldName
+
+	SelectBlockOffset() int
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -56,7 +64,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.Items {
 		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
@@ -133,9 +141,6 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
-	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
-
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
@@ -207,27 +212,28 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
+func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
 	return basePlan{
-		tp:  tp,
-		id:  id,
-		ctx: ctx,
+		tp:          tp,
+		id:          id,
+		ctx:         ctx,
+		blockOffset: offset,
 	}
 }
 
-func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan) baseLogicalPlan {
+func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:  make(map[string]task),
-		basePlan: newBasePlan(ctx, tp),
+		basePlan: newBasePlan(ctx, tp, offset),
 		self:     self,
 	}
 }
 
-func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan) basePhysicalPlan {
+func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
-		basePlan: newBasePlan(ctx, tp),
+		basePlan: newBasePlan(ctx, tp, offset),
 		self:     self,
 	}
 }
@@ -251,10 +257,11 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) erro
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	tp    string
-	id    int
-	ctx   sessionctx.Context
-	stats *property.StatsInfo
+	tp          string
+	id          int
+	ctx         sessionctx.Context
+	stats       *property.StatsInfo
+	blockOffset int
 }
 
 // OutputNames returns the outputting names of each column.
@@ -279,6 +286,14 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) ExplainInfo() string {
+	return "N/A"
+}
+
+func (p *basePlan) SelectBlockOffset() int {
+	return p.blockOffset
 }
 
 // Schema implements Plan Schema interface.

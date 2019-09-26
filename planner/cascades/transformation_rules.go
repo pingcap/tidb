@@ -40,13 +40,7 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-// GetTransformationRules gets the all the candidate transformation rules based
-// on the logical plan node.
-func GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return transformationMap[memo.GetOperand(node)]
-}
-
-var transformationMap = map[memo.Operand][]Transformation{
+var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
 		&PushSelDownTableScan{},
 		&PushSelDownTableGather{},
@@ -100,7 +94,7 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		Source:      ts.Source,
 		Handle:      ts.Handle,
 		AccessConds: ts.AccessConds.Shallow(),
-	}.Init(ts.SCtx())
+	}.Init(ts.SCtx(), ts.SelectBlockOffset())
 	newTblScan.AccessConds = append(newTblScan.AccessConds, accesses...)
 	tblScanExpr := memo.NewGroupExpr(newTblScan)
 	if len(remained) == 0 {
@@ -109,7 +103,7 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	}
 	schema := old.GetExpr().Group.Prop.Schema
 	tblScanGroup := memo.NewGroupWithSchema(tblScanExpr, schema)
-	newSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx())
+	newSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.SelectBlockOffset())
 	selExpr := memo.NewGroupExpr(newSel)
 	selExpr.Children = append(selExpr.Children, tblScanGroup)
 	// `sel -> ts` is transformed to `newSel ->newTS`.
@@ -153,7 +147,7 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
-	pushedSel := plannercore.LogicalSelection{Conditions: pushed}.Init(sctx)
+	pushedSel := plannercore.LogicalSelection{Conditions: pushed}.Init(sctx, sel.SelectBlockOffset())
 	pushedSelExpr := memo.NewGroupExpr(pushedSel)
 	pushedSelExpr.Children = append(pushedSelExpr.Children, childGroup)
 	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema)
@@ -169,7 +163,7 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 		return []*memo.GroupExpr{tblGatherExpr}, true, false, nil
 	}
 	tblGatherGroup := memo.NewGroupWithSchema(tblGatherExpr, pushedSelGroup.Prop.Schema)
-	remainedSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx())
+	remainedSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.SelectBlockOffset())
 	remainedSelExpr := memo.NewGroupExpr(remainedSel)
 	remainedSelExpr.Children = append(remainedSelExpr.Children, tblGatherGroup)
 	// `oldSel -> oldTg -> any` is transformed to `remainedSel -> newTg -> pushedSel -> any`.

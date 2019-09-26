@@ -202,12 +202,12 @@ type SessionVars struct {
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]*ast.Prepared
+	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams []types.Datum
+	PreparedParams PreparedParams
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -287,9 +287,6 @@ type SessionVars struct {
 	// This variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
-	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
-	AllowInSubqToJoinAndAgg bool
-
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -341,9 +338,6 @@ type SessionVars struct {
 
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
-
-	// EnableIndexMerge enables the generation of IndexMergePath.
-	EnableIndexMerge bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -403,9 +397,6 @@ type SessionVars struct {
 	// use noop funcs or not
 	EnableNoopFuncs bool
 
-	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead kv.ReplicaReadType
-
 	// StartTime is the start time of the last query.
 	StartTime time.Time
 
@@ -416,10 +407,31 @@ type SessionVars struct {
 	DurationCompile time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt string
+	PrevStmt fmt.Stringer
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
+
+	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
+
+	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
+	allowInSubqToJoinAndAgg bool
+
+	// EnableIndexMerge enables the generation of IndexMergePath.
+	enableIndexMerge bool
+
+	// replicaRead is used for reading data from replicas, only follower is supported at this time.
+	replicaRead kv.ReplicaReadType
+}
+
+// PreparedParams contains the parameters of the current prepared statement when executing it.
+type PreparedParams []types.Datum
+
+func (pps PreparedParams) String() string {
+	if len(pps) == 0 {
+		return ""
+	}
+	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
 // ConnectionInfo present connection used by audit.
@@ -447,7 +459,7 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]string),
 		systems:                     make(map[string]string),
-		PreparedStmts:               make(map[uint32]*ast.Prepared),
+		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
 		TxnCtx:                      &TransactionContext{},
@@ -462,7 +474,7 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
-		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
@@ -473,9 +485,9 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		EnableIndexMerge:            false,
+		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		ReplicaRead:                 kv.ReplicaReadLeader,
+		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 	}
 	vars.Concurrency = Concurrency{
@@ -514,6 +526,45 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
+}
+
+// GetAllowInSubqToJoinAndAgg get AllowInSubqToJoinAndAgg from sql hints and SessionVars.allowInSubqToJoinAndAgg.
+func (s *SessionVars) GetAllowInSubqToJoinAndAgg() bool {
+	if s.StmtCtx.HasAllowInSubqToJoinAndAggHint {
+		return s.StmtCtx.AllowInSubqToJoinAndAgg
+	}
+	return s.allowInSubqToJoinAndAgg
+}
+
+// SetAllowInSubqToJoinAndAgg set SessionVars.allowInSubqToJoinAndAgg.
+func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
+	s.allowInSubqToJoinAndAgg = val
+}
+
+// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+func (s *SessionVars) GetEnableIndexMerge() bool {
+	if s.StmtCtx.HasEnableIndexMergeHint {
+		return s.StmtCtx.EnableIndexMerge
+	}
+	return s.enableIndexMerge
+}
+
+// SetEnableIndexMerge set SessionVars.enableIndexMerge.
+func (s *SessionVars) SetEnableIndexMerge(val bool) {
+	s.enableIndexMerge = val
+}
+
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	if s.StmtCtx.HasReplicaReadHint {
+		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
+	}
+	return s.replicaRead
+}
+
+// SetReplicaRead set SessionVars.replicaRead.
+func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
+	s.replicaRead = val
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -601,26 +652,6 @@ func (s *SessionVars) Location() *time.Location {
 	return loc
 }
 
-// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
-func (s *SessionVars) GetExecuteArgumentsInfo() string {
-	if len(s.PreparedParams) == 0 {
-		return ""
-	}
-	args := make([]string, 0, len(s.PreparedParams))
-	for _, v := range s.PreparedParams {
-		if v.IsNull() {
-			args = append(args, "<nil>")
-		} else {
-			str, err := v.ToString()
-			if err != nil {
-				terror.Log(err)
-			}
-			args = append(args, str)
-		}
-	}
-	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
-}
-
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	val, ok := s.systems[name]
@@ -642,7 +673,7 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
-func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
 		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
 		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
@@ -742,7 +773,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptWriteRowID:
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
-		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
+		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
@@ -852,14 +883,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
-		s.EnableIndexMerge = TiDBOptOn(val)
+		s.SetEnableIndexMerge(TiDBOptOn(val))
 	case TiDBEnableNoopFuncs:
 		s.EnableNoopFuncs = TiDBOptOn(val)
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
-			s.ReplicaRead = kv.ReplicaReadFollower
+			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.ReplicaRead = kv.ReplicaReadLeader
+			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
@@ -961,6 +992,8 @@ type Concurrency struct {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+
+	// TODO: remove them below sometime, it should have only one Quota(MemQuotaQuery).
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
 	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
@@ -1019,6 +1052,10 @@ const (
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogParseTimeStr is the parse sql time.
+	SlowLogParseTimeStr = "Parse_time"
+	// SlowLogCompileTimeStr is the compile plan time.
+	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1051,6 +1088,10 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
+	SlowLogPrepared = "Prepared"
+	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
+	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
@@ -1062,19 +1103,21 @@ const (
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS       uint64
-	SQL         string
-	Digest      string
-	TimeTotal   time.Duration
-	TimeParse   time.Duration
-	TimeCompile time.Duration
-	IndexNames  string
-	StatsInfos  map[string]uint64
-	CopTasks    *stmtctx.CopTasksDetails
-	ExecDetail  execdetails.ExecDetails
-	MemMax      int64
-	Succ        bool
-	PrevStmt    string
+	TxnTS          uint64
+	SQL            string
+	Digest         string
+	TimeTotal      time.Duration
+	TimeParse      time.Duration
+	TimeCompile    time.Duration
+	IndexNames     string
+	StatsInfos     map[string]uint64
+	CopTasks       *stmtctx.CopTasksDetails
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	Succ           bool
+	Prepared       bool
+	HasMoreResults bool
+	PrevStmt       string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1108,6 +1151,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
@@ -1146,21 +1191,35 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if logItems.CopTasks != nil {
 		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
-		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-			SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
-			SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
-			SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds(),
-			SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
-			SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
-			SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
-			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+		if logItems.CopTasks.NumCopTasks > 0 {
+			if logItems.CopTasks.NumCopTasks == 1 {
+				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
+					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
+					SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
+				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
+					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
+					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+
+			} else {
+				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
+					SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
+					SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds(),
+					SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
+				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
+					SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
+					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
+					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+			}
+		}
 	}
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
 
+	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
+	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 
 	if logItems.PrevStmt != "" {

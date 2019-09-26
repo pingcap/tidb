@@ -1663,6 +1663,35 @@ func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
 	}
 }
 
+func (s *testTimeSuite) TestFromGoTime(c *C) {
+	// Test rounding of nanosecond to millisecond.
+	cases := []struct {
+		input string
+		yy    int
+		mm    int
+		dd    int
+		hh    int
+		min   int
+		sec   int
+		micro int
+	}{
+		{"2006-01-02T15:04:05.999999999Z", 2006, 1, 2, 15, 4, 6, 0},
+		{"2006-01-02T15:04:05.999999000Z", 2006, 1, 2, 15, 4, 5, 999999},
+		{"2006-01-02T15:04:05.999999499Z", 2006, 1, 2, 15, 4, 5, 999999},
+		{"2006-01-02T15:04:05.999999500Z", 2006, 1, 2, 15, 4, 6, 0},
+		{"2006-01-02T15:04:05.000000501Z", 2006, 1, 2, 15, 4, 5, 1},
+	}
+
+	for ith, ca := range cases {
+		t, err := time.Parse(time.RFC3339Nano, ca.input)
+		c.Assert(err, IsNil)
+
+		t1 := types.FromGoTime(t)
+		c.Assert(t1, Equals, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), Commentf("idx %d", ith))
+	}
+
+}
+
 func BenchmarkFormat(b *testing.B) {
 	var t1 types.Time
 	t1.Type = mysql.TypeTimestamp

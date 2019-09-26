@@ -95,11 +95,11 @@ func (s *testMemoSuite) TestGroupExists(c *C) {
 }
 
 func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
-	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
-	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
-	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
-	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
-	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
 
 	g := NewGroupWithSchema(expr0, nil)
 	g.Insert(expr1)
@@ -123,7 +123,7 @@ func (impl *fakeImpl) GetCost() float64                               { return 0
 func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan              { return impl.plan }
 
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
-	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)), nil)
+	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), nil)
 	emptyProp := &property.PhysicalProperty{}
 	orderProp := &property.PhysicalProperty{Items: []property.Item{{Col: &expression.Column{}}}}
 

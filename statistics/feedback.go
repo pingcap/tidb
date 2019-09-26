@@ -313,15 +313,21 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		if skip {
 			continue
 		}
-		idx, _ := h.Bounds.LowerBound(0, fb.Lower)
+		idx := h.Bounds.UpperBound(0, fb.Lower)
 		bktIdx := 0
 		// The last bucket also stores the feedback that falls outside the upper bound.
-		if idx >= h.Bounds.NumRows()-2 {
+		if idx >= h.Bounds.NumRows()-1 {
 			bktIdx = h.Len() - 1
+		} else if h.Len() == 1 {
+			bktIdx = 0
 		} else {
-			bktIdx = idx / 2
+			if idx == 0 {
+				bktIdx = 0
+			} else {
+				bktIdx = (idx - 1) / 2
+			}
 			// Make sure that this feedback lies within the bucket.
-			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, fb.Upper) < 0 {
+			if chunk.Compare(h.Bounds.GetRow(2*(bktIdx+1)), 0, fb.Upper) < 0 {
 				continue
 			}
 		}

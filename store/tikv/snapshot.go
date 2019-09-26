@@ -76,6 +76,12 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *
 	}
 }
 
+func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
+	// Invalidate cache if the snapshotTS change!
+	s.version.Ver = ts
+	s.cached = nil
+}
+
 func (s *tikvSnapshot) SetPriority(priority int) {
 	s.priority = pb.CommandPri(priority)
 }

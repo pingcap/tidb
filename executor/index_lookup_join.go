@@ -250,7 +250,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req)
+			matched, isNull, err := e.joiner.tryToMatchInners(outerRow, e.innerIter, req)
 			if err != nil {
 				return err
 			}
