@@ -15,13 +15,13 @@ package cascades
 
 import (
 	"context"
-	"github.com/pingcap/tidb/planner/memo"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -44,7 +44,6 @@ func (s *testStringerSuite) SetUpSuite(c *C) {
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "stringer_suite")
 	c.Assert(err, IsNil)
-
 }
 
 func (s *testStringerSuite) TearDownSuite(c *C) {
