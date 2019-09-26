@@ -562,8 +562,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		if ts, ok := p.tablePlan.(*PhysicalTableScan); ok {
 			var saveHandleColumn *model.ColumnInfo
-			if p.ExtraHandleCol != nil && t.doubleReadNeedProj {
-				//if p.ExtraHandleCol != nil {
+			if t.doubleReadNeedProj {
 				saveHandleColumn = ts.Columns[len(ts.Columns)-1]
 				ts.Columns = ts.Columns[:len(ts.Columns)-1]
 			}
@@ -636,7 +635,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		newTask.p = p
 	}
 
-	// TODO: add dependent columns to table scan if necessary.
+	// add dependent columns to table scan if necessary.
 	if tr, ok := newTask.p.(*PhysicalTableReader); ok {
 		ts := tr.TablePlans[0].(*PhysicalTableScan)
 		for _, col := range ts.schema.Columns {

@@ -198,6 +198,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 
+	// We can't push expression containing virtual column to TiKV
 	if column.VirtualExpr != nil {
 		return nil
 	}

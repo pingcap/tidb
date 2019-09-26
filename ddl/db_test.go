@@ -2809,6 +2809,8 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
+
+	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
 	//s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
 	//defer s.mustExec(c, "drop table t;")
 	//for i := 0; i < 50; i++ {

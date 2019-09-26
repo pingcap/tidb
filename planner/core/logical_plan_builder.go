@@ -2440,18 +2440,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
-	// If this table contains any virtual generated columns, we need a
-	// "Projection" to calculate these columns.
-	//proj, err := b.projectVirtualColumns(ctx, ds, columns)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//
-	//if proj != nil {
-	//	proj.SetChildren(result)
-	//	result = proj
-	//}
-
 	return result, nil
 }
 
