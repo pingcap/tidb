@@ -402,9 +402,6 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		ps := trs.preparedStmt
 		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
 			trs.columns = colInfos
-			if trs.columns != nil {
-				return trs.columns
-			}
 		}
 	}
 	if trs.columns == nil {
@@ -412,11 +409,11 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		for _, v := range fields {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
 		}
-	}
-	if trs.preparedStmt != nil {
-		// if ColumnInfo struct has allocated object,
-		// here maybe we need deep copy ColumnInfo to do caching
-		trs.preparedStmt.ColumnInfos = trs.columns
+		if trs.preparedStmt != nil {
+			// if ColumnInfo struct has allocated object,
+			// here maybe we need deep copy ColumnInfo to do caching
+			trs.preparedStmt.ColumnInfos = trs.columns
+		}
 	}
 	return trs.columns
 }
