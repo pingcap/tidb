@@ -35,6 +35,7 @@ type BlockHintProcessor struct {
 	selectStmtOffset int
 }
 
+// MaxSelectStmtOffset returns the current stmt offset.
 func (p *BlockHintProcessor) MaxSelectStmtOffset() int {
 	return p.selectStmtOffset
 }
