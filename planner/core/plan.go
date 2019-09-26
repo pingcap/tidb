@@ -279,17 +279,13 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 
 // ExplainInfo implements Plan interface.
 func (p *basePlan) ExplainInfo() string {
-	return ""
+	return "N/A"
 }
 
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
-}
-
-func (p *basePlan) ExplainInfo() string {
-	return "N/A"
 }
 
 func (p *basePlan) SelectBlockOffset() int {

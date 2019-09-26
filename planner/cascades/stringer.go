@@ -61,8 +61,29 @@ func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]
 //     Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
 //     Projection_15 input:Group#3 Column#1, Column#2
 func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
+	schema := g.Prop.Schema
+	colStrs := make([]string, 0, len(schema.Columns))
+	for _, col := range schema.Columns {
+		colStrs = append(colStrs, col.String())
+	}
+
+	groupLine := bytes.NewBufferString("")
+	fmt.Fprintf(groupLine, "Group#%d Schema:[%s]", idMap[g], strings.Join(colStrs, ","))
+
+	if len(g.Prop.Schema.Keys) > 0 {
+		ukStrs := make([]string, 0, len(schema.Keys))
+		for _, key := range schema.Keys {
+			ukColStrs := make([]string, 0, len(key))
+			for _, col := range key {
+				ukColStrs = append(ukColStrs, col.String())
+			}
+			ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
+		}
+		fmt.Fprintf(groupLine, ", UniqueKey:[%s]", strings.Join(ukStrs, ","))
+	}
+
 	result := make([]string, 0, g.Equivalents.Len()+1)
-	result = append(result, fmt.Sprintf("Group#%d %s", idMap[g], g.Prop.Schema.String()))
+	result = append(result, groupLine.String())
 	for item := g.Equivalents.Front(); item != nil; item = item.Next() {
 		expr := item.Value.(*memo.GroupExpr)
 		result = append(result, "    "+groupExprToString(expr, idMap))

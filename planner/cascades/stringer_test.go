@@ -15,6 +15,7 @@ package cascades
 
 import (
 	"context"
+	"github.com/pingcap/tidb/planner/memo"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -29,18 +30,21 @@ var _ = Suite(&testStringerSuite{})
 
 type testStringerSuite struct {
 	*parser.Parser
-	is       infoschema.InfoSchema
-	sctx     sessionctx.Context
-	testData testutil.TestData
+	is        infoschema.InfoSchema
+	sctx      sessionctx.Context
+	testData  testutil.TestData
+	optimizer *Optimizer
 }
 
 func (s *testStringerSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
+	s.optimizer = NewOptimizer()
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "stringer_suite")
 	c.Assert(err, IsNil)
+
 }
 
 func (s *testStringerSuite) TearDownSuite(c *C) {
@@ -48,6 +52,18 @@ func (s *testStringerSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStringerSuite) TestGroupStringer(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandSelection: {
+			&PushSelDownTableScan{},
+			&PushSelDownTableGather{},
+		},
+		memo.OperandDataSource: {
+			&EnumeratePaths{},
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
 	var input []string
 	var output []struct {
 		SQL    string
@@ -65,8 +81,7 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		err = logic.PruneColumns(logic.Schema().Columns)
 		c.Assert(err, IsNil)
 		group := convert2Group(logic)
-		// TODO: restrict the used transformation rules, only need a few rules like 'EnumeratePaths' and 'PushSelDownxxx' here.
-		err = onPhaseExploration(s.sctx, group)
+		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
