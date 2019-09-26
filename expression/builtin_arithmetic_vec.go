@@ -34,6 +34,14 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 	return errors.Errorf("not implemented")
 }
 
+func (b *builtinArithmeticModIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinArithmeticMinusRealSig) vectorized() bool {
 	return false
 }
