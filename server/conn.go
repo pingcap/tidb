@@ -1312,49 +1312,17 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return cc.flush()
 }
 
-func (cc *clientConn) writeColumnInfo(rs ResultSet, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
 	var err error
-	ps := rs.PrepareStmt()
-	// using cached column info bytes for prepare statements
-	// rs.Columns() is an expensive call, excluded in this path
-	if ps != nil && ps.ColumnsInfoBytes != nil {
-		return cc.writeColumnInfoByBytes(ps.ColumnsInfoBytes, serverStatus)
-	}
 	data := cc.alloc.AllocWithLen(4, 1024)
-	// send length packet
-	columns := rs.Columns()
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err = cc.writePacket(data); err != nil {
 		return err
 	}
-	// send columns info packets
 	for _, v := range columns {
 		data = data[0:4]
 		data = v.Dump(data)
-		if ps != nil {
-			destBytes := make([]byte, len(data))
-			copy(destBytes, data)
-			ps.ColumnsInfoBytes = append(ps.ColumnsInfoBytes, destBytes)
-		}
 		if err = cc.writePacket(data); err != nil {
-			if ps != nil {
-				ps.ColumnsInfoBytes = nil
-			}
-			return err
-		}
-	}
-	return cc.writeEOF(serverStatus)
-}
-
-func (cc *clientConn) writeColumnInfoByBytes(columnsInfoBytes [][]byte, serverStatus uint16) error {
-	var err error
-	data := cc.alloc.AllocWithLen(4, 16)
-	data = dumpLengthEncodedInt(data, uint64(len(columnsInfoBytes)))
-	if err = cc.writePacket(data); err != nil {
-		return err
-	}
-	for _, content := range columnsInfoBytes {
-		if err = cc.writePacket(content); err != nil {
 			return err
 		}
 	}
@@ -1368,7 +1336,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
-	var columnInfo []*ColumnInfo
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
@@ -1378,14 +1345,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
-			err = cc.writeColumnInfo(rs, serverStatus)
+			err = cc.writeColumnInfo(rs.Columns(), serverStatus)
 			if err != nil {
 				return err
 			}
 			gotColumnInfo = true
-		}
-		if columnInfo == nil {
-			columnInfo = rs.Columns()
 		}
 		rowCount := req.NumRows()
 		if rowCount == 0 {
@@ -1394,9 +1358,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, columnInfo, req.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, columnInfo, req.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
 			if err != nil {
 				return err
@@ -1456,10 +1420,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 
 	data := cc.alloc.AllocWithLen(4, 1024)
 	var err error
-	columnInfo := rs.Columns()
 	for _, row := range curRows {
 		data = data[0:4]
-		data, err = dumpBinaryRow(data, columnInfo, row)
+		data, err = dumpBinaryRow(data, rs.Columns(), row)
 		if err != nil {
 			return err
 		}

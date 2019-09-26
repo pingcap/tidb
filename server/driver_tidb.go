@@ -397,10 +397,14 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns != nil {
 		return trs.columns
 	}
+	// for prepare statement, try to get cached columnInfo array
 	if trs.preparedStmt != nil {
 		ps := trs.preparedStmt
 		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
 			trs.columns = colInfos
+			if trs.columns != nil {
+				return trs.columns
+			}
 		}
 	}
 	if trs.columns == nil {
@@ -410,13 +414,11 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		}
 	}
 	if trs.preparedStmt != nil {
+		// if ColumnInfo struct has allocated object,
+		// here maybe we need deep copy ColumnInfo to do caching
 		trs.preparedStmt.ColumnInfos = trs.columns
 	}
 	return trs.columns
-}
-
-func (trs *tidbResultSet) PrepareStmt() *core.CachedPrepareStmt {
-	return trs.preparedStmt
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {

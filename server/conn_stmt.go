@@ -194,7 +194,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
 		stmt.StoreResultSet(rs)
-		err = cc.writeColumnInfo(rs, mysql.ServerStatusCursorExists)
+		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
 			return err
 		}
