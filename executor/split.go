@@ -43,14 +43,14 @@ import (
 type SplitIndexRegionExec struct {
 	baseExecutor
 
-	tableInfo    *model.TableInfo
+	tableInfo      *model.TableInfo
 	partitionNames []model.CIStr
-	indexInfo    *model.IndexInfo
-	lower        []types.Datum
-	upper        []types.Datum
-	num          int
-	valueLists   [][]types.Datum
-	splitIdxKeys [][]byte
+	indexInfo      *model.IndexInfo
+	lower          []types.Datum
+	upper          []types.Datum
+	num            int
+	valueLists     [][]types.Datum
+	splitIdxKeys   [][]byte
 
 	done bool
 	splitRegionResult
@@ -119,27 +119,6 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	// Split index regions by user specified value lists.
 	if len(e.valueLists) > 0 {
 		return e.getSplitIdxKeysFromValueList()
-	}
-
-	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
-	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
-	lowerIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.lower, math.MinInt64, nil)
-	if err != nil {
-		return nil, err
-	}
-	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
-	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MinInt64, nil)
-	if err != nil {
-		return nil, err
-	}
-	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
-		lowerStr, err1 := datumSliceToString(e.lower)
-		upperStr, err2 := datumSliceToString(e.upper)
-		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
-		}
-		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
 	}
 
 	return e.getSplitIdxKeysFromBound()
@@ -258,6 +237,14 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 		return nil, err
 	}
 
+	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
+		lowerStr, err1 := datumSliceToString(e.lower)
+		upperStr, err2 := datumSliceToString(e.upper)
+		if err1 != nil || err2 != nil {
+			return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
+		}
+		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
+	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
 
@@ -337,13 +324,13 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 type SplitTableRegionExec struct {
 	baseExecutor
 
-	tableInfo  *model.TableInfo
+	tableInfo      *model.TableInfo
 	partitionNames []model.CIStr
-	lower      types.Datum
-	upper      types.Datum
-	num        int
-	valueLists [][]types.Datum
-	splitKeys  [][]byte
+	lower          types.Datum
+	upper          types.Datum
+	num            int
+	valueLists     [][]types.Datum
+	splitKeys      [][]byte
 
 	done bool
 	splitRegionResult
@@ -453,43 +440,14 @@ func isCtxDone(ctx context.Context) bool {
 	}
 }
 
-var minRegionStepValue = uint64(1000)
+var minRegionStepValue = int64(1000)
 
 func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 	if len(e.valueLists) > 0 {
 		return e.getSplitTableKeysFromValueList()
 	}
 
-	isUnsigned := false
-	if e.tableInfo.PKIsHandle {
-		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
-		}
-	}
-	var step uint64
-	var lowerValue int64
-	if isUnsigned {
-		lowerRecordID := e.lower.GetUint64()
-		upperRecordID := e.upper.GetUint64()
-		if upperRecordID <= lowerRecordID {
-			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
-		}
-		step = (upperRecordID - lowerRecordID) / uint64(e.num)
-		lowerValue = int64(lowerRecordID)
-	} else {
-		lowerRecordID := e.lower.GetInt64()
-		upperRecordID := e.upper.GetInt64()
-		if upperRecordID <= lowerRecordID {
-			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
-		}
-		step = uint64(upperRecordID-lowerRecordID) / uint64(e.num)
-		lowerValue = lowerRecordID
-	}
-	if step < minRegionStepValue {
-		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
-	}
-
-	return e.getSplitTableKeysFromBound(lowerValue, int64(step))
+	return e.getSplitTableKeysFromBound()
 }
 
 func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error) {
@@ -530,7 +488,11 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID
 	return keys
 }
 
-func (e *SplitTableRegionExec) getSplitTableKeysFromBound(low, step int64) ([][]byte, error) {
+func (e *SplitTableRegionExec) getSplitTableKeysFromBound() ([][]byte, error) {
+	low, step, err := e.calculateBoundValue()
+	if err != nil {
+		return nil, err
+	}
 	var keys [][]byte
 	pi := e.tableInfo.GetPartitionInfo()
 	if pi == nil {
@@ -557,6 +519,36 @@ func (e *SplitTableRegionExec) getSplitTableKeysFromBound(low, step int64) ([][]
 		keys = e.getSplitTablePhysicalKeysFromBound(pid, low, step, keys)
 	}
 	return keys, nil
+}
+
+func (e *SplitTableRegionExec) calculateBoundValue() (lowerValue int64, step int64, err error) {
+	isUnsigned := false
+	if e.tableInfo.PKIsHandle {
+		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
+		}
+	}
+	if isUnsigned {
+		lowerRecordID := e.lower.GetUint64()
+		upperRecordID := e.upper.GetUint64()
+		if upperRecordID <= lowerRecordID {
+			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+		}
+		step = int64(uint64(upperRecordID-lowerRecordID) / uint64(e.num))
+		lowerValue = int64(lowerRecordID)
+	} else {
+		lowerRecordID := e.lower.GetInt64()
+		upperRecordID := e.upper.GetInt64()
+		if upperRecordID <= lowerRecordID {
+			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+		}
+		step = (upperRecordID - lowerRecordID) / int64(e.num)
+		lowerValue = lowerRecordID
+	}
+	if step < minRegionStepValue {
+		return 0, 0, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
+	}
+	return lowerValue, step, nil
 }
 
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID, low, step int64, keys [][]byte) [][]byte {
