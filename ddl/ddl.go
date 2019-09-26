@@ -176,6 +176,8 @@ var (
 	ErrConflictingDeclarations = terror.ClassDDL.New(codeConflictingDeclarations, "Conflicting declarations: 'CHARACTER SET %s' and 'CHARACTER SET %s'")
 	// ErrPrimaryCantHaveNull returns All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
 	ErrPrimaryCantHaveNull = terror.ClassDDL.New(codePrimaryCantHaveNull, mysql.MySQLErrName[mysql.ErrPrimaryCantHaveNull])
+	// ErrInvalidDefaultValue returns for invalid default value for columns.
+	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
@@ -711,6 +713,7 @@ func init() {
 		codeUnknownCollation:                       mysql.ErrUnknownCollation,
 		codeCollationCharsetMismatch:               mysql.ErrCollationCharsetMismatch,
 		codeConflictingDeclarations:                mysql.ErrConflictingDeclarations,
+		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

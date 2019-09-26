@@ -499,7 +499,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
-		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
+		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
 		for _, str := range colDef.Tp.Elems {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
