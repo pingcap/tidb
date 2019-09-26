@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 )
 
@@ -120,7 +119,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
 	}
-	var valStr string
 	if v.IsGlobal {
 		// Set global scope system variable.
 		if sysVar.Scope&variable.ScopeGlobal == 0 {
@@ -133,18 +131,18 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if value.IsNull() {
 			value.SetString("")
 		}
-		valStr, err = value.ToString()
+		svalue, err := value.ToString()
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
 		if err != nil {
 			return err
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, valStr)
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, svalue)
 			}
 			return nil
 		})
@@ -181,6 +179,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			sessionVars.SnapshotTS = oldSnapshotTS
 			return err
 		}
+		var valStr string
 		if value.IsNull() {
 			valStr = "NULL"
 		} else {
@@ -189,10 +188,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			terror.Log(err)
 		}
 		logutil.Logger(context.Background()).Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-	}
-
-	if name == variable.TiDBEnableStmtSummary {
-		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
 	}
 
 	return nil

@@ -17,12 +17,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -34,7 +36,7 @@ type testStmtSummarySuite struct {
 
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
-	s.ssMap.SetEnabled("1", false)
+	atomic.StoreInt32(&variable.EnableStmtSummary, 1)
 }
 
 func TestT(t *testing.T) {
@@ -319,8 +321,7 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 // Test setting EnableStmtSummary to 0
 func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	s.ssMap.Clear()
-	// Set false in global scope, it should work.
-	s.ssMap.SetEnabled("0", false)
+	OnEnableStmtSummaryModified("0")
 
 	stmtExecInfo1 := &StmtExecInfo{
 		SchemaName:    "schema_name",
@@ -337,42 +338,9 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	datums := s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 0)
 
-	// Set true in session scope, it will overwrite global scope.
-	s.ssMap.SetEnabled("1", true)
+	OnEnableStmtSummaryModified("1")
 
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 1)
-
-	// Set false in global scope, it shouldn't work.
-	s.ssMap.SetEnabled("0", false)
-
-	stmtExecInfo2 := &StmtExecInfo{
-		SchemaName:    "schema_name",
-		OriginalSQL:   "original_sql2",
-		NormalizedSQL: "normalized_sql2",
-		Digest:        "digest2",
-		TotalLatency:  50000,
-		AffectedRows:  500,
-		SentRows:      500,
-		StartTime:     time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
-	}
-	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToDatum()
-	c.Assert(len(datums), Equals, 2)
-
-	// Unset in session scope
-	s.ssMap.SetEnabled("", true)
-	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToDatum()
-	c.Assert(len(datums), Equals, 0)
-
-	// Unset in global scope
-	s.ssMap.SetEnabled("", false)
-	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToDatum()
-	c.Assert(len(datums), Equals, 0)
-
-	// Set back
-	s.ssMap.SetEnabled("1", false)
 }

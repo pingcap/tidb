@@ -725,7 +725,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL || !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+	if sessVars.InRestrictedSQL || atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx

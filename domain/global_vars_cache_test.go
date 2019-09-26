@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -127,18 +127,18 @@ func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
 		Collate: charset.CollationBin,
 	}
 
-	stmtsummary.StmtSummaryByDigestMap.SetEnabled("0", false)
+	atomic.StoreInt32(&variable.EnableStmtSummary, 0)
 	ck := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
 	ck.AppendString(0, variable.TiDBEnableStmtSummary)
 	ck.AppendString(1, "1")
 	row := ck.GetRow(0)
 	gvc.Update([]chunk.Row{row}, []*ast.ResultField{rf, rf1})
-	c.Assert(stmtsummary.StmtSummaryByDigestMap.Enabled(), Equals, true)
+	c.Assert(atomic.LoadInt32(&variable.EnableStmtSummary), Equals, int32(1))
 
 	ck = chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
 	ck.AppendString(0, variable.TiDBEnableStmtSummary)
 	ck.AppendString(1, "0")
 	row = ck.GetRow(0)
 	gvc.Update([]chunk.Row{row}, []*ast.ResultField{rf, rf1})
-	c.Assert(stmtsummary.StmtSummaryByDigestMap.Enabled(), Equals, false)
+	c.Assert(atomic.LoadInt32(&variable.EnableStmtSummary), Equals, int32(0))
 }

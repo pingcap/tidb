@@ -83,7 +83,7 @@ func checkEnableStmtSummary(rows []chunk.Row, fields []*ast.ResultField) {
 				}
 			}
 
-			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+			stmtsummary.OnEnableStmtSummaryModified(sVal)
 			break
 		}
 	}
