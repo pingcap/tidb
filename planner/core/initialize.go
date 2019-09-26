@@ -59,8 +59,10 @@ const (
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
 	TypeIndexJoin = "IndexJoin"
-	// TypeIndexMergeJoin is the type of index look up merge join.
+	// TypeIndexMergeJoin is the type of index nested loop merge join.
 	TypeIndexMergeJoin = "IndexMergeJoin"
+	// TypeIndexHashJoin is the type of index nested loop hash join.
+	TypeIndexHashJoin = "IndexHashJoin"
 	// TypeApply is the type of Apply.
 	TypeApply = "Apply"
 	// TypeMaxOneRow is the type of MaxOneRow.
@@ -467,6 +469,15 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
 	ctx.GetSessionVars().PlanID++
 	p.tp = TypeIndexMergeJoin
+	p.id = ctx.GetSessionVars().PlanID
+	p.ctx = ctx
+	return &p
+}
+
+// Init initializes PhysicalIndexHashJoin.
+func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJoin {
+	ctx.GetSessionVars().PlanID++
+	p.tp = TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
 	return &p

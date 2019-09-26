@@ -22,6 +22,32 @@ import (
 )
 
 var vecBuiltinStringCases = map[string][]vecExprBenchCase{
+	ast.Length:         {},
+	ast.ASCII:          {},
+	ast.Concat:         {},
+	ast.ConcatWS:       {},
+	ast.Convert:        {},
+	ast.Substring:      {},
+	ast.SubstringIndex: {},
+	ast.Locate:         {},
+	ast.Hex:            {},
+	ast.Unhex:          {},
+	ast.Trim:           {},
+	ast.LTrim:          {},
+	ast.RTrim:          {},
+	ast.Lpad:           {},
+	ast.Rpad:           {},
+	ast.BitLength:      {},
+	ast.FindInSet:      {},
+	ast.Field:          {},
+	ast.MakeSet:        {},
+	ast.Oct:            {},
+	ast.Ord:            {},
+	ast.Quote:          {},
+	ast.Bin:            {},
+	ast.ToBase64:       {},
+	ast.FromBase64:     {},
+	ast.ExportSet:      {},
 	ast.Repeat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
@@ -37,6 +63,17 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Right: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+	},
+	ast.Left: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+	},
+	ast.Space: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{-10, 2000}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{5, 10}}},
+	},
+	ast.Reverse: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
 	},
 }
 

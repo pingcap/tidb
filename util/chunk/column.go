@@ -549,6 +549,14 @@ func (c *Column) GetRaw(rowID int) []byte {
 	return data
 }
 
+// SetRaw sets the raw bytes for the rowIdx-th element.
+// NOTE: Two conditions must be satisfied before calling this function:
+// 1. The column should be stored with variable-length elements.
+// 2. The length of the new element should be exactly the same as the old one.
+func (c *Column) SetRaw(rowID int, bs []byte) {
+	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
+}
+
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
 func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
