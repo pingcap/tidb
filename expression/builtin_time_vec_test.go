@@ -25,6 +25,35 @@ import (
 )
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
+	ast.DateLiteral:      {},
+	ast.DateDiff:         {},
+	ast.TimeDiff:         {},
+	ast.DateFormat:       {},
+	ast.Hour:             {},
+	ast.Minute:           {},
+	ast.Second:           {},
+	ast.MicroSecond:      {},
+	ast.Now:              {},
+	ast.DayOfMonth:       {},
+	ast.DayOfWeek:        {},
+	ast.DayOfYear:        {},
+	ast.Day:              {},
+	ast.CurrentTime:      {},
+	ast.CurrentDate:      {},
+	ast.MakeDate:         {},
+	ast.MakeTime:         {},
+	ast.PeriodAdd:        {},
+	ast.PeriodDiff:       {},
+	ast.Quarter:          {},
+	ast.TimeFormat:       {},
+	ast.TimeToSec:        {},
+	ast.TimestampAdd:     {},
+	ast.TimestampDiff:    {},
+	ast.TimestampLiteral: {},
+	ast.SubDate:          {},
+	ast.AddDate:          {},
+	ast.SubTime:          {},
+	ast.AddTime:          {},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
@@ -33,6 +62,21 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Date: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Timestamp: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataTimeStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{new(dataTimeStrGener), new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{new(dataTimeStrGener), nil}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{nil, new(dataStrGener)}},
+	},
+	ast.MonthName: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
