@@ -432,6 +432,39 @@ func (b *builtinPowSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	d := result.Float64s()
+	x := buf1.Float64s()
+	result.MergeNulls(buf1)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
+			result.SetNull(i, true)
+		}
+		d[i] = math.Log(x[i]) / math.Log(d[i])
+	}
+	return nil
+}
+
+func (b *builtinLog2ArgsSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinCeilRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -713,14 +746,6 @@ func (b *builtinFloorRealSig) vectorized() bool {
 }
 
 func (b *builtinFloorRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinLog2ArgsSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
