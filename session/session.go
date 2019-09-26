@@ -797,19 +797,24 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		db = s.sessionVars.CurrentDB
 	}
 
+	var curTxnStartTS uint64
+	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
+		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	}
+
 	var info interface{}
 	if len(sql) > 0 {
 		info = sql
 	}
 	pi := util.ProcessInfo{
-		ID:      s.sessionVars.ConnectionID,
-		DB:      db,
-		Command: command,
-		Time:    t,
-		State:   s.Status(),
-		Info:    info,
-		StmtCtx: s.sessionVars.StmtCtx,
-
+		ID:               s.sessionVars.ConnectionID,
+		DB:               db,
+		Command:          command,
+		Time:             t,
+		State:            s.Status(),
+		Info:             info,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		CurTxnStartTS:    curTxnStartTS,
 		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
