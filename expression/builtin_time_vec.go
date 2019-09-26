@@ -1250,7 +1250,7 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < input.NumRows(); i++ {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
