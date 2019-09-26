@@ -46,7 +46,7 @@ const (
 	EngineTiKVOnly = EngineTypeSet(EngineTiKV)
 	// EngineTiFlashOnly is the EngineTypeSet for EngineTiFlash only.
 	EngineTiFlashOnly = EngineTypeSet(EngineTiFlash)
-	// EngineTiKVORTiFlash is the EngineTypeSet for (EngineTiKV | EngineTiFlash).
+	// EngineTiKVOrTiFlash is the EngineTypeSet for (EngineTiKV | EngineTiFlash).
 	EngineTiKVOrTiFlash = EngineTypeSet(EngineTiKV | EngineTiFlash)
 	// EngineAll is the EngineTypeSet for all of the EngineTypes.
 	EngineAll = EngineTypeSet(EngineTiDB | EngineTiKV | EngineTiFlash)
