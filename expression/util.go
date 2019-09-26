@@ -146,39 +146,6 @@ func setExprColumnInOperand(expr Expression) Expression {
 	return expr
 }
 
-// ColumnSubstituteForVirCol substitutes the virtual column in filter to expressions in select fields.
-func ColumnSubstituteForVirCol(expr Expression, schema *Schema) Expression {
-	switch v := expr.(type) {
-	case *Column:
-		id := schema.ColumnIndex(v)
-		if id == -1 {
-			return v
-		}
-		var newExpr Expression
-		if schema.Columns[id].VirtualExpr == nil {
-			newExpr = schema.Columns[id]
-		} else {
-			newExpr = schema.Columns[id].VirtualExpr
-		}
-		if v.InOperand {
-			newExpr = setExprColumnInOperand(newExpr)
-		}
-		return newExpr
-	case *ScalarFunction:
-		if v.FuncName.L == ast.Cast {
-			newFunc := v.Clone().(*ScalarFunction)
-			newFunc.GetArgs()[0] = ColumnSubstituteForVirCol(newFunc.GetArgs()[0], schema)
-			return newFunc
-		}
-		newArgs := make([]Expression, 0, len(v.GetArgs()))
-		for _, arg := range v.GetArgs() {
-			newArgs = append(newArgs, ColumnSubstituteForVirCol(arg, schema))
-		}
-		return NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
-	}
-	return expr
-}
-
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
