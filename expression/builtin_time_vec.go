@@ -1028,12 +1028,42 @@ func (b *builtinSubTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinMonthNameSig) vectorized() bool {
-	return false
+func (b *builtinMonthNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		mon := ds[i].Time.Month()
+		if (ds[i].IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) || mon < 0 || mon > len(types.MonthNames) {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
+			}
+			result.AppendNull()
+			continue
+		} else if mon == 0 || ds[i].IsZero() {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(types.MonthNames[mon-1])
+	}
+	return nil
 }
 
-func (b *builtinMonthNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+func (b *builtinMonthNameSig) vectorized() bool {
+	return true
 }
 
 func (b *builtinSubDateDatetimeStringSig) vectorized() bool {
