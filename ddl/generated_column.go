@@ -231,19 +231,14 @@ type illegalFunctionChecker struct {
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
-		// Blocked functions is not allowed
-		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
+		// Blocked functions & non-builtin functions is not allowed
+		_, hasBlockedFunction := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
+		if hasBlockedFunction || !expression.IsBuiltinFuncName(node.FnName.L) {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
-		// Non-builtin functions is not allowed
-		if !expression.IsBuiltinFuncName(node.FnName.L) {
-			c.hasIllegalFunc = true
-			return inNode, true
-		}
-	case *ast.ValuesExpr, *ast.SubqueryExpr:
-		// values(x) is not allowed &
-		// Subquery is not allowed
+	case *ast.SubqueryExpr, *ast.ValuesExpr:
+		// Subquery & `values(x)` is not allowed
 		c.hasIllegalFunc = true
 		return inNode, true
 	case *ast.AggregateFuncExpr:
