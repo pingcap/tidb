@@ -594,10 +594,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			isPrimary := bytes.Equal(batch.keys[0], c.primary())
-			if isPrimary && c.isPessimistic {
-				c.ttlManager.run(c)
-			}
 			return nil
 		}
 		var locks []*Lock
@@ -766,10 +762,6 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		}
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
-			isPrimary := bytes.Equal(batch.keys[0], c.primary())
-			if isPrimary { // No need to check isPessimistic because this function is only called in that case.
-				c.ttlManager.run(c)
-			}
 			return nil
 		}
 		var locks []*Lock
