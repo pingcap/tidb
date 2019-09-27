@@ -100,8 +100,8 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
-	tk.MustExec("drop table if exists mysql.bind_info")
-	tk.MustExec(session.CreateBindInfoTable)
+	tk.MustExec("truncate table mysql.bind_info")
+	s.domain.BindHandle().Clear()
 }
 
 func (s *testSuite) TestBindParse(c *C) {
@@ -485,4 +485,27 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 	tk.MustExec("drop binding for select * from t")
 	tk.MustExec("execute stmt1")
 	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+}
+
+func (s *testSuite) TestCapturePlanBaseline(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("set @@tidb_enable_stmt_summary = on")
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_stmt_summary = off")
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	s.domain.BindHandle().CaptureBaselines(s.domain.InfoSchema())
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("select * from t")
+	tk.MustExec("select * from t")
+	s.domain.BindHandle().CaptureBaselines(s.domain.InfoSchema())
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][1], Equals, "select /*+ USE_INDEX(@`sel_1` `t` )*/ * from t")
 }

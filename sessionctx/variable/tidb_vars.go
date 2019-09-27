@@ -300,6 +300,9 @@ const (
 
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
+	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 )
 
 // Default TiDB system variable values.
@@ -385,4 +388,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
 )
