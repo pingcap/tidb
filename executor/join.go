@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/bitmap"
 	"sync"
 	"sync/atomic"
 
@@ -70,7 +71,7 @@ type HashJoinExec struct {
 	prepared    bool
 	isOuterJoin bool
 
-	matchedStatus [][]int32
+	matchedStatus []*bitmap.ConcurrentBitmap
 	outerHashJoin bool
 }
 
@@ -333,7 +334,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) (status b
 	for i := start; i < end; i++ {
 		chk := e.rowContainer.records.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
-			if e.matchedStatus[i][j] == 0 { // process unmatched outer rows
+			if e.matchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
@@ -430,7 +431,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2ChunkForOuterHashJoin(workerID uint, 
 		return true, joinResult
 	}
 	for i := range rowsIds {
-		atomic.CompareAndSwapInt32(&e.matchedStatus[rowsIds[i].ChkIdx][rowsIds[i].RowIdx], 0, 1)
+		e.matchedStatus[rowsIds[i].ChkIdx].Set(int(rowsIds[i].RowIdx))
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
 	var outerMatchStatus []outerRowStatusFlag
@@ -620,8 +621,9 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 			return nil
 		}
 		if e.outerHashJoin {
-			matched4Chk := make([]int32, chk.NumRows())
-			e.matchedStatus = append(e.matchedStatus, matched4Chk)
+			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
+			e.matchedStatus = append(e.matchedStatus, bitMap)
+			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) > 0 {
 				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
 				if err != nil {
