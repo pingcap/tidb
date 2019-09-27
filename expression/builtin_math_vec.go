@@ -18,6 +18,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -736,11 +737,38 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 }
 
 func (b *builtinRoundWithFracDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRoundWithFracDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf)
+	tmp := new(types.MyDecimal)
+	d64s := result.Decimals()
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		// TODO: reuse d64[i] and remove the temporary variable tmp.
+		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.Decimal), types.ModeHalfEven); err != nil {
+			return err
+		}
+		d64s[i] = *tmp
+	}
+	return nil
 }
 
 func (b *builtinFloorIntToDecSig) vectorized() bool {
@@ -768,11 +796,11 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinAbsUIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAbsUIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinCeilDecToIntSig) vectorized() bool {
