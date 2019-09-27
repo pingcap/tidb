@@ -192,11 +192,12 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 		if result.IsNull(i) {
 			continue
 		}
-		decimalValue, err := types.ProduceDecWithSpecifiedTp(times[i].ToNumber(), b.tp, sc)
-		if err != nil {
+		if err := times[i].FillNumber(&decs[i]); err != nil {
 			return err
 		}
-		decs[i] = *decimalValue
+		if _, err := types.ProduceDecWithSpecifiedTp(&decs[i], b.tp, sc); err != nil {
+			return err
+		}
 	}
 	return nil
 }
