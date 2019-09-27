@@ -981,6 +981,8 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 				}
 				cop.addCost(p.GetCost(inputRows, false))
 			}
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
 		} else {
 			t = finishCopTask(p.ctx, cop)
