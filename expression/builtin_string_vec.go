@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -734,11 +735,30 @@ func (b *builtinCharLengthBinarySig) vecEvalInt(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinBinSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(fmt.Sprintf("%b", uint64(nums[i])))
+	}
+	return nil
 }
 
 func (b *builtinFormatSig) vectorized() bool {
