@@ -2313,9 +2313,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	if b.getSelectOffset() != -1 {
-		b.ctx.GetSessionVars().PlannerSelectBlockAsName[b.getSelectOffset()] = tblName
-	}
 	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
 	if err != nil {
 		return nil, err
