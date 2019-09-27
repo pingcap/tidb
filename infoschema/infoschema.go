@@ -427,5 +427,5 @@ func CheckTableFlashReplicaStatus(tblInfo *model.TableInfo) bool {
 	if tblInfo == nil || tblInfo.FlashReplica == nil {
 		return false
 	}
-	return tblInfo.FlashReplica.RegionCount == tblInfo.FlashReplica.FlashRegionCount
+	return tblInfo.FlashReplica.RegionCount > 0 && tblInfo.FlashReplica.RegionCount == tblInfo.FlashReplica.FlashRegionCount
 }
