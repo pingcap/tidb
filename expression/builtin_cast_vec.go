@@ -294,14 +294,21 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		if !isUnsigned {
 			str = strconv.FormatInt(i64s[i], 10)
 		} else {
-			str = strconv.FormatUint(uint64(i64s[i]), 10)
+			u64, err := types.ConvertIntToUint(b.ctx.GetSessionVars().StmtCtx, i64s[i], types.IntergerUnsignedUpperBound(b.tp.Tp), b.tp.Tp)
+			if err == nil {
+				result.AppendNull()
+				continue
+			}
+			str = strconv.FormatUint(u64, 10)
+
 		}
 		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 		if err == nil {
 			var d bool
 			str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
 			if err != nil {
-				return err
+				result.AppendNull()
+				continue
 			}
 			if d {
 				result.AppendNull()
@@ -309,7 +316,8 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 				result.AppendString(str)
 			}
 		} else {
-			return err
+			result.AppendNull()
+			continue
 		}
 	}
 	return nil
