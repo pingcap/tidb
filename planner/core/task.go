@@ -968,6 +968,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
+		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
+		// The `extraHandleCol` is added if the double needs to keep order. So we just use it to decided
+		// whether the following plan is double read with order reserved.
 		if cop.extraHandleCol == nil {
 			partialAgg, finalAgg := p.newPartialAggregate()
 			if partialAgg != nil {
