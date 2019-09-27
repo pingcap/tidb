@@ -293,18 +293,16 @@ const dateFormat = "%Y%m%d"
 // 2012-12-12T10:10:10.123456 -> 20121212101010.123456
 func (t Time) ToNumber() *MyDecimal {
 	dec := new(MyDecimal)
-	err := t.FillNumber(dec)
-	// We skip checking error here because time formatted string can be parsed certainly.
-	terror.Log(errors.Trace(err))
+	t.FillNumber(dec)
 	return dec
 }
 
 // FillNumber is the same as ToNumber,
 // but reuses input decimal instead of allocating one.
-func (t Time) FillNumber(dec *MyDecimal) error {
+func (t Time) FillNumber(dec *MyDecimal) {
 	if t.IsZero() {
 		dec.FromInt(0)
-		return nil
+		return
 	}
 
 	// Fix issue #1046
@@ -319,14 +317,15 @@ func (t Time) FillNumber(dec *MyDecimal) error {
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
 		logutil.BgLogger().Error("[fatal] never happen because we've control the format!")
-		return err
 	}
 
 	if t.Fsp > 0 {
 		s1 := fmt.Sprintf("%s.%06d", s, t.Time.Microsecond())
 		s = s1[:len(s)+int(t.Fsp)+1]
 	}
-	return dec.FromString([]byte(s))
+	// We skip checking error here because time formatted string can be parsed certainly.
+	err = dec.FromString([]byte(s))
+	terror.Log(errors.Trace(err))
 }
 
 // Convert converts t with type tp.
