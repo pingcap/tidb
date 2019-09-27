@@ -2997,7 +2997,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
-// AlterTableCharset changes the table charset and collate.
+// AlterTableSetFlashReplica changes the table charset and collate.
 func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.FlashReplicaSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -3023,6 +3023,37 @@ func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident,
 		Args:       []interface{}{*replicaInfo},
 	}
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UpdateTableReplicaInfo updates the table flash replica infos.
+func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, regionCount, flashRegionCount uint64) error {
+	is := d.infoHandle.Get()
+	tb, ok := is.TableByID(tid)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
+	}
+
+	if tb.Meta().FlashReplica == nil ||
+		(tb.Meta().FlashReplica.RegionCount == regionCount && tb.Meta().FlashReplica.FlashRegionCount == flashRegionCount) {
+		return nil
+	}
+
+	db, ok := is.SchemaByTable(tb.Meta())
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+	}
+
+	job := &model.Job{
+		SchemaID:   db.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: db.Name.L,
+		Type:       model.ActionUpdateFlashReplicaStatus,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{regionCount, flashRegionCount},
+	}
+	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

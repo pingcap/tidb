@@ -559,6 +559,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUnlockTables(t, job)
 	case model.ActionSetFlashReplica:
 		ver, err = onSetTableFlashReplica(t, job)
+	case model.ActionUpdateFlashReplicaStatus:
+		ver, err = onUpdateFlashReplicaStatus(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

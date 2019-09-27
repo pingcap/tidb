@@ -679,6 +679,10 @@ type tableFlashReplicaInfo struct {
 }
 
 func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodPost {
+		h.handleStatusReport(w, req)
+		return
+	}
 	schema, err := h.schema()
 	if err != nil {
 		writeError(w, err)
@@ -697,11 +701,44 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				ID:             tblInfo.ID,
 				ReplicaCount:   tblInfo.FlashReplica.Count,
 				LocationLabels: tblInfo.FlashReplica.LocationLabels,
-				Status:         tblInfo.FlashReplica.Status,
+				Status:         infoschema.CheckTableFlashReplicaStatus(tblInfo),
 			})
 		}
 	}
 	writeData(w, replicaInfos)
+}
+
+type tableFlashReplicaStatus struct {
+	ID               int64  `json:"id"`
+	RegionCount      uint64 `json:"region_count"`
+	FlashRegionCount uint64 `json:"flash_region_count"`
+}
+
+func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
+	var status tableFlashReplicaStatus
+	err := json.NewDecoder(req.Body).Decode(&status)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	do, err := session.GetDomain(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.RegionCount, status.FlashRegionCount)
+	if err != nil {
+		writeError(w, err)
+	}
+	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
+		status.RegionCount),
+		zap.Uint64("flash region count", status.FlashRegionCount),
+		zap.Error(err))
 }
 
 // ServeHTTP handles request of list a database or table's schemas.

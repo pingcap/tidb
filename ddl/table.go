@@ -706,6 +706,31 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
+func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var regionCount, flashRegionCount uint64
+	if err := job.DecodeArgs(&regionCount, &flashRegionCount); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if tblInfo.FlashReplica != nil {
+		tblInfo.FlashReplica.RegionCount = regionCount
+		tblInfo.FlashReplica.FlashRegionCount = flashRegionCount
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// d.infoHandle maybe nil in some test.
 	if d.infoHandle == nil || !d.infoHandle.IsValid() {
