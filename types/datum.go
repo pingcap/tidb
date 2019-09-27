@@ -1390,6 +1390,8 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err1 := d.GetBinaryLiteral().ToInt(sc)
 		isZero, err = val == 0, err1
+	case KindMysqlJSON:
+		isZero, err = d.IsNull(), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}

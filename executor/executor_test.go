@@ -1850,6 +1850,12 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gc_read_m`)
 	result.Check(testkit.Rows(`1 2 4`, `2 3 6`))
 
+	// Test for issue #12233
+	tk.MustExec(`create table testjson( id int auto_increment not null primary key, j json )default charset=utf8 engine=innodb;`)
+	tk.MustExec(`insert into testjson set j='{"test":1}';`)
+	result = tk.MustQuery(`select id from testjson where json_extract(j, '$.test');`)
+	result.Check(testkit.Rows(`1`))
+
 	// Test not null generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)
 	tk.MustExec(`CREATE TABLE test_gc_read_2(a int primary key, b int, c int as (a+b), d int as (a*b) stored not null)`)
