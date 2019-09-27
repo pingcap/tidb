@@ -31,12 +31,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Only print a log when out of memory quota.
-# Valid options: ["log", "cancel"]
-oom-action = "log"
-
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
+
+# Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
+oom-use-tmp-storage = true
+
+# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
 
 # Enable coprocessor streaming.
 enable-streaming = false
