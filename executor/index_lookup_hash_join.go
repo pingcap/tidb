@@ -627,8 +627,9 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		outerRow := task.outerResult.GetRow(outerRowIdx)
 		for _, ptr := range innerRowPtrs {
 			matchedInnerRows = append(matchedInnerRows, task.innerResult.GetRow(ptr))
-			iter := chunk.NewIterator4Slice(matchedInnerRows)
-			iter.Begin()
+		}
+		iter := chunk.NewIterator4Slice(matchedInnerRows)
+		for iter.Begin(); iter.Current() != iter.End(); {
 			matched, isNull, err := iw.joiner.tryToMatchInners(outerRow, iter, joinResult.chk)
 			if err != nil {
 				return err
@@ -648,17 +649,6 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		}
 		if !hasMatched {
 			iw.joiner.onMissMatch(hasNull, outerRow, joinResult.chk)
-		}
-		if joinResult.chk.IsFull() {
-			select {
-			case resultCh <- joinResult:
-			case <-ctx.Done():
-				return nil
-			}
-			joinResult, ok = iw.getNewJoinResult(ctx)
-			if !ok {
-				return errors.New("indexHashJoinInnerWorker.doJoinInOrder failed")
-			}
 		}
 	}
 	return nil
