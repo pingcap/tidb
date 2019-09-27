@@ -245,7 +245,7 @@ id	count	task	operator info
 Sort_10	1.00	root	Column#31:asc
 └─HashAgg_15	1.00	root	group by:Column#1, funcs:firstrow(Column#1), firstrow(Column#2), firstrow(Column#3), firstrow(Column#4), firstrow(Column#5), firstrow(Column#6), firstrow(Column#7), firstrow(Column#8), firstrow(Column#9), firstrow(Column#10)
   └─Selection_22	0.01	root	or(eq(Column#22, 62), or(eq(Column#1, 20), eq(Column#1, 20)))
-    └─HashLeftJoin_24	0.02	root	left outer join, inner:TableReader_70 (REVERSED), equal:[eq(Column#11, Column#23)]
+    └─HashLeftJoin_24	0.02	root	left outer join, inner:IndexMergeJoin_40 (REVERSED), equal:[eq(Column#11, Column#23)]
       ├─IndexMergeJoin_40	0.01	root	left outer join, inner:IndexLookUp_38, outer key:Column#1, inner key:Column#17
       │ ├─IndexLookUp_60	0.01	root	
       │ │ ├─IndexScan_57	10.00	cop	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo

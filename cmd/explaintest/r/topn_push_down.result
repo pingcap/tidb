@@ -265,7 +265,7 @@ explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a 
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(Column#3)
-  └─HashLeftJoin_23	5.00	root	left outer join, inner:IndexReader_31 (REVERSED), equal:[eq(Column#1, Column#3)]
+  └─HashLeftJoin_23	5.00	root	left outer join, inner:IndexReader_27 (REVERSED), equal:[eq(Column#1, Column#3)]
     ├─IndexReader_27	4.00	root	index:IndexScan_26
     │ └─IndexScan_26	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
     └─IndexReader_31	10000.00	root	index:IndexScan_30
