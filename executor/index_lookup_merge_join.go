@@ -466,7 +466,7 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 }
 
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	chk := chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
+	chk := <-imw.joinChkResourceCh
 	defer func() {
 		if chk.NumRows() > 0 {
 			select {
