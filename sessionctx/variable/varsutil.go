@@ -74,14 +74,14 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
-// SetMaxDetalSchemaCount sets maxDetalSchemaCount size.
-func SetMaxDetalSchemaCount(cnt int64) {
-	atomic.StoreInt64(&maxDetalSchemaCount, cnt)
+// SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
+func SetMaxDeltaSchemaCount(cnt int64) {
+	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
 }
 
-// GetMaxDetalSchemaCount gets maxDetalSchemaCount size.
-func GetMaxDetalSchemaCount() int64 {
-	return atomic.LoadInt64(&maxDetalSchemaCount)
+// GetMaxDeltaSchemaCount gets maxDeltaSchemaCount size.
+func GetMaxDeltaSchemaCount() int64 {
+	return atomic.LoadInt64(&maxDeltaSchemaCount)
 }
 
 // GetSessionSystemVar gets a system variable.

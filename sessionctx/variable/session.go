@@ -896,7 +896,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 	// It's a global variable, but it also wants to be cached in server.
 	case TiDBMaxDeltaSchemaCount:
-		SetMaxDetalSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
+		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	}
 	s.systems[name] = val
 	return nil

@@ -1055,10 +1055,10 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
-func (s *seqTestSuite) TestMaxDetalSchemaCount(c *C) {
+func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	c.Assert(variable.GetMaxDetalSchemaCount(), Equals, int64(variable.DefTiDBMaxDeltaSchemaCount))
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(variable.DefTiDBMaxDeltaSchemaCount))
 	gvc := domain.GetDomain(tk.Se).GetGlobalVarsCache()
 	gvc.Disable()
 
@@ -1067,18 +1067,18 @@ func (s *seqTestSuite) TestMaxDetalSchemaCount(c *C) {
 	// Make sure a new session will load global variables.
 	tk.Se = nil
 	tk.MustExec("use test")
-	c.Assert(variable.GetMaxDetalSchemaCount(), Equals, int64(100))
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(100))
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_max_delta_schema_count= %v", uint64(math.MaxInt64)))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '%d'", uint64(math.MaxInt64))))
 	tk.Se = nil
 	tk.MustExec("use test")
-	c.Assert(variable.GetMaxDetalSchemaCount(), Equals, int64(16384))
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(16384))
 	_, err := tk.Exec("set @@global.tidb_max_delta_schema_count= invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
 	tk.Se = nil
 	tk.MustExec("use test")
-	c.Assert(variable.GetMaxDetalSchemaCount(), Equals, int64(2048))
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(2048))
 	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
 }

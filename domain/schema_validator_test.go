@@ -147,18 +147,18 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 
 func (*testSuite) TestEnqueue(c *C) {
 	lease := 10 * time.Millisecond
-	originalCnt := variable.GetMaxDetalSchemaCount()
-	defer variable.SetMaxDetalSchemaCount(originalCnt)
+	originalCnt := variable.GetMaxDeltaSchemaCount()
+	defer variable.SetMaxDeltaSchemaCount(originalCnt)
 
 	validator := NewSchemaValidator(lease).(*schemaValidator)
 	c.Assert(validator.IsStarted(), IsTrue)
 	// maxCnt is 0.
-	variable.SetMaxDetalSchemaCount(0)
+	variable.SetMaxDeltaSchemaCount(0)
 	validator.enqueue(1, []int64{11})
 	c.Assert(validator.deltaSchemaInfos, HasLen, 0)
 
 	// maxCnt is 10.
-	variable.SetMaxDetalSchemaCount(10)
+	variable.SetMaxDeltaSchemaCount(10)
 	ds := []deltaSchemaInfo{
 		{0, []int64{1}},
 		{1, []int64{1}},
