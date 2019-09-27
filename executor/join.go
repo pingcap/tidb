@@ -317,14 +317,20 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	e.joinWorkerWaitGroup.Done()
 }
 
-// TODO(fangzhuhe): to concurrently handle unmatched rows
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTable() (status bool, err error) {
-	workerID := uint(0)
+func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) (status bool, err error) {
+	var step = e.rowContainer.records.NumChunks() / int(e.concurrency)
+	var start = step * int(workerID)
+	var end = start + step
+	// The last worker handles all remaining chunks
+	if workerID+1 == e.concurrency {
+		end = e.rowContainer.records.NumChunks()
+	}
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return false, err
 	}
-	for i := 0; i < e.rowContainer.records.NumChunks(); i++ {
+
+	for i := start; i < end; i++ {
 		chk := e.rowContainer.records.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			if e.matchedStatus[i][j] == 0 { // process unmatched outer rows
@@ -349,15 +355,14 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable() (status bool, err erro
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
-	// TODO(fangzhuhe): is it ok with following close?
+	// Concurrently handing unmatched rows from hash table at the tail
 	if e.outerHashJoin {
-		ok, err := e.handleUnmatchedRowsFromHashTable()
-		if err != nil {
-			fmt.Println("error at the tail")
+		for i := uint(0); i < e.concurrency; i++ {
+			var workID = i
+			e.joinWorkerWaitGroup.Add(1)
+			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workID) }, e.handleJoinWorkerPanic)
 		}
-		if !ok {
-			fmt.Println("error status")
-		}
+		e.joinWorkerWaitGroup.Wait()
 	}
 	close(e.joinResultCh)
 }

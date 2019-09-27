@@ -576,10 +576,7 @@ func prepare4Join(testCase *hashJoinTestCase, innerExec, outerExec Executor) *Ha
 }
 func prepare4OuterJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
 	// reverse
-	var temp = innerExec
-	innerExec = outerExec
-	outerExec = temp
-
+	innerExec, outerExec = outerExec, innerExec
 	cols0 := testCase.columns()
 	cols1 := testCase.columns()
 	joinSchema := expression.NewSchema(cols0...)
