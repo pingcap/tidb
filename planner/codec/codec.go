@@ -244,11 +244,8 @@ func encodeID(planType string, id int) string {
 
 // Compress is used to compress the input with zlib.
 func Compress(input []byte, buf *bytes.Buffer) (string, error) {
-	w, err := zlib.NewWriterLevel(buf, zlib.BestCompression)
-	if err != nil {
-		return "", err
-	}
-	_, err = w.Write(input)
+	w := zlib.NewWriter(buf)
+	_, err := w.Write(input)
 	if err != nil {
 		return "", err
 	}
