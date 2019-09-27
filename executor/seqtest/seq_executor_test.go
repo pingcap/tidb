@@ -588,7 +588,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c4|varchar(6)|YES||1|",
 		"c5|varchar(6)|YES||'C6'|",
 		"c6|enum('s','m','l','xl')|YES||xl|",
-		"c7|set('a','b','c','d')|YES||a,c,c|",
+		"c7|set('a','b','c','d')|YES||a,c|",
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
 	))

@@ -1498,13 +1498,12 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []b
 		var value mvccValue
 		err := value.UnmarshalBinary(iter.Value())
 		if err == nil && value.startTS == starTS {
-			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			if _, key, err = codec.DecodeBytes(iter.Key(), nil); err != nil {
+				return nil, nil
+			}
 			break
 		}
 		iter.Next()
-	}
-	if key == nil {
-		return nil, nil
 	}
 
 	return mvcc.MvccGetByKey(key), key
