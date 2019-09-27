@@ -110,7 +110,9 @@ func (r *ImplTableGather) Match(expr *memo.GroupExpr, prop *property.PhysicalPro
 func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	tg := expr.ExprNode.(*plannercore.TableGather)
-	reader := tg.GetPhysicalReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	newReqProp := reqProp.Clone()
+	newReqProp.EngineType = property.EngineTiKV
+	reader := tg.GetPhysicalReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(newReqProp.ExpectedCnt), newReqProp)
 	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
 }
 
@@ -176,12 +178,12 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	physicalSel := plannercore.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp)
-	switch expr.Group.EngineType {
-	case memo.TiDBRoot:
-		return impl.NewRootSelectionImpl(physicalSel), nil
-	case memo.TiKVCop:
-		return impl.NewTiKVCopSelectionImpl(physicalSel), nil
+	switch reqProp.EngineType {
+	case property.EngineTiDB:
+		return impl.NewTiDBSelectionImpl(physicalSel), nil
+	case property.EngineTiKV:
+		return impl.NewTiKVSelectionImpl(physicalSel), nil
 	default:
-		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", reqProp.EngineType.String())
 	}
 }

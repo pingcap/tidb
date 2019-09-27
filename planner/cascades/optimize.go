@@ -235,6 +235,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
+		EngineType:  property.EngineTiDB,
 	}
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)

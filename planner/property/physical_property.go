@@ -26,6 +26,34 @@ type Item struct {
 	Desc bool
 }
 
+// EngineType is determined by whether it's above or below `Gather`s.
+// Plan will choose the different engine to be implemented/executed on according to its EngineType.
+// Different engine may support different operators with different cost, so we should design
+// different transformation and implementation rules for each engine.
+type EngineType uint
+
+const (
+	// EngineTiDB stands for groups which is above `Gather`s and will be executed in TiDB layer.
+	EngineTiDB EngineType = iota
+	// EngineTiKV stands for groups which is below `Gather`s and will be executed in TiKV layer.
+	EngineTiKV
+	// EngineTiFlash stands for groups which is below `Gather`s and will be executed in TiFlash layer.
+	EngineTiFlash
+)
+
+// String implements fmt.Stringer interface.
+func (e EngineType) String() string {
+	switch e {
+	case EngineTiDB:
+		return "EngineTiDB"
+	case EngineTiKV:
+		return "EngineTiKV"
+	case EngineTiFlash:
+		return "EngineTiFlash"
+	}
+	return "UnknownEngineType"
+}
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
@@ -40,6 +68,10 @@ type PhysicalProperty struct {
 	// sure the finishing time. So the best way to let the comparison fair is
 	// to add TaskType to required property.
 	TaskTp TaskType
+
+	// EngineType is used in cascades planner, determines which implementation
+	// the plan should use.
+	EngineType
 
 	// ExpectedCnt means this operator may be closed after fetching ExpectedCnt
 	// records.
@@ -140,6 +172,7 @@ func (p *PhysicalProperty) Clone() *PhysicalProperty {
 		Items:       p.Items,
 		TaskTp:      p.TaskTp,
 		ExpectedCnt: p.ExpectedCnt,
+		EngineType:  p.EngineType,
 	}
 	return prop
 }

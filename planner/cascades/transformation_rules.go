@@ -150,7 +150,7 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 	pushedSel := plannercore.LogicalSelection{Conditions: pushed}.Init(sctx, sel.SelectBlockOffset())
 	pushedSelExpr := memo.NewGroupExpr(pushedSel)
 	pushedSelExpr.Children = append(pushedSelExpr.Children, childGroup)
-	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema).SetEngineType(memo.TiKVCop)
+	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema)
 	// The field content of TableGather would not be modified currently, so we
 	// just reference the same tg instead of making a copy of it.
 	//
@@ -195,7 +195,6 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
 		expr := convert2GroupExpr(gather)
-		expr.Children[0].SetEngineType(memo.TiKVCop)
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil
