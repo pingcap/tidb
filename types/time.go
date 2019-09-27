@@ -299,7 +299,8 @@ func (t Time) ToNumber() *MyDecimal {
 	return dec
 }
 
-// Same as ToNumber(), but reuses input decimal instead of allocating one.
+// FillNumber is the same as ToNumber,
+// but reuses input decimal instead of allocating one.
 func (t Time) FillNumber(dec *MyDecimal) error {
 	if t.IsZero() {
 		dec.FromInt(0)
