@@ -1841,16 +1841,16 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	// The type of default value is string.
 	s.tk.MustExec("drop table t_set")
 	failedSQL := "create table t_set (a set('1', '4', '10') default '3');"
-	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
-	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
-	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
 	// The type of default value is int.
 	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
-	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default 8);"
-	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
 
 	// The type of default value is int.
 	// It's for successful cases
