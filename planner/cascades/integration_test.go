@@ -79,3 +79,14 @@ func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
 	))
 	tk.MustQuery("select b from t where a > 1 and a < 3").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestBasicShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustQuery("desc t").Check(testkit.Rows(
+		"a int(11) NO PRI <nil> ",
+		"b int(11) YES  <nil> ",
+	))
+}

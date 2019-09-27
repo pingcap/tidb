@@ -129,9 +129,9 @@ Projection_13	424.00	root	Column#1, Column#20, Column#3, Column#4, Column#23, Co
 └─Limit_16	424.00	root	offset:0, count:2500
   └─HashAgg_19	424.00	root	group by:Column#23, Column#3, funcs:firstrow(Column#1), firstrow(Column#3), firstrow(Column#4), firstrow(Column#8), firstrow(Column#9), firstrow(Column#10), firstrow(Column#11), firstrow(Column#12), firstrow(Column#13), firstrow(Column#14), firstrow(Column#15), firstrow(Column#19), firstrow(Column#20), firstrow(Column#23), firstrow(Column#26), firstrow(Column#27)
     └─IndexMergeJoin_30	424.00	root	inner join, inner:IndexLookUp_28, outer key:Column#3, inner key:Column#21, other cond:eq(Column#5, Column#26), gt(Column#27, Column#19)
-      ├─TableReader_35	424.00	root	data:Selection_34
-      │ └─Selection_34	424.00	cop	eq(Column#16, 0), eq(Column#2, "android"), gt(Column#19, 1478143908), not(isnull(Column#5))
-      │   └─TableScan_33	1999.00	cop	table:gad, range:[0,+inf], keep order:false
+      ├─TableReader_37	424.00	root	data:Selection_36
+      │ └─Selection_36	424.00	cop	eq(Column#16, 0), eq(Column#2, "android"), gt(Column#19, 1478143908), not(isnull(Column#5))
+      │   └─TableScan_35	1999.00	cop	table:gad, range:[0,+inf], keep order:false
       └─IndexLookUp_28	0.23	root	
         ├─IndexScan_25	1.00	cop	table:dd, index:aid, dic, range: decided by [eq(Column#21, Column#3)], keep order:true
         └─Selection_27	0.23	cop	eq(Column#22, "android"), eq(Column#28, 0), gt(Column#27, 1478143908), not(isnull(Column#26)), not(isnull(Column#27))
@@ -141,9 +141,9 @@ id	count	task	operator info
 Projection_10	170.34	root	Column#1, Column#20, Column#3, Column#4, Column#23, Column#26, Column#27, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13, Column#14, Column#15
 └─Limit_13	170.34	root	offset:0, count:3000
   └─IndexMergeJoin_24	170.34	root	inner join, inner:IndexLookUp_22, outer key:Column#3, inner key:Column#21, other cond:eq(Column#6, Column#25), lt(Column#19, Column#27)
-    ├─TableReader_29	170.34	root	data:Selection_28
-    │ └─Selection_28	170.34	cop	eq(Column#16, 0), eq(Column#2, "ios"), eq(Column#7, "mac"), gt(Column#19, 1477971479), not(isnull(Column#6))
-    │   └─TableScan_27	1999.00	cop	table:gad, range:[0,+inf], keep order:false
+    ├─TableReader_31	170.34	root	data:Selection_30
+    │ └─Selection_30	170.34	cop	eq(Column#16, 0), eq(Column#2, "ios"), eq(Column#7, "mac"), gt(Column#19, 1477971479), not(isnull(Column#6))
+    │   └─TableScan_29	1999.00	cop	table:gad, range:[0,+inf], keep order:false
     └─IndexLookUp_22	0.25	root	
       ├─IndexScan_19	1.00	cop	table:sdk, index:aid, dic, range: decided by [eq(Column#21, Column#3)], keep order:true
       └─Selection_21	0.25	cop	eq(Column#22, "ios"), eq(Column#28, 0), gt(Column#27, 1477971479), not(isnull(Column#25)), not(isnull(Column#27))
@@ -161,9 +161,9 @@ id	count	task	operator info
 Projection_10	428.32	root	Column#1, Column#2, Column#4, Column#5, Column#3, Column#24, Column#25, Column#26, Column#11, Column#12, Column#13, Column#14, Column#15, Column#16, Column#17
 └─Limit_13	428.32	root	offset:0, count:2000
   └─IndexMergeJoin_25	428.32	root	inner join, inner:IndexLookUp_23, outer key:Column#2, Column#5, inner key:Column#21, Column#23
-    ├─TableReader_53	428.32	root	data:Selection_52
-    │ └─Selection_52	428.32	cop	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592), not(isnull(Column#5))
-    │   └─TableScan_51	2000.00	cop	table:dt, range:[0,+inf], keep order:false
+    ├─TableReader_42	428.32	root	data:Selection_41
+    │ └─Selection_41	428.32	cop	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592), not(isnull(Column#5))
+    │   └─TableScan_40	2000.00	cop	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_23	0.48	root	
       ├─IndexScan_20	1.00	cop	table:rr, index:aid, dic, range: decided by [eq(Column#21, Column#2) eq(Column#23, Column#5)], keep order:true
       └─Selection_22	0.48	cop	eq(Column#22, "ios"), gt(Column#26, 1478185592)

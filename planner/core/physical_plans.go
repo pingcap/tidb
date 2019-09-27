@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -60,6 +61,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// StoreType indicates table read from which type of store.
+	StoreType kv.StoreType
 }
 
 // GetPhysicalReader returns PhysicalTableReader for logical TableGather.
@@ -89,6 +93,12 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 }
 
+// PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
+type PushedDownLimit struct {
+	Offset uint64
+	Count  uint64
+}
+
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
@@ -101,6 +111,8 @@ type PhysicalIndexLookUpReader struct {
 	tablePlan  PhysicalPlan
 
 	ExtraHandleCol *expression.Column
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
+	PushedLimit *PushedDownLimit
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -266,13 +278,10 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
-	// KeepOuterOrder indicates whether to keep the order of the join results be
-	// the same as the outer table.
-	KeepOuterOrder bool
 	// IdxColLens stores the length of each index column.
 	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
-	// e.g. select * from t where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
+	// e.g. select * from t, t1 where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
@@ -290,6 +299,14 @@ type PhysicalIndexMergeJoin struct {
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+}
+
+// PhysicalIndexHashJoin represents the plan of index look up hash join.
+type PhysicalIndexHashJoin struct {
+	PhysicalIndexJoin
+	// keepOuterOrder indicates whether keeping the output result order as the
+	// outer side.
+	keepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -508,7 +525,7 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 type PhysicalShow struct {
 	physicalSchemaProducer
 
-	baseShowContent
+	ShowContents
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

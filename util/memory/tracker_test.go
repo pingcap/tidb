@@ -96,17 +96,40 @@ func (s *testSuite) TestOOMAction(c *C) {
 	c.Assert(action.called, IsFalse)
 	tracker.Consume(10000)
 	c.Assert(action.called, IsTrue)
+
+	// test fallback
+	action1 := &mockAction{}
+	action2 := &mockAction{}
+	tracker.SetActionOnExceed(action1)
+	tracker.FallbackOldAndSetNewAction(action2)
+	c.Assert(action1.called, IsFalse)
+	c.Assert(action2.called, IsFalse)
+	tracker.Consume(10000)
+	c.Assert(action1.called, IsFalse)
+	c.Assert(action2.called, IsTrue)
+	tracker.Consume(10000)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsTrue)
 }
 
 type mockAction struct {
-	called bool
+	called   bool
+	fallback ActionOnExceed
 }
 
 func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
 func (a *mockAction) Action(t *Tracker) {
+	if a.called && a.fallback != nil {
+		a.fallback.Action(t)
+		return
+	}
 	a.called = true
+}
+
+func (a *mockAction) SetFallback(fallback ActionOnExceed) {
+	a.fallback = fallback
 }
 
 func (s *testSuite) TestAttachTo(c *C) {

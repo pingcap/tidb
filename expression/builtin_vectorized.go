@@ -45,6 +45,8 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
 }
 
+var globalColumnAllocator = newLocalSliceBuffer(1024)
+
 func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	switch evalType {
 	case types.ETInt:
