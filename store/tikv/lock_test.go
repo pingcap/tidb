@@ -275,25 +275,25 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	currentTS, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
-	status, err := newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	status, err := newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
 
-	// The getTxnStatus API is confusing, it really means rollback!
-	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"))
+	// It is confusing here, this getTxnStatus really means rollback!
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, math.MaxUint64)
 	c.Assert(err, IsNil)
 
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	status, err = newLockResolver(s.store).checkTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = newLockResolver(s.store).checkTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)

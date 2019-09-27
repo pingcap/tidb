@@ -206,7 +206,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			continue
 		}
 
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, 0)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -289,7 +289,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Loc
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	for _, l := range expiredLocks {
-		status, err := lr.getTxnStatusFromLock(bo, l, startTS)
+		status, err := lr.getTxnStatusFromLock(bo, l, startTS, cleanTxns)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
@@ -323,53 +323,6 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Loc
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
 	return msBeforeTxnExpired.value(), nil
-}
-
-func (lr *LockResolver) checkTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS uint64, currentTS uint64) (TxnStatus, error) {
-	var status TxnStatus
-	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
-		PrimaryKey:    primary,
-		LockTs:        txnID,
-		CallerStartTs: callerStartTS,
-		CurrentTs:     currentTS,
-	})
-	for {
-		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return status, errors.Trace(err)
-			}
-			continue
-		}
-		if resp.Resp == nil {
-			return status, errors.Trace(ErrBodyMissing)
-		}
-		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
-		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
-			logutil.BgLogger().Error("checkTxnStatus error", zap.Error(err))
-			return status, err
-		}
-		if cmdResp.LockTtl != 0 {
-			status.ttl = cmdResp.LockTtl
-		} else {
-			status.commitTS = cmdResp.CommitVersion
-		}
-		lr.saveResolved(txnID, status)
-		return status, nil
-	}
 }
 
 type txnExpireTime struct {
@@ -410,37 +363,44 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, e
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, currentTS)
+	return lr.getTxnStatus(bo, txnID, primary, 0, currentTS)
 }
 
-func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, cleanTxns map[uint64]map[RegionVerID]struct{}) (TxnStatus, error) {
 	// NOTE: l.TTL = 0 is a special protocol!!!
 	// When the pessimistic txn prewrite meets locks of a txn, it should rollback that txn **unconditionally**.
 	// In this case, TiKV set the lock TTL = 0, and TiDB use currentTS = 0 to call
 	// getTxnStatus, and getTxnStatus with currentTS = 0 would rollback the transaction.
 	if l.TTL == 0 {
-		return lr.getTxnStatus(bo, l.TxnID, l.Primary, 0)
+		var status TxnStatus
+		cleanRegions, exists := cleanTxns[l.TxnID]
+		if !exists {
+			cleanRegions = make(map[RegionVerID]struct{})
+			cleanTxns[l.TxnID] = cleanRegions
+		}
+		err := lr.resolveLock(bo, l, status, cleanRegions)
+		return status, err
 	}
 
 	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 	if err != nil {
 		return TxnStatus{}, err
 	}
-	return lr.getTxnStatus(bo, l.TxnID, l.Primary, currentTS)
+	return lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
 }
 
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, currentTS uint64) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
 
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
-
 	var status TxnStatus
-	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
-		Key:          primary,
-		StartVersion: txnID,
-		CurrentTs:    currentTS,
+	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
+		PrimaryKey:    primary,
+		LockTs:        txnID,
+		CallerStartTs: callerStartTS,
+		CurrentTs:     currentTS,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
@@ -465,25 +425,24 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if resp.Resp == nil {
 			return status, errors.Trace(ErrBodyMissing)
 		}
-		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
+		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			// If the TTL of the primary lock is not outdated, the proto returns a ErrLocked contains the TTL.
-			if lockInfo := keyErr.GetLocked(); lockInfo != nil {
-				status.ttl = lockInfo.LockTtl
-				status.commitTS = 0
-				return status, nil
-			}
-			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
+			err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
-		if cmdResp.CommitVersion != 0 {
-			status = TxnStatus{0, cmdResp.GetCommitVersion()}
-			tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+		if cmdResp.LockTtl != 0 {
+			status.ttl = cmdResp.LockTtl
 		} else {
-			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+			if cmdResp.CommitVersion == 0 {
+				tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+			} else {
+				tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+			}
+
+			status.commitTS = cmdResp.CommitVersion
+			lr.saveResolved(txnID, status)
 		}
-		lr.saveResolved(txnID, status)
 		return status, nil
 	}
 }
