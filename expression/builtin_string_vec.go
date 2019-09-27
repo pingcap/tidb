@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"encoding/hex"
 	"math"
 	"strings"
 	"unicode/utf8"
@@ -402,11 +403,37 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinUnHexSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnHexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		if len(str)%2 != 0 {
+			str = "0" + str
+		}
+		bs, e := hex.DecodeString(str)
+		if e != nil {
+			return e
+		}
+		result.AppendString(string(bs))
+	}
+	return nil
 }
 
 func (b *builtinExportSet3ArgSig) vectorized() bool {
