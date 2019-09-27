@@ -343,6 +343,10 @@ type dbTableHandler struct {
 	*tikvHandlerTool
 }
 
+type flashReplicaHandler struct {
+	*tikvHandlerTool
+}
+
 // regionHandler is the common field for http handler. It contains
 // some common functions for all handlers.
 type regionHandler struct {
@@ -665,6 +669,39 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	binloginfo.DisableSkipBinlogFlag()
+}
+
+type tableFlashReplicaInfo struct {
+	ID             int64    `json:"id"`
+	ReplicaCount   uint64   `json:"replica_count"`
+	LocationLabels []string `json:"location_labels"`
+	Status         bool     `json:"status"`
+}
+
+func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	allDBs := schema.AllSchemas()
+	for _, db := range allDBs {
+		tables := schema.SchemaTables(db.Name)
+		for _, tbl := range tables {
+			tblInfo := tbl.Meta()
+			if tblInfo.FlashReplica == nil || tblInfo.FlashReplica.Count == 0 {
+				continue
+			}
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             tblInfo.ID,
+				ReplicaCount:   tblInfo.FlashReplica.Count,
+				LocationLabels: tblInfo.FlashReplica.LocationLabels,
+				Status:         tblInfo.FlashReplica.Status,
+			})
+		}
+	}
+	writeData(w, replicaInfos)
 }
 
 // ServeHTTP handles request of list a database or table's schemas.

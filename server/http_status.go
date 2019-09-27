@@ -93,6 +93,8 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool}).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
+	// HTTP path for get table flash replica info.
+	router.Handle("/flash/replica", flashReplicaHandler{tikvHandlerTool})
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.

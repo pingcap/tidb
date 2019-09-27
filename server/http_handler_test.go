@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -391,6 +392,36 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(data.Value.Info.Lock, IsNil)
 	c.Assert(data.Value.Info.Writes, IsNil)
 	c.Assert(data.Value.Info.Values, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestGetFlashReplica(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/flash/replica"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data []tableFlashReplicaInfo
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 0)
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("use tidb")
+	dbt.mustExec("alter table test set flash replica 2 location labels 'a','b';")
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/flash/replica"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
