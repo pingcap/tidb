@@ -231,7 +231,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		}
 		fp := tryPointGetPlan(ctx, x)
 		if fp != nil {
-			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
+			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
 			if fp.IsTableDual {
@@ -473,7 +473,19 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		return nil
 	}
 
-	return newBatchPointGetPlan(ctx, in, tryHandle, fieldType, tbl, schema, names, whereColNames)
+	p := newBatchPointGetPlan(ctx, in, tryHandle, fieldType, tbl, schema, names, whereColNames)
+	if p == nil {
+		return nil
+	}
+
+	dbName := tblName.Schema.L
+	if dbName == "" {
+		dbName = ctx.GetSessionVars().CurrentDB
+	}
+	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv) != nil {
+		return nil
+	}
+	return p
 }
 
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
@@ -597,13 +609,13 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 	return p
 }
 
-func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, checkTypes ...mysql.PrivilegeType) error {
+func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	if pm == nil {
 		return nil
 	}
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, fastPlan.dbName, fastPlan.TblInfo.Name.L, "", checkType) {
+		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return errors.New("privilege check fail")
 		}
 	}
@@ -811,7 +823,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if fastSelect == nil {
 		return nil
 	}
-	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv) != nil {
+	if checkFastPlanPrivilege(ctx, fastSelect.dbName, fastSelect.TblInfo.Name.L, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
 	}
 	if fastSelect.IsTableDual {
@@ -890,7 +902,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if fastSelect == nil {
 		return nil
 	}
-	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.DeletePriv) != nil {
+	if checkFastPlanPrivilege(ctx, fastSelect.dbName, fastSelect.TblInfo.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
 	if fastSelect.IsTableDual {
