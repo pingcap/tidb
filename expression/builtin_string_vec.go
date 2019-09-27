@@ -431,7 +431,8 @@ func (b *builtinUnHexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 		}
 		bs, e := hex.DecodeString(str)
 		if e != nil {
-			return e
+			result.AppendNull()
+			continue
 		}
 		result.AppendString(string(bs))
 	}
