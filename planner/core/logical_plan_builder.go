@@ -1280,7 +1280,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1315,7 +1315,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 && a.curClause != windowClause {
+			if index == -1 && a.curClause != fieldList {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1420,7 +1420,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 	}
-	extractor.curClause = windowClause
+	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
 		if !ast.HasWindowFlag(field.Expr) {
 			continue
@@ -3527,7 +3527,10 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.FromLast {
 			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
 		}
-		spec := f.Spec
+		spec := &f.Spec
+		if f.Spec.Name.L != "" {
+			spec = b.windowSpecs[f.Spec.Name.L]
+		}
 		if spec.Frame == nil {
 			continue
 		}
@@ -3541,15 +3544,18 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if end.Type == ast.Preceding && end.UnBounded {
 			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
-		if start.Type == ast.Following && end.Type == ast.Preceding {
+		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 
-		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
+		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
 		if err != nil {
 			return err
 		}
-		err = b.checkOriginWindowFrameBound(&end, &spec, orderByItems)
+		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
 		if err != nil {
 			return err
 		}
@@ -3657,7 +3663,6 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		windowFunc.Spec = *spec
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
