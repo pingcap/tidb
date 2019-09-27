@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -58,6 +59,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// StoreType indicates table read from which type of store.
+	StoreType kv.StoreType
 }
 
 // PhysicalIndexReader is the index reader in tidb.

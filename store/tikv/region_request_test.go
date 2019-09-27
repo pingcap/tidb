@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/storeutil"
@@ -185,12 +186,12 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, TiKV)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 	c.Assert(ctx, NotNil)
 	req.ReplicaRead = true
-	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, TiKV)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 	c.Assert(ctx, NotNil)
