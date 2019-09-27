@@ -786,11 +786,11 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinAbsUIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAbsUIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinCeilDecToIntSig) vectorized() bool {
