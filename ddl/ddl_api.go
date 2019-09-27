@@ -2005,6 +2005,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					return errors.Trace(err)
 				}
 			}
+		case ast.AlterTableSetFlashReplica:
+			err = d.AlterTableSetFlashReplica(ctx, ident, spec.FlashReplica)
 		default:
 			// Nothing to do now.
 		}
@@ -2989,6 +2991,36 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		Type:       model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{toCharset, toCollate},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AlterTableCharset changes the table charset and collate.
+func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.FlashReplicaSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	if len(replicaInfo.Labels) != int(replicaInfo.Count) {
+		return errors.Errorf("set flash replica count should equal to the length of labels")
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionSetFlashReplica,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{*replicaInfo},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)

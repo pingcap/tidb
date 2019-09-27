@@ -3008,6 +3008,31 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
+func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t_flash;")
+	s.tk.MustExec("create table t_flash(a int, b int)")
+	defer s.mustExec(c, "drop table t_flash;")
+
+	t := s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().FlashReplica, IsNil)
+
+	s.tk.MustExec("alter table t_flash set flash replica 2 location labels 'a','b';")
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().FlashReplica, NotNil)
+	c.Assert(t.Meta().FlashReplica.Count, Equals, uint64(2))
+	c.Assert(strings.Join(t.Meta().FlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
+
+	s.tk.MustExec("alter table t_flash set flash replica 0")
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().FlashReplica, IsNil)
+
+	_, err := s.tk.Exec("alter table t_flash set flash replica 1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "set flash replica count should equal to the length of labels")
+}
+
 func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {

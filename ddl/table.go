@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/ast"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -666,6 +667,35 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 			col.Charset = charset.CharsetBin
 			col.Collate = charset.CharsetBin
 		}
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaInfo ast.FlashReplicaSpec
+	if err := job.DecodeArgs(&replicaInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 {
+		tblInfo.FlashReplica = &model.FlashReplicaInfo{
+			Count:          replicaInfo.Count,
+			LocationLabels: replicaInfo.Labels,
+		}
+	} else {
+		tblInfo.FlashReplica = nil
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
