@@ -15,13 +15,13 @@ package ddl
 
 import (
 	"fmt"
-	"github.com/pingcap/parser/ast"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
