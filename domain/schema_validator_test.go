@@ -145,14 +145,20 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 	}
 }
 
-func (*testSuite) TestMerge(c *C) {
+func (*testSuite) TestEnqueue(c *C) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDetalSchemaCount()
-	variable.SetMaxDetalSchemaCount(10)
 	defer variable.SetMaxDetalSchemaCount(originalCnt)
 
 	validator := NewSchemaValidator(lease).(*schemaValidator)
 	c.Assert(validator.IsStarted(), IsTrue)
+	// maxCnt is 0.
+	variable.SetMaxDetalSchemaCount(0)
+	validator.enqueue(1, []int64{11})
+	c.Assert(validator.deltaSchemaInfos, HasLen, 0)
+
+	// maxCnt is 10.
+	variable.SetMaxDetalSchemaCount(10)
 	ds := []deltaSchemaInfo{
 		{0, []int64{1}},
 		{1, []int64{1}},
@@ -179,54 +185,18 @@ func (*testSuite) TestMerge(c *C) {
 		{10, []int64{1}},
 	}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
-	// notMergeCnt <= max deltal schema count
-	validator.enqueue(11, []int64{1})
-	ret = append(ret, deltaSchemaInfo{11, []int64{1}})
-	validator.enqueue(12, []int64{1})
-	ret = append(ret, deltaSchemaInfo{12, []int64{1}})
-	validator.enqueue(13, []int64{1})
-	ret = append(ret, deltaSchemaInfo{13, []int64{1}})
+	// The Items' relatedTableIDs have different order.
+	validator.enqueue(11, []int64{1, 2, 3, 4})
+	validator.enqueue(12, []int64{4, 2, 3, 1})
+	validator.enqueue(13, []int64{4, 1, 3, 2})
+	ret = append(ret, deltaSchemaInfo{13, []int64{4, 1, 3, 2}})
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
+	// The length of deltaSchemaInfos is greater then maxCnt.
 	validator.enqueue(14, []int64{1})
+	validator.enqueue(15, []int64{2})
+	validator.enqueue(16, []int64{3})
 	ret = append(ret, deltaSchemaInfo{14, []int64{1}})
+	ret = append(ret, deltaSchemaInfo{15, []int64{2}})
+	ret = append(ret, deltaSchemaInfo{16, []int64{3}})
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret[1:])
-	// notMergeCnt > max deltal schema count
-	validator.enqueue(15, []int64{1})
-	ret = []deltaSchemaInfo{
-		{2, []int64{1}},
-		{3, []int64{1, 2}},
-		{4, []int64{1}},
-		{7, []int64{1, 3}},
-		{9, []int64{1, 2, 3}},
-		{15, []int64{1}},
-	}
-	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
-
-	validator.notMergeCnt = 0
-	validator.deltaSchemaInfos = []deltaSchemaInfo{
-		{0, []int64{1, 2, 3}},
-		{1, []int64{2}},
-		{2, []int64{3}},
-		{3, []int64{1, 2, 3}},
-		{4, []int64{1, 4}},
-		{5, []int64{1, 5}},
-		{6, []int64{1, 6}},
-		{7, []int64{1, 7}},
-		{8, []int64{1, 2, 3}},
-		{9, []int64{1, 2}},
-	}
-	validator.enqueue(10, []int64{1})
-	ret = []deltaSchemaInfo{
-		{1, []int64{2}},
-		{2, []int64{3}},
-		{3, []int64{1, 2, 3}},
-		{4, []int64{1, 4}},
-		{5, []int64{1, 5}},
-		{6, []int64{1, 6}},
-		{7, []int64{1, 7}},
-		{8, []int64{1, 2, 3}},
-		{9, []int64{1, 2}},
-		{10, []int64{1}},
-	}
-	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 }

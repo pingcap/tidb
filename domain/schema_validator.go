@@ -67,8 +67,6 @@ type schemaValidator struct {
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
 	deltaSchemaInfos []deltaSchemaInfo
-	// notMergeCnt is used to record the number of deltaSchemaInfo that have not been merged.
-	notMergeCnt int
 }
 
 // NewSchemaValidator returns a SchemaValidator structure.
@@ -94,7 +92,6 @@ func (s *schemaValidator) Stop() {
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.notMergeCnt = 0
 	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
@@ -112,7 +109,6 @@ func (s *schemaValidator) Reset() {
 	defer s.mux.Unlock()
 	s.isStarted = true
 	s.latestSchemaVer = 0
-	s.notMergeCnt = 0
 	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
@@ -219,36 +215,51 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 }
 
 func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	s.deltaSchemaInfos = append(s.deltaSchemaInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
-	s.notMergeCnt++
-
 	maxCnt := int(variable.GetMaxDetalSchemaCount())
-	if len(s.deltaSchemaInfos) > maxCnt && s.notMergeCnt > maxCnt/2 {
-		s.merge()
-		s.notMergeCnt = 1
+	if maxCnt <= 0 {
+		logutil.BgLogger().Info("the schema validator enqueue", zap.Int("delta max count", maxCnt))
+		return
 	}
+
+	delta := deltaSchemaInfo{schemaVersion, relatedTableIDs}
+	if len(s.deltaSchemaInfos) == 0 {
+		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+		return
+	}
+
+	lastOffset := len(s.deltaSchemaInfos) - 1
+	// The first item we needn't to merge, because we hope to cover more versions.
+	if lastOffset != 0 && unorderedEqual(s.deltaSchemaInfos[lastOffset].relatedTableIDs, delta.relatedTableIDs) {
+		s.deltaSchemaInfos[lastOffset] = delta
+	} else {
+		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+	}
+
 	if len(s.deltaSchemaInfos) > maxCnt {
+		logutil.BgLogger().Info("the schema validator enqueue, queue is too long",
+			zap.Int("delta max count", maxCnt), zap.Int64("remove schema version", s.deltaSchemaInfos[0].schemaVersion))
 		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
 	}
 }
 
-func equal(a, b []int64) bool {
+func unorderedEqual(a, b []int64) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := 0; i < len(a); i++ {
-		if a[i] != b[i] {
+
+	var isEqual bool
+	for _, i := range a {
+		isEqual = false
+		for _, j := range b {
+			if i == j {
+				isEqual = true
+				break
+			}
+		}
+		if !isEqual {
 			return false
 		}
 	}
-	return true
-}
 
-func (s *schemaValidator) merge() {
-	// The first item we needn't to merge, because we hope to cover more versions.
-	for i := len(s.deltaSchemaInfos) - 1; i > 1; i-- {
-		if equal(s.deltaSchemaInfos[i].relatedTableIDs, s.deltaSchemaInfos[i-1].relatedTableIDs) {
-			s.deltaSchemaInfos = append(s.deltaSchemaInfos[:i-1], s.deltaSchemaInfos[i:]...)
-		}
-	}
+	return true
 }
