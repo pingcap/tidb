@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/twinj/uuid"
 	"go.uber.org/zap"
 )
 
@@ -356,7 +356,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	for _, o := range options {
 		o(opt)
 	}
-	id := uuid.NewV4().String()
+
+	id := uuid.New().String()
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer

@@ -59,7 +59,8 @@ type copTask struct {
 	tblColHists *statistics.HistColl
 	// tblCols stores the original columns of DataSource before being pruned, it
 	// is used to compute average row width when computing scan cost.
-	tblCols []*expression.Column
+	tblCols           []*expression.Column
+	idxMergePartPlans []PhysicalPlan
 }
 
 func (t *copTask) invalid() bool {
@@ -235,6 +236,81 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// So the memory cost consider the results size for each batch.
 	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * memoryFactor
 
+	innerPlanCost := outerCnt * innerTask.cost()
+	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+}
+
+func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
+	innerTask := p.innerTask
+	outerTask := finishCopTask(p.ctx, tasks[1-p.InnerChildIdx].copy())
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.plan(), innerTask.plan())
+	} else {
+		p.SetChildren(innerTask.plan(), outerTask.plan())
+	}
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: p.GetCost(outerTask, innerTask),
+	}
+}
+
+// GetCost computes the cost of index merge join operator and its children.
+func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
+	var cpuCost float64
+	outerCnt, innerCnt := outerTask.count(), innerTask.count()
+	// Add the cost of evaluating outer filter, since inner filter of index join
+	// is always empty, we can simply tell whether outer filter is empty using the
+	// summed length of left/right conditions.
+	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
+		cpuCost += CPUFactor * outerCnt
+		outerCnt *= selectionFactor
+	}
+	// Cost of extracting lookup keys.
+	innerCPUCost := CPUFactor * outerCnt
+	// Cost of sorting and removing duplicate lookup keys:
+	// (outerCnt / batchSize) * (batchSize * Log2(batchSize) + batchSize) * CPUFactor
+	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
+	if batchSize > 2 {
+		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * CPUFactor
+	}
+	// Add cost of building inner executors. CPU cost of building copTasks:
+	// (outerCnt / batchSize) * (batchSize * distinctFactor) * CPUFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	innerCPUCost += outerCnt * distinctFactor * CPUFactor
+	concurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	cpuCost += innerCPUCost / concurrency
+	// CPU cost of building hash table for outer results concurrently.
+	// (outerCnt / batchSize) * (batchSize * CPUFactor)
+	outerCPUCost := outerCnt * CPUFactor
+	cpuCost += outerCPUCost / concurrency
+	// Cost of probing hash table concurrently.
+	numPairs := outerCnt * innerCnt
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
+		p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		if len(p.OtherConditions) > 0 {
+			numPairs *= 0.5
+		} else {
+			numPairs = 0
+		}
+	}
+	// Inner workers do hash join in parallel, but they can only save ONE outer
+	// batch results. So as the number of outer batch exceeds inner concurrency,
+	// it would fall back to linear execution. In a word, the hash join only runs
+	// in parallel for the first `innerConcurrency` number of inner tasks.
+	var probeCost float64
+	if outerCnt/batchSize >= concurrency {
+		probeCost = (numPairs - batchSize*innerCnt*(concurrency-1)) * CPUFactor
+	} else {
+		probeCost = batchSize * innerCnt * CPUFactor
+	}
+	cpuCost += probeCost
+	// Cost of additional concurrent goroutines.
+	cpuCost += (concurrency + 1.0) * concurrencyFactor
+	// Memory cost of hash tables for outer rows. The computed result is the upper bound,
+	// since the executor is pipelined and not all workers are always in full load.
+	memoryCost := concurrency * (batchSize * distinctFactor) * innerCnt * memoryFactor
+	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerTask.cost()
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
 }
@@ -473,6 +549,11 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	newTask := &rootTask{
 		cst: t.cst,
 	}
+	if t.idxMergePartPlans != nil {
+		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		newTask.p = p
+		return newTask
+	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{
 			tablePlan:      t.tablePlan,
@@ -561,6 +642,7 @@ func (t *rootTask) plan() PhysicalPlan {
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
+	sunk := false
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
@@ -575,9 +657,42 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(p.ctx, cop)
+		sunk = p.sinkIntoIndexLookUp(t)
 	}
-	t = attachPlan2Task(p, t)
-	return t
+	if sunk {
+		return t
+	}
+	return attachPlan2Task(p, t)
+}
+
+func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
+	root := t.(*rootTask)
+	reader, isDoubleRead := root.p.(*PhysicalIndexLookUpReader)
+	proj, isProj := root.p.(*PhysicalProjection)
+	if !isDoubleRead && !isProj {
+		return false
+	}
+	if isProj {
+		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		if !isDoubleRead {
+			return false
+		}
+	}
+	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
+	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	if !isTableScan {
+		return false
+	}
+	reader.PushedLimit = &PushedDownLimit{
+		Offset: p.Offset,
+		Count:  p.Count,
+	}
+	ts.stats = p.stats
+	reader.stats = p.stats
+	if isProj {
+		proj.stats = p.stats
+	}
+	return true
 }
 
 // GetCost computes cost of TopN operator itself.

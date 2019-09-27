@@ -33,7 +33,6 @@ import (
 // InsertValues is the data to insert.
 type InsertValues struct {
 	baseExecutor
-	batchChecker
 
 	rowCount       uint64
 	curBatchCnt    uint64
@@ -620,7 +619,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 
 	// Get keys need to be checked.
-	toBeCheckedRows, err := e.getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
+	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
 		return err
 	}

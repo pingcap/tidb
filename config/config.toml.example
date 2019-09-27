@@ -31,12 +31,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Only print a log when out of memory quota.
-# Valid options: ["log", "cancel"]
-oom-action = "log"
-
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
+
+# Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
+oom-use-tmp-storage = true
+
+# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
 
 # Enable coprocessor streaming.
 enable-streaming = false
@@ -70,8 +73,11 @@ level = "info"
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamp in output
+# Disable automatic timestamp in output.
 disable-timestamp = false
+
+# Disable stack information in error message.
+disable-error-stack = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
@@ -312,3 +318,10 @@ max-retry-count = 256
 # default TTL in milliseconds for pessimistic lock.
 # The value must between "15s" and "120s".
 ttl = "40s"
+
+[stmt-summary]
+# max number of statements kept in memory.
+max-stmt-count = 100
+
+# max length of displayed normalized sql and sample sql.
+max-sql-length = 4096

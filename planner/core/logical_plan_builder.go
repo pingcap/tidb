@@ -64,8 +64,12 @@ const (
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
 	HintStreamAgg = "stream_agg"
-	// HintIndex is hint enforce using some indexes.
-	HintIndex = "index"
+	// HintUseIndex is hint enforce using some indexes.
+	HintUseIndex = "use_index"
+	// HintIgnoreIndex is hint enforce ignoring some indexes.
+	HintIgnoreIndex = "ignore_index"
+	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
+	HintAggToCop = "agg_to_cop"
 )
 
 const (
@@ -98,7 +102,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
+		plan4Agg.aggHints = hint.aggHints
 	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
@@ -794,7 +798,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx, child.SelectBlockOffset())
 	if hint := b.TableHints(); hint != nil {
-		plan4Agg.preferAggType = hint.preferAggType
+		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
@@ -1276,7 +1280,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1311,7 +1315,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 && a.curClause != windowClause {
+			if index == -1 && a.curClause != fieldList {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1416,7 +1420,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 	}
-	extractor.curClause = windowClause
+	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
 		if !ast.HasWindowFlag(field.Expr) {
 			continue
@@ -1458,16 +1462,25 @@ type gbyResolver struct {
 	err     error
 	inExpr  bool
 	isParam bool
+
+	exprDepth int // exprDepth is the depth of current expression in expression tree.
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	g.exprDepth++
 	switch n := inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConstructPositionExpr(n)
 		g.isParam = true
-		return newNode, true
+		if g.exprDepth == 1 {
+			_, isNull, isExpectedType := getUintFromNode(g.ctx, n)
+			// For constant uint expression in top level, it should be treated as position expression.
+			if !isNull && isExpectedType {
+				return expression.ConstructPositionExpr(n), true
+			}
+		}
+		return n, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
@@ -1957,7 +1970,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
-		preferAggType                               uint
+		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -1968,10 +1981,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintHashAgg:
-			preferAggType |= preferHashAgg
+			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
-			preferAggType |= preferStreamAgg
-		case HintIndex:
+			aggHints.preferAggType |= preferStreamAgg
+		case HintAggToCop:
+			aggHints.preferAggToCop = true
+		case HintUseIndex:
 			if len(hint.Tables) != 0 {
 				indexHintList = append(indexHintList, indexHintInfo{
 					tblName: hint.Tables[0].TableName,
@@ -1982,17 +1997,28 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintIgnoreIndex:
+			if len(hint.Tables) != 0 {
+				indexHintList = append(indexHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintIgnore,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || preferAggType != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || aggHints.preferAggType != 0 || aggHints.preferAggToCop {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
-			preferAggType:             preferAggType,
+			aggHints:                  aggHints,
 		})
 		return true
 	}
@@ -2361,6 +2387,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.handleHelper.pushMap(nil)
 	}
 	ds.SetSchema(schema)
+
+	// Init fullIdxCols, fullIdxColLens for accessPaths.
+	for _, path := range ds.possibleAccessPaths {
+		if !path.isTablePath {
+			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+		}
+	}
 
 	var result LogicalPlan = ds
 
@@ -3494,7 +3527,10 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.FromLast {
 			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
 		}
-		spec := f.Spec
+		spec := &f.Spec
+		if f.Spec.Name.L != "" {
+			spec = b.windowSpecs[f.Spec.Name.L]
+		}
 		if spec.Frame == nil {
 			continue
 		}
@@ -3508,15 +3544,18 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if end.Type == ast.Preceding && end.UnBounded {
 			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
-		if start.Type == ast.Following && end.Type == ast.Preceding {
+		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 
-		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
+		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
 		if err != nil {
 			return err
 		}
-		err = b.checkOriginWindowFrameBound(&end, &spec, orderByItems)
+		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
 		if err != nil {
 			return err
 		}
@@ -3624,7 +3663,6 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		windowFunc.Spec = *spec
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)

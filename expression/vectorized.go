@@ -92,10 +92,10 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 			return err
 		}
 		if isNull {
-			result.ResizeDuration(n, true)
+			result.ResizeGoDuration(n, true)
 			return nil
 		}
-		result.ResizeDuration(n, false)
+		result.ResizeGoDuration(n, false)
 		ds := result.GoDurations()
 		for i := range ds {
 			ds[i] = v.Duration

@@ -93,7 +93,8 @@ const (
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
-	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
@@ -296,6 +297,9 @@ const (
 
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
+
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
+	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 )
 
 // Default TiDB system variable values.

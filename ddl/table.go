@@ -296,7 +296,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 // mockRecoverTableCommitErrOnce uses to make sure
 // `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce uint32 = 0
+var mockRecoverTableCommitErrOnce uint32
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -780,7 +780,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	err = checkPartitionNameUnique(tblInfo, partInfo)
+	err = checkAddPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
