@@ -219,18 +219,20 @@ func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 
 	i64s := result.Int64s()
 	arg1s := buf.Int64s()
+	// Returns NULL if either operand is NULL.
+	// See https://dev.mysql.com/doc/refman/5.7/en/logical-operators.html#operator_xor
+	result.MergeNulls(buf)
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		arg0 := i64s[i]
 		arg1 := arg1s[i]
-		isNull := result.IsNull(i) || buf.IsNull(i)
-		if !isNull {
-			if (arg0 != 0 && arg1 != 0) || (arg0 == 0 && arg1 == 0) {
-				i64s[i] = 0
-			} else {
-				i64s[i] = 1
-			}
+		if (arg0 != 0 && arg1 != 0) || (arg0 == 0 && arg1 == 0) {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
 		}
-		result.SetNull(i, isNull)
 	}
 	return nil
 }
