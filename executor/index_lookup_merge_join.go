@@ -285,7 +285,6 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 	}
 
 	// TODO: reuse the finished task memory to build tasks.
-	return
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
@@ -656,10 +655,10 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		e.cancelFunc()
 		e.cancelFunc = nil
 	}
+	e.workerWg.Wait()
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 	}
-	e.workerWg.Wait()
 	e.joinChkResourceCh = nil
 	e.memTracker = nil
 	return e.baseExecutor.Close()
