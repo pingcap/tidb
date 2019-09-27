@@ -163,11 +163,11 @@ func (*testSuite) TestEnqueue(c *C) {
 		{0, []int64{1}},
 		{1, []int64{1}},
 		{2, []int64{1}},
-		{3, []int64{1, 2}},
-		{4, []int64{1}},
-		{5, []int64{1, 3}},
-		{6, []int64{1, 3}},
-		{7, []int64{1, 3}},
+		{3, []int64{2, 2}},
+		{4, []int64{2}},
+		{5, []int64{1, 4}},
+		{6, []int64{1, 4}},
+		{7, []int64{3, 1, 3}},
 		{8, []int64{1, 2, 3}},
 		{9, []int64{1, 2, 3}},
 	}
@@ -178,25 +178,27 @@ func (*testSuite) TestEnqueue(c *C) {
 	ret := []deltaSchemaInfo{
 		{0, []int64{1}},
 		{2, []int64{1}},
-		{3, []int64{1, 2}},
-		{4, []int64{1}},
-		{7, []int64{1, 3}},
+		{3, []int64{2, 2}},
+		{4, []int64{2}},
+		{6, []int64{1, 4}},
 		{9, []int64{1, 2, 3}},
 		{10, []int64{1}},
 	}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 	// The Items' relatedTableIDs have different order.
 	validator.enqueue(11, []int64{1, 2, 3, 4})
-	validator.enqueue(12, []int64{4, 2, 3, 1})
-	validator.enqueue(13, []int64{4, 1, 3, 2})
-	ret = append(ret, deltaSchemaInfo{13, []int64{4, 1, 3, 2}})
+	validator.enqueue(12, []int64{4, 1, 2, 3, 1})
+	validator.enqueue(13, []int64{4, 1, 3, 2, 5})
+	ret[len(ret)-1] = deltaSchemaInfo{13, []int64{4, 1, 3, 2, 5}}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 	// The length of deltaSchemaInfos is greater then maxCnt.
 	validator.enqueue(14, []int64{1})
 	validator.enqueue(15, []int64{2})
 	validator.enqueue(16, []int64{3})
+	validator.enqueue(17, []int64{4})
 	ret = append(ret, deltaSchemaInfo{14, []int64{1}})
 	ret = append(ret, deltaSchemaInfo{15, []int64{2}})
 	ret = append(ret, deltaSchemaInfo{16, []int64{3}})
+	ret = append(ret, deltaSchemaInfo{17, []int64{4}})
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret[1:])
 }

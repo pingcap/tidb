@@ -229,7 +229,7 @@ func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) 
 
 	lastOffset := len(s.deltaSchemaInfos) - 1
 	// The first item we needn't to merge, because we hope to cover more versions.
-	if lastOffset != 0 && unorderedEqual(s.deltaSchemaInfos[lastOffset].relatedTableIDs, delta.relatedTableIDs) {
+	if lastOffset != 0 && ids(s.deltaSchemaInfos[lastOffset].relatedTableIDs).containIn(delta.relatedTableIDs) {
 		s.deltaSchemaInfos[lastOffset] = delta
 	} else {
 		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
@@ -242,8 +242,11 @@ func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) 
 	}
 }
 
-func unorderedEqual(a, b []int64) bool {
-	if len(a) != len(b) {
+type ids []int64
+
+// containIn is checks if a is included in b.
+func (a ids) containIn(b []int64) bool {
+	if len(a) > len(b) {
 		return false
 	}
 
