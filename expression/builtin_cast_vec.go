@@ -14,11 +14,12 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"strconv"
 )
 
 func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -281,16 +282,16 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		return err
 	}
 
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
 		var str string
 		if buf.IsNull(i) {
-			result.AppendString("")
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
-		if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		if !isUnsigned {
 			str = strconv.FormatInt(i64s[i], 10)
 		} else {
 			str = strconv.FormatUint(uint64(i64s[i]), 10)
@@ -303,8 +304,7 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 				return err
 			}
 			if d {
-				result.AppendString("")
-				result.SetNull(i, true)
+				result.AppendNull()
 			} else {
 				result.AppendString(str)
 			}
