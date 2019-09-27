@@ -187,7 +187,9 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := 0; i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
-		e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.retFieldTypes, e.maxChunkSize)
+		for j := 0; j < numResChkHold; j++ {
+			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.retFieldTypes, e.maxChunkSize)
+		}
 	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)
 	e.cancelFunc = cancelFunc
