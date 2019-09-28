@@ -393,9 +393,6 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
-// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
-var mockCommitErrorOnce = true
-
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
