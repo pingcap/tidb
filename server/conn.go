@@ -108,21 +108,20 @@ var (
 		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error"),
 		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
 	}
-	queryDurationHistogram = map[string]prometheus.Observer{
-		"Use":              metrics.QueryDurationHistogram.WithLabelValues("Use"),
-		"Show":             metrics.QueryDurationHistogram.WithLabelValues("Show"),
-		"Begin":            metrics.QueryDurationHistogram.WithLabelValues("Begin"),
-		"Commit":           metrics.QueryDurationHistogram.WithLabelValues("Commit"),
-		"Rollback":         metrics.QueryDurationHistogram.WithLabelValues("Rollback"),
-		"Insert":           metrics.QueryDurationHistogram.WithLabelValues("Insert"),
-		"Replace":          metrics.QueryDurationHistogram.WithLabelValues("Replace"),
-		"Delete":           metrics.QueryDurationHistogram.WithLabelValues("Delete"),
-		"Update":           metrics.QueryDurationHistogram.WithLabelValues("Update"),
-		"Select":           metrics.QueryDurationHistogram.WithLabelValues("Select"),
-		"Execute":          metrics.QueryDurationHistogram.WithLabelValues("Execute"),
-		"Set":              metrics.QueryDurationHistogram.WithLabelValues("Set"),
-		metrics.LblGeneral: metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral),
-	}
+
+	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
+	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
+	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
+	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
+	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
+	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
+	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
+	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
+	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
+	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
+	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
+	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
+	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
 )
 
 // newClientConn creates a *clientConn object.
@@ -747,10 +746,34 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
-	observer, found := queryDurationHistogram[sqlType]
-	if found && observer != nil {
-		observer.Observe(time.Since(startTime).Seconds())
-	} else {
+	switch sqlType {
+	case "Use":
+		queryDurationHistogramUse.Observe(time.Since(startTime).Seconds())
+	case "Show":
+		queryDurationHistogramShow.Observe(time.Since(startTime).Seconds())
+	case "Begin":
+		queryDurationHistogramBegin.Observe(time.Since(startTime).Seconds())
+	case "Commit":
+		queryDurationHistogramCommit.Observe(time.Since(startTime).Seconds())
+	case "Rollback":
+		queryDurationHistogramRollback.Observe(time.Since(startTime).Seconds())
+	case "Insert":
+		queryDurationHistogramInsert.Observe(time.Since(startTime).Seconds())
+	case "Replace":
+		queryDurationHistogramReplace.Observe(time.Since(startTime).Seconds())
+	case "Delete":
+		queryDurationHistogramDelete.Observe(time.Since(startTime).Seconds())
+	case "Update":
+		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
+	case "Select":
+		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
+	case "Execute":
+		queryDurationHistogramExecute.Observe(time.Since(startTime).Seconds())
+	case "Set":
+		queryDurationHistogramSet.Observe(time.Since(startTime).Seconds())
+	case metrics.LblGeneral:
+		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
+	default:
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
 	}
 }
