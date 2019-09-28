@@ -1193,7 +1193,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmt := &executor.ExecStmt{
 		InfoSchema:  is,
 		Plan:        execPlan,
-		StmtNode:    prepared.Stmt,
+		StmtNode:    execAst,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 	}
@@ -1203,9 +1203,19 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	logQuery(stmt.OriginText(), s.sessionVars)
 
 	// run ExecStmt
-	rs, err := stmt.GetPointRecord(ctx, is)
-	s.txn.changeToInvalid()
-	return rs, err
+	var resultSet sqlexec.RecordSet
+	switch prepared.CachedPlan.(type) {
+	case *plannercore.PointGetPlan:
+		resultSet, err = stmt.PointGet(ctx, is)
+		s.txn.changeToInvalid()
+	case *plannercore.Update:
+		s.PrepareTxnFuture(ctx)
+		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+		resultSet, err = runStmt(ctx, s, stmt)
+	default:
+		return nil, errors.Errorf("invalid cached plan type")
+	}
+	return resultSet, err
 }
 
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
@@ -1221,12 +1231,29 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current
-	// only point select will be cached, see "getPhysicalPlan" func
-	return true, nil
+	// only point select/update will be cached, see "getPhysicalPlan" func
+	var ok bool
+	var err error
+	switch prepared.CachedPlan.(type) {
+	case *plannercore.PointGetPlan:
+		ok = true
+	case *plannercore.Update:
+		pointUpdate := prepared.CachedPlan.(*plannercore.Update)
+		_, ok = pointUpdate.SelectPlan.(*plannercore.PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			prepared.CachedPlan = nil
+			return false, err
+		}
+	default:
+		ok = false
+	}
+	return ok, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
+	s.PrepareTxnCtx(ctx)
 	var err error
 	s.sessionVars.StartTime = time.Now()
 	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
@@ -1246,7 +1273,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if ok {
 		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
@@ -1795,6 +1821,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBMaxDeltaSchemaCount,
 }
 
 var (
