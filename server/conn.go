@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -77,46 +78,51 @@ const (
 )
 
 var (
-	queryTotalCounterComSleepOK           = metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK")
-	queryTotalCounterComSleepError        = metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error")
-	queryTotalCounterComQuitOK            = metrics.QueryTotalCounter.WithLabelValues("Quit", "OK")
-	queryTotalCounterComQuitError         = metrics.QueryTotalCounter.WithLabelValues("Quit", "Error")
-	queryTotalCounterComInitDBOK          = metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK")
-	queryTotalCounterComInitDBError       = metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error")
-	queryTotalCounterComQueryOK           = metrics.QueryTotalCounter.WithLabelValues("Query", "OK")
-	queryTotalCounterComQueryError        = metrics.QueryTotalCounter.WithLabelValues("Query", "Error")
-	queryTotalCounterComPingOK            = metrics.QueryTotalCounter.WithLabelValues("Ping", "OK")
-	queryTotalCounterComPingError         = metrics.QueryTotalCounter.WithLabelValues("Ping", "Error")
-	queryTotalCounterComFieldListOK       = metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK")
-	queryTotalCounterComFieldListError    = metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error")
-	queryTotalCounterComPrepareOK         = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK")
-	queryTotalCounterComPrepareError      = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error")
-	queryTotalCounterComExecuteOK         = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK")
-	queryTotalCounterComExecuteError      = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error")
-	queryTotalCounterComFetchOK           = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK")
-	queryTotalCounterComFetchError        = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error")
-	queryTotalCounterComCloseOK           = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK")
-	queryTotalCounterComCloseError        = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error")
-	queryTotalCounterComSendLongDataOK    = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK")
-	queryTotalCounterComSendLongDataError = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error")
-	queryTotalCounterComResetOK           = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK")
-	queryTotalCounterComResetError        = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error")
-	queryTotalCounterComSetOptionOK       = metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK")
-	queryTotalCounterComSetOptionError    = metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error")
-
-	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
-	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
-	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
-	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
-	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
-	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
-	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
-	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
-	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
-	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
-	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
-	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
-	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
+	queryTotalCountOk = [...]prometheus.Counter{
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK"),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK"),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK"),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK"),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK"),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK"),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK"),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK"),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK"),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK"),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK"),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK"),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK"),
+	}
+	queryTotalCountErr = [...]prometheus.Counter{
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error"),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error"),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error"),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error"),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error"),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error"),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error"),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error"),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error"),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error"),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error"),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error"),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
+	}
+	queryDurationHistogram = map[string]prometheus.Observer{
+		"Use":              metrics.QueryDurationHistogram.WithLabelValues("Use"),
+		"Show":             metrics.QueryDurationHistogram.WithLabelValues("Show"),
+		"Begin":            metrics.QueryDurationHistogram.WithLabelValues("Begin"),
+		"Commit":           metrics.QueryDurationHistogram.WithLabelValues("Commit"),
+		"Rollback":         metrics.QueryDurationHistogram.WithLabelValues("Rollback"),
+		"Insert":           metrics.QueryDurationHistogram.WithLabelValues("Insert"),
+		"Replace":          metrics.QueryDurationHistogram.WithLabelValues("Replace"),
+		"Delete":           metrics.QueryDurationHistogram.WithLabelValues("Delete"),
+		"Update":           metrics.QueryDurationHistogram.WithLabelValues("Update"),
+		"Select":           metrics.QueryDurationHistogram.WithLabelValues("Select"),
+		"Execute":          metrics.QueryDurationHistogram.WithLabelValues("Execute"),
+		"Set":              metrics.QueryDurationHistogram.WithLabelValues("Set"),
+		metrics.LblGeneral: metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral),
+	}
 )
 
 // newClientConn creates a *clientConn object.
@@ -175,7 +181,6 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
-	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, mysql.ServerStatusAutocommit)
@@ -713,91 +718,21 @@ func errStrForLog(err error) string {
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
-	switch cmd {
-	case mysql.ComSleep:
-		if err != nil {
-			queryTotalCounterComSleepError.Inc()
-		} else {
-			queryTotalCounterComSleepOK.Inc()
-		}
-	case mysql.ComQuit:
-		if err != nil {
-			queryTotalCounterComQuitError.Inc()
-		} else {
-			queryTotalCounterComQuitOK.Inc()
-		}
-	case mysql.ComQuery:
-		if cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
-			// Don't take DDL execute time into account.
-			// It's already recorded by other metrics in ddl package.
-			return
-		}
-		if err != nil {
-			queryTotalCounterComQueryError.Inc()
-		} else {
-			queryTotalCounterComQueryOK.Inc()
-		}
-	case mysql.ComPing:
-		if err != nil {
-			queryTotalCounterComPingError.Inc()
-		} else {
-			queryTotalCounterComPingOK.Inc()
-		}
-	case mysql.ComInitDB:
-		if err != nil {
-			queryTotalCounterComInitDBError.Inc()
-		} else {
-			queryTotalCounterComInitDBOK.Inc()
-		}
-	case mysql.ComFieldList:
-		if err != nil {
-			queryTotalCounterComFieldListError.Inc()
-		} else {
-			queryTotalCounterComFieldListOK.Inc()
-		}
-	case mysql.ComStmtPrepare:
-		if err != nil {
-			queryTotalCounterComPrepareError.Inc()
-		} else {
-			queryTotalCounterComPrepareOK.Inc()
-		}
-	case mysql.ComStmtExecute:
-		if err != nil {
-			queryTotalCounterComExecuteError.Inc()
-		} else {
-			queryTotalCounterComExecuteOK.Inc()
-		}
-	case mysql.ComStmtFetch:
-		if err != nil {
-			queryTotalCounterComFetchError.Inc()
-		} else {
-			queryTotalCounterComFetchOK.Inc()
-		}
-	case mysql.ComStmtClose:
-		if err != nil {
-			queryTotalCounterComCloseError.Inc()
-		} else {
-			queryTotalCounterComCloseOK.Inc()
-		}
-	case mysql.ComStmtSendLongData:
-		if err != nil {
-			queryTotalCounterComSendLongDataError.Inc()
-		} else {
-			queryTotalCounterComSendLongDataOK.Inc()
-		}
-	case mysql.ComStmtReset:
-		if err != nil {
-			queryTotalCounterComResetError.Inc()
-		} else {
-			queryTotalCounterComResetOK.Inc()
-		}
-	case mysql.ComSetOption:
-		if err != nil {
-			queryTotalCounterComSetOptionError.Inc()
-		} else {
-			queryTotalCounterComSetOptionOK.Inc()
-		}
-	default:
+	if cmd == mysql.ComQuery && cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
+		// Don't take DDL execute time into account.
+		// It's already recorded by other metrics in ddl package.
+		return
+	}
+
+	var counter prometheus.Counter
+	if err != nil && int(cmd) < len(queryTotalCountErr) {
+		counter = queryTotalCountErr[cmd]
+	} else if err == nil && int(cmd) < len(queryTotalCountOk) {
+		counter = queryTotalCountOk[cmd]
+	}
+	if counter != nil {
+		counter.Inc()
+	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
 			metrics.QueryTotalCounter.WithLabelValues(label, "ERROR").Inc()
@@ -805,40 +740,17 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 		}
 	}
+
 	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
 	sqlType := metrics.LblGeneral
 	if stmtType != "" {
 		sqlType = stmtType
 	}
 
-	switch sqlType {
-	case "Use":
-		queryDurationHistogramUse.Observe(time.Since(startTime).Seconds())
-	case "Show":
-		queryDurationHistogramShow.Observe(time.Since(startTime).Seconds())
-	case "Begin":
-		queryDurationHistogramBegin.Observe(time.Since(startTime).Seconds())
-	case "Commit":
-		queryDurationHistogramCommit.Observe(time.Since(startTime).Seconds())
-	case "Rollback":
-		queryDurationHistogramRollback.Observe(time.Since(startTime).Seconds())
-	case "Insert":
-		queryDurationHistogramInsert.Observe(time.Since(startTime).Seconds())
-	case "Replace":
-		queryDurationHistogramReplace.Observe(time.Since(startTime).Seconds())
-	case "Delete":
-		queryDurationHistogramDelete.Observe(time.Since(startTime).Seconds())
-	case "Update":
-		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
-	case "Select":
-		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
-	case "Execute":
-		queryDurationHistogramExecute.Observe(time.Since(startTime).Seconds())
-	case "Set":
-		queryDurationHistogramSet.Observe(time.Since(startTime).Seconds())
-	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
-	default:
+	observer, found := queryDurationHistogram[sqlType]
+	if found && observer != nil {
+		observer.Observe(time.Since(startTime).Seconds())
+	} else {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
 	}
 }
