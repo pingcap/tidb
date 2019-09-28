@@ -143,3 +143,10 @@ type ResultSet interface {
 	GetFetchedRows() []chunk.Row
 	Close() error
 }
+
+// fetchNotifier represents notifier will be called in COM_FETCH.
+type fetchNotifier interface {
+	// OnFetchReturned be called when COM_FETCH returns.
+	// it will be used in server-side cursor.
+	OnFetchReturned()
+}
