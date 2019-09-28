@@ -285,23 +285,27 @@ func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
 					c_varchar_default varchar(20) default "current_timestamp",
 					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+					c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
+					c_varchar_default_on_update_fsp datetime(3) default current_timestamp(3) on update current_timestamp(3),
 					c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
 				);`)
 
-	tk.MustQuery(`SELECT column_name, column_default
+	tk.MustQuery(`SELECT column_name, column_default, extra
 					FROM information_schema.COLUMNS
 					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
 					ORDER BY column_name`,
 	).Check(testkit.Rows(
-		"c_datetime <nil>",
-		"c_datetime_default CURRENT_TIMESTAMP",
-		"c_datetime_default_2 CURRENT_TIMESTAMP(2)",
-		"c_timestamp <nil>",
-		"c_timestamp_default CURRENT_TIMESTAMP",
-		"c_timestamp_default_3 CURRENT_TIMESTAMP(3)",
-		"c_varchar_default current_timestamp",
-		"c_varchar_default_3 current_timestamp(3)",
-		"c_varchar_default_with_case cUrrent_tImestamp",
+		"c_datetime <nil> ",
+		"c_datetime_default CURRENT_TIMESTAMP ",
+		"c_datetime_default_2 CURRENT_TIMESTAMP(2) ",
+		"c_timestamp <nil> ",
+		"c_timestamp_default CURRENT_TIMESTAMP ",
+		"c_timestamp_default_3 CURRENT_TIMESTAMP(3) ",
+		"c_varchar_default current_timestamp ",
+		"c_varchar_default_3 current_timestamp(3) ",
+		"c_varchar_default_on_update CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+		"c_varchar_default_on_update_fsp CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3)",
+		"c_varchar_default_with_case cUrrent_tImestamp ",
 	))
 	tk.MustExec("DROP DATABASE default_time_test")
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -108,11 +109,28 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 
 func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 	defer testleak.AfterTest(c)()
-	v := IsCurrentTimestampExpr(ast.NewValueExpr("abc"))
-	c.Assert(v, IsFalse)
+	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
+		var args []ast.ExprNode
+		if i != 0 {
+			args = []ast.ExprNode{&driver.ValueExpr{Datum: types.NewIntDatum(i)}}
+		}
+		return &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: args}
+	}
 
-	v = IsCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
+	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc"), nil)
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	c.Assert(v, IsTrue)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
+	c.Assert(v, IsTrue)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
+	c.Assert(v, IsFalse)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
+	c.Assert(v, IsFalse)
 }
 
 func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {

@@ -924,6 +924,21 @@ func (s *testIntegrationSuite) TestDropAutoIncrement(c *C) {
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = off")
 }
 
+func (s *testIntegrationSuite) TestInvalidDefaultOrOnUpdateClause(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	sql := "create table t2 (a datetime(2) default current_timestamp(3))"
+	assertErrorCode(c, tk, sql, mysql.ErrInvalidDefault)
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
+	assertErrorCode(c, tk, sql, mysql.ErrInvalidOnUpdate)
+	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2))"
+	assertErrorCode(c, tk, sql, mysql.ErrInvalidOnUpdate)
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3))"
+	assertErrorCode(c, tk, sql, mysql.ErrInvalidOnUpdate)
+}
+
 func (s *testIntegrationSuite) TestBitDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")

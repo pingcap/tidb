@@ -593,6 +593,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
+				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
 		if len(col.Comment) > 0 {

@@ -510,6 +510,14 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.Flag |= mysql.UniqueKeyFlag
 				}
 			case ast.ColumnOptionDefaultValue:
+				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+					switch x := v.Expr.(type) {
+					case *ast.FuncCallExpr:
+						if x.FnName.L == ast.CurrentTimestamp && !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
+							return nil, nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name)
+						}
+					}
+				}
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
@@ -518,7 +526,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
 				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-					if !expression.IsCurrentTimestampExpr(v.Expr) {
+					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 						return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 					}
 				} else {
@@ -1968,7 +1976,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-				if !expression.IsCurrentTimestampExpr(opt.Expr) {
+				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 					return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 			} else {

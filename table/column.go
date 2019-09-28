@@ -20,6 +20,7 @@ package table
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -272,7 +273,7 @@ func NewColDesc(col *Column) *ColDesc {
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
 		//in order to match the rules of mysql 8.0.16 version
 		//see https://github.com/pingcap/tidb/issues/10337
-		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" + OptionalFsp(&col.FieldType)
 	} else if col.IsGenerated() {
 		if col.GeneratedStored {
 			extra = "STORED GENERATED"
@@ -499,4 +500,13 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlJSON(json.CreateBinary(nil))
 	}
 	return d
+}
+
+// OptionalFsp convert a FieldType.Decimal to string.
+func OptionalFsp(fieldType *types.FieldType) string {
+	fsp := fieldType.Decimal
+	if fsp == 0 {
+		return ""
+	}
+	return "(" + strconv.Itoa(fsp) + ")"
 }
