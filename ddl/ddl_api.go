@@ -3010,10 +3010,6 @@ func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident,
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	if len(replicaInfo.Labels) != int(replicaInfo.Count) {
-		return errors.Errorf("set flash replica count should equal to the length of labels")
-	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,

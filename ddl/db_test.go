@@ -3027,10 +3027,6 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	s.tk.MustExec("alter table t_flash set flash replica 0")
 	t = s.testGetTable(c, "t_flash")
 	c.Assert(t.Meta().FlashReplica, IsNil)
-
-	_, err := s.tk.Exec("alter table t_flash set flash replica 1")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "set flash replica count should equal to the length of labels")
 }
 
 func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
