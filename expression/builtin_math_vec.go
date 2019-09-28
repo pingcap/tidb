@@ -433,6 +433,24 @@ func (b *builtinPowSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinFloorRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	f64s := result.Float64s()
+	for i := 0; i < len(f64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64s[i] = math.Floor(f64s[i])
+	}
+	return nil
+}
+
+func (b *builtinFloorRealSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -766,14 +784,6 @@ func (b *builtinSignSig) vectorized() bool {
 }
 
 func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinFloorRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFloorRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
