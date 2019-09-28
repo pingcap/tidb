@@ -306,9 +306,6 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
-	LightningMode bool
-
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
@@ -582,9 +579,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.LightningMode {
-		s.GetWriteStmtBufs().clean()
-	}
+	s.GetWriteStmtBufs().clean()
 }
 
 // AllocPlanColumnID allocates column id for plan.
