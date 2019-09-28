@@ -52,7 +52,7 @@ type CopClient struct {
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
-	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
+	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -90,7 +90,7 @@ type copTask struct {
 	respChan  chan *copResponse
 	storeAddr string
 	cmdType   tikvrpc.CmdType
-	storeType StoreType
+	storeType kv.StoreType
 }
 
 func (r *copTask) String() string {
@@ -211,11 +211,11 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
 	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
-	if streaming {
+	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
 
@@ -231,8 +231,9 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 				ranges: ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan: make(chan *copResponse, 2),
-				cmdType:  cmdType,
+				respChan:  make(chan *copResponse, 2),
+				cmdType:   cmdType,
+				storeType: req.StoreType,
 			})
 			i = nextI
 		}
@@ -243,7 +244,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		return nil, errors.Trace(err)
 	}
 
-	if desc {
+	if req.Desc {
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
@@ -778,7 +779,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
+		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
@@ -838,7 +839,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	if worker.req.Streaming && lastRange != nil {
 		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
 	}
-	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req.Desc, worker.req.Streaming)
+	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req)
 }
 
 // calculateRemain splits the input ranges into two, and take one of them according to desc flag.
