@@ -2043,23 +2043,13 @@ func (s *session) recordTransactionCounter(err error) {
 }
 
 type multiQueryNoDelayRecordSet struct {
+	sqlexec.RecordSet
+
 	affectedRows uint64
 	lastMessage  string
 	status       uint16
 	warnCount    uint16
 	lastInsertID uint64
-}
-
-func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
-	panic("unsupported method")
 }
 
 func (c *multiQueryNoDelayRecordSet) Close() error {
