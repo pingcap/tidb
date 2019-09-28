@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -189,10 +190,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	prepared, ok := vars.PreparedStmts[e.ExecID]
+	preparedPointer, ok := vars.PreparedStmts[e.ExecID]
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
+	if !ok {
+		return errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
 	paramLen := len(e.PrepareParams)
@@ -239,7 +245,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	err := e.getPhysicalPlan(ctx, sctx, is, prepared)
+	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
@@ -247,7 +253,19 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) error {
+func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
+	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
+			return err
+		}
+	}
+	err := CheckTableLock(sctx, is, preparedObj.VisitInfos)
+	return err
+}
+
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -265,6 +283,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 		e.names = plan.OutputNames()
 		e.Plan = plan
+		sctx.GetSessionVars().StmtCtx.PointExec = true
 		return nil
 	}
 	var cacheKey kvcache.Key
@@ -272,6 +291,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
+				return err
+			}
 			if metrics.ResettablePlanCacheCounterFortTest {
 				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			} else {
@@ -291,19 +313,47 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return err
 	}
-	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+	err = e.tryCachePointPlan(ctx, sctx, prepared, is, p)
 	if err != nil {
 		return err
-	}
-	if ok {
-		// just cache point plan now
-		prepared.CachedPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
+	}
+	return err
+}
+
+// tryCachePointPlan will try to cache point execution plan, there may be some
+// short paths for these executions, currently "point select" and "point update"
+func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
+	prepared *ast.Prepared, is infoschema.InfoSchema, p Plan) error {
+	var (
+		ok  bool
+		err error
+	)
+	switch p.(type) {
+	case *PointGetPlan:
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		if err != nil {
+			return err
+		}
+	case *Update:
+		ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		if err != nil {
+			return err
+		}
+		if ok {
+			// make constant expression store paramMarker
+			sctx.GetSessionVars().StmtCtx.PointExec = true
+			p, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		}
+	}
+	if ok {
+		// just cache point plan now
+		prepared.CachedPlan = p
 	}
 	return err
 }
@@ -860,17 +910,11 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 //  2. txn is not valid
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
-	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
+	ok, err := IsAutoCommitNonValidTxn(ctx)
 	if err != nil {
 		return false, err
 	}
-	if txn.Valid() {
+	if !ok {
 		return false, nil
 	}
 
@@ -894,4 +938,44 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	default:
 		return false, nil
 	}
+}
+
+// IsAutoCommitNonValidTxn checks if session is in autocommit mode and txn not valid
+// used for fast plan like point get
+func IsAutoCommitNonValidTxn(ctx sessionctx.Context) (bool, error) {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+
+	// check txn
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	if txn.Valid() {
+		return false, nil
+	}
+	return true, nil
+}
+
+// IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
+func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	ok, err := IsAutoCommitNonValidTxn(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+
+	// check plan
+	updPlan, ok := p.(*Update)
+	if !ok {
+		return false, nil
+	}
+	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
+		return true, nil
+	}
+	return false, nil
 }

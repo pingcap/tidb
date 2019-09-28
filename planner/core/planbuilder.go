@@ -161,7 +161,6 @@ const (
 	onClause
 	orderByClause
 	whereClause
-	windowClause
 	groupByClause
 	showStatement
 	globalOrderByClause
@@ -177,7 +176,6 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
-	windowClause:        "field list", // For window functions that in field list.
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -311,6 +309,7 @@ func (b *PlanBuilder) popSelectOffset() {
 
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
+	sctx.GetSessionVars().PlannerSelectBlockAsName = make([]model.CIStr, processor.MaxSelectStmtOffset()+1)
 	return &PlanBuilder{
 		ctx:           sctx,
 		is:            is,

@@ -35,6 +35,11 @@ type BlockHintProcessor struct {
 	selectStmtOffset int
 }
 
+// MaxSelectStmtOffset returns the current stmt offset.
+func (p *BlockHintProcessor) MaxSelectStmtOffset() int {
+	return p.selectStmtOffset
+}
+
 // Enter implements Visitor interface.
 func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch node := in.(type) {
@@ -211,16 +216,53 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 	return tblName
 }
 
-func getJoinTableNames(nodeType nodeType, parentOffset int, children ...PhysicalPlan) (res []ast.HintTable) {
-	for _, child := range children {
-		table := extractTableAlias(child)
-		if table != nil {
-			ht := ast.HintTable{TableName: table.name}
-			if child.SelectBlockOffset() != parentOffset {
-				ht.QBName = generateQBName(nodeType, child.SelectBlockOffset())
-			}
-			res = append(res, ht)
+func extractTableAsName(p PhysicalPlan) *model.CIStr {
+	if len(p.Children()) > 1 {
+		return nil
+	}
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		if ts.TableAsName.L != "" {
+			return ts.TableAsName
 		}
+		return &ts.Table.Name
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		if is.TableAsName.L != "" {
+			return is.TableAsName
+		}
+		return &is.Table.Name
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		if is.TableAsName.L != "" {
+			return is.TableAsName
+		}
+		return &is.Table.Name
+	}
+	return nil
+}
+
+func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+	for _, child := range children {
+		if child.SelectBlockOffset() == -1 {
+			continue
+		}
+		var tableName *model.CIStr
+		if child.SelectBlockOffset() != parentOffset {
+			tableName = &sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+		} else {
+			tableName = extractTableAsName(child)
+		}
+		if tableName == nil {
+			continue
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
+			HintName: model.NewCIStr(joinType),
+			Tables:   []ast.HintTable{{TableName: *tableName}},
+		})
+		break
 	}
 	return res
 }
@@ -264,29 +306,13 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 			HintName: model.NewCIStr(HintStreamAgg),
 		})
 	case *PhysicalMergeJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintSMJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[0], pp.children[1]),
-		})
+		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintHJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[0], pp.children[1]),
-		})
+		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintINLJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[pp.InnerChildIdx]),
-		})
+		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, pp.blockOffset),
-			HintName: model.NewCIStr(HintINLJ),
-			Tables:   getJoinTableNames(nodeType, pp.blockOffset, pp.children[pp.InnerChildIdx]),
-		})
+		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
 }
