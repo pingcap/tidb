@@ -178,11 +178,38 @@ func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinLeastRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLeastRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalReal(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		result.MergeNulls(buf)
+		v := buf.Float64s()
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if v[i] < f64s[i] {
+				f64s[i] = v[i]
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinLeastStringSig) vectorized() bool {
