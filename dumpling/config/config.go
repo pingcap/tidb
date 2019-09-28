@@ -287,6 +287,8 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+	// EnableArrow indicate the data encode in arrow format.
+	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
 }
 
 // Binlog is the config for binlog.
@@ -411,6 +413,8 @@ var defaultConf = Config{
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
+
+		EnableArrow: true,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
