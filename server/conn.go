@@ -1153,23 +1153,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	go processStream(ctx, cc, loadDataInfo)
 	err = loadDataInfo.CommitWork(ctx)
 	loadDataInfo.SetMessage()
-
-	var txn kv.Transaction
-	var err1 error
-	txn, err1 = loadDataInfo.Ctx.Txn(true)
-	if err1 == nil {
-		if txn != nil && txn.Valid() {
-			if err != nil {
-				if err1 := txn.Rollback(); err1 != nil {
-					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
-				}
-				return err
-			}
-			return cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx))
-		}
-	}
-	// Should never reach here.
-	panic(err1)
+	return err
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
