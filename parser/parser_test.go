@@ -2670,6 +2670,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a int, b text ascii, c mediumtext ascii)", true, "CREATE TABLE `t` (`a` INT,`b` TEXT CHARACTER SET LATIN1,`c` MEDIUMTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a long ascii, b long ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT CHARACTER SET LATIN1,`b` MEDIUMTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a long character set utf8mb4, b long charset utf8mb4, c long char set utf8mb4)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT CHARACTER SET UTF8MB4,`b` MEDIUMTEXT CHARACTER SET UTF8MB4,`c` MEDIUMTEXT CHARACTER SET UTF8MB4)"},
+
+		// for issue 555
+		{"create table t (a fixed(6, 3), b fixed key)", true, "CREATE TABLE `t` (`a` DECIMAL(6,3),`b` DECIMAL PRIMARY KEY)"},
+		{"create table t (a numeric, b fixed(6))", true, "CREATE TABLE `t` (`a` DECIMAL,`b` DECIMAL(6))"},
+		{"create table t (a fixed(65, 30) zerofill, b numeric, c fixed(65) unsigned zerofill)", true, "CREATE TABLE `t` (`a` DECIMAL(65,30) UNSIGNED ZEROFILL,`b` DECIMAL,`c` DECIMAL(65) UNSIGNED ZEROFILL)"},
 	}
 	s.RunTest(c, table)
 }
