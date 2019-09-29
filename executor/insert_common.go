@@ -297,7 +297,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		row[offset], hasValue[offset] = *val1.Copy(), true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
-	// Row may lack of generated column、autoIncrement column、empty column here.
+	// Row may lack of generated column, autoIncrement column, empty column here.
 	return e.fillRow(ctx, row, hasValue)
 }
 
