@@ -628,7 +628,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	if !ok {
 		return rows, nil
 	}
-	// autoID can find in RetryInfo.
+	// autoID can be found in RetryInfo.
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
 		return e.lazyAdjustAutoIncrementDatumInRetry(ctx, rows, colIdx)

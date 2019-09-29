@@ -47,8 +47,8 @@ var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid Tabl
 type Allocator interface {
 	// Alloc allocs N consecutive autoID for table with tableID.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
-	// The consecutive feature is used to insert multiple rows in a statement, cause JDBC will presume the id of these rows are consecutive.
-	Alloc(tableID int64, N uint64) ([]int64, error)
+	// The consecutive feature is used to insert multiple rows in a statement.
+	Alloc(tableID int64, n uint64) ([]int64, error)
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
@@ -250,7 +250,7 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	}
 }
 
-//autoid error codes.
+//codeInvalidTableID is the code of autoid error.
 const codeInvalidTableID terror.ErrCode = 1
 
 var localSchemaID = int64(math.MaxInt64)
@@ -260,7 +260,7 @@ func GenLocalSchemaID() int64 {
 	return atomic.AddInt64(&localSchemaID, -1)
 }
 
-// AllocN implements autoid.Allocator Alloc interface.
+// Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64, N uint64) ([]int64, error) {
 	if tableID == 0 {
 		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
@@ -303,7 +303,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
 				return err1
 			}
 			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
-			// The global rest is not enough for allocN.
+			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
 			}
@@ -339,15 +339,15 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
 
 func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error) {
 	n1 := int64(n)
-	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
+	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) < n {
 		return nil, ErrAutoincReadFailed
 	}
-	// The local rest is not enough for allocN, skip it.
+	// The local rest is not enough for alloc, skip it.
 	if uint64(alloc.base)+n > uint64(alloc.end) {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		// Although it may skip a segment here, we still think it is consumed.
+		// Although it may skip a segment here, we still treat it as consumed.
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		nextStep := NextStep(alloc.step, consumeDur)
 		// Make sure nextStep is big enough.
@@ -364,7 +364,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error)
 				return err1
 			}
 			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
-			// The global rest is not enough for allocN.
+			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
 			}
@@ -394,7 +394,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error)
 		}
 		resN = append(resN, int64(i))
 	}
-	// Use uint64 N directly.
+	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + n)
 	return resN, nil
 }
