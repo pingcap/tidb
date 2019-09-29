@@ -379,19 +379,19 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	}
 }
 
-func (p *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
 		return
 	}
 
 	var alias *hintTableInfo
-	if len(p.TableAsName.L) != 0 {
-		alias = &hintTableInfo{name: *p.TableAsName, selectOffset: p.SelectBlockOffset()}
+	if len(ds.TableAsName.L) != 0 {
+		alias = &hintTableInfo{name: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
 	} else {
-		alias = extractTableAlias(p)
+		alias = extractTableAlias(ds)
 	}
 	if hintInfo.ifPreferTiFlash(alias) {
-		p.preferStoreType |= preferTiFlash
+		ds.preferStoreType |= preferTiFlash
 	}
 }
 
