@@ -718,7 +718,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 
-	for i := 0; i < len(i64s); i++  {
+	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			i64s[i] = 0
 			continue
