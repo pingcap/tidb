@@ -23,6 +23,49 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+// DefaultOptimizer is the optimizer which contains all of the default
+// transformation and implementation rules.
+var DefaultOptimizer = NewOptimizer()
+
+// Optimizer is the struct for cascades optimizer.
+type Optimizer struct {
+	transformationRuleMap map[memo.Operand][]Transformation
+	implementationRuleMap map[memo.Operand][]ImplementationRule
+}
+
+// NewOptimizer returns a cascades optimizer with default transformation
+// rules and implementation rules.
+func NewOptimizer() *Optimizer {
+	return &Optimizer{
+		transformationRuleMap: defaultTransformationMap,
+		implementationRuleMap: defaultImplementationMap,
+	}
+}
+
+// ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
+func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
+	opt.transformationRuleMap = rules
+	return opt
+}
+
+// ResetImplementationRules resets the implementationRuleMap of the optimizer, and returns the optimizer.
+func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]ImplementationRule) *Optimizer {
+	opt.implementationRuleMap = rules
+	return opt
+}
+
+// GetTransformationRules gets the all the candidate transformation rules of the optimizer
+// based on the logical plan node.
+func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
+	return opt.transformationRuleMap[memo.GetOperand(node)]
+}
+
+// GetImplementationRules gets all the candidate implementation rules of the optimizer
+// for the logical plan node.
+func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
+	return opt.implementationRuleMap[memo.GetOperand(node)]
+}
+
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
 //
@@ -51,13 +94,13 @@ import (
 // for each expression in each group under the required physical property. A
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
-func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
+func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
 	rootGroup := convert2Group(logical)
-	err = onPhaseExploration(sctx, rootGroup)
+	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
-	p, err = onPhaseImplementation(sctx, rootGroup)
+	p, err = opt.onPhaseImplementation(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -84,9 +127,9 @@ func convert2Group(node plannercore.LogicalPlan) *memo.Group {
 	return g
 }
 
-func onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
+func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
 	for !g.Explored {
-		err := exploreGroup(g)
+		err := opt.exploreGroup(g)
 		if err != nil {
 			return err
 		}
@@ -94,7 +137,7 @@ func onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
 	return nil
 }
 
-func exploreGroup(g *memo.Group) error {
+func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 	if g.Explored {
 		return nil
 	}
@@ -109,13 +152,13 @@ func exploreGroup(g *memo.Group) error {
 		// Explore child groups firstly.
 		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
-			if err := exploreGroup(childGroup); err != nil {
+			if err := opt.exploreGroup(childGroup); err != nil {
 				return err
 			}
 			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
-		eraseCur, err := findMoreEquiv(g, elem)
+		eraseCur, err := opt.findMoreEquiv(g, elem)
 		if err != nil {
 			return err
 		}
@@ -129,9 +172,9 @@ func exploreGroup(g *memo.Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, rule := range GetTransformationRules(expr.ExprNode) {
+	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
 		pattern := rule.GetPattern()
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
@@ -167,7 +210,7 @@ func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error)
 }
 
 // fillGroupStats computes Stats property for each Group recursively.
-func fillGroupStats(g *memo.Group) (err error) {
+func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 	if g.Prop.Stats != nil {
 		return nil
 	}
@@ -177,7 +220,7 @@ func fillGroupStats(g *memo.Group) (err error) {
 	expr := elem.Value.(*memo.GroupExpr)
 	childStats := make([]*property.StatsInfo, len(expr.Children))
 	for i, childGroup := range expr.Children {
-		err = fillGroupStats(childGroup)
+		err = opt.fillGroupStats(childGroup)
 		if err != nil {
 			return err
 		}
@@ -189,12 +232,12 @@ func fillGroupStats(g *memo.Group) (err error) {
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, error) {
+func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
-	impl, err := implGroup(g, prop, math.MaxFloat64)
+	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +254,7 @@ func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.
 // g:			the Group to be implemented.
 // reqPhysProp: the required physical property.
 // costLimit:   the maximum cost of all the Implementations.
-func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
+func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
 	groupImpl := g.GetImpl(reqPhysProp)
 	if groupImpl != nil {
 		if groupImpl.GetCost() <= costLimit {
@@ -223,14 +266,14 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	var cumCost float64
 	var childCosts []float64
 	var childPlans []plannercore.PhysicalPlan
-	err := fillGroupStats(g)
+	err := opt.fillGroupStats(g)
 	if err != nil {
 		return nil, err
 	}
 	outCount := math.Min(g.Prop.Stats.RowCount, reqPhysProp.ExpectedCnt)
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
-		impls, err := implGroupExpr(curExpr, reqPhysProp)
+		impls, err := opt.implGroupExpr(curExpr, reqPhysProp)
 		if err != nil {
 			return nil, err
 		}
@@ -239,7 +282,7 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 			childCosts = childCosts[:0]
 			childPlans = childPlans[:0]
 			for i, childGroup := range curExpr.Children {
-				childImpl, err := implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
+				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
 				if err != nil {
 					return nil, err
 				}
@@ -270,7 +313,7 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	for _, rule := range GetEnforcerRules(reqPhysProp) {
 		newReqPhysProp := rule.NewProperty(reqPhysProp)
 		enforceCost := rule.GetEnforceCost(outCount)
-		childImpl, err := implGroup(g, newReqPhysProp, costLimit-enforceCost)
+		childImpl, err := opt.implGroup(g, newReqPhysProp, costLimit-enforceCost)
 		if err != nil {
 			return nil, err
 		}
@@ -292,8 +335,8 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	return groupImpl, nil
 }
 
-func implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) (impls []memo.Implementation, err error) {
-	for _, rule := range GetImplementationRules(cur.ExprNode) {
+func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) (impls []memo.Implementation, err error) {
+	for _, rule := range opt.GetImplementationRules(cur.ExprNode) {
 		if !rule.Match(cur, reqPhysProp) {
 			continue
 		}

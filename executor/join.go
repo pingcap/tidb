@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
@@ -122,8 +123,8 @@ func (e *HashJoinExec) Close() error {
 		}
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
+		terror.Call(e.rowContainer.Close)
 	}
-	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return err
@@ -136,13 +137,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
-
 	return nil
 }
 
@@ -219,7 +219,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	return false, nil
 }
 
-var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
+var innerResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.innerResult")
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
@@ -500,6 +500,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 	}
 	return ok, joinResult
 }
+
 func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
@@ -612,10 +613,13 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 	}
 	var err error
 	var selected []bool
-	initList := chunk.NewList(allTypes, e.initCap, e.maxChunkSize)
-	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx, initList)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.innerEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(innerResultLabel)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := e.rowContainer.ActionSpill()
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+	}
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
 			return nil
