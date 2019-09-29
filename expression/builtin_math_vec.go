@@ -717,14 +717,15 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	}
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
+	buf64s := buf.Int64s()
 
 	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			i64s[i] = 0
 			continue
 		}
-		if buf.GetInt64(i) < 0 {
-			shift := int64(math.Pow10(int(-buf.GetInt64(i))))
+		if buf64s[i] < 0 {
+			shift := int64(math.Pow10(int(-buf64s[i])))
 			i64s[i] = i64s[i] / shift * shift
 		}
 	}
