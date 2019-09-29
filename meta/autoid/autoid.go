@@ -261,19 +261,19 @@ func GenLocalSchemaID() int64 {
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
-func (alloc *allocator) Alloc(tableID int64, N uint64) ([]int64, error) {
+func (alloc *allocator) Alloc(tableID int64, n uint64) ([]int64, error) {
 	if tableID == 0 {
 		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
-	if N == 0 {
+	if n == 0 {
 		return []int64{}, nil
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.alloc4Unsigned(tableID, N)
+		return alloc.alloc4Unsigned(tableID, n)
 	}
-	return alloc.alloc4Signed(tableID, N)
+	return alloc.alloc4Signed(tableID, n)
 }
 
 func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
