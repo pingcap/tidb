@@ -176,7 +176,7 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
-	// ErrInvalidGroupFuncUse returns for invalid group func use
+	// ErrInvalidGroupFuncUse returns for using invalid group functions.
 	ErrInvalidGroupFuncUse = terror.ClassDDL.New(codeInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
 	ErrTableMustHaveColumns = terror.ClassDDL.New(codeTableMustHaveColumns, mysql.MySQLErrName[mysql.ErrTableMustHaveColumns])
