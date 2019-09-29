@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/meta"
 	"runtime"
 	"strconv"
 	"sync"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -320,7 +320,7 @@ type ShowDDLJobsExec struct {
 	baseExecutor
 
 	cursor         int
-	jobs           []*model.Job
+	runningJobs    []*model.Job
 	historyJobIter *meta.LastJobIterator
 	cacheJobs      []*model.Job
 	jobNumber      int
@@ -408,7 +408,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.jobs = append(e.jobs, jobs...)
+	e.runningJobs = append(e.runningJobs, jobs...)
 	e.historyJobIter = historyJobIter
 	e.cursor = 0
 	return nil
@@ -417,22 +417,25 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	if (e.cursor - len(e.jobs)) >= e.jobNumber {
+	if (e.cursor - len(e.runningJobs)) >= e.jobNumber {
 		return nil
 	}
 	count := 0
-	if e.cursor < len(e.jobs) {
-		numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	// Append running ddl jobs.
+	if e.cursor < len(e.runningJobs) {
+		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-			e.appendJobToChunk(req, e.jobs[i])
+			e.appendJobToChunk(req, e.runningJobs[i])
 		}
 		e.cursor += numCurBatch
 		count += numCurBatch
 	}
 	var err error
+	// Append history ddl jobs.
 	if count < req.Capacity() {
 		num := req.Capacity() - count
-		num = mathutil.Min(num, e.jobNumber)
+		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
+		num = mathutil.Min(num, remainNum)
 		e.cacheJobs, err = e.historyJobIter.GetJobs(num, e.cacheJobs)
 		if err != nil {
 			return err
