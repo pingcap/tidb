@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -207,6 +208,15 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now)
 	c.Assert(sp, Equals, zeroTime)
+
+	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"),
+		strconv.FormatUint(variable.GoTimeToTS(now), 10))
+	c.Assert(err, IsNil)
+	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "b"),
+		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
+	c.Assert(err, IsNil)
+	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))
+	c.Assert(sp.Second(), Equals, now.Add(-20*time.Second).Second())
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
