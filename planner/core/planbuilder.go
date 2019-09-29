@@ -1274,19 +1274,18 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
-	tblName := "DDLJobs"
 	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
-	schema.Append(buildColumn(tblName, "JOB_ID", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn(tblName, "DB_NAME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn(tblName, "TABLE_NAME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn(tblName, "JOB_TYPE", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn(tblName, "SCHEMA_STATE", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn(tblName, "SCHEMA_ID", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn(tblName, "TABLE_ID", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn(tblName, "ROW_COUNT", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn(tblName, "START_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn(tblName, "END_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn(tblName, "STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB_TYPE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
 
