@@ -38,34 +38,34 @@ func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 
-// RootSelectionImpl is the implementation of PhysicalSelection in TiDB layer.
-type RootSelectionImpl struct {
+// TiDBSelectionImpl is the implementation of PhysicalSelection in TiDB layer.
+type TiDBSelectionImpl struct {
 	baseImpl
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (sel *RootSelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+func (sel *TiDBSelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
 	sel.cost = outCount*plannercore.CPUFactor + childCosts[0]
 	return sel.cost
 }
 
-// NewRootSelectionImpl creates a new RootSelectionImpl.
-func NewRootSelectionImpl(sel *plannercore.PhysicalSelection) *RootSelectionImpl {
-	return &RootSelectionImpl{baseImpl{plan: sel}}
+// NewTiDBSelectionImpl creates a new TiDBSelectionImpl.
+func NewTiDBSelectionImpl(sel *plannercore.PhysicalSelection) *TiDBSelectionImpl {
+	return &TiDBSelectionImpl{baseImpl{plan: sel}}
 }
 
-// TiKVCopSelectionImpl is the implementation of PhysicalSelection in TiKV layer.
-type TiKVCopSelectionImpl struct {
+// TiKVSelectionImpl is the implementation of PhysicalSelection in TiKV layer.
+type TiKVSelectionImpl struct {
 	baseImpl
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (sel *TiKVCopSelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+func (sel *TiKVSelectionImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
 	sel.cost = outCount*plannercore.CopCPUFactor + childCosts[0]
 	return sel.cost
 }
 
-// NewTiKVCopSelectionImpl creates a new TiKVCopSelectionImpl.
-func NewTiKVCopSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVCopSelectionImpl {
-	return &TiKVCopSelectionImpl{baseImpl{plan: sel}}
+// NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
+func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
+	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }
