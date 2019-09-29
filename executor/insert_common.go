@@ -615,6 +615,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, 
 			rows[i][colIdx] = autoDatum
 		}
 	}
+	return rows, nil
 }
 
 // lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
