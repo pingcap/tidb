@@ -1168,6 +1168,17 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+func (s *session) CommonExec(ctx context.Context,
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	if err != nil {
+		return nil, err
+	}
+	logQuery(st.OriginText(), s.sessionVars)
+	logutil.Logger(ctx).Error("[ray] common execution")
+	return runStmt(ctx, s, st)
+}
+
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
@@ -1182,6 +1193,11 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
 		return nil, err
+	}
+	// after drop unique index like operation, the former cached plan is
+	// not point plan and will be set to nil in `optimizePrepareStatement` func
+	if prepared.CachedPlan == nil {
+		return s.CommonExec(ctx, stmtID, prepareStmt, args)
 	}
 	stmt := &executor.ExecStmt{
 		InfoSchema:  is,
@@ -1206,8 +1222,10 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
+		prepared.CachedPlan = nil
 		return nil, errors.Errorf("invalid cached plan type")
 	}
+	logutil.Logger(ctx).Error("[ray] cached execution")
 	return resultSet, err
 }
 
@@ -1266,13 +1284,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if ok {
 		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
-	if err != nil {
-		return nil, err
-	}
-	logQuery(st.OriginText(), s.sessionVars)
-	r, err := runStmt(ctx, s, st)
-	return r, err
+	return s.CommonExec(ctx, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
