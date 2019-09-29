@@ -304,18 +304,17 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		if err != nil {
 			result.AppendNull()
 			continue
+		}
+		var d bool
+		str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+		if d {
+			result.AppendNull()
 		} else {
-			var d bool
-			str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
-			if err != nil {
-				result.AppendNull()
-				continue
-			}
-			if d {
-				result.AppendNull()
-			} else {
-				result.AppendString(str)
-			}
+			result.AppendString(str)
 		}
 	}
 	return nil
