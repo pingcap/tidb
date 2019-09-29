@@ -705,9 +705,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			i64s[i] = 0
 			continue
 		}
-		if buf.GetInt64(i) >= 0 {
-			i64s[i] = i64s[i]
-		} else {
+		if buf.GetInt64(i) < 0 {
 			shift := int64(math.Pow10(int(-buf.GetInt64(i))))
 			i64s[i] = i64s[i] / shift * shift
 		}
