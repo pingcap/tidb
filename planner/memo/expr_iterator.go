@@ -110,7 +110,7 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 	if !iter.EngineTypeSet.Contain(iter.Group.EngineType) {
 		return false
 	}
-	
+
 	if iter.Operand == OperandAny {
 		return true
 	}
