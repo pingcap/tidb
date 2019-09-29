@@ -540,6 +540,10 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	// MySQL compatibility: 0.0 should not be converted to null, see #11203
+	if val == 0 {
+		return types.Time{}, false, nil
+	}
 	res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, int8(b.tp.Decimal))
 	if err != nil {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
@@ -976,6 +980,10 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	// MySQL compatibility: 0.0 should not be converted to null, see #11203
+	if val.IsZero() {
+		return types.Time{}, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, int8(b.tp.Decimal))
