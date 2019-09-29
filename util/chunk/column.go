@@ -247,7 +247,7 @@ const (
 func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
 	if cap(c.data) >= sizeData {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
+		c.data = c.data[:sizeData]
 	} else {
 		c.data = make([]byte, sizeData)
 	}
@@ -255,7 +255,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
+		c.nullBitmap = c.nullBitmap[:sizeNulls]
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
 		newNulls = true
@@ -271,7 +271,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	}
 
 	if cap(c.elemBuf) >= typeSize {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.elemBuf)).Len = typeSize
+		c.elemBuf = c.elemBuf[:typeSize]
 	} else {
 		c.elemBuf = make([]byte, typeSize)
 	}
