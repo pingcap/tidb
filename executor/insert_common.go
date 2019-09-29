@@ -693,9 +693,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if err != nil {
 					return nil, err
 				}
-				if d, err = col.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
-					return nil, err
-				}
 				rows[offset][colIdx] = d
 			}
 			continue
@@ -707,9 +704,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		// the value of d is adjusted by auto ID, so we need to cast it again.
 		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo())
 		if err != nil {
-			return nil, err
-		}
-		if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 			return nil, err
 		}
 		rows[i][colIdx] = autoDatum
