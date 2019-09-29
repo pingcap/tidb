@@ -725,8 +725,8 @@ var funcs = map[string]functionClass{
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 }
 
-// IsBuiltinFuncName check if given function name is a builtin sql function
-func IsBuiltinFuncName(name string) bool {
+// IsFunctionSupported check if given function name is a builtin sql function
+func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
 }

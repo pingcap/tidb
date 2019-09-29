@@ -232,8 +232,8 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
 		// Blocked functions & non-builtin functions is not allowed
-		_, hasBlockedFunction := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
-		if hasBlockedFunction || !expression.IsBuiltinFuncName(node.FnName.L) {
+		_, IsFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
+		if IsFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
