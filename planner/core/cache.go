@@ -140,4 +140,5 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCache
 type CachedPrepareStmt struct {
 	PreparedAst *ast.Prepared
 	VisitInfos  []visitInfo
+	ColumnInfos interface{}
 }
