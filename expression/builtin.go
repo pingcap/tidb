@@ -727,8 +727,6 @@ var funcs = map[string]functionClass{
 
 // IsBuiltinFuncName check if given function name is a builtin sql function
 func IsBuiltinFuncName(name string) bool {
-	if _, ok := funcs[name]; ok {
-		return true
-	}
-	return false
+	_, ok := funcs[name]
+	return ok
 }
