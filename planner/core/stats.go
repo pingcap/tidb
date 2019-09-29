@@ -45,14 +45,25 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*prope
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	// A fake count, just to avoid panic now.
+	p.stats = getFakeStats(p.Schema().Len())
+	return p.stats, nil
+}
+
+func getFakeStats(length int) *property.StatsInfo {
 	profile := &property.StatsInfo{
 		RowCount:    1,
-		Cardinality: make([]float64, p.Schema().Len()),
+		Cardinality: make([]float64, length),
 	}
 	for i := range profile.Cardinality {
 		profile.Cardinality[i] = 1
 	}
-	p.stats = profile
+	return profile
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	// A fake count, just to avoid panic now.
+	p.stats = getFakeStats(p.Schema().Len())
 	return p.stats, nil
 }
 

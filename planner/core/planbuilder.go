@@ -735,9 +735,20 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.SetSchema(buildShowDDLFields())
 		ret = p
 	case ast.AdminShowDDLJobs:
-		p := &ShowDDLJobs{JobNumber: as.JobNumber}
+		p := LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
 		p.SetSchema(buildShowDDLJobsFields())
-		ret = p
+		for _, col := range p.schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
+		var np LogicalPlan
+		np = p
+		if as.Where != nil {
+			np, err = b.buildSelection(ctx, np, as.Where, nil)
+			if err != nil {
+				return nil, err
+			}
+		}
+		ret = np
 	case ast.AdminCancelDDLJobs:
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
@@ -1263,18 +1274,19 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
+	tblName := "DDLJobs"
 	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
-	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "JOB_TYPE", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "SCHEMA_STATE", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "SCHEMA_ID", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "END_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "JOB_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn(tblName, "DB_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "TABLE_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "JOB_TYPE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "SCHEMA_STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "SCHEMA_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn(tblName, "TABLE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn(tblName, "ROW_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn(tblName, "START_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "END_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
 
