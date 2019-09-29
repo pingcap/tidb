@@ -20,6 +20,7 @@ import (
 
 func (s *testSuite4) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	var result *testkit.Result
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
@@ -28,7 +29,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 		tk.MustExec("set @@tidb_enable_window_function = 0")
 	}()
 	tk.MustExec("insert into t values (1,2,3),(4,3,2),(2,3,4)")
-	result := tk.MustQuery("select count(a) over () from t")
+	result = tk.MustQuery("select count(a) over () from t")
 	result.Check(testkit.Rows("3", "3", "3"))
 	result = tk.MustQuery("select sum(a) over () + count(a) over () from t")
 	result.Check(testkit.Rows("10", "10", "10"))
