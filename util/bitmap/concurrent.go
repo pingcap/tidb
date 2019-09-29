@@ -56,7 +56,7 @@ func (cb *ConcurrentBitmap) Set(bitIndex int) (isSetter bool) {
 	// it based on observation.
 	for {
 		// Observe.
-		oldValue = *segmentPointer
+		oldValue = atomic.LoadUint32(segmentPointer)
 		if (oldValue & mask) != 0 {
 			return
 		}
