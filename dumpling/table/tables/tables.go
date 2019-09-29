@@ -413,10 +413,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
 func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
-	if ctx.GetSessionVars().LightningMode {
-		return ctx.Txn(true)
-	}
-
 	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
 	if bs == nil {
 		txn, err := ctx.Txn(true)
@@ -528,12 +524,10 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	txn.SetAssertion(key, kv.None)
 
-	if !sessVars.LightningMode {
-		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
-			return 0, err
-		}
-		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
+	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+		return 0, err
 	}
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -594,7 +588,7 @@ func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	} else {
 		ctx = context.Background()
 	}
-	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
 			return recordID, err
