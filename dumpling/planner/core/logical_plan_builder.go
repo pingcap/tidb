@@ -2743,11 +2743,20 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
+	oldSchemaLen := p.Schema().Len()
 	if update.Where != nil {
 		p, err = b.buildSelection(ctx, p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
+	}
+	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
+	if p.Schema().Len() != oldSchemaLen {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
+		proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
+		copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+		proj.SetChildren(p)
+		p = proj
 	}
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
