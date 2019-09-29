@@ -80,18 +80,6 @@ func (iter *ExprIter) Next() (found bool) {
 			continue
 		}
 
-		engineTypeMatched := true
-		// Check children's EngineType.
-		for i := range expr.Children {
-			if !iter.Children[i].EngineTypeSet.Contain(expr.Children[i].EngineType) {
-				engineTypeMatched = false
-				break
-			}
-		}
-		if !engineTypeMatched {
-			continue
-		}
-
 		allMatched := true
 		for i := range iter.Children {
 			iter.Children[i].Group = expr.Children[i]
@@ -119,6 +107,10 @@ func (iter *ExprIter) Matched() bool {
 func (iter *ExprIter) Reset() (findMatch bool) {
 	defer func() { iter.matched = findMatch }()
 
+	if !iter.EngineTypeSet.Contain(iter.Group.EngineType) {
+		return false
+	}
+	
 	if iter.Operand == OperandAny {
 		return true
 	}
@@ -135,18 +127,6 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 			return true
 		}
 		if len(expr.Children) != len(iter.Children) {
-			continue
-		}
-
-		engineTypeMatched := true
-		// Check children's EngineType.
-		for i := range expr.Children {
-			if !iter.Children[i].EngineTypeSet.Contain(expr.Children[i].EngineType) {
-				engineTypeMatched = false
-				break
-			}
-		}
-		if !engineTypeMatched {
 			continue
 		}
 
