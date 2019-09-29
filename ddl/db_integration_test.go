@@ -1590,10 +1590,6 @@ func (s *testIntegrationSuite4) TestAlterColumn(c *C) {
 	s.tk.MustExec("drop table multi_unique")
 	s.tk.MustExec("create table multi_unique (a int key unique unique key unique)")
 	s.tk.MustExec("drop table multi_unique")
-	s.tk.MustExec("create table multi_unique (a serial serial default value)")
-	s.tk.MustExec("drop table multi_unique")
-	s.tk.MustExec("create table multi_unique (a serial serial default value serial default value)")
-	s.tk.MustExec("drop table multi_unique")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
