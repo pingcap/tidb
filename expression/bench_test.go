@@ -18,6 +18,7 @@ package expression
 import (
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/util/math"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -249,6 +250,44 @@ func (g *defaultGener) gen() interface{} {
 		return randString()
 	}
 	return nil
+}
+
+type rangeDurationGener struct {
+	nullRation float64
+}
+
+func (g *rangeDurationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	tm := (math.Abs(rand.Int63n(12))*3600 + math.Abs(rand.Int63n(60))*60 + math.Abs(rand.Int63n(60))) * 1000
+	tu := (tm + math.Abs(rand.Int63n(1000))) * 1000
+	return types.Duration{
+		Duration: time.Duration(tu * 1000)}
+}
+
+type timeFormatGener struct {
+	nullRation float64
+}
+
+func (g *timeFormatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return "%H %i %S"
+	case 1:
+		return "%l %i %s"
+	case 2:
+		return "%p %i %s"
+	case 3:
+		return "%I %i %S %f"
+	case 4:
+		return "%T"
+	default:
+		return nil
+	}
 }
 
 // rangeRealGener is used to generate float64 items in [begin, end].
