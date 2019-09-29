@@ -896,6 +896,17 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 	return e
 }
 
+func prepare4IndexOuterHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
+	e := prepare4IndexInnerHashJoin(tc, outerDS, innerDS).(*IndexLookUpJoin)
+	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	concurrency := tc.concurrency
+	idxHash.joiners = make([]joiner, concurrency)
+	for i := 0; i < concurrency; i++ {
+		idxHash.joiners[i] = e.joiner.Clone()
+	}
+	return idxHash
+}
+
 func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
@@ -978,7 +989,7 @@ func benchmarkIndexJoinExecWithCase(
 		case indexInnerHashJoin:
 			exec = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
 		case indexOuterHashJoin:
-			// TODO: benchmark index outer hash join
+			exec = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
 		case indexMergeJoin:
 			exec = prepare4IndexMergeJoin(tc, outerDS, innerDS)
 		}
@@ -1023,6 +1034,10 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 
 	b.Run(fmt.Sprintf("index inner hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexInnerHashJoin)
+	})
+
+	b.Run(fmt.Sprintf("index outer hash join %v", tc), func(b *testing.B) {
+		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexOuterHashJoin)
 	})
 
 	b.Run(fmt.Sprintf("index merge join %v", tc), func(b *testing.B) {
