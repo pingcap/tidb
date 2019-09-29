@@ -221,7 +221,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-			// Before batch insert, should fill the batch allocated autoIDs.
+			// Before batch insert, fill the batch allocated autoIDs.
 			rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 			if err != nil {
 				return err
@@ -532,7 +532,6 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
-				// Handle the bad null error.
 				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
@@ -618,7 +617,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, 
 	return rows, nil
 }
 
-// lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
+// lazyAdjustAutoIncrementDatum is quite similar to adjustAutoIncrementDatum
 // except it will cache auto increment datum previously for lazy batch allocation of autoID.
 func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
 	// Not in lazyFillAutoID mode means no need to fill.
@@ -637,7 +636,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	}
 	// Get the autoIncrement column.
 	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are same.
+	// Consider the colIdx of autoIncrement in row are the same.
 	length := len(rows)
 	for i := 0; i < length; i++ {
 		autoDatum := rows[i][colIdx]

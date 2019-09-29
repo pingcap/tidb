@@ -271,27 +271,27 @@ func (alloc *allocator) Alloc(tableID int64, N uint64) ([]int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.allocN4Unsigned(tableID, N)
+		return alloc.alloc4Unsigned(tableID, N)
 	}
-	return alloc.allocN4Signed(tableID, N)
+	return alloc.alloc4Signed(tableID, N)
 }
 
-func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) {
-	N1 := int64(N)
+func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
+	n1 := int64(n)
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
-	if math.MaxInt64-alloc.base < N1 {
+	if math.MaxInt64-alloc.base < n1 {
 		return nil, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for allocN, skip it.
-	if alloc.base+N1 > alloc.end {
+	if alloc.base+n1 > alloc.end {
 		var newBase, newEnd int64
 		startTime := time.Now()
 		// Although it may skip a segment here, we still think it is consumed.
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		nextStep := NextStep(alloc.step, consumeDur)
 		// Make sure nextStep is big enough.
-		if nextStep <= N1 {
-			alloc.step = mathutil.MinInt64(N1*2, maxStep)
+		if nextStep <= n1 {
+			alloc.step = mathutil.MinInt64(n1*2, maxStep)
 		} else {
 			alloc.step = nextStep
 		}
@@ -304,7 +304,7 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 			}
 			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
 			// The global rest is not enough for allocN.
-			if tmpStep < N1 {
+			if tmpStep < n1 {
 				return ErrAutoincReadFailed
 			}
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
@@ -322,37 +322,37 @@ func (alloc *allocator) allocN4Signed(tableID int64, N uint64) ([]int64, error) 
 	}
 	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
 		zap.Uint64("from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+N1)),
+		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	resN := make([]int64, 0, N1)
-	for i := alloc.base + 1; i <= alloc.base+N1; i++ {
+	resN := make([]int64, 0, n1)
+	for i := alloc.base + 1; i <= alloc.base+n1; i++ {
 		// fix bug : maxInt64 will be allocated
 		if i == math.MaxInt64 {
 			return nil, ErrAutoincReadFailed
 		}
 		resN = append(resN, i)
 	}
-	alloc.base += N1
+	alloc.base += n1
 	return resN, nil
 }
 
-func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error) {
-	N1 := int64(N)
+func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error) {
+	n1 := int64(n)
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
-	if math.MaxUint64-uint64(alloc.base) < N {
+	if math.MaxUint64-uint64(alloc.base) < n {
 		return nil, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for allocN, skip it.
-	if uint64(alloc.base)+N > uint64(alloc.end) {
+	if uint64(alloc.base)+n > uint64(alloc.end) {
 		var newBase, newEnd int64
 		startTime := time.Now()
 		// Although it may skip a segment here, we still think it is consumed.
 		consumeDur := startTime.Sub(alloc.lastAllocTime)
 		nextStep := NextStep(alloc.step, consumeDur)
 		// Make sure nextStep is big enough.
-		if nextStep <= N1 {
-			alloc.step = mathutil.MinInt64(N1*2, maxStep)
+		if nextStep <= n1 {
+			alloc.step = mathutil.MinInt64(n1*2, maxStep)
 		} else {
 			alloc.step = nextStep
 		}
@@ -365,7 +365,7 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 			}
 			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
 			// The global rest is not enough for allocN.
-			if tmpStep < N1 {
+			if tmpStep < n1 {
 				return ErrAutoincReadFailed
 			}
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
@@ -383,11 +383,11 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 	}
 	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
 		zap.Uint64(" from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+N1)),
+		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	resN := make([]int64, 0, N1)
-	for i := uint64(alloc.base) + 1; i <= uint64(alloc.base)+N; i++ {
+	resN := make([]int64, 0, n1)
+	for i := uint64(alloc.base) + 1; i <= uint64(alloc.base)+n; i++ {
 		// fix bug : maxUint64 will be allocated
 		if i == math.MaxUint64 {
 			return nil, ErrAutoincReadFailed
@@ -395,6 +395,6 @@ func (alloc *allocator) allocN4Unsigned(tableID int64, N uint64) ([]int64, error
 		resN = append(resN, int64(i))
 	}
 	// Use uint64 N directly.
-	alloc.base = int64(uint64(alloc.base) + N)
+	alloc.base = int64(uint64(alloc.base) + n)
 	return resN, nil
 }
