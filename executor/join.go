@@ -125,6 +125,7 @@ func (e *HashJoinExec) Close() error {
 		e.joinChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
 	}
+	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return err
@@ -361,7 +362,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 		for i := uint(0); i < e.concurrency; i++ {
 			var workID = i
 			e.joinWorkerWaitGroup.Add(1)
-			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workID) }, e.handleJoinWorkerPanic)
+			go util.WithRecovery(func() { _, _ = e.handleUnmatchedRowsFromHashTable(workID) }, e.handleJoinWorkerPanic)
 		}
 		e.joinWorkerWaitGroup.Wait()
 	}
