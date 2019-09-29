@@ -698,16 +698,13 @@ func (i *LastJobIterator) GetJobs(num int, jobs []*model.Job) ([]*model.Job, err
 	}
 	jobs = jobs[:0]
 	iter := i.iter
-	for iter.Valid() {
+	for iter.Valid() && len(jobs) < num {
 		job := &model.Job{}
 		err := job.Decode(iter.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		jobs = append(jobs, job)
-		if len(jobs) == num {
-			break
-		}
 		err = iter.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
