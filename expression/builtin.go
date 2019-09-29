@@ -16,6 +16,7 @@
 // limitations under the License.
 
 //go:generate go run generator/control_vec.go
+//go:generate go run generator/time_vec.go
 
 package expression
 

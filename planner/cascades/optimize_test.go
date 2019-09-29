@@ -37,8 +37,9 @@ var _ = Suite(&testCascadesSuite{})
 
 type testCascadesSuite struct {
 	*parser.Parser
-	is   infoschema.InfoSchema
-	sctx sessionctx.Context
+	is        infoschema.InfoSchema
+	sctx      sessionctx.Context
+	optimizer *Optimizer
 }
 
 func (s *testCascadesSuite) SetUpSuite(c *C) {
@@ -46,6 +47,7 @@ func (s *testCascadesSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
+	s.optimizer = NewOptimizer()
 }
 
 func (s *testCascadesSuite) TearDownSuite(c *C) {
@@ -63,7 +65,7 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	impl, err := implGroup(rootGroup, prop, 0.0)
+	impl, err := s.optimizer.implGroup(rootGroup, prop, 0.0)
 	c.Assert(impl, IsNil)
 	c.Assert(err, IsNil)
 }
@@ -90,7 +92,7 @@ func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	rootGroup := convert2Group(logic)
-	err = fillGroupStats(rootGroup)
+	err = s.optimizer.fillGroupStats(rootGroup)
 	c.Assert(err, IsNil)
 	c.Assert(rootGroup.Prop.Stats, NotNil)
 }
