@@ -593,12 +593,12 @@ func (e *InsertValues) hasAutoIncrementColumn() (int, bool) {
 func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, rows [][]types.Datum, colIdx int) ([][]types.Datum, error) {
 	// Get the autoIncrement column.
 	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are same.
+	// Consider the colIdx of autoIncrement in row are the same.
 	length := len(rows)
 	for i := 0; i < length; i++ {
 		autoDatum := rows[i][colIdx]
 
-		// autoID can find in RetryInfo.
+		// autoID can be found in RetryInfo.
 		retryInfo := e.ctx.GetSessionVars().RetryInfo
 		if retryInfo.Retrying {
 			id, err := retryInfo.GetCurrAutoIncrementID()
@@ -607,7 +607,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, 
 			}
 			autoDatum.SetAutoID(id, col.Flag)
 
-			// Handle the bad null error.
 			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 				return nil, err
 			}
@@ -676,16 +675,15 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			if e.filterErr(err) != nil {
 				return nil, err
 			}
+			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+			// Cause autoID may be specified by user, judge only the first row is not suitable.
+			if e.lastInsertID == 0 {
+				e.lastInsertID = uint64(recordIDs[0])
+			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
 				d := rows[offset][colIdx]
-
-				// It's compatible with mysql setting the first allocated autoID to lastInsertID.
-				// Cause autoID may be specified by user, judge only the first row is not suitable.
-				if e.lastInsertID == 0 {
-					e.lastInsertID = uint64(recordIDs[0])
-				}
 
 				d.SetAutoID(recordIDs[j], col.Flag)
 				retryInfo.AddAutoIncrementID(recordIDs[j])
@@ -695,7 +693,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if err != nil {
 					return nil, err
 				}
-				// Handle the bad null error.
 				if d, err = col.HandleBadNull(d, e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
@@ -712,7 +709,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		if err != nil {
 			return nil, err
 		}
-		// Handle the bad null error.
 		if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 			return nil, err
 		}
