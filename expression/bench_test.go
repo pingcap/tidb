@@ -18,7 +18,6 @@ package expression
 import (
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/util/math"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/mock"
 )
 
