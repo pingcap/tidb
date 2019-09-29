@@ -220,8 +220,7 @@ func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		}
 		res, err := b.formatTime(b.ctx, buf.GetDuration(i, 0), buf1.GetString(i))
 		if err != nil {
-			result.AppendNull()
-			continue
+			return err
 		}
 		result.AppendString(res)
 	}
