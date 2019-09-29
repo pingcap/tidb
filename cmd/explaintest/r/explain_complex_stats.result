@@ -205,7 +205,7 @@ CREATE TABLE tbl_009 (a int, b int);
 load stats 's/explain_complex_stats_tbl_009.json';
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	count	task	operator info
-HashAgg_34	18000.00	root	group by:Column#50, funcs:sum(Column#0)
+HashAgg_34	18000.00	root	group by:Column#51, funcs:sum(Column#50)
 └─Projection_63	18000.00	root	cast(Column#46), Column#47
   └─Union_35	18000.00	root	
     ├─TableReader_38	2000.00	root	data:TableScan_37

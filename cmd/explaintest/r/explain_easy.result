@@ -90,7 +90,7 @@ TableReader_7	0.33	root	data:Selection_6
   └─TableScan_5	1.00	cop	table:t1, range:[1,1], keep order:false, stats:pseudo
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(Column#0)
+StreamAgg_12	1.00	root	funcs:sum(Column#11)
 └─Projection_23	10000.00	root	cast(Column#8)
   └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(Column#1, Column#4)
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
@@ -217,7 +217,7 @@ StreamAgg_11	1.00	root	funcs:count(1)
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(Column#0)
+StreamAgg_12	1.00	root	funcs:sum(Column#11)
 └─Projection_23	10000.00	root	cast(Column#8)
   └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(Column#1, Column#4)
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
@@ -235,7 +235,7 @@ Projection_6	10000.00	root	Column#8
       └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(6 in (select c2 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(Column#0)
+StreamAgg_12	1.00	root	funcs:sum(Column#11)
 └─Projection_22	10000.00	root	cast(Column#8)
   └─HashLeftJoin_21	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_20
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
