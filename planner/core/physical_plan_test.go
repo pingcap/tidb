@@ -106,7 +106,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN to Limit in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit, Table(t))->Limit",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit, Table(t))",
 		},
 		// Test TopN to Limit in index single read.
 		{
@@ -151,7 +151,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test Limit push down in double single read.
 		{
 			sql:  "select c, b from t where c = 1 limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Limit->Projection",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Projection",
 		},
 		// Test Selection + Limit push down in double single read.
 		{
@@ -182,7 +182,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test PK in index double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))->Limit",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))",
 		},
 		// Test index filter condition push down.
 		{
@@ -574,7 +574,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		},
 		{
 			sql:  "select * from t where c = 1 order by c limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Limit",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))",
 		},
 		{
 			sql:  "select * from t order by a limit 1",

@@ -2486,6 +2486,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
+		// Test issue 11943
+		{
+			sql:    "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
+			result: "TableReader(Table(t))->Sort->Window(row_number() over(partition by test.t.b))->Projection->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)

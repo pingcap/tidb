@@ -108,15 +108,14 @@ MemTableScan_4	10000.00	root
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	count	task	operator info
 Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)
-└─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Limit_21
+└─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Projection_41
   ├─IndexReader_16	1999.00	root	index:IndexScan_15
   │ └─IndexScan_15	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─Limit_21	1.00	root	offset:0, count:1
-    └─Projection_41	1.00	root	test.t2.c1, test.t2.c2
-      └─IndexLookUp_40	1.00	root	
-        ├─Limit_39	1.00	cop	offset:0, count:1
-        │ └─IndexScan_37	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-        └─TableScan_38	1.00	cop	table:t2, keep order:false, stats:pseudo
+  └─Projection_41	1.00	root	test.t2.c1, test.t2.c2
+    └─IndexLookUp_40	1.00	root	limit embedded(offset:0, count:1)
+      ├─Limit_39	1.00	cop	offset:0, count:1
+      │ └─IndexScan_37	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
+      └─TableScan_38	1.00	cop	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
@@ -169,18 +168,16 @@ id	count	task	operator info
 TableDual_5	0.00	root	rows:0
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	count	task	operator info
-Limit_9	1.00	root	offset:1, count:1
-└─IndexLookUp_14	1.00	root	
-  ├─Limit_13	1.00	cop	offset:0, count:2
-  │ └─IndexScan_11	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
-  └─TableScan_12	1.00	cop	table:index_prune, keep order:false, stats:pseudo
+IndexLookUp_14	1.00	root	limit embedded(offset:1, count:1)
+├─Limit_13	1.00	cop	offset:0, count:2
+│ └─IndexScan_11	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
+└─TableScan_12	1.00	cop	table:index_prune, keep order:false, stats:pseudo
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	count	task	operator info
-Limit_9	0.00	root	offset:1, count:0
-└─IndexLookUp_14	0.00	root	
-  ├─Limit_13	0.00	cop	offset:0, count:1
-  │ └─IndexScan_11	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
-  └─TableScan_12	0.00	cop	table:index_prune, keep order:false, stats:pseudo
+IndexLookUp_14	0.00	root	limit embedded(offset:1, count:0)
+├─Limit_13	0.00	cop	offset:0, count:1
+│ └─IndexScan_11	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
+└─TableScan_12	0.00	cop	table:index_prune, keep order:false, stats:pseudo
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:index_prune, index:a b

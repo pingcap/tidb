@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -465,7 +466,38 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 		job.State = model.JobStateCancelled
 		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
+
+	// Double check for drop index on auto_increment column.
+	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, autoid.ErrWrongAutoKey
+	}
+
 	return tblInfo, indexInfo, nil
+}
+
+func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+	cols := tblInfo.Columns
+	for _, idxCol := range indexInfo.Columns {
+		if !mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+			continue
+		}
+		// check the count of index on auto_increment column.
+		count := 0
+		for _, idx := range tblInfo.Indices {
+			for _, c := range idx.Columns {
+				if c.Name.L == idxCol.Name.L {
+					count++
+					break
+				}
+			}
+		}
+		if count < 2 {
+			return autoid.ErrWrongAutoKey
+		}
+	}
+	return nil
 }
 
 func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
