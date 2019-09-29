@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -698,22 +699,31 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+		var storeType string
+		switch x.StoreType {
+		case kv.TiKV:
+			storeType = "tikv"
+		case kv.TiFlash:
+			storeType = "tiflash"
+		default:
+			storeType = "unknown"
+		}
+		e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
-		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, false)
-		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
+		e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i := 0; i < len(x.partialPlans); i++ {
 			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
-				e.explainPlanInRowFormat(x.partialPlans[i], "cop", childIndent, true)
+				e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, true)
 			} else {
-				e.explainPlanInRowFormat(x.partialPlans[i], "cop", childIndent, false)
+				e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, false)
 			}
 		}
 		if x.tablePlan != nil {
-			e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+			e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 		}
 	case *Insert:
 		if x.SelectPlan != nil {

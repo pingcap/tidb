@@ -70,6 +70,8 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
+	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
+	HintReadFromStorage = "read_from_storage"
 )
 
 const (
@@ -374,6 +376,22 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+}
+
+func (p *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	var alias *hintTableInfo
+	if len(p.TableAsName.L) != 0 {
+		alias = &hintTableInfo{name: *p.TableAsName, selectOffset: p.SelectBlockOffset()}
+	} else {
+		alias = extractTableAlias(p)
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
+		p.preferStoreType |= preferTiFlash
 	}
 }
 
@@ -1971,6 +1989,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
+		tiflashTables                               []hintTableInfo
 		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2009,16 +2028,21 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintReadFromStorage:
+			if hint.StoreType.L == "tiflash" {
+				tiflashTables = tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || aggHints.preferAggType != 0 || aggHints.preferAggToCop {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(tiflashTables) > 0 || aggHints.preferAggType != 0 || aggHints.preferAggToCop {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
+			flashTables:               tiflashTables,
 			aggHints:                  aggHints,
 		})
 		return true
@@ -2388,6 +2412,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.handleHelper.pushMap(nil)
 	}
 	ds.SetSchema(schema)
+	ds.setPreferredStoreType(b.TableHints())
 
 	// Init fullIdxCols, fullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
