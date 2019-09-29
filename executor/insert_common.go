@@ -560,10 +560,6 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
 // This used to help lazyFillAutoIncrement to find consecutive N datum backwards for batch autoID alloc.
 func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table.Column) bool {
-	// autoID can find in RetryInfo.
-	if e.ctx.GetSessionVars().RetryInfo.Retrying {
-		return false
-	}
 	var err error
 	var recordID int64
 	if !d.IsNull() {
@@ -595,18 +591,7 @@ func (e *InsertValues) hasAutoIncrementColumn() (int, bool) {
 	return colIdx, colIdx != -1
 }
 
-// lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
-// except it will cache auto increment datum previously for lazy batch allocation of autoID.
-func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
-	// Not in lazyFillAutoID mode means no need to fill.
-	if !e.lazyFillAutoID {
-		return rows, nil
-	}
-	// No autoIncrement column means no need to fill.
-	colIdx, ok := e.hasAutoIncrementColumn()
-	if !ok {
-		return rows, nil
-	}
+func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, rows [][]types.Datum, colIdx int) ([][]types.Datum, error) {
 	// Get the autoIncrement column.
 	col := e.Table.Cols()[colIdx]
 	// Consider the colIdx of autoIncrement in row are same.
@@ -628,8 +613,33 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				return nil, err
 			}
 			rows[i][colIdx] = autoDatum
-			continue
 		}
+	}
+}
+
+// lazyAdjustAutoIncrementDatum is quite same to adjustAutoIncrementDatum()
+// except it will cache auto increment datum previously for lazy batch allocation of autoID.
+func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+	// Not in lazyFillAutoID mode means no need to fill.
+	if !e.lazyFillAutoID {
+		return rows, nil
+	}
+	// No autoIncrement column means no need to fill.
+	colIdx, ok := e.hasAutoIncrementColumn()
+	if !ok {
+		return rows, nil
+	}
+	// autoID can find in RetryInfo.
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		return e.lazyAdjustAutoIncrementDatumInRetry(ctx, rows, colIdx)
+	}
+	// Get the autoIncrement column.
+	col := e.Table.Cols()[colIdx]
+	// Consider the colIdx of autoIncrement in row are same.
+	length := len(rows)
+	for i := 0; i < length; i++ {
+		autoDatum := rows[i][colIdx]
 
 		var err error
 		var recordID int64
@@ -647,11 +657,6 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 			retryInfo.AddAutoIncrementID(recordID)
-
-			// Handle the bad null error.
-			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, err
-			}
 			rows[i][colIdx] = autoDatum
 			continue
 		}
