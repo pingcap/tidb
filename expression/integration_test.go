@@ -1280,8 +1280,15 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for quarter
 	result = tk.MustQuery(`select quarter("2012-00-20"), quarter("2012-01-21"), quarter("2012-03-22"), quarter("2012-05-23"), quarter("2012-08-24"), quarter("2012-09-25"), quarter("2012-11-26"), quarter("2012-12-27");`)
 	result.Check(testkit.Rows("0 1 1 2 3 3 4 4"))
-	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("0000-00-00"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`select quarter(0), quarter(0.0);`)
+	result.Check(testkit.Rows("0 0"))
 
 	// for from_days
 	result = tk.MustQuery(`select from_days(0), from_days(-199), from_days(1111), from_days(120), from_days(1), from_days(1111111), from_days(9999999), from_days(22222);`)
