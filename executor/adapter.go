@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -178,12 +179,18 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
 	sessVars := a.stmt.Ctx.GetSessionVars()
-	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), sessVars)
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
 	a.stmt.SummaryStmt()
 	return err
+}
+
+// OnFetchReturned implements commandLifeCycle#OnFetchReturned
+func (a *recordSet) OnFetchReturned() {
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -211,10 +218,10 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 }
 
-// GetPointRecord short path for point exec directly from plan, keep only necessary steps
-func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
+// PointGet short path for point exec directly from plan, keep only necessary steps
+func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.GetPointRecord", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", a.OriginText())
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
@@ -731,29 +738,28 @@ func (a *ExecStmt) logAudit() {
 }
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
-func FormatSQL(sql string, sessVars *variable.SessionVars) string {
-	cfg := config.GetGlobalConfig()
-	length := len(sql)
-	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
-		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
+	return func() string {
+		cfg := config.GetGlobalConfig()
+		length := len(sql)
+		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
+		}
+		return QueryReplacer.Replace(sql) + pps.String()
 	}
-	return QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	if level > zapcore.WarnLevel {
-		return
-	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
-	sql := FormatSQL(a.Text, sessVars)
+	sql := FormatSQL(a.Text, sessVars.PreparedParams)
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -768,21 +774,23 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
 	slowItems := &variable.SlowQueryLogItems{
-		TxnTS:       txnTS,
-		SQL:         sql,
-		Digest:      digest,
-		TimeTotal:   costTime,
-		TimeParse:   a.Ctx.GetSessionVars().DurationParse,
-		TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
-		IndexNames:  indexNames,
-		StatsInfos:  statsInfos,
-		CopTasks:    copTaskInfo,
-		ExecDetail:  execDetail,
-		MemMax:      memMax,
-		Succ:        succ,
+		TxnTS:          txnTS,
+		SQL:            sql.String(),
+		Digest:         digest,
+		TimeTotal:      costTime,
+		TimeParse:      a.Ctx.GetSessionVars().DurationParse,
+		TimeCompile:    a.Ctx.GetSessionVars().DurationCompile,
+		IndexNames:     indexNames,
+		StatsInfos:     statsInfos,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     execDetail,
+		MemMax:         memMax,
+		Succ:           succ,
+		Prepared:       a.isPreparedStmt,
+		HasMoreResults: hasMoreResults,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
-		slowItems.PrevStmt = sessVars.PrevStmt
+		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
@@ -796,7 +804,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:        sql,
+			SQL:        sql.String(),
 			Digest:     digest,
 			Start:      a.Ctx.GetSessionVars().StartTime,
 			Duration:   costTime,
@@ -816,7 +824,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL || atomic.LoadInt32(&variable.EnableStmtSummary) == 0 {
+	if sessVars.InRestrictedSQL || !stmtsummary.StmtSummaryByDigestMap.Enabled() {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx

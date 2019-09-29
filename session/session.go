@@ -246,10 +246,6 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 }
 
 func (s *session) getMembufCap() int {
-	if s.sessionVars.LightningMode {
-		return kv.ImportingTxnMembufCap
-	}
-
 	return kv.DefaultTxnMembufCap
 }
 
@@ -266,16 +262,21 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var preparedAst *ast.Prepared
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-		cacheKey = plannercore.NewPSTMTPlanCacheKey(
-			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
-		)
+		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
+			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+			if ok {
+				preparedAst = preparedObj.PreparedAst
+				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+			}
+		}
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			if i > 0 {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
+			if i > 0 && preparedAst != nil {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -387,9 +388,6 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	}
 	return fields, nil
 }
-
-// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
-var mockCommitErrorOnce = true
 
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
@@ -667,7 +665,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
+					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1172,7 +1170,8 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) CachedPlanExec(ctx context.Context,
-	stmtID uint32, prepared *ast.Prepared, args []types.Datum) (sqlexec.RecordSet, error) {
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
 	is := executor.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
@@ -1187,7 +1186,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmt := &executor.ExecStmt{
 		InfoSchema:  is,
 		Plan:        execPlan,
-		StmtNode:    prepared.Stmt,
+		StmtNode:    execAst,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 	}
@@ -1197,15 +1196,26 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	logQuery(stmt.OriginText(), s.sessionVars)
 
 	// run ExecStmt
-	rs, err := stmt.GetPointRecord(ctx, is)
-	s.txn.changeToInvalid()
-	return rs, err
+	var resultSet sqlexec.RecordSet
+	switch prepared.CachedPlan.(type) {
+	case *plannercore.PointGetPlan:
+		resultSet, err = stmt.PointGet(ctx, is)
+		s.txn.changeToInvalid()
+	case *plannercore.Update:
+		s.PrepareTxnFuture(ctx)
+		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+		resultSet, err = runStmt(ctx, s, stmt)
+	default:
+		return nil, errors.Errorf("invalid cached plan type")
+	}
+	return resultSet, err
 }
 
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
 // Be careful for the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (bool, error) {
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
+	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan == nil {
 		return false, nil
 	}
@@ -1214,28 +1224,48 @@ func (s *session) IsCachedExecOk(ctx context.Context, prepared *ast.Prepared) (b
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current
-	// only point select will be cached, see "getPhysicalPlan" func
-	return true, nil
+	// only point select/update will be cached, see "getPhysicalPlan" func
+	var ok bool
+	var err error
+	switch prepared.CachedPlan.(type) {
+	case *plannercore.PointGetPlan:
+		ok = true
+	case *plannercore.Update:
+		pointUpdate := prepared.CachedPlan.(*plannercore.Update)
+		_, ok = pointUpdate.SelectPlan.(*plannercore.PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			prepared.CachedPlan = nil
+			return false, err
+		}
+	default:
+		ok = false
+	}
+	return ok, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
+	s.PrepareTxnCtx(ctx)
 	var err error
 	s.sessionVars.StartTime = time.Now()
-	prepared, ok := s.sessionVars.PreparedStmts[stmtID]
+	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
 	if !ok {
 		err = plannercore.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
-	ok, err = s.IsCachedExecOk(ctx, prepared)
+	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
-		return s.CachedPlanExec(ctx, stmtID, prepared, args)
+		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
@@ -1784,6 +1814,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBMaxDeltaSchemaCount,
 }
 
 var (
@@ -1967,7 +1998,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
-			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
+			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
 
@@ -2008,23 +2039,13 @@ func (s *session) recordTransactionCounter(err error) {
 }
 
 type multiQueryNoDelayRecordSet struct {
+	sqlexec.RecordSet
+
 	affectedRows uint64
 	lastMessage  string
 	status       uint16
 	warnCount    uint16
 	lastInsertID uint64
-}
-
-func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
-	panic("unsupported method")
 }
 
 func (c *multiQueryNoDelayRecordSet) Close() error {

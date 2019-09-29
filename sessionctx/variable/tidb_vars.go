@@ -93,7 +93,8 @@ const (
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
-	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
@@ -119,6 +120,9 @@ const (
 
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
+
+	// tidb_enable_arrow enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableArrow = "tidb_enable_arrow"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
@@ -251,6 +255,10 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
+	// deltaSchemaInfos is a queue that maintains the history of schema changes.
+	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
+
 	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
 
@@ -349,6 +357,7 @@ const (
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
@@ -365,7 +374,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBEnableStmtSummary           = false
 )
 
 // Process global variables.
@@ -375,6 +383,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
@@ -385,5 +394,4 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )
