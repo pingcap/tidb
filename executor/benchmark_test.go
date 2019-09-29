@@ -181,7 +181,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	return m
 }
 
-func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mockDataSource {
+func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int, b *testing.B) *mockDataSource {
 	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	types := retTypes(m)
@@ -214,7 +214,7 @@ func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mo
 			datumJ := rows[j].GetDatum(colIdx, retTypes[colIdx])
 			cmp, err := (&datumI).CompareDatum(nil, &datumJ)
 			if err != nil {
-				fmt.Errorf("compare datum reture error %v", err)
+				b.Fatal(err)
 			}
 			if cmp < 0 {
 				return true
@@ -601,6 +601,7 @@ func defaultHashJoinTestCase() *hashJoinTestCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
 	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}}
 	return tc
 }
@@ -1017,8 +1018,8 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 	outerOpt := tc.getMockDataSourceOptByRows(tc.outerRows)
 	innerOpt := tc.getMockDataSourceOptByRows(tc.innerRows)
 	outerDS := buildMockDataSource(outerOpt)
-	outerDSWithIdx := buildMockDataSourceWithIndex(outerOpt, tc.innerIdx)
-	innerDS := buildMockDataSourceWithIndex(innerOpt, tc.innerIdx)
+	outerDSWithIdx := buildMockDataSourceWithIndex(outerOpt, tc.innerIdx, b)
+	innerDS := buildMockDataSourceWithIndex(innerOpt, tc.innerIdx, b)
 
 	b.Run(fmt.Sprintf("index inner hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexInnerHashJoin)
