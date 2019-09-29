@@ -15,9 +15,7 @@ package codec
 
 import (
 	"bytes"
-	"compress/zlib"
 	"encoding/base64"
-	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -244,16 +242,17 @@ func encodeID(planType string, id int) string {
 
 // Compress is used to compress the input with zlib.
 func Compress(input []byte, buf *bytes.Buffer) (string, error) {
-	w := zlib.NewWriter(buf)
-	_, err := w.Write(input)
-	if err != nil {
-		return "", err
-	}
-	err = w.Close()
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	//w := zlib.NewWriter(buf)
+	//_, err := w.Write(input)
+	//if err != nil {
+	//	return "", err
+	//}
+	//err = w.Close()
+	//if err != nil {
+	//	return "", err
+	//}
+	//return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	return base64.StdEncoding.EncodeToString(input), nil
 }
 
 func decompress(str string, buf *bytes.Buffer) (string, error) {
@@ -261,14 +260,15 @@ func decompress(str string, buf *bytes.Buffer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	reader := bytes.NewReader(decodeBytes)
-	out, err := zlib.NewReader(reader)
-	if err != nil {
-		return "", err
-	}
-	_, err = io.Copy(buf, out)
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return string(decodeBytes), nil
+	//reader := bytes.NewReader(decodeBytes)
+	//out, err := zlib.NewReader(reader)
+	//if err != nil {
+	//	return "", err
+	//}
+	//_, err = io.Copy(buf, out)
+	//if err != nil {
+	//	return "", err
+	//}
+	//return buf.String(), nil
 }
