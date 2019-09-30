@@ -373,6 +373,9 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
+	// needOuterSort means the outer side property items can't guarantee the order of join keys.
+	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
+	// In this case, we need sort the outer side.
 	if omw.outerMergeCtx.needOuterSort {
 		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
 			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
@@ -575,7 +578,7 @@ func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) 
 
 func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask) ([]*indexJoinLookUpContent, error) {
 	numRows := len(task.outerOrderIdx)
-	dLookUpKeys := make([]*indexJoinLookUpContent, 0, len(task.outerOrderIdx))
+	dLookUpKeys := make([]*indexJoinLookUpContent, 0, numRows)
 	for i := 0; i < numRows; i++ {
 		dLookUpKey, err := imw.constructDatumLookupKey(task, task.outerOrderIdx[i])
 		if err != nil {
