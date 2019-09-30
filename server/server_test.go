@@ -238,15 +238,15 @@ func runTestRegression(c *C, overrider configOverrider, dbName string) {
 // runTestPrepare executes a statement twice after preparing a statement.
 func runTestPrepare(t *C) {
 	runTests(t, nil, func(dbt *DBTest) {
-		dbt.mustExec("create table t(id int, a int, primary key(id))")
-		dbt.mustExec("insert into t values(1, 2)")
+		dbt.mustExec("create table prepare_t(id int, a int, primary key(id))")
+		dbt.mustExec("insert into prepare_t values(1, 2)")
 
 		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/server/mockNoRecover", `return(true)`), IsNil)
 		defer func() {
 			dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/server/mockNoRecover"), IsNil)
 		}()
 
-		stmt := dbt.mustPrepare("update t set a = a + 1 where id = ? ")
+		stmt := dbt.mustPrepare("update prepare_t set a = a + 1 where id = ? ")
 		dbt.mustExec("set @arg = 1")
 		defer stmt.Close()
 		res, err := stmt.Exec("1")
