@@ -667,10 +667,11 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		ds.stats.Cardinality[i] = 1
 	}
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               ScanFactor * rowSize * ts.stats.RowCount,
+		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
@@ -737,7 +738,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(path.index, ds)
-	cop.cst = rowCount * rowSize * ScanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	tmpPath := &accessPath{
 		indexFilters:     indexConds,
