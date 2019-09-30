@@ -32,14 +32,6 @@ import (
 )
 
 const (
-	netWorkFactor     = 1.0
-	cpuFactor         = 3 * netWorkFactor
-	copCPUFactor      = 3 * netWorkFactor
-	scanFactor        = 1.5 * netWorkFactor
-	descScanFactor    = 2 * scanFactor
-	memoryFactor      = 0.001
-	concurrencyFactor = 0.001
-
 	selectionFactor = 0.8
 	distinctFactor  = 0.8
 )
@@ -543,12 +535,13 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := is.indexScanRowSize(idx, ds)
-	cop.cst = rowCount * rowSize * scanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	task = cop
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			is.Desc = true
-			cop.cst = rowCount * rowSize * descScanFactor
+			cop.cst = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		if cop.tablePlan != nil {
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
@@ -619,8 +612,9 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, isDoubleRead bool)
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
+	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
-		copTask.cst += copTask.count() * copCPUFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		var selectivity float64
 		if path.countAfterAccess > 0 {
 			selectivity = path.countAfterIndex / path.countAfterAccess
@@ -633,7 +627,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * copCPUFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
@@ -883,11 +877,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.TblCols, false)
-	copTask.cst = rowCount * rowSize * scanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	copTask.cst = rowCount * rowSize * sessVars.ScanFactor
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true
-			copTask.cst = rowCount * rowSize * descScanFactor
+			copTask.cst = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
@@ -904,7 +899,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		copTask.cst += copTask.count() * copCPUFactor
+		copTask.cst += copTask.count() * ts.ctx.GetSessionVars().CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel

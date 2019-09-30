@@ -265,6 +265,10 @@ type basePlan struct {
 	stats *property.StatsInfo
 }
 
+func (p *basePlan) SCtx() sessionctx.Context {
+	return p.ctx
+}
+
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 }
 

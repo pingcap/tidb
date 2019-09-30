@@ -519,11 +519,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		ds.stats.Cardinality[i] = 1
 	}
 	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.TblCols, false)
+	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               scanFactor * rowSize * ts.stats.RowCount,
-		tableStats:        ds.tableStats,
+		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
+		keepOrder:         ts.KeepOrder,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -594,10 +595,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.Ind
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
-
 	is.initSchema(idx, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(idx, ds)
-	cop.cst = rowCount * rowSize * scanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{
 		indexFilters:     indexConds,
