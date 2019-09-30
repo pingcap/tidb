@@ -330,7 +330,6 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 // buildTask builds a lookUpMergeJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
-	newFirstChunk(omw.executor)
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
 		outerResult: newFirstChunk(omw.executor),

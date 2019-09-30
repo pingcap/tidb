@@ -181,60 +181,12 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	return m
 }
 
-func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int, b *testing.B) *mockDataSource {
-	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
-	m := &mockDataSource{baseExec, opt, nil, nil, 0}
-	types := retTypes(m)
-	colData := make([][]interface{}, len(types))
-	for i := 0; i < len(types); i++ {
-		colData[i] = m.genColDatums(i)
+func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mockDataSource {
+	opt.orders = make([]bool, len(opt.schema.Columns))
+	for _, idx := range index {
+		opt.orders[idx] = true
 	}
-
-	data := chunk.NewChunkWithCapacity(retTypes(m), m.p.rows)
-	rows := make([]chunk.Row, m.p.rows)
-	retTypes := retTypes(m)
-	for i := 0; i < m.p.rows; i++ {
-		for colIdx := 0; colIdx < len(types); colIdx++ {
-			switch retTypes[colIdx].Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				data.AppendInt64(colIdx, colData[colIdx][i].(int64))
-			case mysql.TypeDouble:
-				data.AppendFloat64(colIdx, colData[colIdx][i].(float64))
-			case mysql.TypeVarString:
-				data.AppendString(colIdx, colData[colIdx][i].(string))
-			default:
-				panic("not implement")
-			}
-		}
-		rows[i] = data.GetRow(i)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		for _, colIdx := range index {
-			datumI := rows[i].GetDatum(colIdx, retTypes[colIdx])
-			datumJ := rows[j].GetDatum(colIdx, retTypes[colIdx])
-			cmp, err := (&datumI).CompareDatum(nil, &datumJ)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if cmp < 0 {
-				return true
-			} else if cmp > 0 {
-				return false
-			}
-		}
-		return true
-	})
-
-	m.genData = make([]*chunk.Chunk, (m.p.rows+m.maxChunkSize-1)/m.maxChunkSize)
-	for i := range m.genData {
-		m.genData[i] = chunk.NewChunkWithCapacity(retTypes, m.maxChunkSize)
-	}
-
-	for i := 0; i < m.p.rows; i++ {
-		idx := i / m.maxChunkSize
-		m.genData[idx].AppendRow(rows[i])
-	}
-	return m
+	return buildMockDataSource(opt)
 }
 
 type aggTestCase struct {
@@ -826,7 +778,7 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	tc := &indexJoinTestCase{
 		outerRows:       100000,
-		innerRows:       variable.DefMaxChunkSize * 5,
+		innerRows:       variable.DefMaxChunkSize * 40,
 		concurrency:     4,
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
@@ -1028,9 +980,18 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 	tc := defaultIndexJoinTestCase()
 	outerOpt := tc.getMockDataSourceOptByRows(tc.outerRows)
 	innerOpt := tc.getMockDataSourceOptByRows(tc.innerRows)
-	outerDS := buildMockDataSource(outerOpt)
-	outerDSWithIdx := buildMockDataSourceWithIndex(outerOpt, tc.innerIdx, b)
-	innerDS := buildMockDataSourceWithIndex(innerOpt, tc.innerIdx, b)
+	outerDS := buildMockDataSourceWithIndex(outerOpt, tc.innerIdx)
+	innerDS := buildMockDataSourceWithIndex(innerOpt, tc.innerIdx)
+
+	tc.needOuterSort = true
+	b.Run(fmt.Sprintf("index merge join need outer sort %v", tc), func(b *testing.B) {
+		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
+	})
+
+	tc.needOuterSort = false
+	b.Run(fmt.Sprintf("index merge join %v", tc), func(b *testing.B) {
+		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
+	})
 
 	b.Run(fmt.Sprintf("index inner hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexInnerHashJoin)
@@ -1038,14 +999,5 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 
 	b.Run(fmt.Sprintf("index outer hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexOuterHashJoin)
-	})
-
-	b.Run(fmt.Sprintf("index merge join %v", tc), func(b *testing.B) {
-		benchmarkIndexJoinExecWithCase(b, tc, outerDSWithIdx, innerDS, indexMergeJoin)
-	})
-
-	tc.needOuterSort = true
-	b.Run(fmt.Sprintf("index merge join need outer sort %v", tc), func(b *testing.B) {
-		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
 	})
 }
