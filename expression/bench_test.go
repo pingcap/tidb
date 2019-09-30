@@ -1162,7 +1162,7 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 			isNull := make([]bool, it.Len())
 			selected, nulls, err := rowBasedFilter(ctx, exprs, it, nil, isNull)
 			c.Assert(err, IsNil)
-			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, nil)
+			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, isNull)
 			c.Assert(err2, IsNil)
 			length := it.Len()
 			for i := 0; i < length; i++ {
