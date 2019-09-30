@@ -923,3 +923,16 @@ func (s *testIntegrationSuite) TestDropAutoIncrement(c *C) {
 	tk.MustExec("alter table t1 modify column a int")
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = off")
 }
+
+func (s *testIntegrationSuite) TestBitDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_bit (a int)")
+	tk.MustExec("insert into t_bit value (1)")
+	tk.MustExec("alter table t_bit add column c bit(16) null default b'1100110111001'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x19\xb9"))
+	tk.MustExec("update t_bit set c = b'11100000000111'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
+}
