@@ -276,9 +276,6 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 
-	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
-	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
-
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -406,8 +403,6 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
-
-		MaxTxnTimeUse: 590,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -594,9 +589,6 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
-	}
-	if c.TiKVClient.MaxTxnTimeUse == 0 {
-		return fmt.Errorf("max-txn-time-use should be greater than 0")
 	}
 	if c.PessimisticTxn.TTL != "" {
 		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)

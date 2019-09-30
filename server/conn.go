@@ -180,6 +180,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
+	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, mysql.ServerStatusAutocommit)
