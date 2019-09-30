@@ -957,7 +957,6 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		}
 		// If current transaction's lock exists.
 		if ok && dec.lock.startTS == startTS {
-
 			// If the lock has already outdated, clean up it.
 			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
 				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
@@ -1499,13 +1498,12 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []b
 		var value mvccValue
 		err := value.UnmarshalBinary(iter.Value())
 		if err == nil && value.startTS == starTS {
-			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			if _, key, err = codec.DecodeBytes(iter.Key(), nil); err != nil {
+				return nil, nil
+			}
 			break
 		}
 		iter.Next()
-	}
-	if key == nil {
-		return nil, nil
 	}
 
 	return mvcc.MvccGetByKey(key), key

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table/tables"
@@ -128,7 +129,11 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 	builder := newExecutorBuilder(sctx, nil)
-	req, _, err := builder.constructDAGReq(nil)
+	req, _, err := builder.constructDAGReq([]core.PhysicalPlan{&core.PhysicalTableScan{
+		Columns: []*model.ColumnInfo{},
+		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
+		Desc:    false,
+	}})
 	if err != nil {
 		panic(err)
 	}

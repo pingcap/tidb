@@ -24,13 +24,12 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -52,11 +51,13 @@ const (
 var (
 	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
+	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
 )
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64
+	PessimisticLockTTL uint64 = 15000 // 15s ~ 40s
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -92,11 +93,7 @@ type twoPhaseCommitter struct {
 	priority  pb.CommandPri
 	connID    uint64 // connID is used for log.
 	cleanWg   sync.WaitGroup
-	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
-	// We use it to guarantee GC worker will not influence any active txn. The value
-	// should be less than GC life time.
-	maxTxnTimeUse uint64
-	detail        unsafe.Pointer
+	detail    unsafe.Pointer
 
 	primaryKey     []byte
 	forUpdateTS    uint64
@@ -113,6 +110,8 @@ type twoPhaseCommitter struct {
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
+	// Used by pessimistic transaction and large transaction.
+	ttlManager
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -142,6 +141,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		startTS:       txn.StartTS(),
 		connID:        connID,
 		regionTxnSize: map[uint64]int{},
+		ttlManager: ttlManager{
+			ch: make(chan struct{}),
+		},
 	}, nil
 }
 
@@ -306,9 +308,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
-	// Convert from sec to ms
-	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
-
 	// Sanity check for startTS.
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
@@ -321,7 +320,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
-	c.maxTxnTimeUse = maxTxnTimeUse
 	c.keys = keys
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
@@ -577,6 +575,80 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+	}
+}
+
+type ttlManagerState uint32
+
+const (
+	stateUninitialized ttlManagerState = iota
+	stateRunning
+	stateClosed
+)
+
+type ttlManager struct {
+	state ttlManagerState
+	ch    chan struct{}
+}
+
+func (tm *ttlManager) run(c *twoPhaseCommitter) {
+	// Run only once.
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
+		return
+	}
+	go tm.keepAlive(c)
+}
+
+func (tm *ttlManager) close() {
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateRunning), uint32(stateClosed)) {
+		return
+	}
+	close(tm.ch)
+}
+
+func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
+	// Ticker is set to 1/3 of the PessimisticLockTTL.
+	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tm.ch:
+			return
+		case <-ticker.C:
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			if err != nil {
+				err1 := bo.Backoff(BoPDRPC, err)
+				if err1 != nil {
+					logutil.BgLogger().Warn("keepAlive get tso fail",
+						zap.Error(err))
+					return
+				}
+				continue
+			}
+
+			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
+			const c10min = 10 * 60 * 1000
+			if uptime > c10min {
+				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+				// the key will not be locked forever.
+				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+
+			newTTL := uptime + PessimisticLockTTL
+			startTime := time.Now()
+			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			if err != nil {
+				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
+				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+			tiKVTxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
 		}
 	}
 }
@@ -952,13 +1024,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
-		if tmpMaxTxnTime := uint64(val.(int)); tmpMaxTxnTime > 0 {
-			c.maxTxnTimeUse = tmpMaxTxnTime
-		}
-	})
-
-	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
