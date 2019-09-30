@@ -306,9 +306,6 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
-	LightningMode bool
-
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
@@ -352,6 +349,9 @@ type SessionVars struct {
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
+
+	// EnableArrow indicates whether the coprocessor request can use arrow API.
+	EnableArrow bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -528,6 +528,14 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+
+	var enableArrow string
+	if config.GetGlobalConfig().TiKVClient.EnableArrow {
+		enableArrow = "1"
+	} else {
+		enableArrow = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
 	return vars
 }
 
@@ -582,9 +590,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.LightningMode {
-		s.GetWriteStmtBufs().clean()
-	}
+	s.GetWriteStmtBufs().clean()
 }
 
 // AllocPlanColumnID allocates column id for plan.
@@ -851,6 +857,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableArrow:
+		s.EnableArrow = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:

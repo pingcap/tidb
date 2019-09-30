@@ -198,9 +198,10 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		fn(&opt)
 	}
 	ss := opt.AssertionProto
-	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
-	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
-	key, distinct, err := c.GenIndexKey(sctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	vars := sctx.GetSessionVars()
+	writeBufs := vars.GetWriteStmtBufs()
+	skipCheck := vars.StmtCtx.BatchCheck
+	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return 0, err
 	}
