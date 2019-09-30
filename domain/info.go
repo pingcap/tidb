@@ -215,7 +215,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 }
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.
-func (is InfoSyncer) Done() <-chan struct{} {
+func (is *InfoSyncer) Done() <-chan struct{} {
 	if is.etcdCli == nil {
 		return make(chan struct{}, 1)
 	}
