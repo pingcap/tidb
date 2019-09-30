@@ -1175,7 +1175,6 @@ func (s *session) CommonExec(ctx context.Context,
 		return nil, err
 	}
 	logQuery(st.OriginText(), s.sessionVars)
-	logutil.Logger(ctx).Error("[ray] common execution")
 	return runStmt(ctx, s, st)
 }
 
@@ -1225,7 +1224,6 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		prepared.CachedPlan = nil
 		return nil, errors.Errorf("invalid cached plan type")
 	}
-	logutil.Logger(ctx).Error("[ray] cached execution")
 	return resultSet, err
 }
 
