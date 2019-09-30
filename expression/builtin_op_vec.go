@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -27,11 +28,46 @@ func (b *builtinTimeIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinLogicOrSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	arg1s := buf.Int64s()
+
+	for i := 0; i < n; i++ {
+		isNull0 := result.IsNull(i)
+		isNull1 := buf.IsNull(i)
+		// Because buf is used to store the conversion of args[0] in place, it could
+		// be that args[0] is null and args[1] is nonzero, in which case the result
+		// is 1. In these cases, we need to clear the null bit mask of the corresponding
+		// row in result.
+		// See https://dev.mysql.com/doc/refman/5.7/en/logical-operators.html#operator_or
+		isNull := false
+		if (!isNull0 && i64s[i] != 0) || (!isNull1 && arg1s[i] != 0) {
+			i64s[i] = 1
+		} else if isNull0 || isNull1 {
+			isNull = true
+		} else {
+			i64s[i] = 0
+		}
+		result.SetNull(i, isNull)
+	}
+	return nil
 }
 
 func (b *builtinBitOrSig) vectorized() bool {
@@ -107,11 +143,51 @@ func (b *builtinUnaryNotRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinLogicAndSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	arg1 := buf1.Int64s()
+
+	for i := 0; i < n; i++ {
+		isNull0 := result.IsNull(i)
+		if !isNull0 && i64s[i] == 0 {
+			result.SetNull(i, false)
+			continue
+		}
+
+		isNull1 := buf1.IsNull(i)
+		if !isNull1 && arg1[i] == 0 {
+			i64s[i] = 0
+			result.SetNull(i, false)
+			continue
+		}
+
+		if isNull0 || isNull1 {
+			result.SetNull(i, true)
+			continue
+		}
+
+		i64s[i] = 1
+	}
+
+	return nil
 }
 
 func (b *builtinBitXorSig) vectorized() bool {
@@ -123,11 +199,42 @@ func (b *builtinBitXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinLogicXorSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	arg1s := buf.Int64s()
+	// Returns NULL if either operand is NULL.
+	// See https://dev.mysql.com/doc/refman/5.7/en/logical-operators.html#operator_xor
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		arg0 := i64s[i]
+		arg1 := arg1s[i]
+		if (arg0 != 0 && arg1 != 0) || (arg0 == 0 && arg1 == 0) {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinBitAndSig) vectorized() bool {
