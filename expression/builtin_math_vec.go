@@ -812,19 +812,19 @@ func (b *builtinCeilDecToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinCeilIntToIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilIntToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinFloorIntToIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorIntToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinFloorDecToIntSig) vectorized() bool {
