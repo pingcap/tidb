@@ -66,7 +66,8 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	if len(e.resultChunk) > 0 {
 		chk.SwapColumns(e.resultChunk[0])
-		e.resultChunk = e.resultChunk[1:] // TODO: reuse e.preparedChunk[0]
+		e.resultChunk[0] = nil // GC it. TODO: reuse it.
+		e.resultChunk = e.resultChunk[1:]
 		e.remainingRowsInChunk = e.remainingRowsInChunk[1:]
 	}
 	return nil
