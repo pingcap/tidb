@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -231,6 +232,33 @@ func runTestRegression(c *C, overrider configOverrider, dbName string) {
 		if b == nil {
 			dbt.Error("nil echo from non-nil input")
 		}
+	})
+}
+
+// runTestPrepare executes a statement twice after preparing a statement.
+func runTestPrepare(t *C) {
+	runTests(t, nil, func(dbt *DBTest) {
+		dbt.mustExec("create table t(id int, a int, primary key(id))")
+		dbt.mustExec("insert into t values(1, 2)")
+
+		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/server/mockNoRecover", `return(true)`), IsNil)
+		defer func() {
+			dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/server/mockNoRecover"), IsNil)
+		}()
+
+		stmt := dbt.mustPrepare("update t set a = a + 1 where id = ? ")
+		dbt.mustExec("set @arg = 1")
+		defer stmt.Close()
+		res, err := stmt.Exec("1")
+		dbt.Assert(err, IsNil)
+		count, err := res.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(count, Equals, int64(1))
+		res, err = stmt.Exec("1")
+		dbt.Assert(err, IsNil)
+		count, err = res.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(count, Equals, int64(1))
 	})
 }
 

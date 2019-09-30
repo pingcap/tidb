@@ -93,6 +93,10 @@ func (ts *TidbTestSuite) TestRegression(c *C) {
 	}
 }
 
+func (ts *TidbTestSuite) TestPrepareExec(c *C) {
+	runTestPrepare(c)
+}
+
 func (ts *TidbTestSuite) TestUint64(c *C) {
 	runTestPrepareResultFieldType(c)
 }

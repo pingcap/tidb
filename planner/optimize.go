@@ -227,7 +227,7 @@ func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) boo
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	var err error
-	builder := plannercore.NewPlanBuilder(sctx, is, nil)
+	builder := plannercore.NewPlanBuilder(sctx, is, &plannercore.BlockHintProcessor{})
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err

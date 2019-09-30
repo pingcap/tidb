@@ -596,6 +596,12 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 func (cc *clientConn) Run(ctx context.Context) {
 	const size = 4096
 	defer func() {
+		failpoint.Inject("mockNoRecover", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return()
+			}
+		})
+
 		r := recover()
 		if r != nil {
 			buf := make([]byte, size)
