@@ -52,7 +52,7 @@ const (
 	EngineAll = EngineTypeSet(EngineTiDB | EngineTiKV | EngineTiFlash)
 )
 
-// Contain checks whether the EngineTypeSet contains the EngineType.
+// Contains checks whether the EngineTypeSet contains the EngineType.
 func (e EngineTypeSet) Contains(tp EngineType) bool {
 	return uint(e)&uint(tp) != 0
 }
