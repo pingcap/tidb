@@ -940,6 +940,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
 		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->StreamAgg}(test.t.b,test.t.c)->Projection->Update",
+		},
 	}
 
 	ctx := context.Background()
@@ -2480,6 +2484,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
 			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		// Test issue 11943
+		{
+			sql:    "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
+			result: "TableReader(Table(t))->Sort->Window(row_number() over(partition by test.t.b))->Projection->Projection",
 		},
 	}
 

@@ -435,3 +435,16 @@ id	count	task	operator info
 Projection_4	1.00	root	1
 └─Projection_5	1.00	root	sleep(1)
   └─TableDual_6	1.00	root	rows:1
+drop table t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
+i int(10) unsigned DEFAULT NULL,
+x int(10) unsigned DEFAULT 0,
+PRIMARY KEY (`id`)
+);
+explain select row_number() over( partition by i ) - x as rnk from t;
+id	count	task	operator info
+Projection_8	10000.00	root	minus(4_window_3, test.t.x)
+└─Window_9	10000.00	root	row_number() over(partition by test.t.i)
+  └─Sort_12	10000.00	root	test.t.i:asc
+    └─TableReader_11	10000.00	root	data:TableScan_10
+      └─TableScan_10	10000.00	cop	table:t, range:[0,+inf], keep order:false, stats:pseudo

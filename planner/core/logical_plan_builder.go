@@ -1255,7 +1255,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1290,7 +1290,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 && a.curClause != windowClause {
+			if index == -1 && a.curClause != fieldList {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1395,7 +1395,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 	}
-	extractor.curClause = windowClause
+	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
 		if !ast.HasWindowFlag(field.Expr) {
 			continue
@@ -2584,11 +2584,20 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
+	oldSchemaLen := p.Schema().Len()
 	if sel.Where != nil {
-		p, err = b.buildSelection(ctx, p, sel.Where, nil)
+		p, err = b.buildSelection(ctx, p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
+	}
+	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
+	if p.Schema().Len() != oldSchemaLen {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx)
+		proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
+		copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+		proj.SetChildren(p)
+		p = proj
 	}
 	if sel.OrderBy != nil {
 		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, nil, nil)
