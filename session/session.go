@@ -62,7 +62,38 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
+<<<<<<< HEAD
 	"golang.org/x/net/context"
+=======
+)
+
+var (
+	statementPerTransactionInternalOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "ok")
+	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
+	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
+	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
+	transactionDurationInternalOK        = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "ok")
+	transactionDurationInternalError     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "error")
+	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
+	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
+
+	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
+	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
+	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
+	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
+	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
+	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
+	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+
+	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+
+	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
+	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
+>>>>>>> ea6d00b... *: add a new way to calculate TPS (#12411)
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -414,8 +445,13 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		label = metrics.LblError
 	}
 	s.sessionVars.TxnCtx.Cleanup()
+<<<<<<< HEAD
 	metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), label).Inc()
 	return errors.Trace(err)
+=======
+	s.recordTransactionCounter(nil, err)
+	return err
+>>>>>>> ea6d00b... *: add a new way to calculate TPS (#12411)
 }
 
 func (s *session) RollbackTxn(ctx context.Context) error {
@@ -848,7 +884,27 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
+<<<<<<< HEAD
 		return nil, errors.Trace(err)
+=======
+		return nil, err
+	}
+	s.recordTransactionCounter(stmtNode, err)
+	if s.isInternal() {
+		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
+	} else {
+		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
+	}
+
+	if inMulitQuery && recordSet == nil {
+		recordSet = &multiQueryNoDelayRecordSet{
+			affectedRows: s.AffectedRows(),
+			lastMessage:  s.LastMessage(),
+			warnCount:    s.sessionVars.StmtCtx.WarningCount(),
+			lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
+			status:       s.sessionVars.Status,
+		}
+>>>>>>> ea6d00b... *: add a new way to calculate TPS (#12411)
 	}
 	metrics.SessionExecuteRunDuration.WithLabelValues(s.getSQLLabel()).Observe(time.Since(startTime).Seconds())
 
@@ -1616,3 +1672,95 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
+<<<<<<< HEAD
+=======
+
+func (s *session) recordOnTransactionExecution(err error, counter int, duration float64) {
+	if s.isInternal() {
+		if err != nil {
+			statementPerTransactionInternalError.Observe(float64(counter))
+			transactionDurationInternalError.Observe(duration)
+		} else {
+			statementPerTransactionInternalOK.Observe(float64(counter))
+			transactionDurationInternalOK.Observe(duration)
+		}
+	} else {
+		if err != nil {
+			statementPerTransactionGeneralError.Observe(float64(counter))
+			transactionDurationGeneralError.Observe(duration)
+		} else {
+			statementPerTransactionGeneralOK.Observe(float64(counter))
+			transactionDurationGeneralOK.Observe(duration)
+		}
+	}
+}
+
+func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
+	if stmtNode == nil {
+		if s.isInternal() {
+			if err != nil {
+				transactionCounterInternalErr.Inc()
+			} else {
+				transactionCounterInternalOK.Inc()
+			}
+		} else {
+			if err != nil {
+				transactionCounterGeneralErr.Inc()
+			} else {
+				transactionCounterGeneralOK.Inc()
+			}
+		}
+		return
+	}
+
+	var isTxn bool
+	switch stmtNode.(type) {
+	case *ast.CommitStmt:
+		isTxn = true
+	case *ast.RollbackStmt:
+		isTxn = true
+	}
+	if !isTxn {
+		return
+	}
+	if s.isInternal() {
+		transactionCounterInternalCommitRollback.Inc()
+	} else {
+		transactionCounterGeneralCommitRollback.Inc()
+	}
+}
+
+type multiQueryNoDelayRecordSet struct {
+	sqlexec.RecordSet
+
+	affectedRows uint64
+	lastMessage  string
+	status       uint16
+	warnCount    uint16
+	lastInsertID uint64
+}
+
+func (c *multiQueryNoDelayRecordSet) Close() error {
+	return nil
+}
+
+func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
+	return c.affectedRows
+}
+
+func (c *multiQueryNoDelayRecordSet) LastMessage() string {
+	return c.lastMessage
+}
+
+func (c *multiQueryNoDelayRecordSet) WarnCount() uint16 {
+	return c.warnCount
+}
+
+func (c *multiQueryNoDelayRecordSet) Status() uint16 {
+	return c.status
+}
+
+func (c *multiQueryNoDelayRecordSet) LastInsertID() uint64 {
+	return c.lastInsertID
+}
+>>>>>>> ea6d00b... *: add a new way to calculate TPS (#12411)
