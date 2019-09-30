@@ -778,7 +778,7 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	tc := &indexJoinTestCase{
 		outerRows:       100000,
-		innerRows:       variable.DefMaxChunkSize * 40,
+		innerRows:       variable.DefMaxChunkSize * 100,
 		concurrency:     4,
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
