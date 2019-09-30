@@ -244,7 +244,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
-	// In areZeros slice, -1 means Null, 0 means false, 1 means true
+	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
 	areZeros := make([]int8, n)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
