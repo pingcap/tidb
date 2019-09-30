@@ -721,7 +721,6 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 
 	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
-			i64s[i] = 0
 			continue
 		}
 		if buf64s[i] < 0 {
