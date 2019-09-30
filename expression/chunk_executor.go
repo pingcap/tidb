@@ -355,9 +355,9 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 		}
 	}
 	if canVectorized {
-		return vectorizedFilter(ctx, filters, iterator, selected, nil)
+		return vectorizedFilter(ctx, filters, iterator, selected, isNull)
 	}
-	return rowBasedFilter(ctx, filters, iterator, selected, nil)
+	return rowBasedFilter(ctx, filters, iterator, selected, isNull)
 }
 
 // rowBasedFilter filters by row.
