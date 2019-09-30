@@ -92,6 +92,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 	ast.Ceil: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
 	},
 	ast.Truncate: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
