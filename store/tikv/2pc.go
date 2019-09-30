@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -50,11 +51,13 @@ const (
 var (
 	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
+	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
 )
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64
+	PessimisticLockTTL uint64 = 15000 // 15s ~ 40s
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -107,6 +110,8 @@ type twoPhaseCommitter struct {
 	isFirstLock   bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
+	// Used by pessimistic transaction and large transaction.
+	ttlManager
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -136,6 +141,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		startTS:       txn.StartTS(),
 		connID:        connID,
 		regionTxnSize: map[uint64]int{},
+		ttlManager: ttlManager{
+			ch: make(chan struct{}),
+		},
 	}, nil
 }
 
@@ -567,6 +575,80 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+	}
+}
+
+type ttlManagerState uint32
+
+const (
+	stateUninitialized ttlManagerState = iota
+	stateRunning
+	stateClosed
+)
+
+type ttlManager struct {
+	state ttlManagerState
+	ch    chan struct{}
+}
+
+func (tm *ttlManager) run(c *twoPhaseCommitter) {
+	// Run only once.
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
+		return
+	}
+	go tm.keepAlive(c)
+}
+
+func (tm *ttlManager) close() {
+	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateRunning), uint32(stateClosed)) {
+		return
+	}
+	close(tm.ch)
+}
+
+func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
+	// Ticker is set to 1/3 of the PessimisticLockTTL.
+	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tm.ch:
+			return
+		case <-ticker.C:
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			if err != nil {
+				err1 := bo.Backoff(BoPDRPC, err)
+				if err1 != nil {
+					logutil.BgLogger().Warn("keepAlive get tso fail",
+						zap.Error(err))
+					return
+				}
+				continue
+			}
+
+			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
+			const c10min = 10 * 60 * 1000
+			if uptime > c10min {
+				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+				// the key will not be locked forever.
+				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+
+			newTTL := uptime + PessimisticLockTTL
+			startTime := time.Now()
+			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			if err != nil {
+				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
+				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS))
+				return
+			}
+			tiKVTxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
 		}
 	}
 }

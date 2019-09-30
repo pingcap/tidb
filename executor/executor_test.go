@@ -93,7 +93,7 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testSuite4{})
-var _ = SerialSuites(&testShowStatsSuite{testSuite{&baseTestSuite{}}})
+var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
@@ -4661,4 +4661,128 @@ func (s *testSuiteP1) TestPointGetPreparedPlanWithCommitMode(c *C) {
 	// verify
 	tk1.MustQuery("execute pk1 using @p1").Check(testkit.Rows("1 1 11"))
 	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 11"))
+}
+
+func (s *testSuiteP1) TestPointUpdatePreparedPlan(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists pu_test")
+	defer tk1.MustExec("drop database if exists pu_test")
+	tk1.MustExec("create database pu_test")
+	tk1.MustExec("use pu_test")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	tk1.MustExec(`prepare pu1 from "update t set c = c + 1 where a = ? "`)
+	tk1.MustExec(`prepare pu2 from "update t set c = c + 2 where ? = a "`)
+
+	tk1.MustExec("set @p0 = 0")
+	tk1.MustExec("set @p1 = 1")
+	tk1.MustExec("set @p2 = 2")
+	tk1.MustExec("set @p3 = 3")
+	tk1.MustExec("set @p4 = 4")
+
+	// first time plan generated
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
+	// using the generated plan but with different params
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
+	tk1.MustExec("execute pu2 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
+	tk1.MustExec("execute pu2 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
+
+	// unique index
+	tk1.MustExec(`prepare uu1 from "update t set c = c + 10 where a = ?"`)
+	tk1.MustExec("execute uu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 20"))
+	tk1.MustExec("execute uu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 30"))
+
+	// test schema changed, cached plan should be invalidated
+	tk1.MustExec("alter table t add column col4 int default 10 after c")
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 31 10"))
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 32 10"))
+
+	tk1.MustExec("alter table t drop index k_b")
+	tk1.MustExec("execute uu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 42 10"))
+	tk1.MustExec("execute uu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 52 10"))
+
+	tk1.MustExec("alter table t add unique index k_b(b)")
+	tk1.MustExec("execute uu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 62 10"))
+	tk1.MustExec("execute uu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 72 10"))
+
+	tk1.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1 10"))
+	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2 10"))
+}
+
+func (s *testSuiteP1) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists pu_test2")
+	defer tk1.MustExec("drop database if exists pu_test2")
+	tk1.MustExec("create database pu_test2")
+	tk1.MustExec("use pu_test2")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	tk1.MustExec(`prepare pu1 from "update t set c = c + 1 where a = ? "`)
+	tk1.MustExec(`prepare pu2 from "update t set c = c + 1 where ? = a "`)
+
+	tk1.MustExec("set @p0 = 0")
+	tk1.MustExec("set @p1 = 1")
+	tk1.MustExec("set @p2 = 2")
+	tk1.MustExec("set @p3 = 3")
+	tk1.MustExec("set @p4 = 4")
+
+	// first time plan generated
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
+
+	// next start a non autocommit txn
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("begin")
+	// try to exec using point get plan(this plan should not go short path)
+	tk1.MustExec("execute pu1 using @p3")
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
+
+	// update rows
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use pu_test2")
+	tk2.MustExec(`prepare pu2 from "update t set c = c + 2 where ? = a "`)
+	tk2.MustExec("set @p3 = 3")
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
+	tk2.MustExec("execute pu2 using @p3")
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
+	tk2.MustExec("execute pu2 using @p3")
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
+
+	// try to update in session 1
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
+	_, err := tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+
+	// verify
+	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2"))
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
+	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
 }

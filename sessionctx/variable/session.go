@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -305,9 +306,6 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
-	LightningMode bool
-
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
@@ -351,6 +349,9 @@ type SessionVars struct {
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
+
+	// EnableArrow indicates whether the coprocessor request can use arrow API.
+	EnableArrow bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -422,6 +423,8 @@ type SessionVars struct {
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
+
+	PlannerSelectBlockAsName []model.CIStr
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -525,6 +528,14 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+
+	var enableArrow string
+	if config.GetGlobalConfig().TiKVClient.EnableArrow {
+		enableArrow = "1"
+	} else {
+		enableArrow = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
 	return vars
 }
 
@@ -579,9 +590,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.LightningMode {
-		s.GetWriteStmtBufs().clean()
-	}
+	s.GetWriteStmtBufs().clean()
 }
 
 // AllocPlanColumnID allocates column id for plan.
@@ -848,6 +857,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableArrow:
+		s.EnableArrow = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -894,6 +905,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
+	// It's a global variable, but it also wants to be cached in server.
+	case TiDBMaxDeltaSchemaCount:
+		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	}
 	s.systems[name] = val
 	return nil
@@ -992,6 +1006,8 @@ type Concurrency struct {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+
+	// TODO: remove them below sometime, it should have only one Quota(MemQuotaQuery).
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
 	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
@@ -1050,6 +1066,10 @@ const (
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogParseTimeStr is the parse sql time.
+	SlowLogParseTimeStr = "Parse_time"
+	// SlowLogCompileTimeStr is the compile plan time.
+	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1082,6 +1102,10 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
+	SlowLogPrepared = "Prepared"
+	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
+	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
@@ -1093,19 +1117,21 @@ const (
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS       uint64
-	SQL         string
-	Digest      string
-	TimeTotal   time.Duration
-	TimeParse   time.Duration
-	TimeCompile time.Duration
-	IndexNames  string
-	StatsInfos  map[string]uint64
-	CopTasks    *stmtctx.CopTasksDetails
-	ExecDetail  execdetails.ExecDetails
-	MemMax      int64
-	Succ        bool
-	PrevStmt    string
+	TxnTS          uint64
+	SQL            string
+	Digest         string
+	TimeTotal      time.Duration
+	TimeParse      time.Duration
+	TimeCompile    time.Duration
+	IndexNames     string
+	StatsInfos     map[string]uint64
+	CopTasks       *stmtctx.CopTasksDetails
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	Succ           bool
+	Prepared       bool
+	HasMoreResults bool
+	PrevStmt       string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1139,6 +1165,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
@@ -1204,6 +1232,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
 
+	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
+	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 
 	if logItems.PrevStmt != "" {
