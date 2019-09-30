@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -263,7 +264,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	if err != nil {
-		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		log.Fatal("listen failed", zap.Error(err))
 	}
 }
 
