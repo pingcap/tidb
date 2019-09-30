@@ -14,7 +14,10 @@
 package expression
 
 import (
+	"regexp"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -35,9 +38,68 @@ func (b *builtinRegexpBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinRegexpSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	bufExpr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufExpr)
+	if err := b.args[0].VecEvalString(b.ctx, input, bufExpr); err != nil {
+		return err
+	}
+
+	bufPat, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufPat)
+	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
+		return err
+	}
+
+	pat2re := make(map[string]*regexp.Regexp)
+	isMemoizable := b.args[1].ConstItem()
+	if isMemoizable {
+		// If args[1] is a constant item, then all the items in bufPat are
+		// the same. So the pattern can be compiled once and memoized.
+		for i := 0; i < n; i++ {
+			if bufPat.IsNull(i) {
+				continue
+			}
+			pat := bufPat.GetString(i)
+			if _, ok := pat2re[pat]; ok {
+				continue
+			}
+			re, err := b.compilePattern(pat)
+			if err != nil {
+				return err
+			}
+			pat2re[pat] = re
+		}
+	}
+	getRegexp := func(pat string) (*regexp.Regexp, error) {
+		if isMemoizable {
+			return pat2re[pat], nil
+		}
+		return b.compilePattern(pat)
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(bufExpr, bufPat)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		re, err := getRegexp(bufPat.GetString(i))
+		if err != nil {
+			return err
+		}
+		i64s[i] = boolToInt64(re.MatchString(bufExpr.GetString(i)))
+	}
+	return nil
 }
