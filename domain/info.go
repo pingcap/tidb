@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -59,7 +58,7 @@ type InfoSyncer struct {
 	serverInfoPath string
 	minStartTS     uint64
 	minStartTSPath string
-	manager        atomic.Value
+	manager        util2.SessionManager
 	session        *concurrency.Session
 }
 
@@ -97,7 +96,7 @@ func (is *InfoSyncer) Init(ctx context.Context) error {
 
 // SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
-	is.manager.Store(manager)
+	is.manager = manager
 }
 
 // GetServerInfo gets self server static information.
@@ -184,12 +183,11 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 
 // ReportMinStartTS reports self server min start timestamp to ETCD.
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
-	sm := is.manager.Load()
-	if sm == nil {
+	if is.manager == nil {
 		// Server may not start in time.
 		return
 	}
-	pl := sm.(util2.SessionManager).ShowProcessList()
+	pl := is.manager.ShowProcessList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion()
@@ -207,7 +205,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	atomic.StoreUint64(&is.minStartTS, minStartTS)
+	is.minStartTS = minStartTS
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
