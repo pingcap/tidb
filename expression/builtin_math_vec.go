@@ -855,9 +855,38 @@ func (b *builtinFloorIntToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinFloorDecToIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorDecToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+
+	d := buf.Decimals()
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		i64s[i], err = d[i].ToInt()
+		if err == types.ErrTruncated {
+			err = nil
+			if d[i].IsNegative() {
+				i64s[i]--
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
