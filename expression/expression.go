@@ -16,9 +16,9 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"github.com/pingcap/errors"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
