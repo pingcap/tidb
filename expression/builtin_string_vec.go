@@ -688,11 +688,55 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinReplaceSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinReplaceSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		oldStr := buf1.GetString(i)
+		newStr := buf2.GetString(i)
+		if oldStr == "" {
+			result.AppendString(str)
+			continue
+		}
+		str = strings.Replace(str, oldStr, newStr, -1)
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinMakeSetSig) vectorized() bool {
