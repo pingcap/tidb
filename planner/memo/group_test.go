@@ -141,23 +141,23 @@ func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 }
 
 func (s *testMemoSuite) TestEngineTypeSet(c *C) {
-	c.Assert(EngineAll.Contain(EngineTiDB), IsTrue)
-	c.Assert(EngineAll.Contain(EngineTiKV), IsTrue)
-	c.Assert(EngineAll.Contain(EngineTiFlash), IsTrue)
+	c.Assert(EngineAll.Contains(EngineTiDB), IsTrue)
+	c.Assert(EngineAll.Contains(EngineTiKV), IsTrue)
+	c.Assert(EngineAll.Contains(EngineTiFlash), IsTrue)
 
-	c.Assert(EngineTiDBOnly.Contain(EngineTiDB), IsTrue)
-	c.Assert(EngineTiDBOnly.Contain(EngineTiKV), IsFalse)
-	c.Assert(EngineTiDBOnly.Contain(EngineTiFlash), IsFalse)
+	c.Assert(EngineTiDBOnly.Contains(EngineTiDB), IsTrue)
+	c.Assert(EngineTiDBOnly.Contains(EngineTiKV), IsFalse)
+	c.Assert(EngineTiDBOnly.Contains(EngineTiFlash), IsFalse)
 
-	c.Assert(EngineTiKVOnly.Contain(EngineTiDB), IsFalse)
-	c.Assert(EngineTiKVOnly.Contain(EngineTiKV), IsTrue)
-	c.Assert(EngineTiKVOnly.Contain(EngineTiFlash), IsFalse)
+	c.Assert(EngineTiKVOnly.Contains(EngineTiDB), IsFalse)
+	c.Assert(EngineTiKVOnly.Contains(EngineTiKV), IsTrue)
+	c.Assert(EngineTiKVOnly.Contains(EngineTiFlash), IsFalse)
 
-	c.Assert(EngineTiFlashOnly.Contain(EngineTiDB), IsFalse)
-	c.Assert(EngineTiFlashOnly.Contain(EngineTiKV), IsFalse)
-	c.Assert(EngineTiFlashOnly.Contain(EngineTiFlash), IsTrue)
+	c.Assert(EngineTiFlashOnly.Contains(EngineTiDB), IsFalse)
+	c.Assert(EngineTiFlashOnly.Contains(EngineTiKV), IsFalse)
+	c.Assert(EngineTiFlashOnly.Contains(EngineTiFlash), IsTrue)
 
-	c.Assert(EngineTiKVOrTiFlash.Contain(EngineTiDB), IsFalse)
-	c.Assert(EngineTiKVOrTiFlash.Contain(EngineTiKV), IsTrue)
-	c.Assert(EngineTiKVOrTiFlash.Contain(EngineTiFlash), IsTrue)
+	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiDB), IsFalse)
+	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiKV), IsTrue)
+	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiFlash), IsTrue)
 }

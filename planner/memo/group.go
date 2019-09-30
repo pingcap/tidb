@@ -53,7 +53,7 @@ const (
 )
 
 // Contain checks whether the EngineTypeSet contains the EngineType.
-func (e EngineTypeSet) Contain(tp EngineType) bool {
+func (e EngineTypeSet) Contains(tp EngineType) bool {
 	return uint(e)&uint(tp) != 0
 }
 

@@ -118,13 +118,25 @@ func (o Operand) Match(t Operand) bool {
 	return false
 }
 
-// Pattern defines the Match pattern for a rule.
-// It describes a piece of logical expression.
-// It's a tree-like structure and each node in the tree is an Operand and an EngineType.
+// Pattern defines the match pattern for a rule. It's a tree-like structure
+// which is a piece of a logical expression. Each node in the Pattern tree is
+// defined by a Operand and EngineType pair.
 type Pattern struct {
 	Operand
 	EngineTypeSet
 	Children []*Pattern
+}
+
+// Match checks whether the EngineTypeSet contains the given EngineType
+// and whether the two Operands match.
+func (p *Pattern) Match(o Operand, e EngineType) bool {
+	return p.EngineTypeSet.Contains(e) && p.Operand.Match(o)
+}
+
+// MatchOperandAny checks whether the pattern's Operand is OperandAny
+// and the EngineTypeSet contains the given EngineType.
+func (p *Pattern) MatchOperandAny(e EngineType) bool {
+	return p.EngineTypeSet.Contains(e) && p.Operand == OperandAny
 }
 
 // NewPattern creates a pattern node according to the Operand and EngineType.
