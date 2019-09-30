@@ -247,10 +247,6 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 }
 
 func (s *session) getMembufCap() int {
-	if s.sessionVars.LightningMode {
-		return kv.ImportingTxnMembufCap
-	}
-
 	return kv.DefaultTxnMembufCap
 }
 
@@ -393,9 +389,6 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	}
 	return fields, nil
 }
-
-// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
-var mockCommitErrorOnce = true
 
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
@@ -1177,6 +1170,16 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+func (s *session) CommonExec(ctx context.Context,
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	if err != nil {
+		return nil, err
+	}
+	logQuery(st.OriginText(), s.sessionVars)
+	return runStmt(ctx, s, st)
+}
+
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
@@ -1195,7 +1198,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmt := &executor.ExecStmt{
 		InfoSchema:  is,
 		Plan:        execPlan,
-		StmtNode:    prepared.Stmt,
+		StmtNode:    execAst,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 	}
@@ -1205,9 +1208,20 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	logQuery(stmt.OriginText(), s.sessionVars)
 
 	// run ExecStmt
-	rs, err := stmt.GetPointRecord(ctx, is)
-	s.txn.changeToInvalid()
-	return rs, err
+	var resultSet sqlexec.RecordSet
+	switch prepared.CachedPlan.(type) {
+	case *plannercore.PointGetPlan:
+		resultSet, err = stmt.PointGet(ctx, is)
+		s.txn.changeToInvalid()
+	case *plannercore.Update:
+		s.PrepareTxnFuture(ctx)
+		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+		resultSet, err = runStmt(ctx, s, stmt)
+	default:
+		prepared.CachedPlan = nil
+		return nil, errors.Errorf("invalid cached plan type")
+	}
+	return resultSet, err
 }
 
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
@@ -1222,13 +1236,36 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	if !s.GetSessionVars().IsAutocommit() {
 		return false, nil
 	}
+	// check schema version
+	is := executor.GetInfoSchema(s)
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		prepared.CachedPlan = nil
+		return false, nil
+	}
 	// maybe we'd better check cached plan type here, current
-	// only point select will be cached, see "getPhysicalPlan" func
-	return true, nil
+	// only point select/update will be cached, see "getPhysicalPlan" func
+	var ok bool
+	var err error
+	switch prepared.CachedPlan.(type) {
+	case *plannercore.PointGetPlan:
+		ok = true
+	case *plannercore.Update:
+		pointUpdate := prepared.CachedPlan.(*plannercore.Update)
+		_, ok = pointUpdate.SelectPlan.(*plannercore.PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			prepared.CachedPlan = nil
+			return false, err
+		}
+	default:
+		ok = false
+	}
+	return ok, err
 }
 
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
+	s.PrepareTxnCtx(ctx)
 	var err error
 	s.sessionVars.StartTime = time.Now()
 	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
@@ -1248,14 +1285,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if ok {
 		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	s.PrepareTxnCtx(ctx)
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
-	if err != nil {
-		return nil, err
-	}
-	logQuery(st.OriginText(), s.sessionVars)
-	r, err := runStmt(ctx, s, st)
-	return r, err
+	return s.CommonExec(ctx, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -1783,6 +1813,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptInSubqToJoinAndAgg,
 	variable.TiDBOptCorrelationThreshold,
 	variable.TiDBOptCorrelationExpFactor,
+	variable.TiDBOptCPUFactor,
+	variable.TiDBOptCopCPUFactor,
+	variable.TiDBOptNetworkFactor,
+	variable.TiDBOptScanFactor,
+	variable.TiDBOptDescScanFactor,
+	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
 	variable.TiDBMaxChunkSize,
@@ -1797,6 +1834,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBMaxDeltaSchemaCount,
 }
 
 var (
@@ -2040,23 +2078,13 @@ func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
 }
 
 type multiQueryNoDelayRecordSet struct {
+	sqlexec.RecordSet
+
 	affectedRows uint64
 	lastMessage  string
 	status       uint16
 	warnCount    uint16
 	lastInsertID uint64
-}
-
-func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
-	panic("unsupported method")
 }
 
 func (c *multiQueryNoDelayRecordSet) Close() error {
