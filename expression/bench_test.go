@@ -1170,6 +1170,7 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 				c.Assert(selected2[i], Equals, selected[i])
 			}
 
+			// add test which sel is not nil
 			isNull = isNull[:0]
 			selected, nulls, err = rowBasedFilter(ctx, exprs, it, selected, isNull)
 			c.Assert(err, IsNil)
