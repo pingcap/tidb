@@ -367,7 +367,6 @@ func rowBasedFilter(ctx sessionctx.Context, filters []Expression, iterator *chun
 	// TODO: Just use input.Sel() instead of selected to check for those rows that are filtered out.
 	input := iterator.GetChunk()
 	if input.Sel() != nil {
-		defer input.SetSel(input.Sel())
 		input = input.CopyReconstruct(nil)
 		iterator = chunk.NewIterator4Chunk(input)
 	}

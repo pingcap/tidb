@@ -228,7 +228,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	// If input.Sel() != nil, then we will call input.CopyReconstruct() to get a new chunk
 	// that the filtered rows has been removed.
 	if input.Sel() != nil {
-		defer input.SetSel(input.Sel())
 		input = input.CopyReconstruct(nil)
 	}
 

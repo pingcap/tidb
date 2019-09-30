@@ -1169,6 +1169,16 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 				c.Assert(nulls2[i], Equals, nulls[i])
 				c.Assert(selected2[i], Equals, selected[i])
 			}
+
+			isNull = isNull[:0]
+			selected, nulls, err = rowBasedFilter(ctx, exprs, it, selected, isNull)
+			c.Assert(err, IsNil)
+			selected2, nulls2, err2 = vectorizedFilter(ctx, exprs, it, selected2, isNull)
+			c.Assert(err2, IsNil)
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
 		}
 	}
 }
