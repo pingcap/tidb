@@ -428,6 +428,7 @@ const (
 	ColumnOptionCollate
 	ColumnOptionCheck
 	ColumnOptionColumnFormat
+	ColumnOptionStorage
 )
 
 var (
@@ -524,6 +525,9 @@ func (n *ColumnOption) Restore(ctx *RestoreCtx) error {
 		}
 	case ColumnOptionColumnFormat:
 		ctx.WriteKeyWord("COLUMN_FORMAT ")
+		ctx.WriteKeyWord(n.StrValue)
+	case ColumnOptionStorage:
+		ctx.WriteKeyWord("STORAGE ")
 		ctx.WriteKeyWord(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")

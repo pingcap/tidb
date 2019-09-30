@@ -198,6 +198,9 @@ func (ts *testDDLSuite) TestDDLColumnOptionRestore(c *C) {
 		{"generated always as(id + 1) stored", "GENERATED ALWAYS AS(`id`+1) STORED"},
 		{"REFERENCES parent(id)", "REFERENCES `parent`(`id`)"},
 		{"COLLATE utf8_bin", "COLLATE utf8_bin"},
+		{"STORAGE DEFAULT", "STORAGE DEFAULT"},
+		{"STORAGE DISK", "STORAGE DISK"},
+		{"STORAGE MEMORY", "STORAGE MEMORY"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Cols[0].Options[0]
