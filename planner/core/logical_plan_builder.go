@@ -72,6 +72,10 @@ const (
 	HintAggToCop = "agg_to_cop"
 	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
 	HintReadFromStorage = "read_from_storage"
+	// HintTiFlash is a label represents the tiflash storage type.
+	HintTiFlash = "tiflash"
+	// HintTiKV is a label represents the tikv storage type.
+	HintTiKV = "tikv"
 )
 
 const (
@@ -388,7 +392,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	if len(ds.TableAsName.L) != 0 {
 		alias = &hintTableInfo{name: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
 	} else {
-		alias = extractTableAlias(ds)
+		alias = &hintTableInfo{name: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
 	if hintInfo.ifPreferTiFlash(alias) {
 		ds.preferStoreType |= preferTiFlash
@@ -2029,7 +2033,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintReadFromStorage:
-			if hint.StoreType.L == "tiflash" {
+			if hint.StoreType.L == HintTiFlash {
 				tiflashTables = tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		default:

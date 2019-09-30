@@ -102,7 +102,10 @@ const (
 	preferMergeJoin
 	preferHashAgg
 	preferStreamAgg
-	preferTiKV
+)
+
+const (
+	preferTiKV = 1 << iota
 	preferTiFlash
 )
 
