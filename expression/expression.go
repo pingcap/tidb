@@ -250,6 +250,10 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
+		if err := vecEval(ctx, expr, input, buf); err != nil {
+			return nil, nil, err
+		}
+
 		j := 0
 		if eType == types.ETInt {
 			if err = expr.VecEvalInt(ctx, input, buf); err != nil {
@@ -274,10 +278,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			input.SetSel(sel)
 			globalColumnAllocator.put(buf)
 			continue
-		}
-
-		if err := vecEval(ctx, expr, input, buf); err != nil {
-			return nil, nil, err
 		}
 
 		isEQCondFromIn := IsEQCondFromIn(expr)
@@ -336,6 +336,8 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 
 func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	switch expr.GetType().EvalType() {
+	case types.ETInt:
+		err = expr.VecEvalInt(ctx, input, result)
 	case types.ETReal:
 		err = expr.VecEvalReal(ctx, input, result)
 	case types.ETDuration:

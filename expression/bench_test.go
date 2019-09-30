@@ -1002,7 +1002,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 }
 
-func genVecEvalBool(numCols int, colTypes []types.EvalType, eTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
+func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
 	gens := make([]dataGenerator, 0, len(eTypes))
 	for _, eType := range eTypes {
 		if eType == types.ETString {
