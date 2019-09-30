@@ -333,6 +333,7 @@ type ExecuteStmt struct {
 	UsingVars  []ExprNode
 	BinaryArgs interface{}
 	ExecID     uint32
+	IdxInMulti int
 }
 
 // Restore implements Node interface.
