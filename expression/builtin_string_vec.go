@@ -653,7 +653,7 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	i64s2 := buf2.Int64s()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
-			result.AppendString("")
+			result.AppendNull()
 			continue
 		}
 		str := buf.GetString(i)
@@ -665,6 +665,7 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		runeLength := int64(len(runes))
 		if pos < 1 || pos > runeLength {
 			result.AppendString(str)
+			continue
 		}
 		if length > runeLength-pos+1 || length < 0 {
 			length = runeLength - pos + 1
@@ -674,7 +675,7 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		strTail := string(runes[pos+length-1:])
 		if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
-			result.AppendString("")
+			result.AppendNull()
 			continue
 		}
 		result.AppendString(strHead + newstr + strTail)
