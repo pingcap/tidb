@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"github.com/pingcap/errors"
 	"sync"
 
 	"github.com/pingcap/parser/ast"
@@ -243,6 +244,8 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
+	// In areZeros slice, -1 means Null, 0 means false, 1 means true
+	areZeros := make([]int8, n)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
@@ -254,37 +257,16 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		j := 0
-		if eType == types.ETInt {
-			if err = expr.VecEvalInt(ctx, input, buf); err != nil {
-				return nil, nil, err
-			}
-
-			i64s := buf.Int64s()
-			for i := range sel {
-				if buf.IsNull(i) {
-					nulls[sel[i]] = true
-					sel[j] = sel[i]
-					j++
-					continue
-				}
-				if i64s[i] == 0 {
-					continue
-				}
-				sel[j] = sel[i] // this row passes this filter
-				j++
-			}
-			sel = sel[:j]
-			input.SetSel(sel)
-			globalColumnAllocator.put(buf)
-			continue
+		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, areZeros)
+		if err != nil {
+			return nil, nil, err
 		}
 
+		j := 0
 		isEQCondFromIn := IsEQCondFromIn(expr)
-		d := types.Datum{}
 		for i := range sel {
-			if buf.IsNull(i) {
-				if !isEQCondFromIn {
+			if areZeros[i] == -1 {
+				if eType != types.ETInt && !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -295,26 +277,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				continue
 			}
 
-			switch eType {
-			case types.ETReal:
-				d.SetFloat64(buf.GetFloat64(i))
-			case types.ETDuration:
-				d.SetMysqlDuration(buf.GetDuration(i, 0))
-			case types.ETDatetime, types.ETTimestamp:
-				d.SetMysqlTime(buf.GetTime(i))
-			case types.ETString:
-				d.SetString(buf.GetString(i))
-			case types.ETJson:
-				d.SetMysqlJSON(buf.GetJSON(i))
-			case types.ETDecimal:
-				d.SetMysqlDecimal(buf.GetDecimal(i))
-			}
-
-			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return nil, nil, err
-			}
-			if b == 0 {
+			if areZeros[i] == 0 {
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -332,6 +295,100 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	}
 
 	return selected, nulls, nil
+}
+
+func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, areZeros []int8) error {
+	var err error
+	switch eType {
+	case types.ETInt:
+		i64s := buf.Int64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				areZeros[i] = -1
+			} else {
+				if i64s[i] == 0 {
+					areZeros[i] = 0
+				} else {
+					areZeros[i] = 1
+				}
+			}
+		}
+	case types.ETReal:
+		f64s := buf.Float64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				areZeros[i] = -1
+			} else {
+				if types.RoundFloat(f64s[i]) == 0 {
+					areZeros[i] = 0
+				} else {
+					areZeros[i] = 1
+				}
+			}
+		}
+	case types.ETDuration:
+		d64s := buf.GoDurations()
+		for i := range sel {
+			if buf.IsNull(i) {
+				areZeros[i] = -1
+			} else {
+				if d64s[i] == 0 {
+					areZeros[i] = 0
+				} else {
+					areZeros[i] = 1
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		t64s := buf.Times()
+		for i := range sel {
+			if buf.IsNull(i) {
+				areZeros[i] = -1
+			} else {
+				if t64s[i].IsZero() {
+					areZeros[i] = 0
+				} else {
+					areZeros[i] = 1
+				}
+			}
+		}
+	case types.ETString:
+		for i := range sel {
+			if buf.IsNull(i) {
+				areZeros[i] = -1
+			} else {
+				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
+				err = err1
+				if iVal == 0 {
+					areZeros[i] = 0
+				} else {
+					areZeros[i] = 1
+				}
+			}
+		}
+	case types.ETDecimal:
+		d64s := buf.Decimals()
+		for i := range sel {
+			if buf.IsNull(i) {
+				areZeros[i] = -1
+			} else {
+				v, err1 := d64s[i].ToFloat64()
+				err = err1
+				if types.RoundFloat(v) == 0 {
+					areZeros[i] = 0
+				} else {
+					areZeros[i] = 1
+				}
+			}
+		}
+	case types.ETJson:
+		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
