@@ -347,7 +347,6 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
-	DefTiDBAllowRemoveAutoInc          = false
 )
 
 // Process global variables.
