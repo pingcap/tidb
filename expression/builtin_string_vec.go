@@ -14,7 +14,10 @@
 package expression
 
 import (
+	"encoding/hex"
+	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -402,11 +405,38 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinUnHexSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnHexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		if len(str)%2 != 0 {
+			str = "0" + str
+		}
+		bs, e := hex.DecodeString(str)
+		if e != nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(bs))
+	}
+	return nil
 }
 
 func (b *builtinExportSet3ArgSig) vectorized() bool {
@@ -674,11 +704,30 @@ func (b *builtinMakeSetSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinOctIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinOctIntSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strconv.FormatUint(uint64(nums[i]), 8))
+	}
+	return nil
 }
 
 func (b *builtinToBase64Sig) vectorized() bool {
@@ -714,11 +763,30 @@ func (b *builtinCharLengthBinarySig) vecEvalInt(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinBinSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(fmt.Sprintf("%b", uint64(nums[i])))
+	}
+	return nil
 }
 
 func (b *builtinFormatSig) vectorized() bool {

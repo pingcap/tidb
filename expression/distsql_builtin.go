@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
+// PbTypeToFieldType converts tipb.FieldType to FieldType
+func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	return &types.FieldType{
 		Tp:      byte(tp.Tp),
 		Flag:    uint(tp.Flag),
@@ -40,7 +41,7 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 }
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
-	fieldTp := pbTypeToFieldType(tp)
+	fieldTp := PbTypeToFieldType(tp)
 	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
 	switch sigCode {
@@ -551,7 +552,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 }
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
-	ft := pbTypeToFieldType(ftPB)
+	ft := PbTypeToFieldType(ftPB)
 	_, v, err := codec.DecodeUint(data)
 	if err != nil {
 		return nil, err
