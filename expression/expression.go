@@ -216,6 +216,11 @@ var (
 			return make([]int, 1024)
 		},
 	}
+	zeroPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int8, 1024)
+		},
+	}
 )
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
@@ -245,7 +250,8 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	input.SetSel(sel)
 
 	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
-	areZeros := make([]int8, n)
+	areZeros := zeroPool.Get().([]int8)
+	defer zeroPool.Put(areZeros)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
