@@ -1,0 +1,22 @@
+[
+  {
+    "Name": "TestPushLimitDownIndexLookUpReader",
+    "Cases": null
+  },
+  {
+    "Name": "TestIsFromUnixtimeNullRejective",
+    "Cases": [
+      {
+        "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
+        "Plan": [
+          "HashLeftJoin_8 10000.00 root inner join, inner:Selection_12, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11 10000.00 root data:TableScan_10",
+          "│ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─Selection_12 8000.00 root from_unixtime(cast(test.t2.b))",
+          "  └─TableReader_14 10000.00 root data:TableScan_13",
+          "    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]
