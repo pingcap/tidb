@@ -608,7 +608,7 @@ func (c *Column) reconstruct(sel []int) {
 // CopyReconstruct copies this Column to dst and removes unselected rows.
 // If dst is nil, it creates a new Column and returns it.
 func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
-	if sel == nil {
+	if sel == nil || len(sel) == c.length {
 		return c.CopyConstruct(dst)
 	}
 
