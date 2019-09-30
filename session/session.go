@@ -1193,11 +1193,6 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	// after drop unique index like operation, the former cached plan is
-	// not point plan and will be set to nil in `optimizePrepareStatement` func
-	if prepared.CachedPlan == nil {
-		return s.CommonExec(ctx, stmtID, prepareStmt, args)
-	}
 	stmt := &executor.ExecStmt{
 		InfoSchema:  is,
 		Plan:        execPlan,
@@ -1237,6 +1232,12 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	}
 	// check auto commit
 	if !s.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+	// check schema version
+	is := executor.GetInfoSchema(s)
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		prepared.CachedPlan = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current

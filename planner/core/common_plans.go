@@ -974,14 +974,8 @@ func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	if pointSel, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, pointSel)
-		if err != nil {
-			return false, err
-		}
-		if ok {
-			return true, nil
-		}
+	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
+		return true, nil
 	}
 	return false, nil
 }
