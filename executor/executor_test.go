@@ -2210,6 +2210,34 @@ func (s *testSuiteP1) TestRow(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select (select 1)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("insert t1 values (1, 2)")
+	tk.MustExec("insert t1 values (1, null)")
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert t2 values (0, 0)")
+
+	result = tk.MustQuery("select * from t2 where (1, 2) in (select * from t1)")
+	result.Check(testkit.Rows("1,2"))
+	result = tk.MustQuery("select * from t2 where (1, 2) not in (select * from t1)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t2 where (1, 1) not in (select * from t1)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t2 where (1, 1) not in (select * from t1)")
+	result.Check(testkit.Rows())
+
+	result = tk.MustQuery("select (1, 1) in (select * from t2) from t1")
+	result.Check(testkit.Rows("<nil>,<nil>"))
+	result = tk.MustQuery("select (1, 1) not in (select * from t2) from t1")
+	result.Check(testkit.Rows("<nil>,<nil>"))
+	result = tk.MustQuery("select (1, 1) in (select 1,1 from t2) from t1")
+	result.Check(testkit.Rows("0", "0"))
+	result = tk.MustQuery("select (1, 1) not in (select 1,1 from t2) from t1")
+	result.Check(testkit.Rows("1", "1"))
+
 }
 
 func (s *testSuiteP1) TestColumnName(c *C) {

@@ -74,7 +74,6 @@ type HashAggFinalWorker struct {
 	baseHashAggWorker
 
 	rowBuffer           []types.Datum
-	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
 	groupSet            set.StringSet
 	inputCh             chan *HashAggIntermData
@@ -292,7 +291,6 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: e.finalInputCh,
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 		}
 	}
 }

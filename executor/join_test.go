@@ -807,6 +807,12 @@ func (s *testSuite2) TestSubquery(c *C) {
 	tk.MustQuery("select 1 not in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 1 in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
 
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(b int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1)")
+
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 

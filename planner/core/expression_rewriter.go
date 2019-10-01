@@ -349,7 +349,7 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 			rCol.InOperand = false
 		}
-		if lcon, ok := l.(*expression.Constant); ok && !lcon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+		if lCon, ok := l.(*expression.Constant); ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 			rCol.InOperand = false
 		}
 	}
@@ -731,8 +731,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
-			lcon, ok := lexpr2.(*expression.Constant)
-			if ok && !lcon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			lCon, ok := lexpr2.(*expression.Constant)
+			if ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
 			if isSf {
