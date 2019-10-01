@@ -664,11 +664,52 @@ func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinLocate2ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals LOCATE(substr,str), non case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		subStr := buf.GetString(i)
+		str := buf1.GetString(i)
+
+		if int64(len([]rune(subStr))) == 0 {
+			i64s[i] = 1
+			continue
+		}
+		slice := string([]rune(strings.ToLower(str)))
+		ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
+		if idx != -1 {
+			ret = utf8.RuneCountInString(slice[:idx]) + 1
+		}
+		i64s[i] = int64(ret)
+	}
+	return nil
 }
 
 func (b *builtinBitLengthSig) vectorized() bool {
