@@ -1395,6 +1395,10 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
+	// MySQL compatibility: 0.0 should not be converted to null, see #11203
+	if num == 0 {
+		return Time{Time: ZeroTime, Type: tp}, nil
+	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
