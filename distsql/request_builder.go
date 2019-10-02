@@ -35,6 +35,7 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
+	SQL string
 	err error
 }
 
@@ -86,6 +87,7 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 
 	builder.Request.Tp = kv.ReqTypeDAG
 	builder.Request.StartTs = dag.StartTs
+	builder.Request.SQL = builder.SQL
 	builder.Request.Data, builder.err = dag.Marshal()
 	return builder
 }

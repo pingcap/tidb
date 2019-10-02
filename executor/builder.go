@@ -1929,6 +1929,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
 	sort.Sort(sortutil.Int64Slice(handles))
 	var b distsql.RequestBuilder
+	b.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
 	kvReq, err := b.SetTableHandles(e.physicalTableID, handles).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).

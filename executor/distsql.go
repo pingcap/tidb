@@ -295,6 +295,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	}
 
 	var builder distsql.RequestBuilder
+	builder.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
@@ -426,6 +427,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	var builder distsql.RequestBuilder
+	builder.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).

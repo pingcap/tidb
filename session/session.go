@@ -1583,7 +1583,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 }
 
 func logQuery(query string, vars *variable.SessionVars) {
-	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
+	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 {
 		query = executor.QueryReplacer.Replace(query)
 		logutil.Logger(context.Background()).Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),

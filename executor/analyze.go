@@ -177,6 +177,7 @@ type AnalyzeIndexExec struct {
 // special null range for single-column index to get the null count.
 func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRange bool) error {
 	var builder distsql.RequestBuilder
+	builder.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
@@ -345,6 +346,7 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
+	builder.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
