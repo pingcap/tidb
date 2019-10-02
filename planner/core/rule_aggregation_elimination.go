@@ -217,7 +217,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 		return nil
 	}
 
-	newFuns := make([]*aggregation.AggFuncDesc, len(ptn.outer.AggFuncs))
+	newFuncs := make([]*aggregation.AggFuncDesc, len(ptn.outer.AggFuncs))
 	for idx, fun := range ptn.outer.AggFuncs {
 		if len(fun.Args) != 1 {
 			// Only aggregate functions with 1 param can be handled
@@ -242,7 +242,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 		_, noExtraProj := expr.(*expression.Column)
 		// isGbItem indicates if expr is the group-by item of inner aggregation.
 		// For example, select max(at), sum(bt) from (select a as at, count(b) as bt from t group by a) as tt,
-		// in such case column `at` is actually an alias of `a` and is the group-by item of inner aggregation
+		// in such case column `at` is an alias of `a` and is the group-by item of inner aggregation.
 		isGbItem := expression.EqualContains(la.ctx, ptn.inner.GroupByItems, expr)
 		if !noExtraProj && !isGbItem {
 			return nil
@@ -260,10 +260,10 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 		if len(innerFun.Args) != 1 {
 			return nil
 		}
-		// Generalize isGbItem: aggregate function can also be treated as group by item.
-		// For example, select max(at), sum(bt) from (select a as at, count(b) as bt from t group by a) as tt,
-		// in such case column `at` is an alias of `max(a)`,  and `max(a)` is equivalent of `a`, which is the group by
-		// item of inner aggregation
+		// Generalize isGbItem: aggregate function in inner aggregation can also be treated as group by item.
+		// For example, select max(at), sum(bt) from (select max(a) as at, count(b) as bt from t group by a) as tt,
+		// in such case column `at` is an alias of `max(a)`, and `max(a)` is equivalent of `a`(`firstrow(a)`), which is the group by
+		// item of inner aggregation.
 		isGbItem = isGbItem || expression.EqualContains(la.ctx, ptn.inner.GroupByItems, innerFun.Args[0])
 
 		_, combinedExprs := exprSubstitute(la.ctx, exprs, aggMap, func(i interface{}) expression.Expression {
@@ -273,15 +273,15 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 			}
 			return f.Args[0]
 		})
-		newFun := tryToCombineAggFunc(fun, innerFun, isGbItem, combinedExprs[0])
-		if newFun == nil {
+		newFunc := tryToCombineAggFunc(fun, innerFun, isGbItem, combinedExprs[0])
+		if newFunc == nil {
 			return nil
 		}
-		newFuns[idx] = newFun
+		newFuncs[idx] = newFunc
 	}
 
 	// All agg functions are combined, now combine two aggregation plans.
-	la.AggFuncs = newFuns
+	la.AggFuncs = newFuncs
 	la.GroupByItems = items
 	la.collectGroupByColumns()
 	la.SetChildren(ptn.inner.Children()...)
@@ -353,7 +353,7 @@ func collectNestedAggPattern(lp LogicalPlan, ptn *nestedAggPattern) {
 
 // tryToCombineAggFunc checks the types of inner/outer aggregate function and check if they can be combined as one based on their semantics.
 // for example, since max(max(PARTIAL)) can be combined as max(TOTAL), we can combine inner max() and outer max() as a final max()
-// `innerIsGroup` indicates if the inner aggregate function is aggregating group-by items(values are de-duplicated).
+// `innerIsGbItem` indicates if the inner aggregate function is aggregating group-by items(values are de-duplicated).
 func tryToCombineAggFunc(outer, inner *aggregation.AggFuncDesc, innerIsGbItem bool, expr expression.Expression) *aggregation.AggFuncDesc {
 	combined := outer.Clone()
 	combined.Args[0] = expr

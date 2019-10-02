@@ -389,7 +389,47 @@
       // Do nothing to max with groupby.
       "select max(a) from t group by b;",
       // If inner is not a data source, we can still do transformation.
-      "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t"
+      "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
+      // The most trivial case for agg elimination by mapping.
+      "select count(*) from (select sum(a), b from t group by b) tt group by b",
+      // The most trivial case for agg elimination for two-phase aggregation.
+      "select bt, max(ct) from (select b as bt, max(c) as ct from t group by c, b) tt group by bt",
+      // Agg elimination for nested sum(sum(_)) case.
+      "select max(c), sum(sum_d) from (select b, c, sum(d) as sum_d from t group by b, c) tmp group by b",
+      // Agg elimination works for sum(sum(_)) with scalar function as group-by item.
+      "select max(ct), sum(sum_d) from (select b, c+1 as ct, sum(d) as sum_d from t group by b, c+1) tmp group by b",
+      // Agg elimination works for max(min(func)) with func as group-by item.
+      "select max(ct), sum(sum_d) from (select b, min(c+1) as ct, sum(d) as sum_d from t group by b, c+1) tmp group by b;",
+      // Agg elimination works for scalar function as the group-by item.
+      "select p, max(ct) from (select a+b as p, count(c) as ct from t group by a+b) tt group by p",
+      // Agg elimination eliminates order-by in inner aggregation.
+      "select bt, max(ct) from (select b as bt, max(c) as ct from t group by c, b order by ct) tt group by bt",
+      // Agg elimination for constants.
+      "select 3 from (select 1 as at, 2 as bt from t group by 1, 2) as tt group by at",
+      // Agg elimination for non-trivial cases.
+      "select v.a, v.b, max(v.sm), sum(v.sm) from (select t1.a, t1.b, sum(t2.f) as sm from t as t1, t as t2 where  t1.d > 3 and t1.e_str = t2.e_str and t2.c > 10 group by t1.a, t1.b) v group by v.a, v.b",
+      // Agg elimination for non-trivial cases.
+      "select v.a, v.b, sum(v.sm) from (select t1.a, t1.b, sum(t2.f) as sm from t as t1, t as t2 where  t1.d > 3 and t1.e_str = t2.e_str and t2.c > 10 group by t1.a, t1.b) v group by v.a",
+      // Agg elimination for 3 nested aggregations.
+      "select u.a, u.b, min(u.mn), sum(u.sm) from (select v.a, v.b, v.c, min(mx) as mn, sum(v.sm) as sm from (select t1.a, t1.b, t1.c, t1.d, max(t1.c) as mx, max(t2.d) as mx2, sum(t2.f) as sm from t as t1, t as t2 where t1.d > 3 and t1.e_str = t2.e_str and t2.c > 10 group by t1.a, t1.b, t1.c, t1.d) v group by v.a, v.b, v.c) u group by u.a, u.b having u.a is not null",
+      // Not applicable case: limit between aggregations.
+      "select bt, max(ct) from (select b as bt, max(c) as ct from t group by c, b limit 5) tt group by bt",
+      // Not applicable case: selections between aggregations.
+      "select bt, max(ct) from (select b as bt, max(c) as ct from t group by c, b having ct > 0) tt group by bt",
+      // Not applicable case: selections between aggregations.
+      "select bt, max(ct) from (select b as bt, max(c) as ct from t group by c, b) tt where ct > 0 group by ct",
+      // Not applicable case: non-subset group-by items, and test constant hashcode in rule implementation.
+      "select bt, max(ct) from (select b as bt, TIMESTAMP '2000-01-01 00:00:01' as ct from t group by b, c) tt group by bt, ct",
+      // Not applicable case: max(min(_)).
+      "select max(ct), sum(sum_d) from (select b, min(c+2) as ct, sum(d) as sum_d from t group by b, c+1) tmp group by b;",
+      // Not applicable case: max(sum(_)).
+      "select max(sum_c), sum(sum_d) from (select b, sum(c) as sum_c, sum(d) as sum_d from t group by b, c) tmp group by b",
+      // Not applicable case: max(max(_)+1).
+      "select bt, max(ct) from (select b as bt, max(c) + 1 as ct from t group by c, b) tt group by bt",
+      // Not applicable case: max(max(_) - min(_)).
+      "select bt, max(ct) from (select b as bt, max(c) - min(c) as ct from t group by c, b) tt group by bt",
+      // Not applicable case: max(sum(_)).
+      "select v.a, v.b, max(v.sm) from (select t1.a, t1.b, sum(t2.f) as sm from t as t1, t as t2 where t1.d > 3 and t1.e_str = t2.e_str and t2.c > 10 group by t1.a, t1.b) v group by v.a"
     ]
   },
   {
