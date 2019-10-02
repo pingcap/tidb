@@ -97,6 +97,7 @@ type StatementContext struct {
 	StmtType         string
 	Tables           []TableEntry
 	OriginalSQL      string
+	Plan             string
 	digestMemo       struct {
 		sync.Once
 		normalized string

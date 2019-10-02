@@ -1930,6 +1930,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	sort.Sort(sortutil.Int64Slice(handles))
 	var b distsql.RequestBuilder
 	b.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
+	b.SQL += " plan is: " + e.ctx.GetSessionVars().StmtCtx.Plan
 	kvReq, err := b.SetTableHandles(e.physicalTableID, handles).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).

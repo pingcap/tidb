@@ -212,6 +212,23 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		}()
 	}
 
+	if _, ok := a.Plan.(plannercore.PhysicalPlan); ok {
+		explainer := plannercore.Explain{StmtPlan: a.Plan, ExecStmt: a.StmtNode, ExecPlan: a.Plan, Format: "row"}
+		err := explainer.RenderResult()
+		if err == nil {
+			planRows := []string{}
+			for i := range explainer.Rows {
+				row := strings.Join(explainer.Rows[i], "\t")
+				planRows = append(planRows, row)
+			}
+			a.Ctx.GetSessionVars().StmtCtx.Plan = strings.Join(planRows, "\n")
+		} else {
+			a.Ctx.GetSessionVars().StmtCtx.Plan = "un-explainable"
+		}
+	} else {
+		a.Ctx.GetSessionVars().StmtCtx.Plan = "un-explainable"
+	}
+
 	e, err := a.buildExecutor(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)

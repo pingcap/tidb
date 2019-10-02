@@ -151,6 +151,7 @@ func (e *TableReaderExecutor) Close() error {
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	builder.SQL = e.ctx.GetSessionVars().StmtCtx.OriginalSQL
+	builder.SQL += " plan is: " + e.ctx.GetSessionVars().StmtCtx.Plan
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
