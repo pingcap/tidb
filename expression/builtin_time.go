@@ -793,7 +793,7 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	if t.InvalidZero() {
 		// MySQL compatibility, #11203
-		// 0 | 0.0 should be converted to 0 value (not null)
+		// 0 | 0.0 should be converted to null without warnings
 		n, isNull, err := b.args[0].EvalInt(b.ctx, row)
 		isOriginalIntOrDecimalZero := n == 0 && !isNull && err == nil
 		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
