@@ -30,11 +30,11 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinRegexpBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRegexpBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return vecEvalRegexp(&b.baseBuiltinFunc, b, input, result)
 }
 
 func (b *builtinRegexpSig) vectorized() bool {
@@ -42,6 +42,10 @@ func (b *builtinRegexpSig) vectorized() bool {
 }
 
 func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return vecEvalRegexp(&b.baseBuiltinFunc, b, input, result)
+}
+
+func vecEvalRegexp(b *baseBuiltinFunc, rc regexpCompiler, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bufExpr, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -74,7 +78,7 @@ func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			if _, ok := pat2re[pat]; ok {
 				continue
 			}
-			re, err := b.compilePattern(pat)
+			re, err := rc.compile(pat)
 			if err != nil {
 				return err
 			}
@@ -85,7 +89,7 @@ func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if isMemoizable {
 			return pat2re[pat], nil
 		}
-		return b.compilePattern(pat)
+		return rc.compile(pat)
 	}
 
 	result.ResizeInt64(n, false)

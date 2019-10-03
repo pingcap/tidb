@@ -103,6 +103,10 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	return sig, nil
 }
 
+type regexpCompiler interface {
+	compile(pat string) (*regexp.Regexp, error)
+}
+
 type builtinRegexpBinarySig struct {
 	baseBuiltinFunc
 }
@@ -125,11 +129,15 @@ func (b *builtinRegexpBinarySig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	re, err := regexp.Compile(pat)
+	re, err := b.compile(pat)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 	return boolToInt64(re.MatchString(expr)), false, nil
+}
+
+func (b *builtinRegexpBinarySig) compile(pat string) (*regexp.Regexp, error) {
+	return regexp.Compile(pat)
 }
 
 type builtinRegexpSig struct {
@@ -156,13 +164,13 @@ func (b *builtinRegexpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	re, err := b.compilePattern(pat)
+	re, err := b.compile(pat)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 	return boolToInt64(re.MatchString(expr)), false, nil
 }
 
-func (b *builtinRegexpSig) compilePattern(pat string) (*regexp.Regexp, error) {
+func (b *builtinRegexpSig) compile(pat string) (*regexp.Regexp, error) {
 	return regexp.Compile("(?i)" + pat)
 }
