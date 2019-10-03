@@ -356,26 +356,20 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf2)
-	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+	// store positions in result
+	if err := b.args[2].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
-	result.ResizeInt64(n, false)
+	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
-	poses := buf2.Int64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		subStr := buf.GetString(i)
 		str := buf1.GetString(i)
-		pos := poses[i]
+		pos := i64s[i]
 
 		// Transfer the argument which starts from 1 to real index which starts from 0.
 		pos--
