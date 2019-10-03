@@ -757,10 +757,10 @@ func (b *builtinLocate2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		subStr := buf.GetString(i)
