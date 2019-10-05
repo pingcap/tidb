@@ -383,7 +383,7 @@ func (b *builtinRealIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	result.ResizeInt64(numRows, false)
 	f64s := buf.Float64s()
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i ++ {
+	for i := 0; i < numRows; i++ {
 		if buf.IsNull(i) || f64s[i] == 0 {
 			i64s[i] = 0
 		} else {
