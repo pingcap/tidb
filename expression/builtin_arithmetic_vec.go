@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
@@ -113,7 +112,7 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 			continue
 		}
 		if (x[i] > 0 && y[i] > math.MaxFloat64-x[i]) || (x[i] < 0 && y[i] < -math.MaxFloat64-x[i]) {
-			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", strconv.FormatFloat(x[i], 'f', -1, 64), strconv.FormatFloat(y[i], 'f', -1, 64)))
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = x[i] + y[i]
 	}
