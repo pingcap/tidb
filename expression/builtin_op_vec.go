@@ -390,12 +390,12 @@ func (b *builtinDecimalIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
-	desc := buf.Decimals()
+	decs := buf.Decimals()
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 
 	for i := 0; i < numRows; i++ {
-		if buf.IsNull(i) || desc[i].IsZero() {
+		if buf.IsNull(i) || decs[i].IsZero() {
 			i64s[i] = 0
 		} else {
 			i64s[i] = 1
