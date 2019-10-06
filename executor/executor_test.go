@@ -2221,7 +2221,7 @@ func (s *testSuiteP1) TestRow(c *C) {
 	tk.MustExec("insert t2 values (0, 0)")
 
 	result = tk.MustQuery("select * from t2 where (1, 2) in (select * from t1)")
-	result.Check(testkit.Rows("1,2"))
+	result.Check(testkit.Rows("0 0"))
 	result = tk.MustQuery("select * from t2 where (1, 2) not in (select * from t1)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t2 where (1, 1) not in (select * from t1)")
@@ -2229,14 +2229,15 @@ func (s *testSuiteP1) TestRow(c *C) {
 	result = tk.MustQuery("select * from t2 where (1, 1) not in (select * from t1)")
 	result.Check(testkit.Rows())
 
+	tk.MustExec("delete from t1 where a=1 and b=2")
 	result = tk.MustQuery("select (1, 1) in (select * from t2) from t1")
-	result.Check(testkit.Rows("<nil>,<nil>"))
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select (1, 1) not in (select * from t2) from t1")
-	result.Check(testkit.Rows("<nil>,<nil>"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select (1, 1) in (select 1,1 from t2) from t1")
-	result.Check(testkit.Rows("0", "0"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select (1, 1) not in (select 1,1 from t2) from t1")
-	result.Check(testkit.Rows("1", "1"))
+	result.Check(testkit.Rows("0"))
 
 }
 
