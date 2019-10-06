@@ -266,7 +266,6 @@ func (alloc *allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
 	if n == 0 {
-		//todo: alloc(tableID,0) will cause duplicate allocation in extreme test case, return err may be better.
 		return 0, 0, nil
 	}
 	alloc.mu.Lock()

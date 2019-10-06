@@ -670,23 +670,25 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				i++
 				cnt++
 			}
-			// Alloc batch N consecutive autoIDs.
-			recordIDs, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			// Alloc batch N consecutive (min, max] autoIDs.
+			// max value can be derived from adding one for cnt times.
+			min, _, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
 			if e.filterErr(err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(recordIDs[0])
+				e.lastInsertID = uint64(min) + 1
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
 				d := rows[offset][colIdx]
 
-				d.SetAutoID(recordIDs[j], col.Flag)
-				retryInfo.AddAutoIncrementID(recordIDs[j])
+				id := int64(uint64(min) + uint64(j) + 1)
+				d.SetAutoID(id, col.Flag)
+				retryInfo.AddAutoIncrementID(id)
 
 				// The value of d is adjusted by auto ID, so we need to cast it again.
 				d, err := table.CastValue(e.ctx, d, col.ToInfo())
