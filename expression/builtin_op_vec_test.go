@@ -22,7 +22,9 @@ import (
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth:   {},
+	ast.IsTruth: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{&defaultGener{0.2, types.ETDecimal}}},
+	},
 	ast.IsFalsity: {},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
