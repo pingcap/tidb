@@ -394,7 +394,7 @@ func (b *builtinDecimalIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 
-	for i := 0; i < numRows; i ++ {
+	for i := 0; i < numRows; i++ {
 		if buf.IsNull(i) || desc[i].IsZero() {
 			i64s[i] = 0
 		} else {
