@@ -48,7 +48,7 @@ type Allocator interface {
 	// Alloc allocs N consecutive autoID for table with tableID.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
-	Alloc(tableID int64, n uint64) ([]int64, error)
+	Alloc(tableID int64, n uint64) (int64, int64, error)
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
@@ -261,12 +261,13 @@ func GenLocalSchemaID() int64 {
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
-func (alloc *allocator) Alloc(tableID int64, n uint64) ([]int64, error) {
+func (alloc *allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
 	if tableID == 0 {
-		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
+		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
 	if n == 0 {
-		return []int64{}, nil
+		//todo: alloc(tableID,0) will cause duplicate allocation in extreme test case, return err may be better.
+		return 0, 0, nil
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
@@ -276,11 +277,11 @@ func (alloc *allocator) Alloc(tableID int64, n uint64) ([]int64, error) {
 	return alloc.alloc4Signed(tableID, n)
 }
 
-func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
+func (alloc *allocator) alloc4Signed(tableID int64, n uint64) (int64, int64, error) {
 	n1 := int64(n)
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
-	if math.MaxInt64-alloc.base < n1 {
-		return nil, ErrAutoincReadFailed
+	if math.MaxInt64-alloc.base <= n1 {
+		return 0, 0, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for allocN, skip it.
 	if alloc.base+n1 > alloc.end {
@@ -312,11 +313,11 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
 		})
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
-			return nil, err
+			return 0, 0, err
 		}
 		alloc.lastAllocTime = time.Now()
 		if newBase == math.MaxInt64 {
-			return nil, ErrAutoincReadFailed
+			return 0, 0, ErrAutoincReadFailed
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -325,23 +326,16 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64) ([]int64, error) {
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	resN := make([]int64, 0, n1)
-	for i := alloc.base + 1; i <= alloc.base+n1; i++ {
-		// fix bug : maxInt64 will be allocated
-		if i == math.MaxInt64 {
-			return nil, ErrAutoincReadFailed
-		}
-		resN = append(resN, i)
-	}
+	min := alloc.base
 	alloc.base += n1
-	return resN, nil
+	return min, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error) {
+func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) (int64, int64, error) {
 	n1 := int64(n)
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
-	if math.MaxUint64-uint64(alloc.base) < n {
-		return nil, ErrAutoincReadFailed
+	if math.MaxUint64-uint64(alloc.base) <= n {
+		return 0, 0, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for alloc, skip it.
 	if uint64(alloc.base)+n > uint64(alloc.end) {
@@ -373,11 +367,11 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error)
 		})
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
-			return nil, err
+			return 0, 0, err
 		}
 		alloc.lastAllocTime = time.Now()
 		if uint64(newBase) == math.MaxUint64 {
-			return nil, ErrAutoincReadFailed
+			return 0, 0, ErrAutoincReadFailed
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -386,15 +380,8 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) ([]int64, error)
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	resN := make([]int64, 0, n1)
-	for i := uint64(alloc.base) + 1; i <= uint64(alloc.base)+n; i++ {
-		// fix bug : maxUint64 will be allocated
-		if i == math.MaxUint64 {
-			return nil, ErrAutoincReadFailed
-		}
-		resN = append(resN, int64(i))
-	}
+	min := alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + n)
-	return resN, nil
+	return min, alloc.base, nil
 }
