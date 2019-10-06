@@ -807,11 +807,27 @@ func (b *builtinFloorIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinSignSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := 0; i < len(i64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if i64s[i] == 0 {
+			result.SetNull(i, true)
+		} else if i64s[i] > 0 {
+			i64s[i] = 1
+		} else {
+			i64s[i] = -1
+		}
+	}
+	return nil
 }
 
 func (b *builtinConvSig) vectorized() bool {
