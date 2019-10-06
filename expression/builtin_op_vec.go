@@ -130,7 +130,7 @@ func (b *builtinIntIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 	defer b.bufAllocator.put(buf)
 
-	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 
