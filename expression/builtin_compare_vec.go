@@ -475,11 +475,48 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinNullEQDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	args0 := buf0.Decimals()
+	args1 := buf1.Decimals()
+	result.ResizeDecimal(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < len(i64s); i++ {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		switch {
+		case isNull0 && isNull1:
+			i64s[i] = 1
+		case isNull0 != isNull1:
+			break
+		case args0[i].Compare(&args1[i]) == 0:
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinCoalesceDecimalSig) vectorized() bool {
