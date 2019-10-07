@@ -378,9 +378,7 @@ func (b *builtinDecimalIsTrueSig) vectorized() bool {
 }
 
 func (b *builtinDecimalIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-
 	numRows := input.NumRows()
-
 	buf, err := b.bufAllocator.get(types.ETDecimal, numRows)
 	if err != nil {
 		return err
