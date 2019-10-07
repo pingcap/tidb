@@ -819,11 +819,9 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-		if i64s[i] == 0 {
-			result.SetNull(i, true)
-		} else if i64s[i] > 0 {
+		if i64s[i] > 0 {
 			i64s[i] = 1
-		} else {
+		} else if i64s[i] < 0 {
 			i64s[i] = -1
 		}
 	}
