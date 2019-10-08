@@ -2051,9 +2051,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset)
 	defer func() {
-		defer b.popSelectOffset()
+		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
-		defer b.popTableHints()
+		b.popTableHints()
 	}()
 
 	if sel.SelectStmtOpts != nil {
@@ -2704,9 +2704,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	b.pushSelectOffset(0)
 	b.pushTableHints(update.TableHints, typeUpdate, 0)
 	defer func() {
-		defer b.popSelectOffset()
+		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
-		defer b.popTableHints()
+		b.popTableHints()
 	}()
 
 	// update subquery table should be forbidden
@@ -2947,9 +2947,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	b.pushSelectOffset(0)
 	b.pushTableHints(delete.TableHints, typeDelete, 0)
 	defer func() {
-		defer b.popSelectOffset()
+		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
-		defer b.popTableHints()
+		b.popTableHints()
 	}()
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
