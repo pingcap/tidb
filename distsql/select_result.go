@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -66,9 +67,10 @@ type selectResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
-	selectResp     *tipb.SelectResponse
-	selectRespSize int // record the selectResp.Size() when it is initialized.
-	respChkIdx     int
+	selectResp       *tipb.SelectResponse
+	selectRespSize   int // record the selectResp.Size() when it is initialized.
+	respChkIdx       int
+	respArrowDecoder *chunk.ArrowDecoder
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
@@ -187,10 +189,37 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
-	rowBatchData := r.selectResp.RowBatchData
-	codec := chunk.NewCodec(r.fieldTypes)
-	remained := codec.DecodeToChunk(rowBatchData, chk)
-	r.selectResp.RowBatchData = remained
+	if r.respArrowDecoder == nil {
+		decoder := &chunk.ArrowDecoder{
+			chunk.NewChunkWithCapacity(r.fieldTypes, r.ctx.GetSessionVars().MaxChunkSize),
+			r.fieldTypes,
+			0,
+			0,
+		}
+		r.respArrowDecoder = decoder
+	}
+
+	for !chk.IsFull() {
+		if r.respChkIdx == len(r.selectResp.Chunks) && r.respArrowDecoder.Empty() {
+			err := r.getSelectResp()
+			if err != nil || r.selectResp == nil {
+				return err
+			}
+		}
+
+		if r.respArrowDecoder.Len() >= chk.RequiredRows()-chk.NumRows() {
+			r.respArrowDecoder.Decode(chk, chk.RequiredRows()-chk.NumRows())
+		} else {
+			r.respArrowDecoder.Decode(chk, r.respArrowDecoder.Len())
+		}
+
+		if r.respArrowDecoder.Empty() {
+			r.respArrowDecoder.Reset()
+			codec := chunk.NewCodec(r.fieldTypes)
+			_ := codec.DecodeToReadOnlyChunk(r.selectResp.Chunks[r.respChkIdx].RowsData, r.respArrowDecoder.GetChunk())
+			r.respChkIdx++
+		}
+	}
 	return nil
 }
 
