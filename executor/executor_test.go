@@ -4144,7 +4144,6 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 	tk.MustExec("split table t partition (p1,p2) between (1000000) and (100000000) regions 5;")
 	// Test for `split for region` syntax.
 	tk.MustExec("split region for partition table t partition (p3,p4) between (1000000) and (100000000) regions 5;")
-
 }
 
 func (s *testSuite) TestShowTableRegion(c *C) {
