@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -942,11 +943,50 @@ func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinFromBase64Sig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals FROM_BASE64(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_from-base64
 func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		needDecodeLen := base64NeededDecodedLength(len(str))
+		if needDecodeLen == -1 {
+			result.AppendNull()
+			continue
+		} else if needDecodeLen > int(b.maxAllowedPacket) {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("from_base64", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+
+		str = strings.Replace(str, "\t", "", -1)
+		str = strings.Replace(str, " ", "", -1)
+		newStr, err := base64.StdEncoding.DecodeString(str)
+		if err != nil {
+			// When error happens, take `from_base64("asc")` as an example, we should return NULL.
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(newStr))
+	}
+	return nil
 }
 
 func (b *builtinCharLengthSig) vectorized() bool {
