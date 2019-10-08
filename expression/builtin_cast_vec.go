@@ -499,11 +499,42 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 }
 
 func (b *builtinCastDurationAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, e := types.ProduceStrWithSpecifiedTp(buf.GetDuration(i, 0).String(), b.tp, sc, false)
+		if e != nil {
+			return e
+		}
+		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
+		if e1 != nil {
+			return e1
+		}
+		if b {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinCastDecimalAsRealSig) vectorized() bool {
