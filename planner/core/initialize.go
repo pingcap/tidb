@@ -293,7 +293,7 @@ func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	return &p
 }
 
-// Init initializes LogicalShow.
+// Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx sessionctx.Context) *LogicalShowDDLJobs {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShowDDLJobs, &p, 0)
 	return &p
