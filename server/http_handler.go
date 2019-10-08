@@ -701,7 +701,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				ID:             tblInfo.ID,
 				ReplicaCount:   tblInfo.FlashReplica.Count,
 				LocationLabels: tblInfo.FlashReplica.LocationLabels,
-				Status:         infoschema.CheckTableFlashReplicaStatus(tblInfo),
+				Status:         tblInfo.FlashReplica.Available,
 			})
 		}
 	}
@@ -712,6 +712,11 @@ type tableFlashReplicaStatus struct {
 	ID               int64  `json:"id"`
 	RegionCount      uint64 `json:"region_count"`
 	FlashRegionCount uint64 `json:"flash_region_count"`
+}
+
+// checkTableFlashReplicaAvailable uses to check the available status of table flash replica.
+func (tf *tableFlashReplicaStatus) checkTableFlashReplicaAvailable() bool {
+	return tf.FlashRegionCount == tf.RegionCount
 }
 
 func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
@@ -731,7 +736,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.RegionCount, status.FlashRegionCount)
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.checkTableFlashReplicaAvailable())
 	if err != nil {
 		writeError(w, err)
 	}

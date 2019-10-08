@@ -707,8 +707,8 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var regionCount, flashRegionCount uint64
-	if err := job.DecodeArgs(&regionCount, &flashRegionCount); err != nil {
+	var available bool
+	if err := job.DecodeArgs(&available); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -719,8 +719,7 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 
 	if tblInfo.FlashReplica != nil {
-		tblInfo.FlashReplica.RegionCount = regionCount
-		tblInfo.FlashReplica.FlashRegionCount = flashRegionCount
+		tblInfo.FlashReplica.Available = available
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

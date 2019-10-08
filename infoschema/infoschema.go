@@ -422,10 +422,3 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	return false, ""
 }
 
-// CheckTableFlashReplicaStatus uses to check the status of table flash replica.
-func CheckTableFlashReplicaStatus(tblInfo *model.TableInfo) bool {
-	if tblInfo == nil || tblInfo.FlashReplica == nil {
-		return false
-	}
-	return tblInfo.FlashReplica.RegionCount > 0 && tblInfo.FlashReplica.RegionCount == tblInfo.FlashReplica.FlashRegionCount
-}

@@ -3024,15 +3024,14 @@ func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident,
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
-func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, regionCount, flashRegionCount uint64) error {
+func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error {
 	is := d.infoHandle.Get()
 	tb, ok := is.TableByID(tid)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
 	}
 
-	if tb.Meta().FlashReplica == nil ||
-		(tb.Meta().FlashReplica.RegionCount == regionCount && tb.Meta().FlashReplica.FlashRegionCount == flashRegionCount) {
+	if tb.Meta().FlashReplica == nil || (tb.Meta().FlashReplica.Available == available) {
 		return nil
 	}
 
@@ -3047,7 +3046,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, regionCo
 		SchemaName: db.Name.L,
 		Type:       model.ActionUpdateFlashReplicaStatus,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{regionCount, flashRegionCount},
+		Args:       []interface{}{available},
 	}
 	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
