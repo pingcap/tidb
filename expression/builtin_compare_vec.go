@@ -508,20 +508,18 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	if err != nil {
 		return err
 	}
+	defer b.bufAllocator.put(buf0)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
-
 	buf1, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
+	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
-
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < len(i64s); i++ {
