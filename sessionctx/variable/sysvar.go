@@ -638,6 +638,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, WarningCount, "0"},
 	{ScopeSession, ErrorCount, "0"},
 	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400"},
+	{ScopeGlobal, "thread_pool_size", "16"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -980,6 +981,8 @@ const (
 	CollationServer = "collation_server"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
+	// ThreadPoolSize is the name of 'thread_pool_size' variable.
+	ThreadPoolSize = "thread_pool_size"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
