@@ -18,66 +18,88 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
+	ast.Sign: {},
 	ast.Log: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, nil}},
 	},
 	ast.Log10: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Log2: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Sqrt: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Acos: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Asin: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Atan: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Atan2: {
-		{types.ETReal, []types.EvalType{types.ETReal, types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 	},
 	ast.Cos: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Exp: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Degrees: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Cot: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Radians: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Sin: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Tan: {
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Abs: {
-		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
-		{types.ETReal, []types.EvalType{types.ETReal}, nil},
-		{types.ETInt, []types.EvalType{types.ETInt}, nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}},
 	},
 	ast.Round: {
-		{types.ETDecimal, []types.EvalType{types.ETDecimal}, nil},
-		{types.ETInt, []types.EvalType{types.ETInt}, nil},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-100, 100}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-100, 100}}},
 	},
 	ast.Pow: {
-		{types.ETReal, []types.EvalType{types.ETReal, types.ETReal}, []dataGenerator{&rangeRealGener{0, 10, 0.5}, &rangeRealGener{0, 100, 0.5}}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{&rangeRealGener{0, 10, 0.5}, &rangeRealGener{0, 100, 0.5}}},
+	},
+	ast.Floor: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
+	},
+	ast.Ceil: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
+	},
+	ast.Truncate: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
 	},
 }
 

@@ -33,7 +33,6 @@ import (
 // InsertValues is the data to insert.
 type InsertValues struct {
 	baseExecutor
-	batchChecker
 
 	rowCount       uint64
 	curBatchCnt    uint64
@@ -397,13 +396,11 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-	if !sessVars.LightningMode {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
 	}
+	sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	return nil
 }
 
@@ -620,7 +617,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 
 	// Get keys need to be checked.
-	toBeCheckedRows, err := e.getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
+	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
 		return err
 	}

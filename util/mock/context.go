@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -155,15 +157,11 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		membufCap := kv.DefaultTxnMembufCap
-		if c.sessionVars.LightningMode {
-			membufCap = kv.ImportingTxnMembufCap
-		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		txn.SetCap(membufCap)
+		txn.SetCap(kv.DefaultTxnMembufCap)
 		c.txn.Transaction = txn
 	}
 	return nil
@@ -266,6 +264,7 @@ func NewContext() *Context {
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
+	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

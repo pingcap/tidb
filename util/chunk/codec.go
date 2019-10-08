@@ -105,7 +105,9 @@ func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
 	return buffer
 }
 
+// decodeColumn decodes a Column from a byte slice, return the remained unused bytes.
 func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained []byte) {
+	// Todo(Shenghui Wu): Optimize all data is null.
 	// decode length.
 	col.length = int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
