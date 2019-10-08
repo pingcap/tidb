@@ -91,6 +91,7 @@ type innerMergeCtx struct {
 type lookUpMergeJoinTask struct {
 	outerResult   *chunk.Chunk
 	outerOrderIdx []int
+	outerMatch    []bool
 
 	innerResult *chunk.Chunk
 	innerIter   chunk.Iterator
@@ -357,38 +358,13 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	if task.outerResult == nil || task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
-	var outerMatch []bool
 	if omw.filter != nil {
-		outerMatch, err = expression.VectorizedFilter(omw.ctx, omw.filter, chunk.NewIterator4Chunk(task.outerResult), outerMatch)
+		task.outerMatch = make([]bool, task.outerResult.NumRows())
+		task.memTracker.Consume(int64(cap(task.outerMatch)))
+		task.outerMatch, err = expression.VectorizedFilter(omw.ctx, omw.filter, chunk.NewIterator4Chunk(task.outerResult), task.outerMatch)
 		if err != nil {
 			return task, err
 		}
-	}
-	numOuterRows := task.outerResult.NumRows()
-	task.outerOrderIdx = make([]int, 0, numOuterRows)
-	for i := 0; i < numOuterRows; i++ {
-		if len(outerMatch) == 0 || outerMatch[i] {
-			task.outerOrderIdx = append(task.outerOrderIdx, i)
-		}
-	}
-	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
-	// needOuterSort means the outer side property items can't guarantee the order of join keys.
-	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
-	// In this case, we need sort the outer side.
-	if omw.outerMergeCtx.needOuterSort {
-		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
-			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
-			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
-			for id, joinKey := range omw.joinKeys {
-				cmp, _, err := omw.compareFuncs[id](omw.ctx, joinKey, joinKey, rowI, rowJ)
-				terror.Log(err)
-				if cmp != 0 || omw.nextColCompareFilters == nil {
-					return cmp < 0
-				}
-				return omw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
-			}
-			return false
-		})
 	}
 
 	return task, nil
@@ -429,6 +405,32 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 }
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) error {
+	numOuterRows := task.outerResult.NumRows()
+	task.outerOrderIdx = make([]int, 0, numOuterRows)
+	for i := 0; i < numOuterRows; i++ {
+		if len(task.outerMatch) == 0 || task.outerMatch[i] {
+			task.outerOrderIdx = append(task.outerOrderIdx, i)
+		}
+	}
+	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
+	// needOuterSort means the outer side property items can't guarantee the order of join keys.
+	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
+	// In this case, we need sort the outer side.
+	if imw.outerMergeCtx.needOuterSort {
+		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
+			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
+			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
+			for id, joinKey := range imw.outerMergeCtx.joinKeys {
+				cmp, _, err := imw.outerMergeCtx.compareFuncs[id](imw.ctx, joinKey, joinKey, rowI, rowJ)
+				terror.Log(err)
+				if cmp != 0 || imw.nextColCompareFilters == nil {
+					return cmp < 0
+				}
+				return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
+			}
+			return false
+		})
+	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
 	if err != nil {
 		return err
