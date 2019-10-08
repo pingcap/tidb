@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file. See also [R
 * Add system table `performance_schema.events_statements_summary_by_digest` to troubleshoot performance issues at SQL level
 * Add the `WHERE` clause in TiDB’s `SHOW TABLE REGIONS` syntax
 * Add the `worker-count` and   `txn-batch` configuration items in Reparo to control the recovery speed
-* Improvements
+
+## Improvements
 * Support `Split` commands in batches and the empty `Split` command in TiKV to split Regions in batches
 * Support double linked list for RocksDB in TiKV to improve performance of  reverse scan
 * Add two perf tools -`iosnoop` and `funcslower` in TiDB Ansible to better diagnose the cluster state
