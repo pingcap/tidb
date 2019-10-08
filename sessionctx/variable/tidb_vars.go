@@ -121,6 +121,9 @@ const (
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
+	// tidb_enable_arrow enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableArrow = "tidb_enable_arrow"
+
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
@@ -171,6 +174,21 @@ const (
 
 	// tidb_opt_correlation_exp_factor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
 	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
+
+	// tidb_opt_cpu_factor is the CPU cost of processing one expression for one row.
+	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
+	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
+	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
+	TiDBOptNetworkFactor = "tidb_opt_network_factor"
+	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
+	TiDBOptScanFactor = "tidb_opt_scan_factor"
+	// tidb_opt_desc_factor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	TiDBOptDescScanFactor = "tidb_opt_desc_factor"
+	// tidb_opt_memory_factor is the memory cost of storing one tuple.
+	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
+	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -252,6 +270,10 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
+	// deltaSchemaInfos is a queue that maintains the history of schema changes.
+	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
+
 	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
 
@@ -321,6 +343,13 @@ const (
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
+	DefOptCPUFactor                    = 3.0
+	DefOptCopCPUFactor                 = 3.0
+	DefOptNetworkFactor                = 1.0
+	DefOptScanFactor                   = 1.5
+	DefOptDescScanFactor               = 3.0
+	DefOptMemoryFactor                 = 0.001
+	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
@@ -350,6 +379,7 @@ const (
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
@@ -375,6 +405,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32

@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -170,11 +172,34 @@ func (b *builtinCastDecimalAsStringSig) vecEvalString(input *chunk.Chunk, result
 }
 
 func (b *builtinCastTimeAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	times := buf.Times()
+	decs := result.Decimals()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		times[i].FillNumber(&decs[i])
+		if _, err := types.ProduceDecWithSpecifiedTp(&decs[i], b.tp, sc); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsIntSig) vectorized() bool {
@@ -242,11 +267,50 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastIntAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		var str string
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if !isUnsigned {
+			str = strconv.FormatInt(i64s[i], 10)
+		} else {
+			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+		if err != nil {
+			return err
+		}
+		var d bool
+		str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if d {
+			result.AppendNull()
+		} else {
+			result.AppendString(str)
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsIntSig) vectorized() bool {
@@ -258,11 +322,41 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCastTimeAsRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeFloat64(n, false)
+	result.MergeNulls(buf)
+	times := buf.Times()
+	f64s := result.Float64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		f64, err := times[i].ToNumber().ToFloat64()
+		if err != nil {
+			if types.ErrOverflow.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+			}
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		f64s[i] = f64
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsJSONSig) vectorized() bool {
@@ -362,11 +456,38 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 }
 
 func (b *builtinCastTimeAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	arg0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(arg0)
+	if err := b.args[0].VecEvalTime(b.ctx, input, arg0); err != nil {
+		return err
+	}
+	arg0s := arg0.Times()
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(arg0)
+	ds := result.GoDurations()
+	for i, t := range arg0s {
+		if result.IsNull(i) {
+			continue
+		}
+		d, err := t.ConvertToDuration()
+		if err != nil {
+			return err
+		}
+		d, err = d.RoundFrac(int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		ds[i] = d.Duration
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsDurationSig) vectorized() bool {

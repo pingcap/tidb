@@ -983,6 +983,14 @@ func (s *testIntegrationSuite5) TestBitDefaultValue(c *C) {
 	tk.MustExec("insert into t_bit set c2=1;")
 	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
 	tk.MustExec("drop table t_bit")
+
+	tk.MustExec("create table t_bit (a int)")
+	tk.MustExec("insert into t_bit value (1)")
+	tk.MustExec("alter table t_bit add column c bit(16) null default b'1100110111001'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x19\xb9"))
+	tk.MustExec("update t_bit set c = b'11100000000111'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
+
 	tk.MustExec(`create table testalltypes1 (
     field_1 bit default 1,
     field_2 tinyint null default null
@@ -1568,6 +1576,18 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+
+	s.tk.MustExec("drop table if exists multi_unique")
+	s.tk.MustExec("create table multi_unique (a int unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key primary key unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key unique unique key unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a serial serial default value)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a serial serial default value serial default value)")
+	s.tk.MustExec("drop table multi_unique")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
