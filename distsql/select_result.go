@@ -152,9 +152,8 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil || r.selectResp == nil {
 			return err
 		}
-		// TODO(Shenghui Wu): add metrics
 	}
-
+	// TODO(Shenghui Wu): add metrics
 	switch r.selectResp.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
