@@ -33,8 +33,10 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.Mul:    {},
 	ast.Round:  {},
 	ast.And:    {},
-	ast.Plus:   {},
-	ast.NE:     {},
+	ast.Plus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+	},
+	ast.NE: {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
