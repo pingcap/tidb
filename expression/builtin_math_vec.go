@@ -697,11 +697,38 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinTruncateIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	buf64s := buf.Int64s()
+
+	for i := 0; i < len(i64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if buf64s[i] < 0 {
+			shift := int64(math.Pow10(int(-buf64s[i])))
+			i64s[i] = i64s[i] / shift * shift
+		}
+	}
+	return nil
 }
 
 func (b *builtinTruncateUintSig) vectorized() bool {
@@ -850,11 +877,11 @@ func (b *builtinCeilIntToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinFloorIntToIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorIntToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinFloorDecToIntSig) vectorized() bool {

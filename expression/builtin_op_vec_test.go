@@ -22,8 +22,10 @@ import (
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
+	ast.IsTruth: {},
+	ast.IsFalsity: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+	},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
@@ -34,7 +36,11 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.LogicAnd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
-	ast.UnaryNot:   {},
+	ast.UnaryNot: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
 	ast.UnaryMinus: {},
 	ast.IsNull:     {},
 }
