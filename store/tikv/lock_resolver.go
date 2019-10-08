@@ -206,7 +206,8 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			continue
 		}
 
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, 0)
+		// Use math.MaxUint64 as currentTS, so the txn is either committed or rollbacked.
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, math.MaxUint64)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
