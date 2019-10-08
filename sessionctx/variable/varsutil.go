@@ -488,6 +488,21 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
+	case TiDBOptCPUFactor,
+		TiDBOptCopCPUFactor,
+		TiDBOptNetworkFactor,
+		TiDBOptScanFactor,
+		TiDBOptDescScanFactor,
+		TiDBOptMemoryFactor,
+		TiDBOptConcurrencyFactor:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TiDBProjectionConcurrency,
 		TIDBMemQuotaQuery,
 		TIDBMemQuotaHashJoin,
