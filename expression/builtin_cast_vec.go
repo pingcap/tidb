@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -154,11 +156,48 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastRealAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	bits := 64
+	if b.args[0].GetType().Tp == mysql.TypeFloat {
+		bits = 32
+	}
+
+	f64s := buf.Float64s()
+	result.ReserveString(n)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i, v := range f64s {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, e := types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
+		if e != nil {
+			return e
+		}
+		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
+		if e1 != nil {
+			return e1
+		}
+		if b {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinCastDecimalAsStringSig) vectorized() bool {
