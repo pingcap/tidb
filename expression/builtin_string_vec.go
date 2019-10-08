@@ -763,15 +763,15 @@ func (b *builtinLocate2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		if result.IsNull(i) {
 			continue
 		}
-		subStr := buf.GetString(i)
-		str := buf1.GetString(i)
+		subStr := strings.ToLower(buf.GetString(i))
+		str := strings.ToLower(buf1.GetString(i))
 
 		if int64(len([]rune(subStr))) == 0 {
 			i64s[i] = 1
 			continue
 		}
-		slice := string([]rune(strings.ToLower(str)))
-		ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
+		slice := string([]rune(str))
+		ret, idx := 0, strings.Index(slice, subStr)
 		if idx != -1 {
 			ret = utf8.RuneCountInString(slice[:idx]) + 1
 		}
