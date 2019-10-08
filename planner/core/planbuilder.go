@@ -314,7 +314,11 @@ func (b *PlanBuilder) popSelectOffset() {
 
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
-	sctx.GetSessionVars().PlannerSelectBlockAsName = make([]model.CIStr, processor.MaxSelectStmtOffset()+1)
+	if processor == nil {
+		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
+	} else {
+		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]model.CIStr, processor.MaxSelectStmtOffset()+1)
+	}
 	return &PlanBuilder{
 		ctx:           sctx,
 		is:            is,
