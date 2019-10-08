@@ -237,8 +237,8 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
-	case *ast.SubqueryExpr, *ast.ValuesExpr:
-		// Subquery & `values(x)` is not allowed
+	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
+		// Subquery & `values(x)` & variable is not allowed
 		c.hasIllegalFunc = true
 		return inNode, true
 	case *ast.AggregateFuncExpr:
