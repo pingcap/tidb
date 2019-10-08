@@ -44,6 +44,7 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.UnaryMinus: {},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
 	},
 }
 

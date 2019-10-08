@@ -18,11 +18,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
-	ast.LE:     {},
-	ast.Minus:  {},
+	ast.LE: {},
+	ast.Minus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+	},
 	ast.Div:    {},
 	ast.IntDiv: {},
 	ast.Mod:    {},
@@ -30,8 +33,10 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.Mul:    {},
 	ast.Round:  {},
 	ast.And:    {},
-	ast.Plus:   {},
-	ast.NE:     {},
+	ast.Plus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+	},
+	ast.NE: {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
