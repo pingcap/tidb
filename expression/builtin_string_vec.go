@@ -367,22 +367,23 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		if result.IsNull(i) {
 			continue
 		}
-		subStr := buf.GetString(i)
-		str := buf1.GetString(i)
+		subStr := strings.ToLower(buf.GetString(i))
+		str := strings.ToLower(buf1.GetString(i))
 		pos := i64s[i]
 
 		// Transfer the argument which starts from 1 to real index which starts from 0.
 		pos--
+		strLen := len([]rune(str))
 		subStrLen := len([]rune(subStr))
-		if pos < 0 || pos > int64(len([]rune(strings.ToLower(str)))-subStrLen) {
+		if pos < 0 || pos > int64(strLen-subStrLen) {
 			i64s[i] = 0
 			continue
 		} else if subStrLen == 0 {
 			i64s[i] = pos + 1
 			continue
 		}
-		slice := string([]rune(strings.ToLower(str))[pos:])
-		idx := strings.Index(slice, strings.ToLower(subStr))
+		slice := string([]rune(str)[pos:])
+		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
 			continue
