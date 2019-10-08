@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package util
 
 import (
 	"context"
@@ -158,6 +158,12 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}
+}
+
+// GetMinStartTS get min start timestamp.
+// Export for testing.
+func (is *InfoSyncer) GetMinStartTS() uint64 {
+	return is.minStartTS
 }
 
 // storeMinStartTS stores self server min start timestamp to etcd.
