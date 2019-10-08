@@ -735,7 +735,6 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Assert(mysqlErr.Message, Equals, "mock commit one task error")
 		dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"), IsNil)
 
-		//
 		dbt.mustExec("drop table if exists pn")
 	})
 }
