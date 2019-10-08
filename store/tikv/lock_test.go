@@ -281,7 +281,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
 
-	// It is confusing here, this getTxnStatus really means rollback!
+	// It is confusing here, getTxnStatus with currentTS = MaxUint64 really means rollback!
 	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, math.MaxUint64)
 	c.Assert(err, IsNil)
 

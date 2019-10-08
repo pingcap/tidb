@@ -304,6 +304,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Loc
 				cleanRegions = make(map[RegionVerID]struct{})
 				cleanTxns[l.TxnID] = cleanRegions
 			}
+
 			err = lr.resolveLock(bo, l, status, cleanRegions)
 			if err != nil {
 				msBeforeTxnExpired.update(0)
@@ -369,8 +370,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, e
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, cleanTxns map[uint64]map[RegionVerID]struct{}) (TxnStatus, error) {
 	// NOTE: l.TTL = 0 is a special protocol!!!
 	// When the pessimistic txn prewrite meets locks of a txn, it should rollback that txn **unconditionally**.
-	// In this case, TiKV set the lock TTL = 0, and TiDB use currentTS = 0 to call
-	// getTxnStatus, and getTxnStatus with currentTS = 0 would rollback the transaction.
+	// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
 	if l.TTL == 0 {
 		var status TxnStatus
 		cleanRegions, exists := cleanTxns[l.TxnID]
@@ -395,6 +395,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	}
 
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
+
 	var status TxnStatus
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
 		PrimaryKey:    primary,
