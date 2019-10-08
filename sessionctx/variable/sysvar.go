@@ -624,6 +624,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
 	{ScopeSession, WarningCount, "0"},
 	{ScopeSession, ErrorCount, "0"},
+	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400"},
+	{ScopeGlobal, "thread_pool_size", "16"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -791,6 +793,145 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// Port is the name for 'port' system variable.
+	Port = "port"
+	// DataDir is the name for 'datadir' system variable.
+	DataDir = "datadir"
+	// Profiling is the name for 'Profiling' system variable.
+	Profiling = "profiling"
+	// Socket is the name for 'socket' system variable.
+	Socket = "socket"
+	// BinlogOrderCommits is the name for 'binlog_order_commits' system variable.
+	BinlogOrderCommits = "binlog_order_commits"
+	// MasterVerifyChecksum is the name for 'master_verify_checksum' system variable.
+	MasterVerifyChecksum = "master_verify_checksum"
+	// ValidatePasswordCheckUserName is the name for 'validate_password_check_user_name' system variable.
+	ValidatePasswordCheckUserName = "validate_password_check_user_name"
+	// SuperReadOnly is the name for 'super_read_only' system variable.
+	SuperReadOnly = "super_read_only"
+	// SQLNotes is the name for 'sql_notes' system variable.
+	SQLNotes = "sql_notes"
+	// QueryCacheType is the name for 'query_cache_type' system variable.
+	QueryCacheType = "query_cache_type"
+	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
+	SlaveCompressedProtocol = "slave_compressed_protocol"
+	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
+	BinlogRowQueryLogEvents = "binlog_rows_query_log_events"
+	// LogSlowSlaveStatements is the name for 'log_slow_slave_statements' system variable.
+	LogSlowSlaveStatements = "log_slow_slave_statements"
+	// LogSlowAdminStatements is the name for 'log_slow_admin_statements' system variable.
+	LogSlowAdminStatements = "log_slow_admin_statements"
+	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
+	LogQueriesNotUsingIndexes = "log_queries_not_using_indexes"
+	// QueryCacheWlockInvalidate is the name for 'query_cache_wlock_invalidate' system variable.
+	QueryCacheWlockInvalidate = "query_cache_wlock_invalidate"
+	// SQLAutoIsNull is the name for 'sql_auto_is_null' system variable.
+	SQLAutoIsNull = "sql_auto_is_null"
+	// RelayLogPurge is the name for 'relay_log_purge' system variable.
+	RelayLogPurge = "relay_log_purge"
+	// AutomaticSpPrivileges is the name for 'automatic_sp_privileges' system variable.
+	AutomaticSpPrivileges = "automatic_sp_privileges"
+	// SQLQuoteShowCreate is the name for 'sql_quote_show_create' system variable.
+	SQLQuoteShowCreate = "sql_quote_show_create"
+	// SlowQueryLog is the name for 'slow_query_log' system variable.
+	SlowQueryLog = "slow_query_log"
+	// BinlogDirectNonTransactionalUpdates is the name for 'binlog_direct_non_transactional_updates' system variable.
+	BinlogDirectNonTransactionalUpdates = "binlog_direct_non_transactional_updates"
+	// SQLBigSelects is the name for 'sql_big_selects' system variable.
+	SQLBigSelects = "sql_big_selects"
+	// LogBinTrustFunctionCreators is the name for 'log_bin_trust_function_creators' system variable.
+	LogBinTrustFunctionCreators = "log_bin_trust_function_creators"
+	// OldAlterTable is the name for 'old_alter_table' system variable.
+	OldAlterTable = "old_alter_table"
+	// EnforceGtidConsistency is the name for 'enforce_gtid_consistency' system variable.
+	EnforceGtidConsistency = "enforce_gtid_consistency"
+	// SecureAuth is the name for 'secure_auth' system variable.
+	SecureAuth = "secure_auth"
+	// UniqueChecks is the name for 'unique_checks' system variable.
+	UniqueChecks = "unique_checks"
+	// SQLWarnings is the name for 'sql_warnings' system variable.
+	SQLWarnings = "sql_warnings"
+	// AutoCommit is the name for 'autocommit' system variable.
+	AutoCommit = "autocommit"
+	// KeepFilesOnCreate is the name for 'keep_files_on_create' system variable.
+	KeepFilesOnCreate = "keep_files_on_create"
+	// ShowOldTemporals is the name for 'show_old_temporals' system variable.
+	ShowOldTemporals = "show_old_temporals"
+	// LocalInFile is the name for 'local_infile' system variable.
+	LocalInFile = "local_infile"
+	// PerformanceSchema is the name for 'performance_schema' system variable.
+	PerformanceSchema = "performance_schema"
+	// Flush is the name for 'flush' system variable.
+	Flush = "flush"
+	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.
+	SlaveAllowBatching = "slave_allow_batching"
+	// MyISAMUseMmap is the name for 'myisam_use_mmap' system variable.
+	MyISAMUseMmap = "myisam_use_mmap"
+	// InnodbFilePerTable is the name for 'innodb_file_per_table' system variable.
+	InnodbFilePerTable = "innodb_file_per_table"
+	// InnodbLogCompressedPages is the name for 'innodb_log_compressed_pages' system variable.
+	InnodbLogCompressedPages = "innodb_log_compressed_pages"
+	// InnodbPrintAllDeadlocks is the name for 'innodb_print_all_deadlocks' system variable.
+	InnodbPrintAllDeadlocks = "innodb_print_all_deadlocks"
+	// InnodbStrictMode is the name for 'innodb_strict_mode' system variable.
+	InnodbStrictMode = "innodb_strict_mode"
+	// InnodbCmpPerIndexEnabled is the name for 'innodb_cmp_per_index_enabled' system variable.
+	InnodbCmpPerIndexEnabled = "innodb_cmp_per_index_enabled"
+	// InnodbBufferPoolDumpAtShutdown is the name for 'innodb_buffer_pool_dump_at_shutdown' system variable.
+	InnodbBufferPoolDumpAtShutdown = "innodb_buffer_pool_dump_at_shutdown"
+	// InnodbAdaptiveHashIndex is the name for 'innodb_adaptive_hash_index' system variable.
+	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
+	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
+	InnodbFtEnableStopword = "innodb_ft_enable_stopword"
+	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
+	InnodbSupportXA = "innodb_support_xa"
+	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
+	InnodbOptimizeFullTextOnly = "innodb_optimize_fulltext_only"
+	// InnodbStatusOutputLocks is the name for 'innodb_status_output_locks' system variable.
+	InnodbStatusOutputLocks = "innodb_status_output_locks"
+	// InnodbBufferPoolDumpNow is the name for 'innodb_buffer_pool_dump_now' system variable.
+	InnodbBufferPoolDumpNow = "innodb_buffer_pool_dump_now"
+	// InnodbBufferPoolLoadNow is the name for 'innodb_buffer_pool_load_now' system variable.
+	InnodbBufferPoolLoadNow = "innodb_buffer_pool_load_now"
+	// InnodbStatsOnMetadata is the name for 'innodb_stats_on_metadata' system variable.
+	InnodbStatsOnMetadata = "innodb_stats_on_metadata"
+	// InnodbDisableSortFileCache is the name for 'innodb_disable_sort_file_cache' system variable.
+	InnodbDisableSortFileCache = "innodb_disable_sort_file_cache"
+	// InnodbStatsAutoRecalc is the name for 'innodb_stats_auto_recalc' system variable.
+	InnodbStatsAutoRecalc = "innodb_stats_auto_recalc"
+	// InnodbBufferPoolLoadAbort is the name for 'innodb_buffer_pool_load_abort' system variable.
+	InnodbBufferPoolLoadAbort = "innodb_buffer_pool_load_abort"
+	// InnodbStatsPersistent is the name for 'innodb_stats_persistent' system variable.
+	InnodbStatsPersistent = "innodb_stats_persistent"
+	// InnodbRandomReadAhead is the name for 'innodb_random_read_ahead' system variable.
+	InnodbRandomReadAhead = "innodb_random_read_ahead"
+	// InnodbAdaptiveFlushing is the name for 'innodb_adaptive_flushing' system variable.
+	InnodbAdaptiveFlushing = "innodb_adaptive_flushing"
+	// InnodbTableLocks is the name for 'innodb_table_locks' system variable.
+	InnodbTableLocks = "innodb_table_locks"
+	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
+	InnodbStatusOutput = "innodb_status_output"
+
+	// NetBufferLength is the name for 'net_buffer_length' system variable.
+	NetBufferLength = "net_buffer_length"
+	// QueryCacheSize is the name of 'query_cache_size' system variable.
+	QueryCacheSize = "query_cache_size"
+	// TxReadOnly is the name of 'tx_read_only' system variable.
+	TxReadOnly = "tx_read_only"
+	// TransactionReadOnly is the name of 'transaction_read_only' system variable.
+	TransactionReadOnly = "transaction_read_only"
+	// CharacterSetServer is the name of 'character_set_server' system variable.
+	CharacterSetServer = "character_set_server"
+	// AutoIncrementIncrement it the name of 'auto_increment_increment' system variable.
+	AutoIncrementIncrement = "auto_increment_increment"
+	// InitConnect is the name of 'init_connect' system variable.
+	InitConnect = "init_connect"
+	// CollationServer is the name of 'collation_server' variable.
+	CollationServer = "collation_server"
+	// NetWriteTimeout is the name of 'net_write_timeout' variable.
+	NetWriteTimeout = "net_write_timeout"
+	// ThreadPoolSize is the name of 'thread_pool_size' variable.
+	ThreadPoolSize = "thread_pool_size"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

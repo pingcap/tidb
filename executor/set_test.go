@@ -390,6 +390,19 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	_, err = tk.Exec("set @@global.max_connections='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
+	tk.MustExec("set @@global.thread_pool_size=65")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
+	result = tk.MustQuery("select @@global.thread_pool_size;")
+	result.Check(testkit.Rows("64"))
+
+	tk.MustExec("set @@global.thread_pool_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '-1'"))
+	result = tk.MustQuery("select @@global.thread_pool_size;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.thread_pool_size='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
 	tk.MustExec("set @@global.max_allowed_packet=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
