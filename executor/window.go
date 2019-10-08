@@ -31,13 +31,13 @@ type WindowExec struct {
 	baseExecutor
 
 	groupChecker *groupChecker
-	// inputIter is the iterator of children chunks
+	// inputIter is the iterator of child chunks
 	inputIter *chunk.Iterator4Chunk
 	// executed indicates the child executor is drained or something unexpected happened.
 	executed bool
-	// resultChunk stores the chunk to return
-	resultChunk []*chunk.Chunk
-	// remainingRowsInChunk indicates how many rows the resultChunk[i] is not prepared.
+	// resultChunks stores the chunks to return
+	resultChunks []*chunk.Chunk
+	// remainingRowsInChunk indicates how many rows the resultChunks[i] is not prepared.
 	remainingRowsInChunk []int
 
 	numWindowFuncs int
@@ -59,17 +59,17 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return err
 		}
 	}
-	if len(e.resultChunk) > 0 {
-		chk.SwapColumns(e.resultChunk[0])
-		e.resultChunk[0] = nil // GC it. TODO: reuse it.
-		e.resultChunk = e.resultChunk[1:]
+	if len(e.resultChunks) > 0 {
+		chk.SwapColumns(e.resultChunks[0])
+		e.resultChunks[0] = nil // GC it. TODO: Reuse it.
+		e.resultChunks = e.resultChunks[1:]
 		e.remainingRowsInChunk = e.remainingRowsInChunk[1:]
 	}
 	return nil
 }
 
 func (e *WindowExec) preparedChunkAvailable() bool {
-	return len(e.resultChunk) > 0 && e.remainingRowsInChunk[0] == 0
+	return len(e.resultChunks) > 0 && e.remainingRowsInChunk[0] == 0
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
@@ -101,7 +101,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 	if remainingRowsInGroup == 0 {
 		return nil
 	}
-	for i := 0; i < len(e.resultChunk); i++ {
+	for i := 0; i < len(e.resultChunks); i++ {
 		remained := mathutil.Min(e.remainingRowsInChunk[i], remainingRowsInGroup)
 		e.remainingRowsInChunk[i] -= remained
 		remainingRowsInGroup -= remained
@@ -113,7 +113,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = e.processor.appendResult2Chunk(e.ctx, groupRows, e.resultChunk[i], remained)
+		_, err = e.processor.appendResult2Chunk(e.ctx, groupRows, e.resultChunks[i], remained)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -145,7 +145,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err e
 	if err := e.copyChk(childResult, resultChk); err != nil {
 		return false, err
 	}
-	e.resultChunk = append(e.resultChunk, resultChk)
+	e.resultChunks = append(e.resultChunks, resultChk)
 	e.remainingRowsInChunk = append(e.remainingRowsInChunk, numRows)
 
 	e.inputIter = chunk.NewIterator4Chunk(childResult)
