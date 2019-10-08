@@ -577,11 +577,49 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastTimeAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var buf *chunk.Column
+	var err error
+	if b.args[0].GetType().Tp == mysql.TypeTimestamp {
+		buf, err = b.bufAllocator.get(types.ETTimestamp, n)
+	} else if b.args[0].GetType().Tp == mysql.TypeDatetime {
+		buf, err = b.bufAllocator.get(types.ETDatetime, n)
+	}
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	vas := buf.Times()
+	result.ReserveString(n)
+	for i, v := range vas {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, e := types.ProduceStrWithSpecifiedTp(v.String(), b.tp, sc, false)
+		if e != nil {
+			return e
+		}
+		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
+		if e1 != nil {
+			return e1
+		}
+		if b {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinCastJSONAsDecimalSig) vectorized() bool {
