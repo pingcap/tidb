@@ -121,7 +121,7 @@ func (b *builtinIntIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	i64s := result.Int64s()
 
 	for i := 0; i < numRows; i++ {
-		if result.IsNull(i) || result.GetInt64(i) != 0 {
+		if result.IsNull(i) || i64s[i] != 0 {
 			i64s[i] = 0
 		} else {
 			i64s[i] = 1
