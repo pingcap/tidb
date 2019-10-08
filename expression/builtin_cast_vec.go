@@ -178,6 +178,8 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 		bits = 32
 	}
 
+	var isNull bool
+	var res string
 	f64s := buf.Float64s()
 	result.ReserveString(n)
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -186,19 +188,19 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		res, e := types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
-		if e != nil {
-			return e
+		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
+		if err != nil {
+			return err
 		}
-		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
-		if e1 != nil {
-			return e1
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
 		}
-		if b {
+		if isNull {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(str)
+		result.AppendString(res)
 	}
 	return nil
 }
