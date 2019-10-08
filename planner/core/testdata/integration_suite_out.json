@@ -52,12 +52,12 @@
         "Plan": [
           "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(Column#1, Column#4)]",
           "├─TableReader_12 9990.00 root data:Selection_11",
-          "│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
-          "│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│ └─Selection_11 9990.00 cop[tikv] not(isnull(Column#1))",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─Selection_13 7992.00 root from_unixtime(cast(Column#5))",
           "  └─TableReader_16 9990.00 root data:Selection_15",
-          "    └─Selection_15 9990.00 cop not(isnull(Column#4))",
-          "      └─TableScan_14 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─Selection_15 9990.00 cop[tikv] not(isnull(Column#4))",
+          "      └─TableScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]

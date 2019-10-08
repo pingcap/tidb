@@ -464,7 +464,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
-	if (!isDataSource && !isUnionScan) || ds.preferStoreType&preferTiFlash != 0 {
+	if (!isDataSource && !isUnionScan) || (isDataSource && ds.preferStoreType&preferTiFlash != 0) {
 		return nil
 	}
 	if isUnionScan {
@@ -472,6 +472,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		ds, isDataSource = us.Children()[0].(*DataSource)
 		if !isDataSource {
 			return nil
+		}
+		// If one of the union scan children is a TiFlash table, then we can't choose index join.
+		for _, child := range us.Children() {
+			if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
+				return nil
+			}
 		}
 	}
 	var avgInnerRowCnt float64
