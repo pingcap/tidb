@@ -1828,6 +1828,7 @@ const (
 	ShowOpenTables
 	ShowAnalyzeStatus
 	ShowRegions
+	ShowBuiltins
 )
 
 const (
@@ -2018,6 +2019,8 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 
 	case ShowPrivileges:
 		ctx.WriteKeyWord("PRIVILEGES")
+	case ShowBuiltins:
+		ctx.WriteKeyWord("BUILTINS")
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
