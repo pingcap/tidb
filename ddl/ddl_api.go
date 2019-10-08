@@ -3295,10 +3295,10 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 		}
 	}
 
-	fkInfo := &model.FKInfo {
-		Name: fkName,
+	fkInfo := &model.FKInfo{
+		Name:     fkName,
 		RefTable: refer.Table.Name,
-		Cols: make([]model.CIStr, len(keys)),
+		Cols:     make([]model.CIStr, len(keys)),
 	}
 
 	for i, key := range keys {
