@@ -81,13 +81,14 @@ var (
 	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
 	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
 
-	transactionCounterInternalOK  = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK   = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-
-	transactionRollbackCounterInternal = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
+	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
+	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
+	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
+	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
+	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
+	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
 
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
@@ -246,10 +247,6 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 }
 
 func (s *session) getMembufCap() int {
-	if s.sessionVars.LightningMode {
-		return kv.ImportingTxnMembufCap
-	}
-
 	return kv.DefaultTxnMembufCap
 }
 
@@ -393,9 +390,6 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
-// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
-var mockCommitErrorOnce = true
-
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -530,7 +524,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	})
 
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(err)
+	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -1029,6 +1023,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
+	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1175,6 +1170,16 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+func (s *session) CommonExec(ctx context.Context,
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	if err != nil {
+		return nil, err
+	}
+	logQuery(st.OriginText(), s.sessionVars)
+	return runStmt(ctx, s, st)
+}
+
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
@@ -1213,6 +1218,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
+		prepared.CachedPlan = nil
 		return nil, errors.Errorf("invalid cached plan type")
 	}
 	return resultSet, err
@@ -1228,6 +1234,12 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	}
 	// check auto commit
 	if !s.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+	// check schema version
+	is := executor.GetInfoSchema(s)
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		prepared.CachedPlan = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current
@@ -1273,13 +1285,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if ok {
 		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
-	if err != nil {
-		return nil, err
-	}
-	logQuery(st.OriginText(), s.sessionVars)
-	r, err := runStmt(ctx, s, st)
-	return r, err
+	return s.CommonExec(ctx, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -1807,6 +1813,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptInSubqToJoinAndAgg,
 	variable.TiDBOptCorrelationThreshold,
 	variable.TiDBOptCorrelationExpFactor,
+	variable.TiDBOptCPUFactor,
+	variable.TiDBOptCopCPUFactor,
+	variable.TiDBOptNetworkFactor,
+	variable.TiDBOptScanFactor,
+	variable.TiDBOptDescScanFactor,
+	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
 	variable.TiDBMaxChunkSize,
@@ -2029,40 +2042,49 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	}
 }
 
-func (s *session) recordTransactionCounter(err error) {
+func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
+	if stmtNode == nil {
+		if s.isInternal() {
+			if err != nil {
+				transactionCounterInternalErr.Inc()
+			} else {
+				transactionCounterInternalOK.Inc()
+			}
+		} else {
+			if err != nil {
+				transactionCounterGeneralErr.Inc()
+			} else {
+				transactionCounterGeneralOK.Inc()
+			}
+		}
+		return
+	}
+
+	var isTxn bool
+	switch stmtNode.(type) {
+	case *ast.CommitStmt:
+		isTxn = true
+	case *ast.RollbackStmt:
+		isTxn = true
+	}
+	if !isTxn {
+		return
+	}
 	if s.isInternal() {
-		if err != nil {
-			transactionCounterInternalErr.Inc()
-		} else {
-			transactionCounterInternalOK.Inc()
-		}
+		transactionCounterInternalCommitRollback.Inc()
 	} else {
-		if err != nil {
-			transactionCounterGeneralErr.Inc()
-		} else {
-			transactionCounterGeneralOK.Inc()
-		}
+		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 
 type multiQueryNoDelayRecordSet struct {
+	sqlexec.RecordSet
+
 	affectedRows uint64
 	lastMessage  string
 	status       uint16
 	warnCount    uint16
 	lastInsertID uint64
-}
-
-func (c *multiQueryNoDelayRecordSet) Fields() []*ast.ResultField {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	panic("unsupported method")
-}
-
-func (c *multiQueryNoDelayRecordSet) NewChunk() *chunk.Chunk {
-	panic("unsupported method")
 }
 
 func (c *multiQueryNoDelayRecordSet) Close() error {
