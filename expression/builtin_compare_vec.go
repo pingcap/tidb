@@ -510,8 +510,8 @@ func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 		switch {
 		case isNull0 && isNull1:
 			i64s[i] = 1
-		case i64s[i] == 0:
-			break
+		case isNull0 != isNull1:
+			i64s[i] = 0
 		case args0[i].Compare(&args1[i]) == 0:
 			i64s[i] = 1
 		}
