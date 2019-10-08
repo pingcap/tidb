@@ -293,7 +293,7 @@ func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	return &p
 }
 
-// Init initializes LogicalShow.
+// Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx sessionctx.Context) *LogicalShowDDLJobs {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShowDDLJobs, &p, 0)
 	return &p
@@ -307,7 +307,7 @@ func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 	return &p
 }
 
-// Init initializes PhysicalShow.
+// Init initializes PhysicalShowDDLJobs.
 func (p PhysicalShowDDLJobs) Init(ctx sessionctx.Context) *PhysicalShowDDLJobs {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShowDDLJobs, &p, 0)
 	// Just use pseudo stats to avoid panic.
