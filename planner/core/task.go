@@ -999,12 +999,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
 		// copToFlash means whether the cop task is run on flash storage
-		copToFlash := false
-		if cop.tablePlan != nil {
-			if ts, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-				copToFlash = ts.StoreType == kv.TiFlash
-			}
-		}
+		copToFlash := isFlashCopTask(cop)
 		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
@@ -1060,17 +1055,26 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
+func isFlashCopTask(cop *copTask) bool {
+	if cop.tablePlan == nil {
+		return false
+	}
+	tp := cop.tablePlan
+	for len(tp.Children()) > 0 {
+		tp = tp.Children()[0]
+	}
+	if ts, ok := tp.(*PhysicalTableScan); ok {
+		return ts.StoreType == kv.TiFlash
+	}
+	return false
+}
+
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
 		// copToFlash means whether the cop task is running on flash storage
-		copToFlash := false
-		if cop.tablePlan != nil {
-			if ts, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-				copToFlash = ts.StoreType == kv.TiFlash
-			}
-		}
+		copToFlash := isFlashCopTask(cop)
 		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
