@@ -16,6 +16,7 @@ package codec
 import (
 	"bytes"
 	"encoding/base64"
+	"github.com/golang/snappy"
 	"strconv"
 	"strings"
 	"sync"
@@ -242,6 +243,7 @@ func encodeID(planType string, id int) string {
 
 // Compress is used to compress the input with zlib.
 func Compress(input []byte, buf *bytes.Buffer) (string, error) {
+	bs := snappy.Encode(buf.Bytes(), input)
 	//w := zlib.NewWriter(buf)
 	//_, err := w.Write(input)
 	//if err != nil {
@@ -251,8 +253,8 @@ func Compress(input []byte, buf *bytes.Buffer) (string, error) {
 	//if err != nil {
 	//	return "", err
 	//}
-	//return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
-	return base64.StdEncoding.EncodeToString(input), nil
+	return base64.StdEncoding.EncodeToString(bs), nil
+	//return base64.StdEncoding.EncodeToString(input), nil
 }
 
 func decompress(str string, buf *bytes.Buffer) (string, error) {
@@ -260,7 +262,12 @@ func decompress(str string, buf *bytes.Buffer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(decodeBytes), nil
+	bs, err := snappy.Decode(buf.Bytes(), decodeBytes)
+	if err != nil {
+		return "", err
+	}
+	return string(bs), nil
+	////return string(decodeBytes), nil
 	//reader := bytes.NewReader(decodeBytes)
 	//out, err := zlib.NewReader(reader)
 	//if err != nil {
