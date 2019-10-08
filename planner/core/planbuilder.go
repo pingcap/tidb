@@ -744,15 +744,13 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		for _, col := range p.schema.Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
-		var np LogicalPlan
-		np = p
+		ret = p
 		if as.Where != nil {
-			np, err = b.buildSelection(ctx, np, as.Where, nil)
+			ret, err = b.buildSelection(ctx, p, as.Where, nil)
 			if err != nil {
 				return nil, err
 			}
 		}
-		ret = np
 	case ast.AdminCancelDDLJobs:
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
