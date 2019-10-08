@@ -373,9 +373,9 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 
 		// Transfer the argument which starts from 1 to real index which starts from 0.
 		pos--
-		strLen := len([]rune(str))
-		subStrLen := len([]rune(subStr))
-		if pos < 0 || pos > int64(strLen-subStrLen) {
+		strLen := int64(len([]rune(str)))
+		subStrLen := int64(len([]rune(subStr)))
+		if pos < 0 || pos > strLen-subStrLen {
 			i64s[i] = 0
 			continue
 		} else if subStrLen == 0 {
