@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -86,6 +87,12 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		UniqueID: 5,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
+	names := make(types.NameSlice, 0, 5)
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col1")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col2")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col3")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col4")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col5")})
 	testCases := []struct {
 		expr       string
 		corColIDs  []int64
@@ -161,7 +168,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	}
 	for _, tt := range testCases {
 		comment := Commentf("failed at case:\nexpr: %v\ncorColIDs: %v\nidxColIDs: %v\nidxColLens: %v\naccess: %v\nremained: %v\n", tt.expr, tt.corColIDs, tt.idxColIDs, tt.idxColLens, tt.access, tt.remained)
-		filters, err := expression.ParseSimpleExprsWithSchema(s.ctx, tt.expr, totalSchema)
+		filters, err := expression.ParseSimpleExprsWithNames(s.ctx, tt.expr, totalSchema, names)
 		if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			filters = expression.FlattenCNFConditions(sf)
 		}

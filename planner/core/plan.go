@@ -53,6 +53,7 @@ type Plan interface {
 	// OutputNames returns the outputting names of each column.
 	OutputNames() types.NameSlice
 
+	// SetOutputNames sets the outputting name by the given slice.
 	SetOutputNames(names types.NameSlice)
 
 	SelectBlockOffset() int

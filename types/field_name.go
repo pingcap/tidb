@@ -48,12 +48,15 @@ func (name *FieldName) String() string {
 	return builder.String()
 }
 
+// NameSlice is the slice of the *fieldName
 type NameSlice []*FieldName
 
+// Shallow is a shallow copy, only making a new slice.
 func (s NameSlice) Shallow() NameSlice {
 	ret := make(NameSlice, len(s))
 	copy(ret, s)
 	return ret
 }
 
+// EmptyName is to occupy the position in the name slice. If it's set, that column's name is hidden.
 var EmptyName = &FieldName{Hidden: true}

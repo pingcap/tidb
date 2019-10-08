@@ -96,7 +96,9 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
-func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *Schema, names []*types.FieldName) ([]Expression, error) {
+// ParseSimpleExprsWithNames parses simple expression string to Expression.
+// The expression string must only reference the column in the given NameSlice.
+func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *Schema, names types.NameSlice) ([]Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
 	for _, warn := range warns {
@@ -155,6 +157,7 @@ func FindFieldName(names []*types.FieldName, astCol *ast.ColumnName) (int, error
 	return idx, nil
 }
 
+// FindFieldNameIdxByColName finds the index of corresponding name in the given slice. -1 for not found.
 func FindFieldNameIdxByColName(names []*types.FieldName, colName string) int {
 	for i, name := range names {
 		if name.ColName.L == colName {

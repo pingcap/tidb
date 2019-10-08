@@ -143,6 +143,7 @@ func (p *PointGetPlan) OutputNames() types.NameSlice {
 	return p.outputNames
 }
 
+// SetOutputNames sets the outputting name by the given slice.
 func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }

@@ -349,6 +349,7 @@ func (p *PhysicalUnionAll) OutputNames() types.NameSlice {
 	return p.physicalSchemaProducer.OutputNames()
 }
 
+// SetOutputNames sets the outputting name by the given slice.
 func (p *PhysicalUnionAll) SetOutputNames(names types.NameSlice) {
 	if p.IsPointGetUnion {
 		p.children[0].(*PointGetPlan).SetOutputNames(names)
@@ -484,6 +485,7 @@ func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 	return p.names
 }
 
+// SetOutputNames sets the outputting name by the given slice.
 func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }

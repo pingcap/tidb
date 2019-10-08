@@ -3090,15 +3090,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
-	// Add a projection for the following case, otherwise the final schema will be the schema of the join.
-	// delete from t where a in (select ...) or b in (select ...)
-	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
-		proj.SetChildren(p)
-		proj.SetSchema(oldSchema.Clone())
-		proj.names = p.OutputNames()[:oldLen]
-		p = proj
-	}
+	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
+	proj.SetChildren(p)
+	proj.SetSchema(oldSchema.Clone())
+	proj.names = p.OutputNames()[:oldLen]
+	p = proj
 
 	del := Delete{
 		IsMultiTable: delete.IsMultiTable,

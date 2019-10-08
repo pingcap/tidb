@@ -272,6 +272,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
+		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			return err
@@ -281,7 +282,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		e.names = plan.OutputNames()
+		e.names = names
 		e.Plan = plan
 		return nil
 	}
@@ -319,9 +320,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
+		prepared.CachedNames = names
 	}
 	e.names = names
-	e.names = p.OutputNames()
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {

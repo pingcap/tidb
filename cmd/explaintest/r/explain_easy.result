@@ -56,10 +56,10 @@ Update_2	N/A	root	N/A
 └─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-Delete_3	N/A	root	N/A
-└─IndexLookUp_9	10.00	root	
-  ├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-  └─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
+Delete_4	N/A	root	N/A
+└─IndexLookUp_11	10.00	root	
+  ├─IndexScan_9	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_10	10.00	cop	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(Column#9)
@@ -197,14 +197,14 @@ StreamAgg_13	1.00	root	funcs:count(1)
 explain select 1 from (select count(c2), count(c3) from t1) k;
 id	count	task	operator info
 Projection_5	1.00	root	1
-└─StreamAgg_21	1.00	root	funcs:firstrow(Column#12)
+└─StreamAgg_21	1.00	root	funcs:firstrow(Column#15)
   └─IndexReader_22	1.00	root	index:StreamAgg_9
     └─StreamAgg_9	1.00	cop	funcs:firstrow(1)
       └─IndexScan_20	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	count	task	operator info
 StreamAgg_11	1.00	root	funcs:count(1)
-└─StreamAgg_27	1.00	root	funcs:firstrow(Column#12)
+└─StreamAgg_27	1.00	root	funcs:firstrow(Column#15)
   └─IndexReader_28	1.00	root	index:StreamAgg_15
     └─StreamAgg_15	1.00	cop	funcs:firstrow(1)
       └─IndexScan_26	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
@@ -350,25 +350,6 @@ Projection_11	5.00	root	Column#12
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)
-<<<<<<< HEAD
-<<<<<<< HEAD
-    └─MergeJoin_45	2.40	root	inner join, left key:test.s.a, right key:test.t1.a
-      ├─IndexReader_35	2.40	root	index:Selection_34
-      │ └─Selection_34	2.40	cop	eq(3, test.t.a)
-      │   └─IndexScan_33	3.00	cop	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_38	4.00	root	data:Selection_37
-        └─Selection_37	4.00	cop	eq(3, test.t.a)
-          └─TableScan_36	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
-=======
-    └─MergeJoin_58	2.40	root	inner join, left key:Column#4, right key:Column#7
-      ├─IndexReader_45	2.40	root	index:Selection_44
-      │ └─Selection_44	2.40	cop	eq(3, Column#1)
-      │   └─IndexScan_43	3.00	cop	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_48	4.00	root	data:Selection_47
-        └─Selection_47	4.00	cop	eq(3, Column#1)
-          └─TableScan_46	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
->>>>>>> master
-=======
     └─MergeJoin_51	2.40	root	inner join, left key:Column#4, right key:Column#7
       ├─IndexReader_38	2.40	root	index:Selection_37
       │ └─Selection_37	2.40	cop	eq(3, Column#1)
@@ -376,7 +357,6 @@ Projection_11	5.00	root	Column#12
       └─TableReader_41	4.00	root	data:Selection_40
         └─Selection_40	4.00	cop	eq(3, Column#1)
           └─TableScan_39	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
->>>>>>> master
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#12
@@ -384,25 +364,6 @@ Projection_10	5.00	root	Column#12
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-<<<<<<< HEAD
-<<<<<<< HEAD
-    └─MergeJoin_39	2.40	root	left outer join, left key:test.s.a, right key:test.t1.a
-      ├─IndexReader_29	2.40	root	index:Selection_28
-      │ └─Selection_28	2.40	cop	eq(3, test.t.a)
-      │   └─IndexScan_27	3.00	cop	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_32	4.00	root	data:Selection_31
-        └─Selection_31	4.00	cop	eq(3, test.t.a)
-          └─TableScan_30	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
-=======
-    └─MergeJoin_47	2.40	root	left outer join, left key:Column#4, right key:Column#7
-      ├─IndexReader_34	2.40	root	index:Selection_33
-      │ └─Selection_33	2.40	cop	eq(3, Column#1)
-      │   └─IndexScan_32	3.00	cop	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_37	4.00	root	data:Selection_36
-        └─Selection_36	4.00	cop	eq(3, Column#1)
-          └─TableScan_35	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
->>>>>>> master
-=======
     └─MergeJoin_49	2.40	root	left outer join, left key:Column#4, right key:Column#7
       ├─IndexReader_36	2.40	root	index:Selection_35
       │ └─Selection_35	2.40	cop	eq(3, Column#1)
@@ -410,7 +371,6 @@ Projection_10	5.00	root	Column#12
       └─TableReader_39	4.00	root	data:Selection_38
         └─Selection_38	4.00	cop	eq(3, Column#1)
           └─TableScan_37	5.00	cop	table:t1, range:[-inf,+inf], keep order:true
->>>>>>> master
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#12
@@ -418,25 +378,6 @@ Projection_10	5.00	root	Column#12
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-<<<<<<< HEAD
-<<<<<<< HEAD
-    └─MergeJoin_38	2.40	root	right outer join, left key:test.s.a, right key:test.t1.a
-      ├─TableReader_28	4.00	root	data:Selection_27
-      │ └─Selection_27	4.00	cop	eq(3, test.t.a)
-      │   └─TableScan_26	5.00	cop	table:s, range:[-inf,+inf], keep order:true
-      └─IndexReader_31	2.40	root	index:Selection_30
-        └─Selection_30	2.40	cop	eq(3, test.t.a)
-          └─IndexScan_29	3.00	cop	table:t1, index:b, range:[3,3], keep order:true
-=======
-    └─MergeJoin_46	2.40	root	right outer join, left key:Column#4, right key:Column#7
-      ├─TableReader_33	4.00	root	data:Selection_32
-      │ └─Selection_32	4.00	cop	eq(3, Column#1)
-      │   └─TableScan_31	5.00	cop	table:s, range:[-inf,+inf], keep order:true
-      └─IndexReader_36	2.40	root	index:Selection_35
-        └─Selection_35	2.40	cop	eq(3, Column#1)
-          └─IndexScan_34	3.00	cop	table:t1, index:b, range:[3,3], keep order:true
->>>>>>> master
-=======
     └─MergeJoin_48	2.40	root	right outer join, left key:Column#4, right key:Column#7
       ├─TableReader_35	4.00	root	data:Selection_34
       │ └─Selection_34	4.00	cop	eq(3, Column#1)
@@ -444,7 +385,6 @@ Projection_10	5.00	root	Column#12
       └─IndexReader_38	2.40	root	index:Selection_37
         └─Selection_37	2.40	cop	eq(3, Column#1)
           └─IndexScan_36	3.00	cop	table:t1, index:b, range:[3,3], keep order:true
->>>>>>> master
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
