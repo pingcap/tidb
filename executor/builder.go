@@ -1699,6 +1699,8 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+
+	distsql.SetEncodeType(b.ctx, dagReq)
 	return dagReq, streaming, err
 }
 

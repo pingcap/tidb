@@ -51,15 +51,12 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	defer sessVars.CleanBuffers()
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
-	if !sessVars.LightningMode {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
 	}
-
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
+	sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
