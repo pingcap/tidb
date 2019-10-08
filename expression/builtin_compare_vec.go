@@ -480,26 +480,22 @@ func (b *builtinNullEQDecimalSig) vectorized() bool {
 
 func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
 	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
 	}
+	defer b.bufAllocator.put(buf0)
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
-
 	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
 	}
-
+	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf1)
-
 	args0 := buf0.Decimals()
 	args1 := buf1.Decimals()
 	result.ResizeInt64(n, false)
