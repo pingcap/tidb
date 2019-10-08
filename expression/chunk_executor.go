@@ -364,10 +364,11 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 func rowBasedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, then we will call input.CopyReconstruct() to get a new chunk
 	// that the filtered rows has been removed.
+	var input2 *chunk.Chunk
 	input := iterator.GetChunk()
 	if input.Sel() != nil {
-		input = input.CopyReconstruct(nil)
-		iterator = chunk.NewIterator4Chunk(input)
+		input2 = input.CopyReconstruct(nil)
+		iterator = chunk.NewIterator4Chunk(input2)
 	}
 
 	selected = selected[:0]

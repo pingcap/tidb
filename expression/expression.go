@@ -224,15 +224,43 @@ var (
 	}
 )
 
+func allocSelSlice(n int) []int {
+	if n > defaultChunkSize {
+		return make([]int, n)
+	}
+	return selPool.Get().([]int)
+}
+
+func deallocateSelSlice(sel []int) {
+	if len(sel) > defaultChunkSize {
+		selPool.Put(sel)
+	}
+}
+
+func allocZeroSlice(n int) []int8 {
+	if n > defaultChunkSize {
+		return make([]int8, n)
+	}
+	return zeroPool.Get().([]int8)
+}
+
+func deallocateZeroSlice(areZeros []int8) {
+	if len(areZeros) > defaultChunkSize {
+		zeroPool.Put(areZeros)
+	}
+}
+
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, then we will call input.CopyReconstruct() to get a new chunk
 	// that the filtered rows has been removed.
+	var input2 *chunk.Chunk
+	input2 = input
 	if input.Sel() != nil {
-		input = input.CopyReconstruct(nil)
+		input2 = input.CopyReconstruct(nil)
 	}
 
-	n := input.NumRows()
+	n := input2.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
 	for i := 0; i < n; i++ {
@@ -240,17 +268,17 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		nulls = append(nulls, false)
 	}
 
-	sel := selPool.Get().([]int)
-	defer selPool.Put(sel)
+	sel := allocSelSlice(n)
+	defer deallocateSelSlice(sel)
 	sel = sel[:0]
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
-	input.SetSel(sel)
+	input2.SetSel(sel)
 
 	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
-	areZeros := zeroPool.Get().([]int8)
-	defer zeroPool.Put(areZeros)
+	areZeros := allocZeroSlice(n)
+	defer deallocateZeroSlice(areZeros)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
@@ -258,7 +286,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := vecEval(ctx, expr, input, buf); err != nil {
+		if err := vecEval(ctx, expr, input2, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -289,7 +317,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			j++
 		}
 		sel = sel[:j]
-		input.SetSel(sel)
+		input2.SetSel(sel)
 		globalColumnAllocator.put(buf)
 	}
 

@@ -277,6 +277,7 @@ func (c *Chunk) CopyReconstruct(dst *Chunk) *Chunk {
 	}
 	dst.numVirtualRows = c.numVirtualRows
 	dst.capacity = c.capacity
+	dst.sel = c.sel
 	if len(dst.columns) < len(c.columns) {
 		dst.columns = make([]*Column, len(c.columns))
 	}

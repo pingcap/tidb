@@ -1078,6 +1078,16 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 	return exprs, input
 }
 
+func generateRandomSel() []int {
+	var sel []int
+	val := 0
+	for val < 1024 {
+		val += rand.Intn(5)
+		sel = append(sel, val)
+	}
+	return sel
+}
+
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
@@ -1171,10 +1181,13 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 			}
 
 			// add test which sel is not nil
+			exprs, input = genVecEvalBool(numCols, nil, eTypes)
+			input.SetSel(generateRandomSel())
+			it = chunk.NewIterator4Chunk(input)
 			isNull = isNull[:0]
-			selected, nulls, err = rowBasedFilter(ctx, exprs, it, selected, isNull)
+			selected, nulls, err = rowBasedFilter(ctx, exprs, it, nil, isNull)
 			c.Assert(err, IsNil)
-			selected2, nulls2, err2 = vectorizedFilter(ctx, exprs, it, selected2, isNull)
+			selected2, nulls2, err2 = vectorizedFilter(ctx, exprs, it, nil, isNull)
 			c.Assert(err2, IsNil)
 			for i := 0; i < length; i++ {
 				c.Assert(nulls2[i], Equals, nulls[i])
