@@ -530,8 +530,8 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		switch {
 		case isNull0 && isNull1:
 			i64s[i] = 1
-		case i64s[i] == 0:
-			break
+		case isNull0 != isNull1:
+			i64s[i] = 0
 		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
 			i64s[i] = 1
 		}
