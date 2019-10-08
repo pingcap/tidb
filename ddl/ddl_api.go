@@ -3315,12 +3315,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 }
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
-	if len(keys) == 0 {
-		// TODO: In MySQL, this case will report a parse error.
-		return nil, infoschema.ErrCannotAddForeign
-	}
 	if len(keys) != len(refer.IndexColNames) {
-		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
+		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs("foreign key without name")
 	}
 
 	// all base columns of stored generated columns

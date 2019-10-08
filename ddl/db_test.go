@@ -1896,6 +1896,9 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	// test oreign key not match error
+	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrWrongFkDef)
 	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
