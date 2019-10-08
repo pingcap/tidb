@@ -243,18 +243,8 @@ func encodeID(planType string, id int) string {
 
 // Compress is used to compress the input with zlib.
 func Compress(input []byte, buf *bytes.Buffer) (string, error) {
-	bs := snappy.Encode(buf.Bytes(), input)
-	//w := zlib.NewWriter(buf)
-	//_, err := w.Write(input)
-	//if err != nil {
-	//	return "", err
-	//}
-	//err = w.Close()
-	//if err != nil {
-	//	return "", err
-	//}
+	bs := snappy.Encode(nil, input)
 	return base64.StdEncoding.EncodeToString(bs), nil
-	//return base64.StdEncoding.EncodeToString(input), nil
 }
 
 func decompress(str string, buf *bytes.Buffer) (string, error) {
@@ -262,20 +252,9 @@ func decompress(str string, buf *bytes.Buffer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bs, err := snappy.Decode(buf.Bytes(), decodeBytes)
+	bs, err := snappy.Decode(nil, decodeBytes)
 	if err != nil {
 		return "", err
 	}
 	return string(bs), nil
-	////return string(decodeBytes), nil
-	//reader := bytes.NewReader(decodeBytes)
-	//out, err := zlib.NewReader(reader)
-	//if err != nil {
-	//	return "", err
-	//}
-	//_, err = io.Copy(buf, out)
-	//if err != nil {
-	//	return "", err
-	//}
-	//return buf.String(), nil
 }
