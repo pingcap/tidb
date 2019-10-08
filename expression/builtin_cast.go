@@ -977,10 +977,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	// MySQL compatibility: 0.0 should not be converted to null, see #11203
-	if val.IsZero() {
-		return types.Time{}, false, nil
-	}
+
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, int8(b.tp.Decimal))
 	if err != nil {
