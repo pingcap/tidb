@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -251,6 +252,44 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+type rangeDurationGener struct {
+	nullRation float64
+}
+
+func (g *rangeDurationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	tm := (math.Abs(rand.Int63n(12))*3600 + math.Abs(rand.Int63n(60))*60 + math.Abs(rand.Int63n(60))) * 1000
+	tu := (tm + math.Abs(rand.Int63n(1000))) * 1000
+	return types.Duration{
+		Duration: time.Duration(tu * 1000)}
+}
+
+type timeFormatGener struct {
+	nullRation float64
+}
+
+func (g *timeFormatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return "%H %i %S"
+	case 1:
+		return "%l %i %s"
+	case 2:
+		return "%p %i %s"
+	case 3:
+		return "%I %i %S %f"
+	case 4:
+		return "%T"
+	default:
+		return nil
+	}
+}
+
 // rangeRealGener is used to generate float64 items in [begin, end].
 type rangeRealGener struct {
 	begin float64
@@ -306,6 +345,29 @@ func (g *randLenStrGener) gen() interface{} {
 			buf[i] = byte('a' + x - 10)
 		} else {
 			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
+}
+
+type randHexStrGener struct {
+	lenBegin int
+	lenEnd   int
+}
+
+func (g *randHexStrGener) gen() interface{} {
+	n := rand.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(16)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else {
+			if x%2 == 0 {
+				buf[i] = byte('a' + x - 10)
+			} else {
+				buf[i] = byte('A' + x - 10)
+			}
 		}
 	}
 	return string(buf)
