@@ -29,22 +29,20 @@ var encoderPool = sync.Pool{
 type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
-	compressBuf  bytes.Buffer
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
-func EncodePlan(p PhysicalPlan) (string, error) {
+func EncodePlan(p PhysicalPlan) string {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
 	return pn.encodePlanTree(p)
 }
 
-func (pn *planEncoder) encodePlanTree(p PhysicalPlan) (string, error) {
+func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
-	pn.compressBuf.Reset()
 	pn.encodePlan(p, true, 0)
-	return codec.Compress(pn.buf.Bytes(), &pn.compressBuf)
+	return codec.Compress(pn.buf.Bytes())
 }
 
 func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {

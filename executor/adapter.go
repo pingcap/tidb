@@ -839,12 +839,8 @@ func getPlanTree(p plannercore.Plan) string {
 	if selectPlan == nil {
 		return ""
 	}
-	planTree, err := plannercore.EncodePlan(selectPlan)
-	if err == nil {
-		return planTree
-	}
-	logutil.BgLogger().Error("encode plan tree error", zap.Error(err))
-	return ""
+	planTree := plannercore.EncodePlan(selectPlan)
+	return planTree
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest

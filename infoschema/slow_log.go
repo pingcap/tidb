@@ -330,7 +330,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 		if err == nil {
 			planString = decodePlanString
 		} else {
-			logutil.BgLogger().Error("encode plan tree error", zap.String("plan", st.plan), zap.Error(err))
+			logutil.BgLogger().Error("decode plan tree error", zap.String("plan", st.plan), zap.Error(err))
 		}
 
 	}

@@ -15,13 +15,12 @@ package codec
 
 import (
 	"bytes"
-	"compress/zlib"
 	"encoding/base64"
-	"io"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
 )
 
@@ -68,16 +67,14 @@ func DecodePlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
-	pd.decompressBuf.Reset()
 	return pd.decode(planString)
 }
 
 type planDecoder struct {
-	buf           bytes.Buffer
-	depths        []int
-	indents       [][]rune
-	planInfos     []*planInfo
-	decompressBuf bytes.Buffer
+	buf       bytes.Buffer
+	depths    []int
+	indents   [][]rune
+	planInfos []*planInfo
 }
 
 type planInfo struct {
@@ -86,7 +83,7 @@ type planInfo struct {
 }
 
 func (pd *planDecoder) decode(planString string) (string, error) {
-	str, err := decompress(planString, &pd.decompressBuf)
+	str, err := decompress(planString)
 	if err != nil {
 		return "", err
 	}
@@ -243,35 +240,20 @@ func encodeID(planType string, id int) string {
 }
 
 // Compress is used to compress the input with zlib.
-func Compress(input []byte, buf *bytes.Buffer) (string, error) {
-	w, err := zlib.NewWriterLevel(buf, zlib.BestCompression)
-	if err != nil {
-		return "", err
-	}
-	_, err = w.Write(input)
-	if err != nil {
-		return "", err
-	}
-	err = w.Close()
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+func Compress(input []byte) string {
+	compressBytes := snappy.Encode(nil, input)
+	return base64.StdEncoding.EncodeToString(compressBytes)
 }
 
-func decompress(str string, buf *bytes.Buffer) (string, error) {
+func decompress(str string) (string, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return "", err
 	}
-	reader := bytes.NewReader(decodeBytes)
-	out, err := zlib.NewReader(reader)
+
+	bs, err := snappy.Decode(nil, decodeBytes)
 	if err != nil {
 		return "", err
 	}
-	_, err = io.Copy(buf, out)
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return string(bs), nil
 }
