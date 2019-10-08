@@ -14,7 +14,11 @@
 package expression
 
 import (
+	"fmt"
+	"math"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -43,11 +47,36 @@ func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinArithmeticMinusRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf)
+	x := result.Float64s()
+	y := buf.Float64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if (x[i] > 0 && -y[i] > math.MaxFloat64-x[i]) || (x[i] < 0 && -y[i] < -math.MaxFloat64-x[i]) {
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+		x[i] = x[i] - y[i]
+	}
+	return nil
 }
 
 func (b *builtinArithmeticMinusDecimalSig) vectorized() bool {
