@@ -2054,7 +2054,7 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustGetErrCode("create table t (a int, b int as ((SELECT 1 FROM t1 UNION SELECT 1 FROM t1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 5. Variable
 	tk.MustExec("set @x = 1")
-	tk.MustGetErrCode("create table t (a int, b int as (@x)", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (@x))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@@max_connections))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 6. Aggregate function
 	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
