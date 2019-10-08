@@ -178,11 +178,38 @@ func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinLeastRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLeastRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalReal(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		result.MergeNulls(buf)
+		v := buf.Float64s()
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if v[i] < f64s[i] {
+				f64s[i] = v[i]
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinLeastStringSig) vectorized() bool {
@@ -314,11 +341,49 @@ func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinNullEQRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	arg0 := buf0.Float64s()
+
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	arg1 := buf1.Float64s()
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+
+	for i := 0; i < n; i++ {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		switch {
+		case isNull0 && isNull1:
+			i64s[i] = 1
+		case isNull0 != isNull1:
+			break
+		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinNullEQTimeSig) vectorized() bool {
@@ -602,11 +667,38 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinGreatestRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalReal(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		result.MergeNulls(buf)
+		v := buf.Float64s()
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if v[i] > f64s[i] {
+				f64s[i] = v[i]
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinGTStringSig) vectorized() bool {
