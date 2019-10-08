@@ -820,7 +820,7 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
-	args := buf.Int64s()
+	args := buf.Float64s()
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -832,6 +832,8 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 			i64s[i] = 1
 		} else if args[i] < 0 {
 			i64s[i] = -1
+		} else {
+			i64s[i] = 0
 		}
 	}
 	return nil
