@@ -73,6 +73,7 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -145,8 +146,30 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	// Check the returned data is default/arrow format.
+	if r.selectResp == nil || (len(r.selectResp.RowBatchData) == 0 && r.respChkIdx == len(r.selectResp.Chunks)) {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return err
+		}
+		// TODO(Shenghui Wu): add metrics
+		if len(r.selectResp.RowBatchData) == 0 {
+			r.encodeType = tipb.EncodeType_TypeDefault
+		}
+	}
+
+	switch r.encodeType {
+	case tipb.EncodeType_TypeDefault:
+		return r.readFromDefault(ctx, chk)
+	case tipb.EncodeType_TypeArrow:
+		return r.readFromArrow(ctx, chk)
+	}
+	return errors.Errorf("unsupported encode type:%v", r.encodeType)
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
-		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return err
@@ -160,6 +183,14 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			r.respChkIdx++
 		}
 	}
+	return nil
+}
+
+func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+	rowBatchData := r.selectResp.RowBatchData
+	codec := chunk.NewCodec(r.fieldTypes)
+	remained := codec.DecodeToChunk(rowBatchData, chk)
+	r.selectResp.RowBatchData = remained
 	return nil
 }
 
@@ -196,7 +227,7 @@ func (r *selectResult) getSelectResp() error {
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
-		if len(r.selectResp.Chunks) == 0 {
+		if len(r.selectResp.Chunks) == 0 && len(r.selectResp.RowBatchData) == 0 {
 			continue
 		}
 		return nil

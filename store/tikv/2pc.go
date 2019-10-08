@@ -24,10 +24,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -95,11 +93,7 @@ type twoPhaseCommitter struct {
 	priority  pb.CommandPri
 	connID    uint64 // connID is used for log.
 	cleanWg   sync.WaitGroup
-	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
-	// We use it to guarantee GC worker will not influence any active txn. The value
-	// should be less than GC life time.
-	maxTxnTimeUse uint64
-	detail        unsafe.Pointer
+	detail    unsafe.Pointer
 
 	primaryKey     []byte
 	forUpdateTS    uint64
@@ -314,9 +308,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
-	// Convert from sec to ms
-	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
-
 	// Sanity check for startTS.
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
@@ -329,7 +320,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
-	c.maxTxnTimeUse = maxTxnTimeUse
 	c.keys = keys
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
@@ -550,10 +540,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			isPrimary := bytes.Equal(batch.keys[0], c.primary())
-			if isPrimary && c.isPessimistic {
-				c.ttlManager.run(c)
-			}
 			return nil
 		}
 		var locks []*Lock
@@ -712,10 +698,6 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
-			isPrimary := bytes.Equal(batch.keys[0], c.primary())
-			if isPrimary { // No need to check isPessimistic because this function is only called in that case.
-				c.ttlManager.run(c)
-			}
 			return nil
 		}
 		var locks []*Lock
@@ -1042,13 +1024,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
-		if tmpMaxTxnTime := uint64(val.(int)); tmpMaxTxnTime > 0 {
-			c.maxTxnTimeUse = tmpMaxTxnTime
-		}
-	})
-
-	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
