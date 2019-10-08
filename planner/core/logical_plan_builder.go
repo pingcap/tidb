@@ -2047,6 +2047,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		indexNestedLoopJoinTables: INLJTables,
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
+		flashTables:               tiflashTables,
 		aggHints:                  aggHints,
 	})
 }
