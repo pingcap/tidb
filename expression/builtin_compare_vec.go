@@ -504,7 +504,7 @@ func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	args1 := buf1.Decimals()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < len(i64s); i++ {
+	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
 		switch {
