@@ -811,17 +811,26 @@ func (b *builtinSignSig) vectorized() bool {
 }
 
 func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
 		return err
 	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	args := buf.Int64s()
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		if i64s[i] > 0 {
+		if args[i] > 0 {
 			i64s[i] = 1
-		} else if i64s[i] < 0 {
+		} else if args[i] < 0 {
 			i64s[i] = -1
 		}
 	}
