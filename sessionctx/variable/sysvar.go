@@ -117,6 +117,14 @@ func BoolToIntStr(b bool) string {
 	return "0"
 }
 
+// BoolToInt32 converts bool to int32
+func BoolToInt32(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
@@ -691,6 +699,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
 	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
+	{ScopeGlobal, TiDBMaxDeltaSchemaCount, strconv.Itoa(DefTiDBMaxDeltaSchemaCount)},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
@@ -701,6 +710,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBWaitSplitRegionTimeout, strconv.Itoa(DefWaitSplitRegionTimeout)},
 	{ScopeSession, TiDBLowResolutionTSO, "0"},
 	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
+	{ScopeGlobal, TiDBEnableStmtSummary, BoolToIntStr(DefTiDBEnableStmtSummary)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
