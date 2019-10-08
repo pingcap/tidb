@@ -1942,6 +1942,12 @@ func (s *testDBSuite2) TestFKOnGeneratedColumns(c *C) {
 	s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set null;", tmysql.ErrWrongFKOptionForGeneratedColumn)
 	s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set default;", tmysql.ErrWrongFKOptionForGeneratedColumn)
 	s.tk.MustExec("drop table t1, t2;")
+	// column name with uppercase characters
+	s.tk.MustGetErrCode("create table t1 (A int, b int generated always as (A+1) stored, foreign key (b) references t2(a) on update set null);", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	s.tk.MustExec("create table t2 (a int primary key);")
+	s.tk.MustExec("create table t1 (A int, b int generated always as (A+1) stored);")
+	s.tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", tmysql.ErrWrongFKOptionForGeneratedColumn)
+	s.tk.MustExec("drop table t1, t2;")
 
 	// special case: TiDB error different from MySQL 8.0
 	// MySQL: ERROR 3104 (HY000): Cannot define foreign key with ON UPDATE SET NULL clause on a generated column.
