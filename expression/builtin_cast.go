@@ -977,7 +977,6 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, int8(b.tp.Decimal))
 	if err != nil {
