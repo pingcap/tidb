@@ -697,6 +697,8 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 
+	var res string
+	var isNull bool
 	sc := b.ctx.GetSessionVars().StmtCtx
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -704,19 +706,19 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 			result.AppendNull()
 			continue
 		}
-		res, e := types.ProduceStrWithSpecifiedTp(buf.GetString(i), b.tp, sc, false)
-		if e != nil {
-			return e
+		res, err = types.ProduceStrWithSpecifiedTp(buf.GetString(i), b.tp, sc, false)
+		if err != nil {
+			return err
 		}
-		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
-		if e1 != nil {
-			return e1
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
 		}
-		if b {
+		if isNull {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(str)
+		result.AppendString(res)
 	}
 	return nil
 }
