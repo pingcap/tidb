@@ -26,8 +26,8 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{&defaultGener{0.2, types.ETDecimal}}},
 	},
 	ast.IsFalsity: {
-    {retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
-  },
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+	},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
