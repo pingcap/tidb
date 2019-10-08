@@ -36,8 +36,7 @@ type WindowExec struct {
 	// inputIter is the iterator of children chunks
 	inputIter *chunk.Iterator4Chunk
 	// executed indicates the child executor is drained or something unexpected happened.
-	executed     bool
-	requiredRows int
+	executed bool
 	// resultChunk stores the chunk to return
 	resultChunk []*chunk.Chunk
 	// remainingRowsInChunk indicates how many rows the resultChunk[i] is not prepared.
@@ -117,8 +116,8 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 		e.remainingRowsInChunk[i] -= remained
 		remainingRowsInGroup -= remained
 
-		// TODO: combine these three methods
-		// the old implementation needs the processor has these three methods
+		// TODO: Combine these three methods.
+		// The old implementation needs the processor has these three methods
 		// but now it does not have to.
 		groupRows, err = e.processor.consumeGroupRows(e.ctx, groupRows)
 		if err != nil {
@@ -152,7 +151,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err e
 		return true, nil
 	}
 
-	resultChk := chunk.New(e.retFieldTypes, 0, e.requiredRows)
+	resultChk := chunk.New(e.retFieldTypes, 0, numRows)
 	if err := e.copyChk(childResult, resultChk); err != nil {
 		return false, err
 	}
