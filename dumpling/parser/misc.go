@@ -170,6 +170,7 @@ var tokenMap = map[string]int{
 	"BOTH":                     both,
 	"BTREE":                    btree,
 	"BUCKETS":                  buckets,
+	"BUILTINS":                 builtins,
 	"BY":                       by,
 	"BYTE":                     byteType,
 	"CANCEL":                   cancel,
