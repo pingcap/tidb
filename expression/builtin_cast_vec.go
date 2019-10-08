@@ -304,11 +304,50 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastIntAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		var str string
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if !isUnsigned {
+			str = strconv.FormatInt(i64s[i], 10)
+		} else {
+			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+		if err != nil {
+			return err
+		}
+		var d bool
+		str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if d {
+			result.AppendNull()
+		} else {
+			result.AppendString(str)
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsIntSig) vectorized() bool {
