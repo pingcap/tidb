@@ -74,6 +74,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
+func SetMaxDeltaSchemaCount(cnt int64) {
+	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
+}
+
+// GetMaxDeltaSchemaCount gets maxDeltaSchemaCount size.
+func GetMaxDeltaSchemaCount() int64 {
+	return atomic.LoadInt64(&maxDeltaSchemaCount)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -321,6 +331,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case OldPasswords:
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case TiDBMaxDeltaSchemaCount:
+		return checkInt64SystemVar(name, value, 100, 16384, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
@@ -420,7 +432,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion:
+		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion, TiDBEnableStmtSummary:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
