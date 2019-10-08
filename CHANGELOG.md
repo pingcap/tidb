@@ -35,7 +35,7 @@ Our thanks go to the following contributors from the community for helping this 
 
 ## SQL Optimizer
 * Fix the issue that  invalid query ranges might be resulted when splitted by feedback [#12170](https://github.com/pingcap/tidb/pull/12170)
-* Display the returned errort of the `SHOW STATS_BUCKETS` statement in hexadecimal   when the result contains invalid Keys[#12094](https://github.com/pingcap/tidb/pull/12094)
+* Display the returned error of the `SHOW STATS_BUCKETS` statement in hexadecimal   when the result contains invalid Keys [#12094](https://github.com/pingcap/tidb/pull/12094)
 * Fix the issue that when a query contains the `SLEEP` function (for example, `select 1 from (select sleep(1)) t;)`), column pruning causes invalid `sleep(1)`  during query [#11953](https://github.com/pingcap/tidb/pull/11953)
 * Use index scan to lower IO when a query only concerns the number of columns rather than the table data [#12112](https://github.com/pingcap/tidb/pull/12112)
 * Do not use any index when no index is specified in `use index()` to becompatible with MySQL [#12100](https://github.com/pingcap/tidb/pull/12100)
@@ -57,7 +57,7 @@ Our thanks go to the following contributors from the community for helping this 
 * Support using aliases for tables in the point queries (for example, `select * from t tmp where a = "aa"`) [#12282](https://github.com/pingcap/tidb/pull/12282)
 * Fix the error occurred when not handling negative values as unsigned when inserting negative numbers into BIT type columns  [#12423](https://github.com/pingcap/tidb/pull/12423)
 * Fix the incorrectly rounding of time (for example,  `2019-09-11 11:17:47.999999666` should be rounded to `2019-09-11 11:17:48`.) [#12258](https://github.com/pingcap/tidb/pull/12258)
-* Refine the usage of expression blacklist (for example, `<` is equivalent to `It`.) [#11975](https://github.com/pingcap/tidb/pull/11975)
+* Refine the usage of expression blacklist (for example, `<` is equivalent to `lt`.) [#11975](https://github.com/pingcap/tidb/pull/11975)
 * Add the database prefix to the function name in the error message of non-existing functions (for example, `[expression:1305]FUNCTION test.std_samp does not exist`) [#12111](https://github.com/pingcap/tidb/pull/12111)
 
 ## Server
@@ -74,7 +74,7 @@ Our thanks go to the following contributors from the community for helping this 
 ## DDL
 * Add the variable of `tidb_allow_remove_auto_inc`. Dropping the `AUTO INCREMENT` attribute of the column is disabled by default [#12145](https://github.com/pingcap/tidb/pull/12145)
 * Fix the issue that the  uncommented TiDB-specific syntax `PRE_SPLIT_REGIONS` might cause t  errors in the downstream database during data  replication [#12120](https://github.com/pingcap/tidb/pull/12120)
-* Add the `split-region-max-num` variable in the configuration file so that the maximum allowable number of Regions is adjustable.  [#12097](https://github.com/pingcap/tidb/pull/12079)
+* Add the `split-region-max-num` variable in the configuration file so that the maximum allowable number of Regions is adjustable  [#12097](https://github.com/pingcap/tidb/pull/12079)
 * Support splitting a Region into multiple Regions and fix the timeout issue during  Region scattering [#12343](https://github.com/pingcap/tidb/pull/12343)
 * Fix the issue that the `drop index` statement fails  when the index that contains  an `auto_increment` column  referenced byanother  two indexes [#12344](https://github.com/pingcap/tidb/pull/12344)
 
