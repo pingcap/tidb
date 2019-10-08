@@ -162,11 +162,31 @@ func (b *builtinIntIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinRealIsNullSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRealIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, numRows)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := 0; i < numRows; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 1
+		} else {
+			i64s[i] = 0
+		}
+	}
+	return nil
 }
 
 func (b *builtinUnaryNotRealSig) vectorized() bool {
@@ -305,11 +325,31 @@ func (b *builtinBitAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinRealIsFalseSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRealIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, numRows)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	bufI64s := buf.Int64s()
+	for i := 0; i < numRows; i++ {
+		if buf.IsNull(i) || bufI64s[i] != 0 {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinUnaryMinusIntSig) vectorized() bool {
