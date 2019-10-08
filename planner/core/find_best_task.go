@@ -1019,7 +1019,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.ranges,
 		AccessCondition: path.accessConds,
 		filterCondition: path.tableFilters,
-		StoreType:       kv.TiKV,
 	}.Init(ds.ctx, ds.blockOffset)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash

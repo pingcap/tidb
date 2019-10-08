@@ -702,9 +702,9 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 		var storeType string
 		switch x.StoreType {
 		case kv.TiKV:
-			storeType = HintTiKV
+			storeType = "tikv"
 		case kv.TiFlash:
-			storeType = HintTiFlash
+			storeType = "tiflash"
 		default:
 			storeType = "unknown"
 		}
