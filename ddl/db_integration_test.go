@@ -2052,10 +2052,13 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustGetErrCode("create table t (a int, b int as (values(a)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 4. Subquery
 	tk.MustGetErrCode("create table t (a int, b int as ((SELECT 1 FROM t1 UNION SELECT 1 FROM t1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	// 5. Variable
+	// 5. Variable & functions related to variable
 	tk.MustExec("set @x = 1")
 	tk.MustGetErrCode("create table t (a int, b int as (@x))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@@max_connections))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (@y:=1))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (getval("x")`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (setval("y", 1)`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 6. Aggregate function
 	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
 
