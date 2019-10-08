@@ -582,13 +582,7 @@ func (b *builtinCastTimeAsStringSig) vectorized() bool {
 
 func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	var buf *chunk.Column
-	var err error
-	if b.args[0].GetType().Tp == mysql.TypeTimestamp {
-		buf, err = b.bufAllocator.get(types.ETTimestamp, n)
-	} else if b.args[0].GetType().Tp == mysql.TypeDatetime {
-		buf, err = b.bufAllocator.get(types.ETDatetime, n)
-	}
+	buf, err := b.bufAllocator.get(types.ETTimestamp, n)
 	if err != nil {
 		return err
 	}
@@ -597,6 +591,8 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 
+	var res string
+	var isNull bool
 	sc := b.ctx.GetSessionVars().StmtCtx
 	vas := buf.Times()
 	result.ReserveString(n)
@@ -605,19 +601,19 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		res, e := types.ProduceStrWithSpecifiedTp(v.String(), b.tp, sc, false)
-		if e != nil {
-			return e
+		res, err = types.ProduceStrWithSpecifiedTp(v.String(), b.tp, sc, false)
+		if err != nil {
+			return err
 		}
-		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
-		if e1 != nil {
-			return e1
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
 		}
-		if b {
+		if isNull {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(str)
+		result.AppendString(res)
 	}
 	return nil
 }
