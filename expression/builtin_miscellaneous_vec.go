@@ -18,6 +18,7 @@ import (
 	"math"
 	"net"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -86,4 +87,195 @@ func (b *builtinIsIPv4Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 func (b *builtinIsIPv4Sig) vectorized() bool {
 	return true
+}
+func (b *builtinJSONAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinJSONAnyValueSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinRealAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinRealAnyValueSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinStringAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinStringAnyValueSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIsIPv6Sig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstStringSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinDecimalAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinDecimalAnyValueSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinUUIDSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstDurationSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinLockSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinDurationAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinDurationAnyValueSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIntAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIntAnyValueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIsIPv4CompatSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstTimeSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinSleepSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinIsIPv4MappedSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstDecimalSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstJSONSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinInet6AtonSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinTimeAnyValueSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinTimeAnyValueSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinInetAtonSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinInet6NtoaSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNameConstRealSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinReleaseLockSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
 }
