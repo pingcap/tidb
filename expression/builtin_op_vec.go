@@ -371,7 +371,7 @@ func (b *builtinRealIsTrueSig) vectorized() bool {
 
 func (b *builtinRealIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, numRows)
+	buf, err := b.bufAllocator.get(types.ETReal, numRows)
 	if err != nil {
 		return err
 	}
