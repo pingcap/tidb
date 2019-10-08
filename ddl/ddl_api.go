@@ -3277,9 +3277,13 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 }
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
-	var fkInfo model.FKInfo
-	fkInfo.Name = fkName
-	fkInfo.RefTable = refer.Table.Name
+	if len(keys) == 0 {
+		// TODO: In MySQL, this case will report a parse error.
+		return nil, infoschema.ErrCannotAddForeign
+	}
+	if len(keys) != len(refer.IndexColNames) {
+		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
+	}
 
 	// all base columns of stored generated columns
 	baseCols := make(map[string]struct{})
@@ -3291,11 +3295,11 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 		}
 	}
 
-	if len(keys) == 0 {
-		// TODO: In MySQL, this case will report a parse error.
-		return nil, infoschema.ErrCannotAddForeign
+	fkInfo := &model.FKInfo {
+		Name: fkName,
+		RefTable: refer.Table.Name,
+		Cols: make([]model.CIStr, len(keys)),
 	}
-	fkInfo.Cols = make([]model.CIStr, len(keys))
 
 	for i, key := range keys {
 		// Check add foreign key to generated columns
@@ -3312,18 +3316,12 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 
 				// Check wrong reference options of foreign key on stored generated columns
 				switch refer.OnUpdate.ReferOpt {
-				case ast.ReferOptionCascade:
-					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE CASCADE")
-				case ast.ReferOptionSetNull:
-					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE SET NULL")
-				case ast.ReferOptionSetDefault:
-					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE SET DEFAULT")
+				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE " + refer.OnUpdate.ReferOpt.String())
 				}
 				switch refer.OnDelete.ReferOpt {
-				case ast.ReferOptionSetNull:
-					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE SET NULL")
-				case ast.ReferOptionSetDefault:
-					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE SET DEFAULT")
+				case ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE " + refer.OnDelete.ReferOpt.String())
 				}
 				continue
 			}
@@ -3345,9 +3343,6 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
-	if len(keys) != len(refer.IndexColNames) {
-		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
-	}
 	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexColNames))
 	for i, key := range refer.IndexColNames {
 		fkInfo.RefCols[i] = key.Column.Name
@@ -3356,7 +3351,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	fkInfo.OnDelete = int(refer.OnDelete.ReferOpt)
 	fkInfo.OnUpdate = int(refer.OnUpdate.ReferOpt)
 
-	return &fkInfo, nil
+	return fkInfo, nil
 }
 
 func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
