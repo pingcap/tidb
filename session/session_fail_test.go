@@ -82,8 +82,9 @@ func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
+		return fpname == "mockGetTSFail"
+	})
 	tk.Se.Execute(ctx, "select * from t")
 
 	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write

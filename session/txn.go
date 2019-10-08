@@ -411,9 +411,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		tsFuture = oracleStore.GetTimestampAsync(ctx)
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
-	if x := ctx.Value("mockGetTSFail"); x != nil {
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
 		ret.future = txnFailFuture{}
-	}
+	})
 	return ret
 }
 

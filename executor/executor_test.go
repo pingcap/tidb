@@ -3731,8 +3731,9 @@ func (s *testSuite3) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
+		return fpname == "mockGetTSFail"
+	})
 	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
 }
