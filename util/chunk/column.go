@@ -608,8 +608,23 @@ func (c *Column) reconstruct(sel []int) {
 // CopyReconstruct copies this Column to dst and removes unselected rows.
 // If dst is nil, it creates a new Column and returns it.
 func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
-	if sel == nil || len(sel) == c.length {
+	if sel == nil {
 		return c.CopyConstruct(dst)
+	}
+
+	selLength := len(sel)
+	if selLength == c.length {
+		// The variable 'ascend' is used to check if the sel array is in ascending order
+		ascend := true
+		for i := 1; i < selLength; i++ {
+			if sel[i] < sel[i-1] {
+				ascend = false
+				break
+			}
+		}
+		if ascend {
+			return c.CopyConstruct(dst)
+		}
 	}
 
 	if dst == nil {

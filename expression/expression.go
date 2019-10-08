@@ -211,14 +211,15 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 }
 
 var (
-	selPool = sync.Pool{
+	defaultChunkSize = 1024
+	selPool          = sync.Pool{
 		New: func() interface{} {
-			return make([]int, 1024)
+			return make([]int, defaultChunkSize)
 		},
 	}
 	zeroPool = sync.Pool{
 		New: func() interface{} {
-			return make([]int8, 1024)
+			return make([]int8, defaultChunkSize)
 		},
 	}
 )
@@ -245,7 +246,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
-	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
 	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
