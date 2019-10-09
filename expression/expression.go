@@ -232,7 +232,7 @@ func allocSelSlice(n int) []int {
 }
 
 func deallocateSelSlice(sel []int) {
-	if len(sel) > defaultChunkSize {
+	if len(sel) <= defaultChunkSize {
 		selPool.Put(sel)
 	}
 }
@@ -245,7 +245,7 @@ func allocZeroSlice(n int) []int8 {
 }
 
 func deallocateZeroSlice(areZeros []int8) {
-	if len(areZeros) > defaultChunkSize {
+	if len(areZeros) <= defaultChunkSize {
 		zeroPool.Put(areZeros)
 	}
 }
