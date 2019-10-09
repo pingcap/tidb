@@ -246,42 +246,43 @@ func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
 	return &ArrowDecoder{chk: chk, colTypes: colTypes, cur: 0, rows: 0}
 }
 
-func (c ArrowDecoder) Decode(target *Chunk, requestRows int) {
+func (c *ArrowDecoder) Decode(target *Chunk, requestRows int) {
 	for i := 0; i < len(c.colTypes); i++ {
 		c.decodeColumn(target, i, requestRows)
 	}
 	c.cur = c.cur + requestRows
 }
 
-func (c ArrowDecoder) Reset() {
+func (c *ArrowDecoder) Reset() {
 	c.cur = 0
-	c.rows = 0
+	c.rows = c.chk.NumRows()
 }
 
-func (c ArrowDecoder) GetChunk() *Chunk {
+func (c *ArrowDecoder) GetChunk() *Chunk {
 	return c.chk
 }
 
-func (c ArrowDecoder) Len() int {
+func (c *ArrowDecoder) Len() int {
 	return c.rows - c.cur
 }
 
-func (c ArrowDecoder) Empty() bool {
+func (c *ArrowDecoder) Empty() bool {
 	return c.cur == c.rows
 }
 
-func (c ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int) {
+func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int) {
 	numFixedBytes := getFixedLen(c.colTypes[ordinal])
 	numDataBytes := int64(numFixedBytes * requestRows)
 	colSource := c.chk.columns[ordinal]
 	colTarget := target.columns[ordinal]
 
 	if numFixedBytes == -1 {
-		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows]...)
+		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows+1]...)
 		for i := colTarget.length; i < colTarget.length+requestRows; i++ {
 			colTarget.offsets[i] = colTarget.offsets[i] - colSource.offsets[0] + colTarget.offsets[colTarget.length]
 		}
 		colSource.offsets = colSource.offsets[requestRows:]
+		numDataBytes = colTarget.offsets[colTarget.length+requestRows] - colTarget.offsets[colTarget.length]
 	} else if cap(colTarget.elemBuf) < numFixedBytes {
 		colTarget.elemBuf = make([]byte, numFixedBytes)
 	}

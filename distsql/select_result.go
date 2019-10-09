@@ -148,18 +148,14 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	// Check the returned data is default/arrow format.
-	if r.selectResp == nil || (len(r.selectResp.RowBatchData) == 0 && r.respChkIdx == len(r.selectResp.Chunks)) {
+	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 		err := r.getSelectResp()
 		if err != nil || r.selectResp == nil {
 			return err
 		}
-		// TODO(Shenghui Wu): add metrics
-		if len(r.selectResp.RowBatchData) == 0 {
-			r.encodeType = tipb.EncodeType_TypeDefault
-		}
 	}
-
-	switch r.encodeType {
+	// TODO(Shenghui Wu): add metrics
+	switch r.selectResp.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
 	case tipb.EncodeType_TypeArrow:
@@ -188,13 +184,11 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
-	chk.SetRequiredRows(100000, 1024)
 	if r.respArrowDecoder == nil {
-		decoder := chunk.NewArrowDecoder(
+		r.respArrowDecoder = chunk.NewArrowDecoder(
 			chunk.NewChunkWithCapacity(r.fieldTypes, r.ctx.GetSessionVars().MaxChunkSize),
 			r.fieldTypes,
 		)
-		r.respArrowDecoder = decoder
 	}
 
 	for !chk.IsFull() {
@@ -205,17 +199,17 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 			}
 		}
 
+		if r.respArrowDecoder.Empty() {
+			codec := chunk.NewCodec(r.fieldTypes)
+			_ = codec.DecodeToReadOnlyChunk(r.selectResp.Chunks[r.respChkIdx].RowsData, r.respArrowDecoder.GetChunk())
+			r.respArrowDecoder.Reset()
+			r.respChkIdx++
+		}
+
 		if r.respArrowDecoder.Len() >= chk.RequiredRows()-chk.NumRows() {
 			r.respArrowDecoder.Decode(chk, chk.RequiredRows()-chk.NumRows())
 		} else {
 			r.respArrowDecoder.Decode(chk, r.respArrowDecoder.Len())
-		}
-
-		if r.respArrowDecoder.Empty() {
-			r.respArrowDecoder.Reset()
-			codec := chunk.NewCodec(r.fieldTypes)
-			_ = codec.DecodeToReadOnlyChunk(r.selectResp.Chunks[r.respChkIdx].RowsData, r.respArrowDecoder.GetChunk())
-			r.respChkIdx++
 		}
 	}
 	return nil
@@ -254,7 +248,7 @@ func (r *selectResult) getSelectResp() error {
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
-		if len(r.selectResp.Chunks) == 0 && len(r.selectResp.RowBatchData) == 0 {
+		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
 		return nil
