@@ -538,22 +538,15 @@ func (b *builtinIntIsTrueSig) vectorized() bool {
 
 func (b *builtinIntIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, numRows)
-	if err != nil {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
-
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 	for i := 0; i < numRows; i++ {
-		if buf.IsNull(i) || buf.GetInt64(i) == 0 {
+		if result.IsNull(i) {
 			i64s[i] = 0
-		} else {
+			result.SetNull(i, false)
+		} else if i64s[i] != 0 {
 			i64s[i] = 1
 		}
 	}
