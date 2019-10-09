@@ -190,6 +190,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		if name != variable.AutoCommit {
 			logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		} else {
+			// Some applications will set `autocommit` variable before query.
+			// This will print too many unnecessary log info.
+			logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 		}
 	}
 
