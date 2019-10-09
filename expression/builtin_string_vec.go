@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -404,11 +406,38 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinUnHexSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnHexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		if len(str)%2 != 0 {
+			str = "0" + str
+		}
+		bs, e := hex.DecodeString(str)
+		if e != nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(bs))
+	}
+	return nil
 }
 
 func (b *builtinExportSet3ArgSig) vectorized() bool {
@@ -580,11 +609,79 @@ func (b *builtinEltSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinInsertSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals INSERT(str,pos,len,newstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_insert
 func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	buf3, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf3)
+	if err := b.args[3].VecEvalString(b.ctx, input, buf3); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s1 := buf1.Int64s()
+	i64s2 := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		pos := i64s1[i]
+		length := i64s2[i]
+		newstr := buf3.GetString(i)
+
+		runes := []rune(str)
+		runeLength := int64(len(runes))
+		if pos < 1 || pos > runeLength {
+			result.AppendString(str)
+			continue
+		}
+		if length > runeLength-pos+1 || length < 0 {
+			length = runeLength - pos + 1
+		}
+
+		strHead := string(runes[0 : pos-1])
+		strTail := string(runes[pos+length-1:])
+		if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strHead + newstr + strTail)
+	}
+	return nil
 }
 
 func (b *builtinExportSet5ArgSig) vectorized() bool {
@@ -660,11 +757,55 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinReplaceSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinReplaceSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		oldStr := buf1.GetString(i)
+		newStr := buf2.GetString(i)
+		if oldStr == "" {
+			result.AppendString(str)
+			continue
+		}
+		str = strings.Replace(str, oldStr, newStr, -1)
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinMakeSetSig) vectorized() bool {
@@ -703,11 +844,51 @@ func (b *builtinOctIntSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinToBase64Sig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a builtinToBase64Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
 func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		needEncodeLen := base64NeededEncodedLength(len(str))
+		if needEncodeLen == -1 {
+			result.AppendNull()
+			continue
+		} else if needEncodeLen > int(b.maxAllowedPacket) {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("to_base64", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		} else if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
+			result.AppendNull()
+			continue
+		}
+
+		newStr := base64.StdEncoding.EncodeToString([]byte(str))
+		//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+		count := len(newStr)
+		if count > 76 {
+			newStr = strings.Join(splitToSubN(newStr, 76), "\n")
+		}
+		result.AppendString(newStr)
+	}
+	return nil
 }
 
 func (b *builtinTrim1ArgSig) vectorized() bool {

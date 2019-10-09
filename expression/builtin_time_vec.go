@@ -189,11 +189,42 @@ func (b *builtinWeekDaySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinTimeFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf1, err1 := b.bufAllocator.get(types.ETString, n)
+	if err1 != nil {
+		return err1
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, err := b.formatTime(b.ctx, buf.GetDuration(i, 0), buf1.GetString(i))
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinUTCTimeWithArgSig) vectorized() bool {
