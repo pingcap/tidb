@@ -683,7 +683,7 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.Background(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.Background(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = test
