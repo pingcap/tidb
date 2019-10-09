@@ -255,10 +255,8 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
-	if input.Sel() != nil {
-		defer input.SetSel(input.Sel())
-		input.SetSel(nil)
-	}
+	defer input.SetSel(input.Sel())
+	input.SetSel(nil)
 
 	n := input.NumRows()
 	selected = selected[:0]
@@ -274,7 +272,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
-	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
 	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
