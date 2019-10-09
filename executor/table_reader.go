@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
@@ -163,29 +164,38 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	virColTypes := make([]*types.FieldType, 0)
 	virColDef := make([]*expression.Column, 0)
 	virColIndex := make([]int, 0)
+	virColOrder := make([]int, 0)
 	for i, col := range e.schema.Columns {
 		if col.VirtualExpr != nil {
 			virColTypes = append(virColTypes, col.RetType)
 			virColDef = append(virColDef, col)
 			virColIndex = append(virColIndex, i)
+			virColOrder = append(virColOrder, len(virColOrder))
 		}
 	}
+	if len(virColOrder) > 0 {
+		sort.Slice(virColOrder, func(i, j int) bool {
+			return model.FindColumnInfo(e.columns, virColDef[i].OrigColName.String()).Offset <
+				model.FindColumnInfo(e.columns, virColDef[j].OrigColName.String()).Offset
+		})
+	}
+
 	virCols := chunk.NewChunkWithCapacity(virColTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 
-	for i, col := range virColDef {
+	for _, j := range virColOrder {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := col.EvalVirtualColumn(row)
+			datum, err := virColDef[j].EvalVirtualColumn(row)
 			if err != nil {
 				return err
 			}
-			castDatum, err := table.CastValue(e.ctx, datum, e.columns[virColIndex[i]])
+			castDatum, err := table.CastValue(e.ctx, datum, e.columns[virColIndex[j]])
 			if err != nil {
 				return err
 			}
-			virCols.AppendDatum(i, &castDatum)
+			virCols.AppendDatum(j, &castDatum)
 		}
-		req.SetCol(virColIndex[i], virCols.Column(i))
+		req.SetCol(virColIndex[j], virCols.Column(j))
 	}
 
 	return nil

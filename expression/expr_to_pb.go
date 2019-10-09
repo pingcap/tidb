@@ -198,10 +198,10 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 
-	// We can't push expression containing virtual column to TiKV
-	if column.VirtualExpr != nil {
-		return nil
-	}
+	//// We can't push expression containing virtual column to TiKV
+	//if column.VirtualExpr != nil {
+	//	return nil
+	//}
 
 	switch column.GetType().Tp {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeUnspecified:

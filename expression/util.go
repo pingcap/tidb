@@ -56,6 +56,28 @@ func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remaine
 	return input, filteredOut
 }
 
+// ExtractColumnWithVirtualExpr extracts all columns from an expression with virtual expr.
+func ExtractColumnWithVirtualExpr(expr Expression) (cols []*Column) {
+	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
+	result := make([]*Column, 0, 8)
+	return extractColumnsWithVirtualExpr(result, expr)
+}
+
+func extractColumnsWithVirtualExpr(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+		if v.VirtualExpr != nil {
+			result = extractColumnsWithVirtualExpr(result, v.VirtualExpr)
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsWithVirtualExpr(result, arg)
+		}
+	}
+	return result
+}
+
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -99,9 +121,6 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	case *Column:
 		if filter == nil || filter(v) {
 			result = append(result, v)
-		}
-		if v.VirtualExpr != nil {
-			result = extractColumns(result, v.VirtualExpr, filter)
 		}
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {

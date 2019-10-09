@@ -61,6 +61,7 @@ type copTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols           []*expression.Column
 	idxMergePartPlans []PhysicalPlan
+	rootTaskConds     []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -606,18 +607,14 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		splitCopAvg2CountAndSum(t.tablePlan)
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
-		newTask.p = p
-	}
-
-	// add dependent columns to table scan if necessary.
-	if tr, ok := newTask.p.(*PhysicalTableReader); ok {
-		ts := tr.TablePlans[0].(*PhysicalTableScan)
+		// add dependent columns to table scan if necessary.
+		ts := p.TablePlans[0].(*PhysicalTableScan)
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
-				baseCols := expression.ExtractColumns(col.VirtualExpr)
+				baseCols := expression.ExtractColumnWithVirtualExpr(col.VirtualExpr)
 				for _, baseCol := range baseCols {
-					if !tr.schema.Contains(baseCol) {
-						tr.schema.Columns = append(tr.schema.Columns, baseCol)
+					if !p.schema.Contains(baseCol) {
+						p.schema.Columns = append(p.schema.Columns, baseCol)
 						for _, infoCol := range ts.Table.Columns {
 							if baseCol.OrigColName == infoCol.Name {
 								ts.Columns = append(ts.Columns, infoCol)
@@ -628,6 +625,20 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 				}
 			}
 		}
+		//	sort.Slice(ts.schema.Columns, func(i, j int) bool {
+		//		return model.FindColumnInfo(ts.Table.Columns, ts.schema.Columns[i].OrigColName.String()).Offset <
+		//			model.FindColumnInfo(ts.Table.Columns, ts.schema.Columns[j].OrigColName.String()).Offset
+		//	})
+		//	sort.Slice(ts.Columns, func(i, j int) bool {
+		//		return ts.Columns[i].Offset < ts.Columns[j].Offset
+		//	})
+		newTask.p = p
+	}
+
+	if len(t.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
 	}
 
 	return newTask
@@ -870,6 +881,14 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
+		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
+		result := make([]*expression.Column, 0, 8)
+		cols := expression.ExtractColumnsFromExpressions(result, aggFunc.Args, nil)
+		for _, col := range cols {
+			if col.VirtualExpr != nil {
+				return nil, p.self
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return nil, p.self
