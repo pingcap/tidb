@@ -176,7 +176,7 @@ func (b *builtinDayNameSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDayNameSig) vecEvalIndex(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDayNameSig) vecEvalIndex(input *chunk.Chunk, apply func(i, res int), applyNull func(i int)) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
@@ -187,27 +187,25 @@ func (b *builtinDayNameSig) vecEvalIndex(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf)
-	i64s := result.Int64s()
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if buf.IsNull(i) {
+			applyNull(i)
 			continue
 		}
 		if ds[i].InvalidZero() {
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
+			applyNull(i)
 			continue
 		}
 		// Monday is 0, ... Sunday = 6 in MySQL
 		// but in go, Sunday is 0, ... Saturday is 6
 		// we will do a conversion.
-		i64s[i] = (int64(ds[i].Time.Weekday()) + 6) % 7
+		res := (int(ds[i].Time.Weekday()) + 6) % 7
+		apply(i, res)
 	}
-
 	return nil
 }
 
@@ -215,53 +213,46 @@ func (b *builtinDayNameSig) vecEvalIndex(input *chunk.Chunk, result *chunk.Colum
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
 func (b *builtinDayNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.vecEvalIndex(input, buf); err != nil {
-		return err
-	}
-
 	result.ReserveString(n)
-	i64s := buf.Int64s()
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+
+	return b.vecEvalIndex(input,
+		func(i, res int) {
+			result.AppendString(types.WeekdayNames[res])
+		},
+		func(i int) {
 			result.AppendNull()
-			continue
-		}
-		result.AppendString(types.WeekdayNames[i64s[i]])
-	}
-	return nil
+		},
+	)
 }
 
 func (b *builtinDayNameSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.vecEvalIndex(input, buf); err != nil {
-		return err
-	}
-
 	result.ResizeFloat64(n, false)
-	result.MergeNulls(buf)
 	f64s := result.Float64s()
-	i64s := buf.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		f64s[i] = float64(i64s[i])
-	}
-	return nil
+
+	return b.vecEvalIndex(input,
+		func(i, res int) {
+			f64s[i] = float64(res)
+		},
+		func(i int) {
+			result.SetNull(i, true)
+		},
+	)
 }
 
 func (b *builtinDayNameSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return b.vecEvalIndex(input, result)
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+
+	return b.vecEvalIndex(input,
+		func(i, res int) {
+			i64s[i] = int64(res)
+		},
+		func(i int) {
+			result.SetNull(i, true)
+		},
+	)
 }
 
 func (b *builtinWeekDaySig) vectorized() bool {
