@@ -331,14 +331,15 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 }
 
 func parsePlan(planString string) string {
-	if len(planString) > len(variable.SlowLogPlanPrefix)+len(variable.SlowLogPlanSuffix) {
-		planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
-		decodePlanString, err := codec.DecodePlan(planString)
-		if err == nil {
-			planString = decodePlanString
-		} else {
-			logutil.BgLogger().Error("decode plan tree error", zap.String("plan", planString), zap.Error(err))
-		}
+	if len(planString) <= len(variable.SlowLogPlanPrefix)+len(variable.SlowLogPlanSuffix) {
+		return planString
+	}
+	planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
+	decodePlanString, err := codec.DecodePlan(planString)
+	if err == nil {
+		planString = decodePlanString
+	} else {
+		logutil.BgLogger().Error("decode plan tree error", zap.String("plan", planString), zap.Error(err))
 	}
 	return planString
 }
