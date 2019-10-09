@@ -14,7 +14,9 @@
 package infoschema_test
 
 import (
+	"context"
 	"fmt"
+	util2 "github.com/pingcap/tidb/domain/util"
 	"os"
 	"strconv"
 	"strings"
@@ -526,6 +528,26 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+}
+
+func (s *testTableSuite) TestForServersInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	serversInfo, err := util2.GetAllServerInfo(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(serversInfo), Equals, 1)
+
+	for _, info := range serversInfo {
+		c.Assert(result.Rows()[0][0], Equals, info.ID)
+		c.Assert(result.Rows()[0][1], Equals, info.IP)
+		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
+		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
+		c.Assert(result.Rows()[0][4], Equals, info.Lease)
+		c.Assert(result.Rows()[0][5], Equals, info.Version)
+		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	}
 }
 
 func (s *testTableSuite) TestColumnStatistics(c *C) {

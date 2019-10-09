@@ -79,14 +79,17 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
+var globalInfoSyncer *InfoSyncer
+
 // NewInfoSyncer return new InfoSyncer. It is exported for testing.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
-	return &InfoSyncer{
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+	globalInfoSyncer = &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
+	return globalInfoSyncer, globalInfoSyncer.Init(ctx)
 }
 
 // Init creates a new etcd session and stores server info to etcd.
@@ -119,6 +122,13 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 		return nil, errors.Errorf("[info-syncer] get %s failed", key)
 	}
 	return info, nil
+}
+
+func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	if globalInfoSyncer == nil {
+		return nil, nil
+	}
+	return globalInfoSyncer.GetAllServerInfo(ctx)
 }
 
 // GetAllServerInfo gets all servers static information from etcd.

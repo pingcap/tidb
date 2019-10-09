@@ -661,8 +661,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-	do.info = domainutil.NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
-	err = do.info.Init(ctx)
+	do.info, err = domainutil.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
 	if err != nil {
 		return err
 	}
