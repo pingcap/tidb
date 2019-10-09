@@ -302,7 +302,7 @@ func (g *rangeRealGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}
-	if g.end <= g.begin {
+	if g.end < g.begin {
 		g.begin = -100
 		g.end = 100
 	}
