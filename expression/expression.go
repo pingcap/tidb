@@ -505,6 +505,7 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 		newCol := &Column{
 			ColName:  col.Name,
 			TblName:  tblName,
+			OrigTblName: tblName,
 			DBName:   dbName,
 			RetType:  &col.FieldType,
 			ID:       col.ID,

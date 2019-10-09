@@ -2963,6 +2963,13 @@ func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
 	tk.MustExec("insert into t1 set a=1;")
 	tk.MustExec("alter table t1 modify column b int;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Issue #12471
+	// Unexpect error when use `default` sql function in expression of generated column
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1(a int default 9, b int as (default(a)));")
+	tk.MustExec("insert into t1 values(1, default);")
+	tk.MustExec("select * from t1;")
 }
 
 func (s *testDBSuite4) TestIssue9100(c *C) {
