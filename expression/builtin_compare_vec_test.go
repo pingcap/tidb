@@ -47,7 +47,9 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.Interval: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 10, 0}, &rangeRealGener{10, 20, 0}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal, types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 10, 0}, &rangeRealGener{10, 20, 0}, &rangeRealGener{20, 30, 0}}},
 	},
 }
 
