@@ -1080,10 +1080,24 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 
 func generateRandomSel() []int {
 	var sel []int
-	val := 0
-	for val < 1024 {
-		val += rand.Intn(5)
-		sel = append(sel, val)
+	count := 0
+	// Use constant 256 to make it faster to generate randomly arranged sel slices
+	num := rand.Intn(256)
+	existed := make([]bool, 1024)
+	for i := 0; i < 1024; i++ {
+		existed[i] = false
+	}
+	for count < num {
+		val := rand.Intn(1024)
+		if !existed[val] {
+			existed[val] = true
+			count++
+		}
+	}
+	for i := 0; i < 1024; i++ {
+		if existed[i] {
+			sel = append(sel, i)
+		}
 	}
 	return sel
 }

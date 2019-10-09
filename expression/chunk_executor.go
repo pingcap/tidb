@@ -369,18 +369,19 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 
 	// When the input.Sel() != nil, we need to handle the selected slice and input.Sel()
 	// Get the index which is not appeared in input.Sel() and set the selected[index] = false
-	numRows := input.NumRows()
-	i, j, selLength := 0, 0, len(sel)
-	for j < numRows {
-		if i >= selLength {
-			break
+	selectedLength := len(selected)
+	unselected := allocZeroSlice(selectedLength)
+	defer deallocateZeroSlice(unselected)
+	for i := 0; i < selectedLength; i++ {
+		unselected[i] = 0
+	}
+	for _, ind := range sel {
+		unselected[ind] = 1
+	}
+	for i := 0; i < selectedLength; i++ {
+		if unselected[i] == 0 {
+			selected[i] = false
 		}
-		for j < sel[i] {
-			selected[j] = false
-			j++
-		}
-		i++
-		j++
 	}
 	return selected, isNull, err
 }
