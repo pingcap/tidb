@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -154,19 +156,93 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastRealAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	bits := 64
+	if b.args[0].GetType().Tp == mysql.TypeFloat {
+		// b.args[0].EvalReal() casts the value from float32 to float64, for example:
+		// float32(208.867) is cast to float64(208.86700439)
+		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
+		bits = 32
+	}
+
+	var isNull bool
+	var res string
+	f64s := buf.Float64s()
+	result.ReserveString(n)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i, v := range f64s {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
+		if err != nil {
+			return err
+		}
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinCastDecimalAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDecimalAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	vas := buf.Decimals()
+	result.ReserveString(n)
+	for i, v := range vas {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, e := types.ProduceStrWithSpecifiedTp(string(v.ToString()), b.tp, sc, false)
+		if e != nil {
+			return e
+		}
+		str, b, e1 := padZeroForBinaryType(res, b.tp, b.ctx)
+		if e1 != nil {
+			return e1
+		}
+		if b {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinCastTimeAsDecimalSig) vectorized() bool {
@@ -265,11 +341,50 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastIntAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		var str string
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if !isUnsigned {
+			str = strconv.FormatInt(i64s[i], 10)
+		} else {
+			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+		if err != nil {
+			return err
+		}
+		var d bool
+		str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if d {
+			result.AppendNull()
+		} else {
+			result.AppendString(str)
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsIntSig) vectorized() bool {
@@ -383,11 +498,29 @@ func (b *builtinCastJSONAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastJSONAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastJSONAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(buf.GetJSON(i).String())
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsRealSig) vectorized() bool {

@@ -177,10 +177,10 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 }
 
-// GetPointRecord short path for point exec directly from plan, keep only necessary steps
-func (a *ExecStmt) GetPointRecord(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
+// PointGet short path for point exec directly from plan, keep only necessary steps
+func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.GetPointRecord", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", a.OriginText())
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)

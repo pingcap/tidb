@@ -498,7 +498,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	schema := expression.NewSchema(colMaxOrMin)
 
-	plan4Agg.names = append(plan4Agg.names, nil)
+	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
@@ -581,7 +581,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  cond.GetType(),
 	})
-	proj.names = append(proj.names, nil)
+	proj.names = append(proj.names, types.EmptyName)
 	proj.SetChildren(er.p)
 	er.p = proj
 }
@@ -615,7 +615,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-	plan4Agg.names = append(plan4Agg.names, nil, nil)
+	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.One)
 	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
@@ -643,12 +643,12 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
-	plan4Agg.names = append(plan4Agg.names, nil)
+	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	firstRowResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
-	plan4Agg.names = append(plan4Agg.names, nil)
+	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	count := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,

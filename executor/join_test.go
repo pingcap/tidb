@@ -648,7 +648,7 @@ func (s *testSuite2) TestSubquerySameTable(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite2) TestSubquery(c *C) {
+func (s *testSuite2) TestSubqueryXXX(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
