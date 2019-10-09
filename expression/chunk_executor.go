@@ -354,21 +354,48 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 			break
 		}
 	}
+
+	input := iterator.GetChunk()
+	sel := input.Sel()
+	var err error
 	if canVectorized {
-		return vectorizedFilter(ctx, filters, iterator, selected, isNull)
+		selected, isNull, err = vectorizedFilter(ctx, filters, iterator, selected, isNull)
 	}
-	return rowBasedFilter(ctx, filters, iterator, selected, isNull)
+	selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)
+	if err != nil || sel == nil {
+		return selected, isNull, err
+	}
+
+	// When the input.Sel() != nil, we need to solve the selected slice and input.Sel()
+	// Get the index which is not appear in input.Sel() and set the selected[index] = false
+	numRows := input.NumRows()
+	i, j, selLength := 0, 0, len(sel)
+	for j < numRows {
+		if i >= selLength {
+			break
+		}
+		for j < sel[i] {
+			selected[j] = false
+			j++
+		}
+		if j == sel[i] {
+			i++
+			j += 2
+		}
+	}
+	return selected, isNull, err
 }
 
 // rowBasedFilter filters by row.
 func rowBasedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
-	// If input.Sel() != nil, then we will call input.CopyReconstruct() to get a new chunk
-	// that the filtered rows has been removed.
-	var input2 *chunk.Chunk
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the sel in input chunk.
+	// Then the caller will handle the input.sel and selected slices.
 	input := iterator.GetChunk()
 	if input.Sel() != nil {
-		input2 = input.CopyReconstruct(nil)
-		iterator = chunk.NewIterator4Chunk(input2)
+		defer input.SetSel(input.Sel())
+		input.SetSel(nil)
+		iterator = chunk.NewIterator4Chunk(input)
 	}
 
 	selected = selected[:0]

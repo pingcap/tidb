@@ -252,15 +252,15 @@ func deallocateZeroSlice(areZeros []int8) {
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
-	// If input.Sel() != nil, then we will call input.CopyReconstruct() to get a new chunk
-	// that the filtered rows has been removed.
-	var input2 *chunk.Chunk
-	input2 = input
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the sel in input chunk.
+	// Then the caller will handle the input.sel and selected slices.
 	if input.Sel() != nil {
-		input2 = input.CopyReconstruct(nil)
+		defer input.SetSel(input.Sel())
+		input.SetSel(nil)
 	}
 
-	n := input2.NumRows()
+	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
 	for i := 0; i < n; i++ {
@@ -274,7 +274,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
-	input2.SetSel(sel)
+	input.SetSel(sel)
 
 	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
 	areZeros := allocZeroSlice(n)
@@ -286,7 +286,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := vecEval(ctx, expr, input2, buf); err != nil {
+		if err := vecEval(ctx, expr, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -317,7 +317,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			j++
 		}
 		sel = sel[:j]
-		input2.SetSel(sel)
+		input.SetSel(sel)
 		globalColumnAllocator.put(buf)
 	}
 
