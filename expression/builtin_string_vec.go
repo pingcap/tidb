@@ -569,11 +569,43 @@ func (b *builtinSubstring2ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinTrim2ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		remstr := buf1.GetString(i)
+		result.AppendString(trimRight(trimLeft(str, remstr), remstr))
+	}
+
+	return nil
 }
 
 func (b *builtinInstrSig) vectorized() bool {
