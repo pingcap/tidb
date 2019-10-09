@@ -591,11 +591,44 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 }
 
 func (b *builtinCastDurationAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	var res string
+	var isNull bool
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, err = types.ProduceStrWithSpecifiedTp(buf.GetDuration(i, 0).String(), b.tp, sc, false)
+		if err != nil {
+			return err
+		}
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinCastDecimalAsRealSig) vectorized() bool {
@@ -669,11 +702,45 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastTimeAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	var res string
+	var isNull bool
+	sc := b.ctx.GetSessionVars().StmtCtx
+	vas := buf.Times()
+	result.ReserveString(n)
+	for i, v := range vas {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, err = types.ProduceStrWithSpecifiedTp(v.String(), b.tp, sc, false)
+		if err != nil {
+			return err
+		}
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinCastJSONAsDecimalSig) vectorized() bool {
@@ -725,11 +792,44 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(input *chunk.Chunk, re
 }
 
 func (b *builtinCastStringAsStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	var res string
+	var isNull bool
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, err = types.ProduceStrWithSpecifiedTp(buf.GetString(i), b.tp, sc, false)
+		if err != nil {
+			return err
+		}
+		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinCastJSONAsDurationSig) vectorized() bool {
