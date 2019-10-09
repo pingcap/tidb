@@ -1090,7 +1090,7 @@ func generateRandomSel() []int {
 
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 10; numCols++ {
 		for round := 0; round < 64; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)

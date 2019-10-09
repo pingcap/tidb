@@ -274,6 +274,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
+	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
 	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
