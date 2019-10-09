@@ -2859,6 +2859,8 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if p.Schema().Len() != oldSchemaLen {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
+		proj.names = make(types.NameSlice, len(p.OutputNames()))
+		copy(proj.names, p.OutputNames())
 		copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
 		proj.SetChildren(p)
 		p = proj
