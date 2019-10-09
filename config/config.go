@@ -587,6 +587,8 @@ func (c *Config) Valid() error {
 	}
 
 	// For tikvclient.
+	// ansible will rewrite the default value, so we set it explicitly here for bench.
+	c.TiKVClient.GrpcConnectionCount = 1
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
