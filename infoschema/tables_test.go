@@ -16,7 +16,6 @@ package infoschema_test
 import (
 	"context"
 	"fmt"
-	util2 "github.com/pingcap/tidb/domain/util"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -535,7 +535,7 @@ func (s *testTableSuite) TestForServersInfo(c *C) {
 	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	serversInfo, err := util2.GetAllServerInfo(context.Background())
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(len(serversInfo), Equals, 1)
 

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	domainutil "github.com/pingcap/tidb/domain/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
@@ -1798,7 +1798,7 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 }
 
 func dataForServersInfo() ([][]types.Datum, error) {
-	serversInfo, err := domainutil.GetAllServerInfo(context.Background())
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return nil, err
 	}
