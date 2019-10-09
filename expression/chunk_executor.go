@@ -346,7 +346,7 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 // filters, `isNull` indicates whether the result of the filter is null.
 // Filters is executed vectorized.
 func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
-	// canVectorized use to check whether all of the filters can vectorized evaluate by chunk
+	// canVectorized used to check whether all of the filters can be vectorized evaluated
 	canVectorized := true
 	for _, filter := range filters {
 		if !filter.Vectorized() {
@@ -360,8 +360,9 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 	var err error
 	if canVectorized {
 		selected, isNull, err = vectorizedFilter(ctx, filters, iterator, selected, isNull)
+	} else {
+		selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)
 	}
-	selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)
 	if err != nil || sel == nil {
 		return selected, isNull, err
 	}
