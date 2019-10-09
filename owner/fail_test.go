@@ -18,7 +18,6 @@ import (
 	"math"
 	"net"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -41,12 +40,20 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
+	ln net.Listener
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
+	ln, err := net.Listen("unix", "new_session:12379")
+	c.Assert(err, IsNil)
+	s.ln = ln
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	if s.ln != nil {
+		err := s.ln.Close()
+		c.Assert(err, IsNil)
+	}
 }
 
 var (
@@ -56,24 +63,7 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
-	c.Assert(err, IsNil)
-	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
-	var stop sync.WaitGroup
-	stop.Add(1)
-	go func() {
-		if err = srv.Serve(ln); err != nil {
-			c.Errorf("can't serve gRPC requests %v", err)
-		}
-		stop.Done()
-	}()
-
-	leakFunc := testleak.AfterTest(c)
-	defer func() {
-		srv.Stop()
-		stop.Wait()
-		leakFunc()
-	}()
+	defer testleak.AfterTest(c)()
 
 	func() {
 		cli, err := clientv3.New(clientv3.Config{
