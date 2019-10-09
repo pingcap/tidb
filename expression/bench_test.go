@@ -1176,7 +1176,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
+func (s *testEvaluatorSuite) TestRowBasedFilterAndVectorizedFilter(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 10; numCols++ {
@@ -1211,7 +1211,7 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	}
 }
 
-func BenchmarkVectorizedFilterConsiderNull(b *testing.B) {
+func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	ctx := mock.NewContext()
 	selected := make([]bool, 0, 1024)
 	nulls := make([]bool, 0, 1024)
