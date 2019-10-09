@@ -2074,4 +2074,10 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustExec("create table t1 (a int, b int generated always as (abs(a)) virtual)")
 	tk.MustExec("insert into t1 values (-1, default)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("-1 1"))
+
+	// Functions added in MySQL 8.0, but now not supported in TiDB
+	// They will be deal with non-exists function, and throw error.git
+	tk.MustGetErrCode("create table t (a int, b int as (updatexml(1, 1, 1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (statement_digest(1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (statement_digest_text(1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 }
