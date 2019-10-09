@@ -109,11 +109,26 @@ func (b *builtinDecimalIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinIntIsFalseSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	numRows := input.NumRows()
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := 0; i < numRows; i++ {
+		if result.IsNull(i) {
+			i64s[i] = 0
+			result.SetNull(i, false)
+		} else if i64s[i] != 0 {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinUnaryMinusRealSig) vectorized() bool {
