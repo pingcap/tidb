@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -411,11 +412,29 @@ func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinIntervalIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var err error
+	if err = b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	var idx int
+	for i, v := range i64s {
+		if result.IsNull(i) {
+			result.SetNull(i, false)
+			i64s[i] = -1
+			continue
+		}
+		idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(idx)
+	}
+	return nil
 }
 
 func (b *builtinIntervalRealSig) vectorized() bool {
