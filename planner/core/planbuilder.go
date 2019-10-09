@@ -1945,6 +1945,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	for i := range schema4NewRow.Columns {
 		if schema4NewRow.Columns[i] == nil {
 			schema4NewRow.Columns[i] = &expression.Column{UniqueID: insertPlan.ctx.GetSessionVars().AllocPlanColumnID()}
+			names4NewRow[i] = types.EmptyName
 		}
 	}
 	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)

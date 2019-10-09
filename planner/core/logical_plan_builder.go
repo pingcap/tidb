@@ -3301,7 +3301,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
-		proj.names = append(proj.names, nil)
+		proj.names = append(proj.names, types.EmptyName)
 		col := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newArg.GetType(),
@@ -3367,7 +3367,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
-		proj.names = append(proj.names, nil)
+		proj.names = append(proj.names, types.EmptyName)
 		col := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  it.GetType(),
@@ -3608,7 +3608,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 			OrderBy:     orderBy,
 			Frame:       frame,
 		}.Init(b.ctx, b.getSelectOffset())
-		window.names = make([]*types.FieldName, np.Schema().Len()+len(funcs))
+		window.names = make([]*types.FieldName, np.Schema().Len())
 		copy(window.names, np.OutputNames())
 		schema := np.Schema().Clone()
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
@@ -3629,6 +3629,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  desc.RetTp,
 			})
+			window.names = append(window.names, types.EmptyName)
 		}
 		window.WindowFuncDescs = descs
 		window.SetChildren(np)
