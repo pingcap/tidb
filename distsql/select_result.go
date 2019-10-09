@@ -16,7 +16,6 @@ package distsql
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/mysql"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -189,13 +188,12 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+	chk.SetRequiredRows(100000, 1024)
 	if r.respArrowDecoder == nil {
-		decoder := &chunk.ArrowDecoder{
+		decoder := chunk.NewArrowDecoder(
 			chunk.NewChunkWithCapacity(r.fieldTypes, r.ctx.GetSessionVars().MaxChunkSize),
 			r.fieldTypes,
-			0,
-			0,
-		}
+		)
 		r.respArrowDecoder = decoder
 	}
 
@@ -216,7 +214,7 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 		if r.respArrowDecoder.Empty() {
 			r.respArrowDecoder.Reset()
 			codec := chunk.NewCodec(r.fieldTypes)
-			_ := codec.DecodeToReadOnlyChunk(r.selectResp.Chunks[r.respChkIdx].RowsData, r.respArrowDecoder.GetChunk())
+			_ = codec.DecodeToReadOnlyChunk(r.selectResp.Chunks[r.respChkIdx].RowsData, r.respArrowDecoder.GetChunk())
 			r.respChkIdx++
 		}
 	}

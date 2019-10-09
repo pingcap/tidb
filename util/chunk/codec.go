@@ -41,7 +41,7 @@ func NewCodec(colTypes []*types.FieldType) *Codec {
 // Encode encodes a Chunk to a byte slice.
 func (c *Codec) Encode(chk *Chunk) []byte {
 	buffer := make([]byte, 0, chk.MemoryUsage())
-	for _, col := range chk.Columns {
+	for _, col := range chk.columns {
 		buffer = c.encodeColumn(buffer, col)
 	}
 	return buffer
@@ -92,15 +92,15 @@ func (c *Codec) Decode(buffer []byte) (*Chunk, []byte) {
 	for ordinal := 0; len(buffer) > 0; ordinal++ {
 		col := &Column{}
 		buffer = c.decodeColumn(buffer, col, ordinal)
-		chk.Columns = append(chk.Columns, col)
+		chk.columns = append(chk.columns, col)
 	}
 	return chk, buffer
 }
 
 // DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.
 func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
-	for i := 0; i < len(chk.Columns); i++ {
-		buffer = c.decodeColumn(buffer, chk.Columns[i], i)
+	for i := 0; i < len(chk.columns); i++ {
+		buffer = c.decodeColumn(buffer, chk.columns[i], i)
 	}
 	return buffer
 }
@@ -156,8 +156,8 @@ func (c *Codec) setAllNotNull(col *Column) {
 
 // DecodeToChunk decodes a Read-Only Chunk from a byte slice, return the remained unused bytes.
 func (c *Codec) DecodeToReadOnlyChunk(buffer []byte, chk *Chunk) (remained []byte) {
-	for i := 0; i < len(chk.Columns); i++ {
-		buffer = c.decodeReadOnlyColumn(buffer, chk.Columns[i], i)
+	for i := 0; i < len(chk.columns); i++ {
+		buffer = c.decodeReadOnlyColumn(buffer, chk.columns[i], i)
 	}
 	return buffer
 }
@@ -242,6 +242,10 @@ type ArrowDecoder struct {
 	rows     int
 }
 
+func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
+	return &ArrowDecoder{chk: chk, colTypes: colTypes, cur: 0, rows: 0}
+}
+
 func (c ArrowDecoder) Decode(target *Chunk, requestRows int) {
 	for i := 0; i < len(c.colTypes); i++ {
 		c.decodeColumn(target, i, requestRows)
@@ -268,15 +272,25 @@ func (c ArrowDecoder) Empty() bool {
 
 func (c ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int) {
 	numFixedBytes := getFixedLen(c.colTypes[ordinal])
+	numDataBytes := int64(numFixedBytes * requestRows)
+	colSource := c.chk.columns[ordinal]
+	colTarget := target.columns[ordinal]
 
 	if numFixedBytes == -1 {
-		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes])
-		buffer = buffer[numOffsetBytes:]
-		numDataBytes = col.offsets[col.length]
-	} else if cap(col.elemBuf) < numFixedBytes {
-		col.elemBuf = make([]byte, numFixedBytes)
+		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows]...)
+		for i := colTarget.length; i < colTarget.length+requestRows; i++ {
+			colTarget.offsets[i] = colTarget.offsets[i] - colSource.offsets[0] + colTarget.offsets[colTarget.length]
+		}
+		colSource.offsets = colSource.offsets[requestRows:]
+	} else if cap(colTarget.elemBuf) < numFixedBytes {
+		colTarget.elemBuf = make([]byte, numFixedBytes)
 	}
 
-	target.Columns[ordinal].data = buffer[:numDataBytes]
+	for i := c.cur; i < c.cur+requestRows; i++ {
+		colTarget.appendNullBitmap(!colSource.IsNull(i))
+		colTarget.length++
+	}
+
+	colTarget.data = append(colTarget.data, colSource.data[:numDataBytes]...)
+	colSource.data = colSource.data[numDataBytes:]
 }

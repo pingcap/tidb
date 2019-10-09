@@ -409,7 +409,7 @@ var defaultConf = Config{
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
 
-		EnableArrow: true,
+		EnableArrow: false,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
