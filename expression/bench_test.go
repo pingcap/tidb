@@ -1193,20 +1193,6 @@ func (s *testEvaluatorSuite) TestRowBasedFilterAndVectorizedFilter(c *C) {
 				c.Assert(nulls2[i], Equals, nulls[i])
 				c.Assert(selected2[i], Equals, selected[i])
 			}
-
-			// add test which sel is not nil
-			exprs, input = genVecEvalBool(numCols, nil, eTypes)
-			input.SetSel(generateRandomSel())
-			it = chunk.NewIterator4Chunk(input)
-			isNull = isNull[:0]
-			selected, nulls, err = rowBasedFilter(ctx, exprs, it, nil, isNull)
-			c.Assert(err, IsNil)
-			selected2, nulls2, err2 = vectorizedFilter(ctx, exprs, it, nil, isNull)
-			c.Assert(err2, IsNil)
-			for i := 0; i < length; i++ {
-				c.Assert(nulls2[i], Equals, nulls[i])
-				c.Assert(selected2[i], Equals, selected[i])
-			}
 		}
 	}
 }
@@ -1285,4 +1271,45 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 			}
 		}
 	})
+}
+
+func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
+	ctx := mock.NewContext()
+	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for numCols := 1; numCols <= 10; numCols++ {
+		for round := 0; round < 64; round++ {
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
+			it := chunk.NewIterator4Chunk(input)
+			isNull := make([]bool, it.Len())
+			ctx.GetSessionVars().EnableVectorizedExpression = false
+			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			c.Assert(err, IsNil)
+			ctx.GetSessionVars().EnableVectorizedExpression = true
+			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			c.Assert(err2, IsNil)
+			length := it.Len()
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+
+			// add test which sel is not nil
+			exprs, input = genVecEvalBool(numCols, nil, eTypes)
+			input.SetSel(generateRandomSel())
+			it = chunk.NewIterator4Chunk(input)
+			isNull = isNull[:0]
+			ctx.GetSessionVars().EnableVectorizedExpression = false
+			selected, nulls, err = rowBasedFilter(ctx, exprs, it, nil, isNull)
+			c.Assert(err, IsNil)
+			ctx.GetSessionVars().EnableVectorizedExpression = true
+			selected2, nulls2, err2 = vectorizedFilter(ctx, exprs, it, nil, isNull)
+			c.Assert(err2, IsNil)
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+		}
+	}
+	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
 }
