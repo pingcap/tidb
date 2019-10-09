@@ -96,9 +96,9 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = 1
 	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) {
-		sig = &builtinRegexpBinarySig{bf}
+		sig = &builtinRegexpBinarySig{baseBuiltinFunc: bf, rm: nil}
 	} else {
-		sig = &builtinRegexpSig{bf}
+		sig = &builtinRegexpSig{baseBuiltinFunc: bf, rm: nil}
 	}
 	return sig, nil
 }
@@ -107,8 +107,31 @@ type regexpCompiler interface {
 	compile(pat string) (*regexp.Regexp, error)
 }
 
+type regexpMemoizer struct {
+	re *regexp.Regexp
+}
+
+func newRegexpMemoizer(patterns *chunk.Column, n int, rc regexpCompiler) *regexpMemoizer {
+	// Precondition: patterns is generated from a constant expression
+	rm := &regexpMemoizer{}
+	for i := 0; i < n; i++ {
+		if patterns.IsNull(i) {
+			continue
+		}
+		re, err := rc.compile(patterns.GetString(i))
+		if err == nil {
+			// Because patterns rows are all the same, we memoize the first
+			// successfully compiled regexp
+			rm.re = re
+			break
+		}
+	}
+	return rm
+}
+
 type builtinRegexpBinarySig struct {
 	baseBuiltinFunc
+	rm *regexpMemoizer // only used in vectorized evaluation
 }
 
 func (b *builtinRegexpBinarySig) Clone() builtinFunc {
@@ -142,6 +165,7 @@ func (b *builtinRegexpBinarySig) compile(pat string) (*regexp.Regexp, error) {
 
 type builtinRegexpSig struct {
 	baseBuiltinFunc
+	rm *regexpMemoizer // only used in vectorized evaluation
 }
 
 func (b *builtinRegexpSig) Clone() builtinFunc {
