@@ -324,20 +324,23 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
-	planString := st.plan
-	if len(planString) > 0 {
-		decodePlanString, err := codec.DecodePlan(st.plan)
-		if err == nil {
-			planString = decodePlanString
-		} else {
-			logutil.BgLogger().Error("decode plan tree error", zap.String("plan", st.plan), zap.Error(err))
-		}
-
-	}
-	record = append(record, types.NewStringDatum(planString))
+	record = append(record, types.NewStringDatum(parsePlan(st.plan)))
 	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
+}
+
+func parsePlan(planString string) string {
+	if len(planString) > len(variable.SlowLogPlanPrefix)+len(variable.SlowLogPlanSuffix) {
+		planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
+		decodePlanString, err := codec.DecodePlan(planString)
+		if err == nil {
+			planString = decodePlanString
+		} else {
+			logutil.BgLogger().Error("decode plan tree error", zap.String("plan", planString), zap.Error(err))
+		}
+	}
+	return planString
 }
 
 // ParseTime exports for testing.

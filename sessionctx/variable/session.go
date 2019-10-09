@@ -1150,6 +1150,10 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanPrefix is the prefix of the plan value.
+	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogPlanSuffix is the suffix of the plan value.
+	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
@@ -1277,7 +1281,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+		writeSlowLogItem(&buf, SlowLogPlan, SlowLogPlanPrefix+logItems.Plan+SlowLogPlanSuffix)
 	}
 
 	if logItems.PrevStmt != "" {
