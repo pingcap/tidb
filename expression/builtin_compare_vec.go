@@ -419,11 +419,36 @@ func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinIntervalRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	f64s := buf.Float64s()
+	result.ResizeInt64(n, false)
+	res := result.Int64s()
+	var idx int
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			res[i] = -1
+			continue
+		}
+		idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		res[i] = int64(idx)
+	}
+	return nil
 }
 
 func (b *builtinLTRealSig) vectorized() bool {
