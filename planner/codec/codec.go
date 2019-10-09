@@ -109,17 +109,21 @@ func (pd *planDecoder) decode(planString string) (string, error) {
 		pd.depths = append(pd.depths, p.depth)
 	}
 
+	// Calculated indentation of plans.
 	pd.initPlanTreeIndents()
-
 	for i := 1; i < len(pd.depths); i++ {
 		parentIndex := pd.findParentIndex(i)
 		pd.fillIndent(parentIndex, i)
 	}
+	// Align the value of plan fields.
+	pd.alignFields(planInfos)
 
 	for i, p := range planInfos {
 		if i > 0 {
 			pd.buf.WriteByte(lineBreaker)
 		}
+		// This is for alignment.
+		pd.buf.WriteByte(separator)
 		pd.buf.WriteString(string(pd.indents[i]))
 		for j := 0; j < len(p.fields); j++ {
 			if j > 0 {
@@ -169,6 +173,42 @@ func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 		}
 		pd.indents[i][idx] = TreeBody
 	}
+}
+
+func (pd *planDecoder) alignFields(planInfos []*planInfo) {
+	if len(planInfos) == 0 {
+		return
+	}
+	fieldsLen := len(planInfos[0].fields)
+	// Last field no need to align.
+	fieldsLen--
+	for colIdx := 0; colIdx < fieldsLen; colIdx++ {
+		maxFieldLen := pd.getMaxFieldLength(colIdx, planInfos)
+		for rowIdx, p := range planInfos {
+			fillLen := maxFieldLen - pd.getPlanFieldLen(rowIdx, colIdx, p)
+			for i := 0; i < fillLen; i++ {
+				p.fields[colIdx] += " "
+			}
+		}
+	}
+}
+
+func (pd *planDecoder) getMaxFieldLength(idx int, planInfos []*planInfo) int {
+	maxLength := -1
+	for rowIdx, p := range planInfos {
+		l := pd.getPlanFieldLen(rowIdx, idx, p)
+		if l > maxLength {
+			maxLength = l
+		}
+	}
+	return maxLength
+}
+
+func (pd *planDecoder) getPlanFieldLen(rowIdx, colIdx int, p *planInfo) int {
+	if colIdx == 0 {
+		return len(p.fields[0]) + len(pd.indents[rowIdx])
+	}
+	return len(p.fields[colIdx])
 }
 
 func decodePlanInfo(str string) (*planInfo, error) {
