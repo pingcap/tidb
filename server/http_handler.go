@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -994,13 +995,23 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*TableRegions, error) {
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
-	recordRegionIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	ctx := context.Background()
+	pdCli := h.RegionCache.PDClient()
+	regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 	if err != nil {
 		return nil, err
 	}
-	recordRegions, err := h.getRegionsMeta(recordRegionIDs)
-	if err != nil {
-		return nil, err
+
+	recordRegions := make([]RegionMeta, 0, len(peers))
+	for idx, leader := range peers {
+		region := regions[idx]
+		meta := RegionMeta{
+			ID:          region.Id,
+			Leader:      leader,
+			Peers:       region.Peers,
+			RegionEpoch: region.RegionEpoch,
+		}
+		recordRegions = append(recordRegions, meta)
 	}
 
 	// for indices
@@ -1010,14 +1021,22 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		rIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err
 		}
-		indices[i].Regions, err = h.getRegionsMeta(rIDs)
-		if err != nil {
-			return nil, err
+		indexRegions := make([]RegionMeta, 0, len(peers))
+		for idx, leader := range peers {
+			region := regions[idx]
+			meta := RegionMeta{
+				ID:          region.Id,
+				Leader:      leader,
+				Peers:       region.Peers,
+				RegionEpoch: region.RegionEpoch,
+			}
+			indexRegions = append(indexRegions, meta)
 		}
+		indices[i].Regions = indexRegions
 	}
 
 	return &TableRegions{
@@ -1429,7 +1448,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
 	IsOwner bool `json:"is_owner"`
-	*domain.ServerInfo
+	*util.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1448,11 +1467,11 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum                   int                           `json:"servers_num,omitempty"`
-	OwnerID                      string                        `json:"owner_id"`
-	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                         `json:"servers_num,omitempty"`
+	OwnerID                      string                      `json:"owner_id"`
+	IsAllServerVersionConsistent bool                        `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []util.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*util.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1478,8 +1497,8 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		log.Error(err)
 		return
 	}
-	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[util.ServerVersionInfo]struct{}{}
+	allVersions := make([]util.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

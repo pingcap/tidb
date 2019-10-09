@@ -11,5 +11,12 @@
 	  // Limit should NOT be pushed down into IndexLookUpReader when Selection on top of TableScan.
 	  "explain select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1"
     ]
+  },
+  {
+    "name": "TestIsFromUnixtimeNullRejective",
+    "cases": [
+      // fix #12385
+      "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);"
+    ]
   }
 ]
