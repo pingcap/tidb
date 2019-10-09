@@ -32,7 +32,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
-	github.com/myesui/uuid v1.0.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
@@ -59,7 +58,6 @@ require (
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/twinj/uuid v1.0.0
 	github.com/uber-go/atomic v1.3.2 // indirect
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
@@ -79,3 +77,5 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+go 1.13
