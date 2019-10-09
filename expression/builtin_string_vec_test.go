@@ -62,7 +62,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Bin: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
-	ast.ToBase64:   {},
+	ast.ToBase64: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{0, 10}}},
+	},
 	ast.FromBase64: {},
 	ast.ExportSet:  {},
 	ast.Repeat: {
