@@ -251,11 +251,37 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinArithmeticPlusDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf)
+	x := result.Decimals()
+	y := buf.Decimals()
+	to := new(types.MyDecimal)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
+			return err
+		}
+		x[i] = *to
+	}
+	return nil
 }
 
 func (b *builtinArithmeticMultiplyIntUnsignedSig) vectorized() bool {
