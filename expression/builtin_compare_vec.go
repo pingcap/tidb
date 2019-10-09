@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -411,11 +412,29 @@ func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinIntervalIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var err error
+	if err = b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	var idx int
+	for i, v := range i64s {
+		if result.IsNull(i) {
+			result.SetNull(i, false)
+			i64s[i] = -1
+			continue
+		}
+		idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(idx)
+	}
+	return nil
 }
 
 func (b *builtinIntervalRealSig) vectorized() bool {
@@ -475,11 +494,44 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinNullEQDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	args0 := buf0.Decimals()
+	args1 := buf1.Decimals()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		switch {
+		case isNull0 && isNull1:
+			i64s[i] = 1
+		case isNull0 != isNull1:
+			i64s[i] = 0
+		case args0[i].Compare(&args1[i]) == 0:
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinCoalesceDecimalSig) vectorized() bool {
