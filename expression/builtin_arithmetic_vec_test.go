@@ -26,7 +26,10 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.Minus: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 	},
-	ast.Div:    {},
+	ast.Div: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 0}}},
+	},
 	ast.IntDiv: {},
 	ast.Mod:    {},
 	ast.Or:     {},
