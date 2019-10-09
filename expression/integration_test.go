@@ -4132,15 +4132,14 @@ func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
 		"8xNwozCTFfMTcJMQkwCWx0HVlATlVMTCksIG5vdChpc251bGwVHAApUhcAUDIpKQo0CTEwXzE2CTEJMTAwMDAJdAHB2Dp0MSwgcmFuZ2U6Wy1p" +
 		"bmYsK2luZl0sIGtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkbwoFtgAyAZcEMAk6tgAEMjAFtgQyMDq2AAg5LCBmtgAAMFa3AAA5FbcAO" +
 		"T63AAAyzrcA')").Check(testkit.Rows("" +
-
-		"StreamAgg_13\troot\t1\tfuncs:count(1)\n" +
-		"└─HashLeftJoin_14\troot\t0\tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
-		"  ├─TableReader_18\troot\t0\tdata:Selection_17\n" +
-		"  │ └─Selection_17\tcop\t0\tlt(Column#1, NULL), not(isnull(Column#1)), not(isnull(Column#2))\n" +
-		"  │   └─TableScan_16\tcop\t10000\ttable:t1, range:[-inf,+inf], keep order:false, stats:pseudo\n" +
-		"  └─TableReader_21\troot\t0\tdata:Selection_20\n" +
-		"    └─Selection_20\tcop\t0\tlt(Column#9, NULL), not(isnull(Column#10)), not(isnull(Column#9))\n" +
-		"      └─TableScan_19\tcop\t10000\ttable:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"\tStreamAgg_13        \troot\t1    \tfuncs:count(1)\n" +
+		"\t└─HashLeftJoin_14   \troot\t0    \tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
+		"\t  ├─TableReader_18  \troot\t0    \tdata:Selection_17\n" +
+		"\t  │ └─Selection_17  \tcop \t0    \tlt(Column#1, NULL), not(isnull(Column#1)), not(isnull(Column#2))\n" +
+		"\t  │   └─TableScan_16\tcop \t10000\ttable:t1, range:[-inf,+inf], keep order:false, stats:pseudo\n" +
+		"\t  └─TableReader_21  \troot\t0    \tdata:Selection_20\n" +
+		"\t    └─Selection_20  \tcop \t0    \tlt(Column#9, NULL), not(isnull(Column#10)), not(isnull(Column#9))\n" +
+		"\t      └─TableScan_19\tcop \t10000\ttable:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
