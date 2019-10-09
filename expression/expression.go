@@ -253,8 +253,8 @@ func deallocateZeroSlice(areZeros []int8) {
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
-	// After the function finished, then we reset the sel in input chunk.
-	// Then the caller will handle the input.sel and selected slices.
+	// After the function finished, then we reset the input.Sel().
+	// The caller will handle the input.Sel() and selected slices.
 	if input.Sel() != nil {
 		defer input.SetSel(input.Sel())
 		input.SetSel(nil)
