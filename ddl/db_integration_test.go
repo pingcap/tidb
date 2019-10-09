@@ -2052,7 +2052,8 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustExec("drop table if exists t")
 
 	// In generated columns expression, these items are not allowed:
-	// 1. Blocked function
+	// 1. Blocked function (for full function list, please visit https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc)
+	// Note: This list is not complete, if you need a complete list, please refer to MySQL 5.7 source code.
 	tk.MustGetErrCode("create table t (a int, b int as (sysdate()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 2. Non-builtin function
 	tk.MustGetErrCode("create table t (a int, b int as (non_exist_funcA()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
