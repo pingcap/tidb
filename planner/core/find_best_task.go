@@ -670,9 +670,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		ts.SetSchema(ds.schema.Clone())
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
-				if is.schema.Contains(col) {
-					continue
-				}
+				//if is.schema.Contains(col) {
+				//	continue
+				//}
 
 				baseCols := expression.ExtractColumnWithVirtualExpr(col.VirtualExpr)
 				for _, baseCol := range baseCols {
@@ -763,6 +763,23 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCol
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
+
+	selConds := make([]expression.Expression, 0)
+	for i := len(tableConds) - 1; i >= 0; i-- {
+		baseCol := expression.ExtractColumns(tableConds[i])
+		for _, col := range baseCol {
+			if col.VirtualExpr != nil {
+				selConds = append(selConds, tableConds[i])
+				tableConds = append(tableConds[:i], tableConds[i+1:]...)
+				break
+			}
+		}
+	}
+	if len(tableConds) == 0 {
+		tableConds = nil
+	}
+	copTask.rootTaskConds = selConds
+
 	if indexConds != nil {
 		copTask.cst += copTask.count() * CopCPUFactor
 		var selectivity float64
