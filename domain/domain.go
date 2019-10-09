@@ -421,7 +421,7 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
-	ticker := time.NewTicker(time.Second * time.Duration(infosync.InfoSessionTTL) / 2)
+	ticker := time.NewTicker(time.Second * time.Duration(infosync.InfoSessionTTL) / 20)
 	defer ticker.Stop()
 	for {
 		select {
