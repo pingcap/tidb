@@ -1,0 +1,934 @@
+[
+  {
+    "Name": "TestIndexHint",
+    "Cases": null
+  },
+  {
+    "Name": "TestDAGPlanBuilderSimpleCase",
+    "Cases": [
+      {
+        "SQL": "select * from t t1 use index(c_d_e)",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))"
+      },
+      {
+        "SQL": "select f from t use index() where f = 1",
+        "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
+      },
+      {
+        "SQL": "select a from t where a between 1 and 2 order by c",
+        "Best": "TableReader(Table(t))->Sort->Projection"
+      },
+      {
+        "SQL": "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
+        "Best": "IndexLookUp(Index(t.c_d_e)[(0,2) (4,6) (8,10) (12,14) (16,18)], Table(t))"
+      },
+      {
+        "SQL": "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.b],0,1)"
+      },
+      {
+        "SQL": "select * from t where t.e_str is null",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[NULL,NULL]], Table(t))"
+      },
+      {
+        "SQL": "select * from t where t.c is null",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.e],0,1)"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit, Table(t))"
+      },
+      {
+        "SQL": "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t order by t.a limit 1",
+        "Best": "TableReader(Table(t)->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t order by t.a + t.b limit 1",
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([col_3],0,1)->Projection->Projection"
+      },
+      {
+        "SQL": "select c from t  limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit"
+      },
+      {
+        "SQL": "select c from t where c = 1 limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Limit)->Limit"
+      },
+      {
+        "SQL": "select c from t where c = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])"
+      },
+      {
+        "SQL": "select c from t order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])"
+      },
+      {
+        "SQL": "select c from t where c = 1 order by e",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Sort->Projection"
+      },
+      {
+        "SQL": "select c, b from t where c = 1 limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Projection"
+      },
+      {
+        "SQL": "select c, b from t where c = 1 and e = 1 and b = 1 limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)])->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t where c = 1 order by d, c",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Sort->Projection"
+      },
+      {
+        "SQL": "select c_str from t where e_str = '1' order by d_str, c_str",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"1\",\"1\"]], Table(t))->Sort->Projection"
+      },
+      {
+        "SQL": "select c from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))"
+      },
+      {
+        "SQL": "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"e\" \"d\" \"abcdefghij\",\"e\" \"d\" \"abcdefghij\"]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))"
+      },
+      {
+        "SQL": "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"p\",\"p\"]], Table(t))"
+      },
+      {
+        "SQL": "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
+        "Best": "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t1.a)->Limit"
+      },
+      {
+        "SQL": "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
+        "Best": "UnionAll{Dual->Projection->Dual->Projection}->HashAgg->Sort"
+      },
+      {
+        "SQL": "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
+        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort"
+      },
+      {
+        "SQL": "select * from (select *, NULL as xxx from t) t order by xxx",
+        "Best": "TableReader(Table(t))->Projection"
+      },
+      {
+        "SQL": "select lead(a, 1) over (partition by null) as c from t",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(lead(test.t.a, 1) over())->Projection"
+      },
+      {
+        "SQL": "select * from t use index(f) where f = 1 and a = 1",
+        "Best": "IndexLookUp(Index(t.f)[[1,1]]->Sel([eq(test.t.a, 1)]), Table(t))"
+      },
+      {
+        "SQL": "select * from t2 use index(b) where b = 1 and a = 1",
+        "Best": "IndexLookUp(Index(t2.b)[[1,1]]->Sel([eq(test.t2.a, 1)]), Table(t2))"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderJoin",
+    "Cases": [
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.c_str",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(cast(test.t1.a),cast(test.t2.c_str))->Projection"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.a,test.t3.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
+        "Best": "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.b,test.t3.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)->Sort"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)->Limit"
+      },
+      {
+        "SQL": "select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)->TopN([test.t1.a],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t1.b,test.t2.a)->Limit"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
+        "Best": "IndexJoin{IndexLookUp(Index(t.c_d_e)[[1 1 1,1 1 1]], Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)->TopN([test.t1.a],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.b)->TableReader(Table(t))}(test.t1.b,test.t3.b)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
+        "Best": "MergeRightOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.a,test.t3.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
+        "Best": "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t3.a,test.t1.a)->TableReader(Table(t))}(test.t1.a,test.t2.a)->Projection"
+      },
+      {
+        "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
+        "Best": "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.s.a)"
+      },
+      {
+        "SQL": "select t.c in (select b from t s where s.a = t.a) from t",
+        "Best": "MergeLeftOuterSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.s.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(test.t1.a,test.t2.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t1.b,test.t2.b)->Sort"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t1.b,test.t2.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t2.a,test.t3.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.b and t2.a = t3.b",
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(test.t1.a,test.t2.b)->Sort->TableReader(Table(t))->Sort}(test.t2.a,test.t3.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
+        "Best": "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)(test.t1.d,test.t2.d)->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t3.c)(test.t1.d,test.t3.d)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
+        "Best": "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)(test.t1.d,test.t2.d)->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t3.c)(test.t1.d,test.t3.d)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
+        "Best": "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t2.a,test.t3.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
+        "Best": "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->TableReader(Table(t))}(test.t1.a,test.t3.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t1.a,test.t2.c)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
+        "Best": "IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t1.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.c,test.t1.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.a and t2.b < 1",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([lt(test.t2.b, 1)]))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2 on t1.d=t2.d and t2.c = 1",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.d,test.t2.d)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.b",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 right outer join t t2 on t1.a = t2.b",
+        "Best": "RightHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t1.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a = t2.a and t1.f=t2.f",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.f=t2.f and t1.a=t2.a",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a=t2.a and t2.a in (1, 2)",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([in(test.t2.a, 1, 2)]))}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t1.b,test.t2.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c > t1.d-10 and t2.c < t1.d+10",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
+        "Best": "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1 2 4,1 2 4]], Table(t))}"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[(1 1 10,1 1 20)], Table(t))}"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderSubquery",
+    "Cases": [
+      {
+        "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection"
+      },
+      {
+        "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort"
+      },
+      {
+        "SQL": "select * from t where a in (select s.a from t s) order by t.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.s.a)->Projection"
+      },
+      {
+        "SQL": "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.s.c,test.k.c)(test.s.d,test.k.d)->Projection->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection"
+      },
+      {
+        "SQL": "select * from t where a in (select a from t) order by b",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Projection->Sort"
+      },
+      {
+        "SQL": "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
+        "Best": "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t1.a, test.t.a)]))}(test.s.a,test.t1.a)->StreamAgg}->Projection"
+      },
+      {
+        "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
+        "Best": "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->StreamAgg}(test.t.a,test.s.a)->Projection->Projection"
+      },
+      {
+        "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
+        "Best": "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.s.a,test.t1.a)->StreamAgg}(test.t.a,test.s.a)->Projection->Sort->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanTopN",
+    "Cases": [
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.a limit 1",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t1.b,test.t2.b)->TopN([test.t1.a],0,1)->TableReader(Table(t))}(test.t2.b,test.t3.b)->TopN([test.t1.a],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.b limit 1",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->TopN([test.t1.b],0,1))->TopN([test.t1.b],0,1)->TableReader(Table(t))}(test.t1.b,test.t2.b)->TopN([test.t1.b],0,1)->TableReader(Table(t))}(test.t2.b,test.t3.b)->TopN([test.t1.b],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b limit 1",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t1.b,test.t2.b)->Limit->TableReader(Table(t))}(test.t2.b,test.t3.b)->Limit"
+      },
+      {
+        "SQL": "select * from t where b = 1 and c = 1 order by c limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Limit"
+      },
+      {
+        "SQL": "select * from t where c = 1 order by c limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))"
+      },
+      {
+        "SQL": "select * from t order by a limit 1",
+        "Best": "TableReader(Table(t)->Limit)->Limit"
+      },
+      {
+        "SQL": "select c from t order by c limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderBasePhysicalPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t order by b limit 1 for update",
+        "Best": "TableReader(Table(t))->Lock->TopN([test.t.b],0,1)"
+      },
+      {
+        "SQL": "update t set a = 5 where b < 1 order by d limit 1",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Update"
+      },
+      {
+        "SQL": "update t set a = 5",
+        "Best": "TableReader(Table(t))->Update"
+      },
+      {
+        "SQL": "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)->Delete"
+      },
+      {
+        "SQL": "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
+        "Best": "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.c,test.t2.c)->Delete"
+      },
+      {
+        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Update"
+      },
+      {
+        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Update"
+      },
+      {
+        "SQL": "delete from t where b < 1 order by d limit 1",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete"
+      },
+      {
+        "SQL": "delete from t",
+        "Best": "TableReader(Table(t))->Delete"
+      },
+      {
+        "SQL": "delete from t use index(c_d_e) where b = 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Delete"
+      },
+      {
+        "SQL": "insert into t select * from t where b < 1 order by d limit 1",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert"
+      },
+      {
+        "SQL": "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
+        "Best": "Insert"
+      },
+      {
+        "SQL": "select 1",
+        "Best": "Dual->Projection"
+      },
+      {
+        "SQL": "select * from t where false",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "show tables",
+        "Best": "Show"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderUnion",
+    "Cases": [
+      {
+        "SQL": "select * from t union all select * from t",
+        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}"
+      },
+      {
+        "SQL": "select * from t union all (select * from t) order by a ",
+        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort"
+      },
+      {
+        "SQL": "select * from t union all (select * from t) limit 1",
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t)->Limit)->Limit}->Limit"
+      },
+      {
+        "SQL": "select a from t union all (select c from t) order by a limit 1",
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([a],0,1)"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderUnionScan",
+    "Cases": null
+  },
+  {
+    "Name": "TestDAGPlanBuilderAgg",
+    "Cases": [
+      {
+        "SQL": "select distinct b from t",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select count(*) from (select * from t order by b) t group by b",
+        "Best": "TableReader(Table(t))->Sort->StreamAgg"
+      },
+      {
+        "SQL": "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
+        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select sum(a), avg(b + c) from t group by d",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(distinct a), avg(b + c) from t group by d",
+        "Best": "TableReader(Table(t))->Projection->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(e + c) from t where c = 1 group by (c + d)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(e + c) from t where c = 1 group by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(e + c) from t where c = 1 group by e",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->Projection->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(b + c) from t where c = 1 and b = 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
+      },
+      {
+        "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort"
+      },
+      {
+        "SQL": "select sum(to_base64(e)) from t where c = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t.a,test.s.a)->Projection->Projection"
+      },
+      {
+        "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select sum(e+1) from t group by e,d,c order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c,e",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Sort->Projection"
+      },
+      {
+        "SQL": "select sum(e+1) from t group by e,d,c order by c,e",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Sort->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by g order by g limit 10",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by g limit 10",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit"
+      },
+      {
+        "SQL": "select count(*) from t group by g order by g",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by g order by g desc limit 1",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by b order by b limit 10",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->TopN([test.t.b],0,10)->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by b order by b",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Sort->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by b limit 10",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Limit"
+      },
+      {
+        "SQL": "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g group by a.g",
+        "Best": "MergeInnerJoin{IndexReader(Index(t.g)[[NULL,+inf]])->IndexReader(Index(t.g)[[NULL,+inf]])}(test.a.g,test.b.g)->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
+        "Best": "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.b.g, 60)]))}(test.a.g,test.b.g)->Projection->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
+        "Best": "IndexJoin{IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.a.a, 5)]))->IndexReader(Index(t.g)[[NULL,+inf]])}(test.a.g,test.b.g)->Projection->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select sum(d) from t",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg"
+      }
+    ]
+  },
+  {
+    "Name": "TestRefine",
+    "Cases": [
+      {
+        "SQL": "select a from t where c is not null",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c >= 4",
+        "Best": "IndexReader(Index(t.c_d_e)[[4,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c <= 4",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,4]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 4 and d = 5 and e = 6",
+        "Best": "IndexReader(Index(t.c_d_e)[[4 5 6,4 5 6]])->Projection"
+      },
+      {
+        "SQL": "select a from t where d = 4 and c = 5",
+        "Best": "IndexReader(Index(t.c_d_e)[[5 4,5 4]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 4 and e < 5",
+        "Best": "IndexReader(Index(t.c_d_e)[[4,4]]->Sel([lt(test.t.e, 5)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 4 and d <= 5 and d > 3",
+        "Best": "IndexReader(Index(t.c_d_e)[(4 3,4 5]])->Projection"
+      },
+      {
+        "SQL": "select a from t where d <= 5 and d > 3",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([le(test.t.d, 5) gt(test.t.d, 3)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c between 1 and 2",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,2]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c not between 1 and 2",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1) (2,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c <= 5 and c >= 3 and d = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[3,5]]->Sel([eq(test.t.d, 1)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 1 or c = 2 or c = 3",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,3]])->Projection"
+      },
+      {
+        "SQL": "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 5",
+        "Best": "IndexReader(Index(t.c_d_e)[[5,5]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 5 and b = 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[5,5]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where not a",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([not(test.t.a)]))"
+      },
+      {
+        "SQL": "select a from t where c in (1)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in ('1')",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 1.0",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1) and d > 3",
+        "Best": "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+        "Best": "Dual->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
+        "Best": "IndexReader(Index(t.c_d_e)[(1 2,1 4) (1 5,1 7) (2 2,2 4) (2 5,2 7) (3 2,3 4) (3 5,3 7)])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where d in (1, 2, 3)",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([in(test.t.d, 1, 2, 3)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c not in (1)",
+        "Best": "IndexReader(Index(t.c_d_e)[(NULL,1) (1,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t use index(c_d_e) where c != 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like ''",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"\",\"\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abc\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str not like 'abc'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[-inf,\"abc\") (\"abc\",+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where not (c_str like 'abc' or c_str like 'abd')",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[-inf,\"abc\") (\"abc\",\"abd\") (\"abd\",+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like '_abc'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([like(test.t.c_str, _abc, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc%'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc_'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc%af'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc%af, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\_' escape ''",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\_'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\\\_'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\_%'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc=_%' escape '='",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\__'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 123",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 1.9 and d > 3",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select a from t where c < 1.1",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,2)])->Projection"
+      },
+      {
+        "SQL": "select a from t where c <= 1.9",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c >= 1.1",
+        "Best": "IndexReader(Index(t.c_d_e)[[2,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c > 1.9",
+        "Best": "IndexReader(Index(t.c_d_e)[(1,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 123456789098765432101234",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select a from t where c = 'hanfei'",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestAggEliminator",
+    "Cases": [
+      {
+        "SQL": "select max(a) from t;",
+        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
+      },
+      {
+        "SQL": "select min(a) from t;",
+        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
+      },
+      {
+        "SQL": "select min(c_str) from t;",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), b from t;",
+        "Best": "TableReader(Table(t)->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a+1) from t;",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([col_1 true],0,1)->Projection->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), min(a) from t;",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a) from t group by b;",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.a)->Limit->StreamAgg"
+      }
+    ]
+  },
+  {
+    "Name": "TestUnmatchedTableInHint",
+    "Cases": [
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name"
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name"
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": ""
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
+        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t1.a)}(test.t3.a,test.t2.a)->Projection",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t1.b,test.t2.a)",
+        "Warning": "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
+        "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->IndexReader(Index(t2.b_c)[[NULL,+inf]]->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
+        "Warning": "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable"
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinUnionScan",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(test.t1.a,test.t2.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->UnionScan([])}(test.t1.a,test.t2.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(test.t1.a,test.t2.c)->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestSemiJoinToInner",
+    "Cases": [
+      {
+        "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
+        "Best": "Apply{TableReader(Table(t))->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->StreamAgg"
+      }
+    ]
+  }
+]
