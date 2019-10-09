@@ -428,13 +428,16 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 			for _, key := range keys {
 				txn.us.DeleteKeyExistErrInfo(key)
 			}
-			wg := txn.asyncPessimisticRollback(ctx, keys)
-			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
-				dl.IsRetryable = true
-				// Wait for the pessimistic rollback to finish before we retry the statement.
-				wg.Wait()
-				// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
-				time.Sleep(time.Millisecond * 5)
+			// If there is only 1 key and lock failed, no need to do pessimistic rollback.
+			if len(keys) > 1 {
+				wg := txn.asyncPessimisticRollback(ctx, keys)
+				if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
+					dl.IsRetryable = true
+					// Wait for the pessimistic rollback to finish before we retry the statement.
+					wg.Wait()
+					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+					time.Sleep(time.Millisecond * 5)
+				}
 			}
 			if assignedPrimaryKey {
 				// unset the primary key if we assigned primary key when failed to lock it.
