@@ -92,19 +92,13 @@ func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 
+	result.MergeNulls(buf)
+
 	for i := 0; i < numRows; i++ {
-		isNull0 := result.IsNull(i)
-		isNull1 := buf.IsNull(i)
-
-		isNull := false
-
-		if !isNull0 && !isNull1 {
-			arg0s[i] = arg0s[i] | arg1s[i]
-		} else {
-			arg0s[i] = 0
-			isNull = true
+		if result.IsNull(i) {
+			continue
 		}
-		result.SetNull(i, isNull)
+		arg0s[i] = arg0s[i] | arg1s[i]
 	}
 	return nil
 }
