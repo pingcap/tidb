@@ -161,11 +161,14 @@ func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDurationAnyValueSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (b *builtinIntAnyValueSig) vectorized() bool {
