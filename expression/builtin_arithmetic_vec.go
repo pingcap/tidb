@@ -125,15 +125,15 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	x := result.Decimals()
 	y := buf.Decimals()
-	to := new(types.MyDecimal)
+	var to types.MyDecimal
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		if err = types.DecimalSub(&x[i], &y[i], to); err != nil {
+		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
 			return err
 		}
-		x[i] = *to
+		x[i] = to
 	}
 	return nil
 }
