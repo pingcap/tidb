@@ -609,29 +609,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.tablePlan.statsInfo()
 		// add dependent columns to table scan if necessary.
 		ts := p.TablePlans[0].(*PhysicalTableScan)
-		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
-				baseCols := expression.ExtractColumnWithVirtualExpr(col.VirtualExpr)
-				for _, baseCol := range baseCols {
-					if !p.schema.Contains(baseCol) {
-						p.schema.Columns = append(p.schema.Columns, baseCol)
-						for _, infoCol := range ts.Table.Columns {
-							if baseCol.OrigColName == infoCol.Name {
-								ts.Columns = append(ts.Columns, infoCol)
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-		//	sort.Slice(ts.schema.Columns, func(i, j int) bool {
-		//		return model.FindColumnInfo(ts.Table.Columns, ts.schema.Columns[i].OrigColName.String()).Offset <
-		//			model.FindColumnInfo(ts.Table.Columns, ts.schema.Columns[j].OrigColName.String()).Offset
-		//	})
-		//	sort.Slice(ts.Columns, func(i, j int) bool {
-		//		return ts.Columns[i].Offset < ts.Columns[j].Offset
-		//	})
+		ts.ExpandVirtualColumn()
 		newTask.p = p
 	}
 

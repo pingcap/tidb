@@ -668,26 +668,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
-		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
-				//if is.schema.Contains(col) {
-				//	continue
-				//}
-
-				baseCols := expression.ExtractColumnWithVirtualExpr(col.VirtualExpr)
-				for _, baseCol := range baseCols {
-					if !ts.schema.Contains(baseCol) {
-						ts.schema.Columns = append(ts.schema.Columns, baseCol)
-						for _, infoCol := range ts.Table.Columns {
-							if baseCol.OrigColName == infoCol.Name {
-								ts.Columns = append(ts.Columns, infoCol)
-								break
-							}
-						}
-					}
-				}
-			}
-		}
+		ts.ExpandVirtualColumn()
 		cop.tablePlan = ts
 	}
 	cop.cst = cost

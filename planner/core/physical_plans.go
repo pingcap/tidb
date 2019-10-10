@@ -212,6 +212,23 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
+// ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
+func (ts *PhysicalTableScan) ExpandVirtualColumn() {
+	for _, col := range ts.schema.Columns {
+		if col.VirtualExpr == nil {
+			continue
+		}
+
+		baseCols := expression.ExtractColumnWithVirtualExpr(col.VirtualExpr)
+		for _, baseCol := range baseCols {
+			if !ts.schema.Contains(baseCol) {
+				ts.schema.Columns = append(ts.schema.Columns, baseCol)
+				ts.Columns = append(ts.Columns, model.FindColumnInfo(ts.Table.Columns, baseCol.OrigColName.String()))
+			}
+		}
+	}
+}
+
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
 	physicalSchemaProducer
