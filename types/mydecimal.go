@@ -1846,6 +1846,7 @@ DecimalMul multiplies two decimals.
     digits, fast multiplication must be implemented.
 */
 func DecimalMul(from1, from2, to *MyDecimal) error {
+	resetDecimal(to)
 	var (
 		err         error
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
