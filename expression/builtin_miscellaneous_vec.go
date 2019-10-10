@@ -149,10 +149,7 @@ func (b *builtinNameConstDurationSig) vectorized() bool {
 }
 
 func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[1].VecEvalDuration(b.ctx, input, result); err != nil {
-		return err
-	}
-	return nil
+	return b.args[1].VecEvalDuration(b.ctx, input, result)
 }
 
 func (b *builtinLockSig) vectorized() bool {
