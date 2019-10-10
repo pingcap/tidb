@@ -22,7 +22,7 @@ require (
 	github.com/gogo/protobuf v1.1.1
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/golang/groupcache v0.0.0-20181024230925-c65c006176ff // indirect
-	github.com/golang/protobuf v1.1.0
+	github.com/golang/protobuf v1.3.2
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
@@ -35,6 +35,7 @@ require (
 	github.com/hpcloud/tail v1.0.0 // indirect
 	github.com/jonboulle/clockwork v0.1.0 // indirect
 	github.com/json-iterator/go v1.1.6 // indirect
+	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
@@ -52,19 +53,18 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190826051950-fc8799546726
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190910040957-e998b3c52469
+	github.com/pingcap/parser v0.0.0-20191010030522-6e4f15d4819b
 	github.com/pingcap/pd v2.1.12+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
-	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
+	github.com/pingcap/tipb v0.0.0-20191008064422-018b2fadf414
 	github.com/prometheus/client_golang v0.8.0
 	github.com/prometheus/client_model v0.0.0-20171117100541-99fa1f4be8e5
 	github.com/prometheus/common v0.0.0-20180426121432-d811d2e9bf89 // indirect
 	github.com/prometheus/procfs v0.0.0-20180408092902-8b1c2da0d56d // indirect
-	github.com/sirupsen/logrus v0.0.0-20170323161349-3bcb09397d6d
+	github.com/sirupsen/logrus v1.4.2
 	github.com/soheilhy/cmux v0.1.4 // indirect
 	github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 // indirect
-	github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273
 	github.com/uber/jaeger-client-go v2.8.0+incompatible
 	github.com/uber/jaeger-lib v1.1.0 // indirect
 	github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3 // indirect
@@ -73,9 +73,8 @@ require (
 	go.uber.org/zap v1.9.1
 	golang.org/x/crypto v0.0.0-20180503215945-1f94bef427e3 // indirect
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
-	golang.org/x/sync v0.0.0-20180314180146-1d60e4601c6f // indirect
-	golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e // indirect
-	golang.org/x/text v0.3.0
+	golang.org/x/sys v0.0.0-20191009170203-06d7bd2c5f4f // indirect
+	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2 // indirect
 	golang.org/x/tools v0.0.0-20181105230042-78dc5bac0cac
 	google.golang.org/genproto v0.0.0-20180427144745-86e600f69ee4 // indirect
@@ -85,4 +84,4 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
 
-replace github.com/pingcap/parser => github.com/zz-jason/parser v0.0.0-20191003033834-cce7a9500e2e
+go 1.13
