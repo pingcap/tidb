@@ -372,7 +372,7 @@ func (*testSuite) TestT(c *C) {
 	beforeTS := variable.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := variable.GoTimeToTS(time.Now())
-	c.Assert(infoSyncer.minStartTS > beforeTS && infoSyncer.minStartTS < afterTS, IsFalse)
+	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
 	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
 	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
 	sm.PS = []*util.ProcessInfo{
@@ -383,7 +383,7 @@ func (*testSuite) TestT(c *C) {
 	}
 	infoSyncer.SetSessionManager(sm)
 	infoSyncer.ReportMinStartTS(dom.Store())
-	c.Assert(infoSyncer.minStartTS == validTS, IsTrue)
+	c.Assert(infoSyncer.GetMinStartTS() == validTS, IsTrue)
 
 	err = store.Close()
 	c.Assert(err, IsNil)
