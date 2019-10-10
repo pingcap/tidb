@@ -110,12 +110,31 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	partitionDefs := ds.table.Meta().Partition.Definitions
 
+	sctx := ds.SCtx()
+	filterConds := make([]expression.Expression, len(ds.allConds))
+	copy(filterConds, ds.allConds)
+	filterConds = expression.PropagateConstant(sctx, filterConds)
+	presolvedFilters := solver.Solve(sctx, filterConds)
+	alwaysFalse := false
+	if len(presolvedFilters) == 1 {
+		// Constant false.
+		if con, ok := presolvedFilters[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
+			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+			if err == nil && ret == false {
+				alwaysFalse = true
+			}
+		}
+	}
+
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
+		if alwaysFalse {
+			break
+		}
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.SCtx(), col, expr, ds.allConds)
+		pruned, err := s.canBePruned(ds.SCtx(), col, expr, presolvedFilters)
 		if err != nil {
 			return nil, err
 		}
