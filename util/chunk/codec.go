@@ -278,7 +278,7 @@ func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int)
 
 	if numFixedBytes == -1 {
 		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows+1]...)
-		for i := colTarget.length; i < colTarget.length+requestRows; i++ {
+		for i := colTarget.length + 1; i <= colTarget.length+requestRows; i++ {
 			colTarget.offsets[i] = colTarget.offsets[i] - colSource.offsets[0] + colTarget.offsets[colTarget.length]
 		}
 		colSource.offsets = colSource.offsets[requestRows:]
