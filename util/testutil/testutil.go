@@ -193,6 +193,26 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	return res, err
 }
 
+// GetTestCasesByName gets the test cases for a test function by its name.
+func (t *TestData) GetTestCasesByName(caseName string, c *check.C, in interface{}, out interface{}) {
+	casesIdx, ok := t.funcMap[caseName]
+	c.Assert(ok, check.IsTrue, check.Commentf("Must get test %s", caseName))
+	err := json.Unmarshal(*t.input[casesIdx].Cases, in)
+	c.Assert(err, check.IsNil)
+	if !record {
+		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
+		c.Assert(err, check.IsNil)
+	} else {
+		// Init for generate output file.
+		inputLen := reflect.ValueOf(in).Elem().Len()
+		v := reflect.ValueOf(out).Elem()
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+		}
+	}
+	t.output[casesIdx].decodedOut = out
+}
+
 // GetTestCases gets the test cases for a test function.
 func (t *TestData) GetTestCases(c *check.C, in interface{}, out interface{}) {
 	// Extract caller's name.
