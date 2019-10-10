@@ -71,11 +71,42 @@ func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinBitOrSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	arg0s := result.Int64s()
+	arg1s := buf.Int64s()
+
+	for i := 0; i < numRows; i++ {
+		isNull0 := result.IsNull(i)
+		isNull1 := buf.IsNull(i)
+
+		isNull := false
+
+		if !isNull0 && !isNull1 {
+			arg0s[i] = arg0s[i] | arg1s[i]
+		} else {
+			arg0s[i] = 0
+			isNull = true
+		}
+		result.SetNull(i, isNull)
+	}
+	return nil
 }
 
 func (b *builtinDecimalIsFalseSig) vectorized() bool {
