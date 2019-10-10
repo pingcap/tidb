@@ -422,6 +422,9 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 			var uintVal uint64
 			sc := b.ctx.GetSessionVars().StmtCtx
 			uintVal, err = types.ConvertFloatToUint(sc, f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			if err != nil {
+				return err
+			}
 			i64s[i] = int64(uintVal)
 		}
 	}
