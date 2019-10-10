@@ -145,11 +145,14 @@ func (b *builtinUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinNameConstDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[1].VecEvalDuration(b.ctx, input, result); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (b *builtinLockSig) vectorized() bool {
