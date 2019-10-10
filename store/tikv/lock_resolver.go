@@ -17,7 +17,6 @@ import (
 	"container/list"
 	"context"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -200,18 +199,32 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
-	startTime := time.Now()
+	startTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
 	txnInfos := make(map[uint64]uint64)
+	startTime := time.Now()
 	for _, l := range expiredLocks {
 		if _, ok := txnInfos[l.TxnID]; ok {
 			continue
 		}
 
-		// Use math.MaxUint64 as currentTS, so the txn is either committed or rollbacked.
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, math.MaxUint64)
+		currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, startTS, currentTS)
+		if err != nil {
+			return false, err
+		}
+
+		if status.ttl > 0 {
+			// Do not clean lock that is not expired.
+			continue
+		}
+
 		txnInfos[l.TxnID] = uint64(status.commitTS)
 	}
 	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
