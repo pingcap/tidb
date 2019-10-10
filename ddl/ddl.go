@@ -825,7 +825,6 @@ func init() {
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeGeneratedColumnFunctionIsNotAllowed:    mysql.ErrGeneratedColumnFunctionIsNotAllowed,
 		codeGeneratedColumnRefAutoInc:              mysql.ErrGeneratedColumnRefAutoInc,
-		codeGeneratedColumnRefAutoInc:              mysql.ErrGeneratedColumnRefAutoInc,
 		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
 		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
 		codePartitionWrongNoSubpart:                mysql.ErrPartitionWrongNoSubpart,
