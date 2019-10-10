@@ -267,6 +267,27 @@ func (c *Chunk) CopyConstruct() *Chunk {
 	return newChk
 }
 
+// CopyReconstruct copies this Chunk to dst and removes unselected rows.
+// If dst is nil, it creates a new Chunk and returns it.
+func (c *Chunk) CopyReconstruct(dst *Chunk) *Chunk {
+	if dst == nil {
+		dst = new(Chunk)
+	} else {
+		dst.Reset()
+	}
+	dst.numVirtualRows = c.numVirtualRows
+	dst.capacity = c.capacity
+	dst.sel = c.sel
+	if len(dst.columns) < len(c.columns) {
+		dst.columns = make([]*Column, len(c.columns))
+	}
+
+	for i := 0; i < len(c.columns); i++ {
+		dst.columns[i] = c.columns[i].CopyReconstruct(c.sel, nil)
+	}
+	return dst
+}
+
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
 // The doubled capacity should not be larger than maxChunkSize.
 // TODO: this method will be used in following PR.

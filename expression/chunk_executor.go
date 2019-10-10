@@ -372,15 +372,15 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 	selectedLength := len(selected)
 	unselected := allocZeroSlice(selectedLength)
 	defer deallocateZeroSlice(unselected)
-	// unselected[i] == 0 means that the i-th row is not selected
+	// unselected[i] == 1 means that the i-th row is not selected
 	for i := 0; i < selectedLength; i++ {
-		unselected[i] = 0
+		unselected[i] = 1
 	}
 	for _, ind := range sel {
-		unselected[ind] = 1
+		unselected[ind] = 0
 	}
 	for i := 0; i < selectedLength; i++ {
-		if unselected[i] == 0 {
+		if selected[i] && unselected[i] == 1 {
 			selected[i] = false
 		}
 	}
