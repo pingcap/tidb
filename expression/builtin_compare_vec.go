@@ -618,13 +618,14 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 func VecCompareInt(lhsArg, rhsArg Expression, lColumn, rColumn *chunk.Column, n int, f func(val int64, isNull bool, err error) (int64, bool, error), result *chunk.Column) error {
 	arg0 := lColumn.Int64s()
 	arg1 := rColumn.Int64s()
+	result.MergeNulls(lColumn, rColumn)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		var res int64
 		var isNull bool = false
 		var err error = nil
 		// compare null values.
-		if lColumn.IsNull(i) || rColumn.IsNull(i) {
+		if result.IsNull(i) {
 			result.SetNull(i, true)
 			res, isNull, err = f(compareNull(lColumn.IsNull(i), rColumn.IsNull(i)), false, nil)
 			if err != nil {
