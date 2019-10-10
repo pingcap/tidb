@@ -1518,7 +1518,14 @@ func DecimalSub(from1, from2, to *MyDecimal) error {
 	return doAdd(from1, from2, to)
 }
 
+func resetDecimal(d *MyDecimal) {
+	for i := range d.wordBuf {
+		d.wordBuf[i] = 0
+	}
+}
+
 func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
+	resetDecimal(to)
 	var (
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
 		wordsFrac1  = digitsToWords(int(from1.digitsFrac))
@@ -1684,6 +1691,7 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 }
 
 func doAdd(from1, from2, to *MyDecimal) error {
+	resetDecimal(to)
 	var (
 		err         error
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
@@ -2000,6 +2008,7 @@ func DecimalMod(from1, from2, to *MyDecimal) error {
 }
 
 func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
+	resetDecimal(mod)
 	var (
 		frac1 = digitsToWords(int(from1.digitsFrac)) * digitsPerWord
 		prec1 = int(from1.digitsInt) + frac1
