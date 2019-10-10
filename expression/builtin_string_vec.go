@@ -589,7 +589,7 @@ func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
 
