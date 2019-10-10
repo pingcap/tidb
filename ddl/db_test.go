@@ -2974,7 +2974,6 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
-
 	s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
 	defer s.mustExec(c, "drop table t;")
 	for i := 0; i < 50; i++ {
@@ -2989,7 +2988,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
 	}
-	// NOTE: this test case contains a bug, it should be uncomment after the bug is fixed.
+	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
 	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
 	//s.mustExec(c, "delete from t where y = 2155")
 	//s.mustExec(c, "alter table t add index idx_y(y1)")

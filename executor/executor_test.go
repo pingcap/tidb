@@ -1613,7 +1613,7 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	result.Check(testkit.Rows(`3 {} <nil>`))
 
 	// Check cast json to decimal.
-	// NOTE: this test case contains a bug, it should be uncomment after the bug is fixed.
+	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
 	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12178
 	//tk.MustExec("drop table if exists test_json")
 	//tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
