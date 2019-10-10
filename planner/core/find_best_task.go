@@ -745,21 +745,10 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 
-	selConds := make([]expression.Expression, 0)
-	for i := len(tableConds) - 1; i >= 0; i-- {
-		baseCol := expression.ExtractColumns(tableConds[i])
-		for _, col := range baseCol {
-			if col.VirtualExpr != nil {
-				selConds = append(selConds, tableConds[i])
-				tableConds = append(tableConds[:i], tableConds[i+1:]...)
-				break
-			}
-		}
-	}
+	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
 	if len(tableConds) == 0 {
 		tableConds = nil
 	}
-	copTask.rootTaskConds = selConds
 
 	if indexConds != nil {
 		copTask.cst += copTask.count() * CopCPUFactor
@@ -780,6 +769,22 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+}
+
+// splitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
+func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	filterConds := make([]expression.Expression, 0)
+	for i := len(conds) - 1; i >= 0; i-- {
+		baseCol := expression.ExtractColumns(conds[i])
+		for _, col := range baseCol {
+			if col.VirtualExpr != nil {
+				filterConds = append(filterConds, conds[i])
+				conds = append(conds[:i], conds[i+1:]...)
+				break
+			}
+		}
+	}
+	return conds, filterConds
 }
 
 func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.Item) bool {
@@ -1012,18 +1017,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	selConds := make([]expression.Expression, 0)
-	for i := len(ts.filterCondition) - 1; i >= 0; i-- {
-		baseCol := expression.ExtractColumns(ts.filterCondition[i])
-		for _, col := range baseCol {
-			if col.VirtualExpr != nil {
-				selConds = append(selConds, ts.filterCondition[i])
-				ts.filterCondition = append(ts.filterCondition[:i], ts.filterCondition[i+1:]...)
-				break
-			}
-		}
-	}
-	copTask.rootTaskConds = selConds
+	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
 
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {

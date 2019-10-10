@@ -607,7 +607,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		splitCopAvg2CountAndSum(t.tablePlan)
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
-		// add dependent columns to table scan if necessary.
 		ts := p.TablePlans[0].(*PhysicalTableScan)
 		ts.ExpandVirtualColumn()
 		newTask.p = p
