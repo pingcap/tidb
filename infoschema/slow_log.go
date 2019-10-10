@@ -339,7 +339,7 @@ func parsePlan(planString string) string {
 	if err == nil {
 		planString = decodePlanString
 	} else {
-		logutil.BgLogger().Error("decode plan tree error", zap.String("plan", planString), zap.Error(err))
+		logutil.BgLogger().Error("decode plan in slow log failed", zap.String("plan", planString), zap.Error(err))
 	}
 	return planString
 }
