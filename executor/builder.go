@@ -1702,6 +1702,8 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+
+	distsql.SetEncodeType(b.ctx, dagReq)
 	return dagReq, streaming, err
 }
 
@@ -1864,6 +1866,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		corColInFilter: b.corColInDistPlan(v.TablePlans),
 		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		plans:          v.TablePlans,
+		storeType:      v.StoreType,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2066,6 +2069,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+	case *mockPhysicalIndexReader:
+		return v.e, nil
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
@@ -2121,6 +2126,12 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
 	return e, nil
+}
+
+type mockPhysicalIndexReader struct {
+	plannercore.PhysicalPlan
+
+	e Executor
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
