@@ -165,10 +165,7 @@ func (b *builtinDurationAnyValueSig) vectorized() bool {
 }
 
 func (b *builtinDurationAnyValueSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
-		return err
-	}
-	return nil
+	return b.args[0].VecEvalDuration(b.ctx, input, result)
 }
 
 func (b *builtinIntAnyValueSig) vectorized() bool {
