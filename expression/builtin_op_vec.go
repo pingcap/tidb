@@ -118,7 +118,7 @@ func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		arg0s[i] = arg0s[i] | arg1s[i]
+		arg0s[i] |= arg1s[i]
 	}
 	return nil
 }
