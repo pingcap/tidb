@@ -64,7 +64,6 @@ require (
 	github.com/soheilhy/cmux v0.1.4 // indirect
 	github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 // indirect
-	github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273
 	github.com/uber/jaeger-client-go v2.8.0+incompatible
 	github.com/uber/jaeger-lib v1.1.0 // indirect
 	github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3 // indirect
@@ -84,3 +83,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
+
+go 1.13
