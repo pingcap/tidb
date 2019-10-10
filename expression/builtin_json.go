@@ -14,6 +14,7 @@
 package expression
 
 import (
+	json2 "encoding/json"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -72,6 +74,8 @@ var (
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
+	_ builtinFunc = &builtinJSONValidJsonSig{}
+	_ builtinFunc = &builtinJSONValidStringSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -716,7 +720,66 @@ type jsonValidFunctionClass struct {
 }
 
 func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_VALID")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	var sig builtinFunc
+	argType := args[0].GetType().EvalType()
+	switch argType {
+	case types.ETJson:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+		sig = &builtinJSONValidJsonSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
+	default:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argType)
+		sig = &builtinJSONValidStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
+	}
+	return sig, nil
+}
+
+type builtinJSONValidJsonSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidJsonSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidJsonSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONValidJsonSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	return 1, isNull, err
+}
+
+type builtinJSONValidStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidStringSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	if b.args[0].GetType().EvalType() != types.ETString {
+		return 0, false, nil
+	}
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, isNull, err
+	}
+
+	data := hack.Slice(val)
+	if json2.Valid(data) {
+		res = 1
+	} else {
+		res = 0
+	}
+	return res, false, nil
 }
 
 type jsonArrayAppendFunctionClass struct {
