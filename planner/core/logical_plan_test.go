@@ -957,7 +957,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "update t set a = 2 where b in (select c from t)",
-			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(Column#2,Column#25)->Projection->Update",
+			plan: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.c)->Update",
 		},
 	}
 	for _, ca := range tests {

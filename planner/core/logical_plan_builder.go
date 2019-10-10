@@ -2263,15 +2263,16 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "")
 	}
 
-	oldSchemaLen := p.Schema().Len()
+	oldSchema := p.Schema().Clone()
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if update.Order != nil {
-		p, err = b.buildSort(p, update.Order.Items, nil)
+
+	if sel.OrderBy != nil {
+		p, err = b.buildSort(p, sel.OrderBy.Items, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2283,10 +2284,9 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		}
 	}
 	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
-	if p.Schema().Len() != oldSchemaLen {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.init(b.ctx)
-		proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
-		copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+	if p.Schema().Len() != oldSchema.Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(oldSchema.Columns)}.init(b.ctx)
+		proj.SetSchema(oldSchema)
 		proj.SetChildren(p)
 		p = proj
 	}
