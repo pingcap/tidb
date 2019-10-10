@@ -1079,6 +1079,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 }
 
 func generateRandomSel() []int {
+	rand.Seed(int64(time.Now().UnixNano()))
 	var sel []int
 	count := 0
 	// Use constant 256 to make it faster to generate randomly arranged sel slices
