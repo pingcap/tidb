@@ -76,6 +76,7 @@ type TableReaderExecutor struct {
 	keepOrder bool
 	desc      bool
 	streaming bool
+	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
@@ -209,6 +210,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
 		Build()
 	if err != nil {
 		return nil, err

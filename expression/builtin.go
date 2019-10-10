@@ -16,6 +16,7 @@
 // limitations under the License.
 
 //go:generate go run generator/control_vec.go
+//go:generate go run generator/time_vec.go
 
 package expression
 
@@ -722,4 +723,10 @@ var funcs = map[string]functionClass{
 	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
+}
+
+// IsFunctionSupported check if given function name is a builtin sql function.
+func IsFunctionSupported(name string) bool {
+	_, ok := funcs[name]
+	return ok
 }

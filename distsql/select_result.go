@@ -73,6 +73,7 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -145,8 +146,26 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	// Check the returned data is default/arrow format.
+	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return err
+		}
+	}
+	// TODO(Shenghui Wu): add metrics
+	switch r.selectResp.EncodeType {
+	case tipb.EncodeType_TypeDefault:
+		return r.readFromDefault(ctx, chk)
+	case tipb.EncodeType_TypeArrow:
+		return r.readFromArrow(ctx, chk)
+	}
+	return errors.Errorf("unsupported encode type:%v", r.encodeType)
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
-		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return err
@@ -160,6 +179,14 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			r.respChkIdx++
 		}
 	}
+	return nil
+}
+
+func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+	rowBatchData := r.selectResp.Chunks[r.respChkIdx].RowsData
+	codec := chunk.NewCodec(r.fieldTypes)
+	_ = codec.DecodeToChunk(rowBatchData, chk)
+	r.respChkIdx++
 	return nil
 }
 
