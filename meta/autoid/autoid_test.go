@@ -16,6 +16,7 @@ package autoid_test
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +61,8 @@ func (*testSuite) TestT(c *C) {
 		c.Assert(err, IsNil)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
+		c.Assert(err, IsNil)
 		return nil
 	})
 	c.Assert(err, IsNil)
@@ -70,13 +73,13 @@ func (*testSuite) TestT(c *C) {
 	globalAutoID, err := alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
 	c.Assert(globalAutoID, Equals, int64(1))
-	id, err := alloc.Alloc(1)
+	_, id, err := alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(1))
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
-	_, err = alloc.Alloc(0)
+	_, _, err = alloc.Alloc(0, 1)
 	c.Assert(err, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
@@ -85,28 +88,28 @@ func (*testSuite) TestT(c *C) {
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3))
 	err = alloc.Rebase(1, int64(3), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(4))
 	err = alloc.Rebase(1, int64(10), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(11))
 	err = alloc.Rebase(1, int64(3010), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
 	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
@@ -114,7 +117,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(2)
+	_, id, err = alloc.Alloc(2, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
@@ -126,22 +129,65 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(3)
+	_, id, err = alloc.Alloc(3, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3211))
 	err = alloc.Rebase(3, int64(6543), false)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(3)
+	_, id, err = alloc.Alloc(3, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
 
 	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
 	err = alloc.Rebase(3, int64(math.MaxInt64-1), true)
 	c.Assert(err, IsNil)
-	_, err = alloc.Alloc(3)
+	_, _, err = alloc.Alloc(3, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(math.MaxInt64), true)
 	c.Assert(err, IsNil)
+
+	// alloc N for signed
+	alloc = autoid.NewAllocator(store, 1, false)
+	c.Assert(alloc, NotNil)
+	globalAutoID, err = alloc.NextGlobalAutoID(4)
+	c.Assert(err, IsNil)
+	c.Assert(globalAutoID, Equals, int64(1))
+	min, max, err := alloc.Alloc(4, 1)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(1))
+	c.Assert(min+1, Equals, int64(1))
+
+	min, max, err = alloc.Alloc(4, 2)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(2))
+	c.Assert(min+1, Equals, int64(2))
+	c.Assert(max, Equals, int64(3))
+
+	min, max, err = alloc.Alloc(4, 100)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(100))
+	expected := int64(4)
+	for i := min + 1; i <= max; i++ {
+		c.Assert(i, Equals, expected)
+		expected++
+	}
+
+	err = alloc.Rebase(4, int64(1000), false)
+	c.Assert(err, IsNil)
+	min, max, err = alloc.Alloc(4, 3)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(3))
+	c.Assert(min+1, Equals, int64(1001))
+	c.Assert(min+2, Equals, int64(1002))
+	c.Assert(max, Equals, int64(1003))
+
+	lastRemainOne := alloc.End()
+	err = alloc.Rebase(4, alloc.End()-2, false)
+	c.Assert(err, IsNil)
+	min, max, err = alloc.Alloc(4, 5)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(5))
+	c.Assert(min+1, Greater, lastRemainOne)
 }
 
 func (*testSuite) TestUnsignedAutoid(c *C) {
@@ -164,6 +210,8 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 		c.Assert(err, IsNil)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
+		c.Assert(err, IsNil)
 		return nil
 	})
 	c.Assert(err, IsNil)
@@ -174,13 +222,13 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	globalAutoID, err := alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
 	c.Assert(globalAutoID, Equals, int64(1))
-	id, err := alloc.Alloc(1)
+	_, id, err := alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(1))
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
-	_, err = alloc.Alloc(0)
+	_, _, err = alloc.Alloc(0, 1)
 	c.Assert(err, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
@@ -189,28 +237,28 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3))
 	err = alloc.Rebase(1, int64(3), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(4))
 	err = alloc.Rebase(1, int64(10), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(11))
 	err = alloc.Rebase(1, int64(3010), true)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
 	alloc = autoid.NewAllocator(store, 1, true)
 	c.Assert(alloc, NotNil)
-	id, err = alloc.Alloc(1)
+	_, id, err = alloc.Alloc(1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
@@ -218,7 +266,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(2)
+	_, id, err = alloc.Alloc(2, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
@@ -230,12 +278,12 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(3)
+	_, id, err = alloc.Alloc(3, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3211))
 	err = alloc.Rebase(3, int64(6543), false)
 	c.Assert(err, IsNil)
-	id, err = alloc.Alloc(3)
+	_, id, err = alloc.Alloc(3, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(6544))
 
@@ -244,11 +292,40 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	un := int64(n)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
-	_, err = alloc.Alloc(3)
+	_, _, err = alloc.Alloc(3, 1)
 	c.Assert(err, NotNil)
 	un = int64(n + 1)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
+
+	// alloc N for unsigned
+	alloc = autoid.NewAllocator(store, 1, true)
+	c.Assert(alloc, NotNil)
+	globalAutoID, err = alloc.NextGlobalAutoID(4)
+	c.Assert(err, IsNil)
+	c.Assert(globalAutoID, Equals, int64(1))
+
+	min, max, err := alloc.Alloc(4, 2)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(2))
+	c.Assert(min+1, Equals, int64(1))
+	c.Assert(max, Equals, int64(2))
+
+	err = alloc.Rebase(4, int64(500), true)
+	c.Assert(err, IsNil)
+	min, max, err = alloc.Alloc(4, 2)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(2))
+	c.Assert(min+1, Equals, int64(501))
+	c.Assert(max, Equals, int64(502))
+
+	lastRemainOne := alloc.End()
+	err = alloc.Rebase(4, alloc.End()-2, false)
+	c.Assert(err, IsNil)
+	min, max, err = alloc.Alloc(4, 5)
+	c.Assert(err, IsNil)
+	c.Assert(max-min, Equals, int64(5))
+	c.Assert(min+1, Greater, lastRemainOne)
 }
 
 // TestConcurrentAlloc is used for the test that
@@ -283,7 +360,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	allocIDs := func() {
 		alloc := autoid.NewAllocator(store, dbID, false)
 		for j := 0; j < int(autoid.GetStep())+5; j++ {
-			id, err1 := alloc.Alloc(tblID)
+			_, id, err1 := alloc.Alloc(tblID, 1)
 			if err1 != nil {
 				errCh <- err1
 				break
@@ -296,6 +373,30 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 				break
 			}
 			m[id] = struct{}{}
+			mu.Unlock()
+
+			//test Alloc N
+			N := rand.Uint64() % 100
+			min, max, err1 := alloc.Alloc(tblID, N)
+			if err1 != nil {
+				errCh <- err1
+				break
+			}
+
+			errFlag := false
+			mu.Lock()
+			for i := min + 1; i <= max; i++ {
+				if _, ok := m[i]; ok {
+					errCh <- fmt.Errorf("duplicate id:%v", i)
+					errFlag = true
+					mu.Unlock()
+					break
+				}
+				m[i] = struct{}{}
+			}
+			if errFlag {
+				break
+			}
 			mu.Unlock()
 		}
 	}
@@ -336,7 +437,7 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
 	alloc := autoid.NewAllocator(injectedStore, 1, false)
-	_, err = alloc.Alloc(2)
+	_, _, err = alloc.Alloc(2, 1)
 	c.Assert(err, NotNil)
 	c.Assert(alloc.Base(), Equals, int64(0))
 	c.Assert(alloc.End(), Equals, int64(0))
@@ -355,4 +456,35 @@ func (*testSuite) TestNextStep(c *C) {
 	c.Assert(nextStep, Equals, int64(678910))
 	nextStep = autoid.NextStep(50000, 10*time.Minute)
 	c.Assert(nextStep, Equals, int64(1000))
+}
+
+func BenchmarkAllocator_Alloc(b *testing.B) {
+	b.StopTimer()
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	dbID := int64(1)
+	tblID := int64(2)
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
+		if err != nil {
+			return err
+		}
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+	alloc := autoid.NewAllocator(store, 1, false)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		alloc.Alloc(2, 1)
+	}
 }

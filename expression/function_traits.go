@@ -87,11 +87,16 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.Schema:           {},
 	ast.SessionUser:      {},
 	ast.Sleep:            {},
+	ast.Sysdate:          {},
 	ast.SystemUser:       {},
 	ast.User:             {},
 	ast.Values:           {},
 	ast.Encrypt:          {},
 	ast.Version:          {},
+	ast.JSONMerge:        {},
+	ast.SetVar:           {},
+	ast.GetVar:           {},
+	ast.ReleaseAllLocks:  {},
 }
 
 // DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
