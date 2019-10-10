@@ -67,11 +67,13 @@ type indexHashJoinInnerWorker struct {
 	matchedOuterPtrs  []chunk.RowPtr
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
-	resultCh          chan *indexHashJoinResult
-	taskCh            <-chan *indexHashJoinTask
-	wg                *sync.WaitGroup
-	joinKeyBuf        []byte
-	outerRowStatus    []outerRowStatusFlag
+	// resultCh is valid only when indexNestedLoopHashJoin do not need to keep
+	// order. Otherwise, it will be nil.
+	resultCh       chan *indexHashJoinResult
+	taskCh         <-chan *indexHashJoinTask
+	wg             *sync.WaitGroup
+	joinKeyBuf     []byte
+	outerRowStatus []outerRowStatusFlag
 }
 
 type indexHashJoinResult struct {
@@ -87,7 +89,12 @@ type indexHashJoinTask struct {
 	err            error
 	keepOuterOrder bool
 	// resultCh is only used when the outer order needs to be promised.
-	resultCh            chan *indexHashJoinResult
+	resultCh chan *indexHashJoinResult
+	// matchedInnerRowPtrs is only valid when the outer order needs to be
+	// promised. Otherwise, it will be nil.
+	// len(matchedInnerRowPtrs) equals to len(lookUpJoinTask.outerResult), and
+	// the elements of every row indicates the matched inner row ptrs of the
+	// corresponding outer row.
 	matchedInnerRowPtrs [][]chunk.RowPtr
 }
 
@@ -207,12 +214,11 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 		ok     bool
 	)
 	for {
-		task := e.fetchNextTask(ctx)
-		if task == nil {
+		if e.isDryUpTasks(ctx) {
 			return nil
 		}
 		select {
-		case result, ok = <-task.resultCh:
+		case result, ok = <-e.curTask.resultCh:
 			if !ok {
 				e.curTask = nil
 				continue
@@ -229,21 +235,21 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 	}
 }
 
-func (e *IndexNestedLoopHashJoin) fetchNextTask(ctx context.Context) (task *indexHashJoinTask) {
+// isDryUpTasks indicates whether all the tasks have been processed.
+func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 	if e.curTask != nil {
-		return e.curTask
+		return false
 	}
 	var ok bool
 	select {
-	case task, ok = <-e.taskCh:
+	case e.curTask, ok = <-e.taskCh:
 		if !ok {
-			return nil
+			return true
 		}
-		e.curTask = task
 	case <-ctx.Done():
-		return nil
+		return true
 	}
-	return
+	return false
 }
 
 // Close implements the IndexNestedLoopHashJoin Executor interface.
@@ -395,6 +401,9 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		if task.keepOuterOrder {
+			// `resultCh` will be nil in 2 cases:
+			//  1. Before the first task is fetched.
+			//  2. After a task is finished.
 			if resultCh != nil {
 				close(resultCh)
 				resultCh = nil
@@ -617,6 +626,9 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			row := chk.GetRow(j)
 			ptr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
 			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, joinResult, h, iw.joinKeyBuf)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// TODO: matchedInnerRowPtrs and matchedInnerRows can be moved to inner worker.
