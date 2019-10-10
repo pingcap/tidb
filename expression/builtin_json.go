@@ -74,7 +74,7 @@ var (
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
-	_ builtinFunc = &builtinJSONValidJsonSig{}
+	_ builtinFunc = &builtinJSONValidJSONSig{}
 	_ builtinFunc = &builtinJSONValidStringSig{}
 )
 
@@ -729,7 +729,7 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	switch argType {
 	case types.ETJson:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
-		sig = &builtinJSONValidJsonSig{bf}
+		sig = &builtinJSONValidJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
 	default:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argType)
@@ -739,17 +739,17 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-type builtinJSONValidJsonSig struct {
+type builtinJSONValidJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinJSONValidJsonSig) Clone() builtinFunc {
-	newSig := &builtinJSONValidJsonSig{}
+func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidJSONSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinJSONValidJsonSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONValidJSONSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	return 1, isNull, err
 }
