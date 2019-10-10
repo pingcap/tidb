@@ -488,11 +488,10 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			if err != nil {
 				return nil, err
 			}
-		}
-
-		// Handle the bad null error.
-		if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
-			return nil, err
+			// Handle the bad null error.
+			if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return row, nil
