@@ -200,16 +200,10 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 		}
 
 		if r.respArrowDecoder.Empty() {
-			codec := chunk.NewCodec(r.fieldTypes)
-			_ = codec.DecodeToReadOnlyChunk(r.selectResp.Chunks[r.respChkIdx].RowsData, r.respArrowDecoder.GetChunk())
-			r.respArrowDecoder.Reset()
+			r.respArrowDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
 		}
 
-		if r.respArrowDecoder.Len() >= chk.RequiredRows()-chk.NumRows() {
-			r.respArrowDecoder.Decode(chk, chk.RequiredRows()-chk.NumRows())
-		} else {
-			r.respArrowDecoder.Decode(chk, r.respArrowDecoder.Len())
-		}
+		r.respArrowDecoder.Decode(chk)
 
 		if r.respArrowDecoder.Empty() {
 			r.respChkIdx++

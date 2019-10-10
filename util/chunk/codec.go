@@ -119,63 +119,6 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
-		buffer = buffer[numNullBitmapBytes:]
-	} else {
-		c.setAllNotNull(col)
-	}
-
-	// decode offsets.
-	numFixedBytes := getFixedLen(c.colTypes[ordinal])
-	numDataBytes := int64(numFixedBytes * col.length)
-	if numFixedBytes == -1 {
-		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = append(col.offsets[:0], bytesToI64Slice(buffer[:numOffsetBytes])...)
-		buffer = buffer[numOffsetBytes:]
-		numDataBytes = col.offsets[col.length]
-	} else if cap(col.elemBuf) < numFixedBytes {
-		col.elemBuf = make([]byte, numFixedBytes)
-	}
-
-	// decode data.
-	col.data = append(col.data[:0], buffer[:numDataBytes]...)
-	return buffer[numDataBytes:]
-}
-
-var allNotNullBitmap [128]byte
-
-func (c *Codec) setAllNotNull(col *Column) {
-	numNullBitmapBytes := (col.length + 7) / 8
-	col.nullBitmap = col.nullBitmap[:0]
-	for i := 0; i < numNullBitmapBytes; {
-		numAppendBytes := mathutil.Min(numNullBitmapBytes-i, cap(allNotNullBitmap))
-		col.nullBitmap = append(col.nullBitmap, allNotNullBitmap[:numAppendBytes]...)
-		i += numAppendBytes
-	}
-}
-
-// DecodeToChunk decodes a Read-Only Chunk from a byte slice, return the remained unused bytes.
-func (c *Codec) DecodeToReadOnlyChunk(buffer []byte, chk *Chunk) (remained []byte) {
-	for i := 0; i < len(chk.columns); i++ {
-		buffer = c.decodeReadOnlyColumn(buffer, chk.columns[i], i)
-	}
-	return buffer
-}
-
-// decodeColumn decodes a Read-Only Column from a byte slice, return the remained unused bytes.
-func (c *Codec) decodeReadOnlyColumn(buffer []byte, col *Column, ordinal int) (remained []byte) {
-	// Todo(Shenghui Wu): Optimize all data is null.
-	// decode length.
-	col.length = int(binary.LittleEndian.Uint32(buffer))
-	buffer = buffer[4:]
-
-	// decode nullCount.
-	nullCount := int(binary.LittleEndian.Uint32(buffer))
-	buffer = buffer[4:]
-
-	// decode nullBitmap.
-	if nullCount > 0 {
-		numNullBitmapBytes := (col.length + 7) / 8
 		col.nullBitmap = buffer[:numNullBitmapBytes]
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
@@ -197,6 +140,18 @@ func (c *Codec) decodeReadOnlyColumn(buffer []byte, col *Column, ordinal int) (r
 	// decode data.
 	col.data = buffer[:numDataBytes]
 	return buffer[numDataBytes:]
+}
+
+var allNotNullBitmap [128]byte
+
+func (c *Codec) setAllNotNull(col *Column) {
+	numNullBitmapBytes := (col.length + 7) / 8
+	col.nullBitmap = col.nullBitmap[:0]
+	for i := 0; i < numNullBitmapBytes; {
+		numAppendBytes := mathutil.Min(numNullBitmapBytes-i, cap(allNotNullBitmap))
+		col.nullBitmap = append(col.nullBitmap, allNotNullBitmap[:numAppendBytes]...)
+		i += numAppendBytes
+	}
 }
 
 func bytesToI64Slice(b []byte) (i64s []int64) {
@@ -235,6 +190,8 @@ func init() {
 	}
 }
 
+// ArrowDecoder is used to:
+// 1. decode a Chunk from a byte slice.
 type ArrowDecoder struct {
 	chk      *Chunk
 	colTypes []*types.FieldType
@@ -242,30 +199,32 @@ type ArrowDecoder struct {
 	rows     int
 }
 
+// NewArrowDecoder creates a new ArrowDecoder object for decode a Chunk.
 func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
 	return &ArrowDecoder{chk: chk, colTypes: colTypes, cur: 0, rows: 0}
 }
 
-func (c *ArrowDecoder) Decode(target *Chunk, requestRows int) {
+// Decode decodes a Chunk from ArrowDecoder, save the remained unused bytes.
+func (c *ArrowDecoder) Decode(target *Chunk) {
+	requestRows := target.RequiredRows() - target.NumRows()
+	if requestRows > c.rows-c.cur {
+		requestRows = c.rows - c.cur
+	}
 	for i := 0; i < len(c.colTypes); i++ {
 		c.decodeColumn(target, i, requestRows)
 	}
 	c.cur = c.cur + requestRows
 }
 
-func (c *ArrowDecoder) Reset() {
+// Reset resets ArrowDecoder using byte slice.
+func (c *ArrowDecoder) Reset(data []byte) {
+	codec := NewCodec(c.colTypes)
+	codec.DecodeToChunk(data, c.chk)
 	c.cur = 0
 	c.rows = c.chk.NumRows()
 }
 
-func (c *ArrowDecoder) GetChunk() *Chunk {
-	return c.chk
-}
-
-func (c *ArrowDecoder) Len() int {
-	return c.rows - c.cur
-}
-
+// Empty indicate the ArrowDecoder is empty.
 func (c *ArrowDecoder) Empty() bool {
 	return c.cur == c.rows
 }
@@ -277,12 +236,12 @@ func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int)
 	colTarget := target.columns[ordinal]
 
 	if numFixedBytes == -1 {
+		numDataBytes = colSource.offsets[requestRows] - colSource.offsets[0]
 		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows+1]...)
 		for i := colTarget.length + 1; i <= colTarget.length+requestRows; i++ {
 			colTarget.offsets[i] = colTarget.offsets[i] - colSource.offsets[0] + colTarget.offsets[colTarget.length]
 		}
 		colSource.offsets = colSource.offsets[requestRows:]
-		numDataBytes = colTarget.offsets[colTarget.length+requestRows] - colTarget.offsets[colTarget.length]
 	} else if cap(colTarget.elemBuf) < numFixedBytes {
 		colTarget.elemBuf = make([]byte, numFixedBytes)
 	}
