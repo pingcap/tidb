@@ -78,3 +78,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/log => github.com/pingcap/log v0.0.0-20191010073858-f7c6108fa1d0
