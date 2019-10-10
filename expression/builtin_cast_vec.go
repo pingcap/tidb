@@ -388,11 +388,44 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinCastRealAsIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastRealAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	f64s := buf.Float64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if !mysql.HasUnsignedFlag(b.tp.Flag) {
+			res, err := types.ConvertFloatToInt(f64s[i], types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			if err != nil {
+				return err
+			}
+			i64s[i] = res
+		} else if b.inUnion && f64s[i] < 0 {
+			i64s[i] = 0
+		} else {
+			var uintVal uint64
+			sc := b.ctx.GetSessionVars().StmtCtx
+			uintVal, err = types.ConvertFloatToUint(sc, f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			i64s[i] = int64(uintVal)
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastTimeAsRealSig) vectorized() bool {
