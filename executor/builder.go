@@ -2202,12 +2202,6 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	return e, nil
 }
 
-type mockPhysicalIndexReader struct {
-	plannercore.PhysicalPlan
-
-	e Executor
-}
-
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
