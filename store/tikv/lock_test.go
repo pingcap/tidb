@@ -185,19 +185,19 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 
 func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err := s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	status, err := s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Equals, commitTS)
 
 	startTS, commitTS = s.lockKey(c, []byte("a"), []byte("a"), []byte("a"), []byte("a"), true)
-	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Equals, commitTS)
 
 	startTS, _ = s.lockKey(c, []byte("a"), []byte("a"), []byte("a"), []byte("a"), false)
-	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -209,10 +209,13 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
-	// Check the lock TTL of a transaction.
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
 	lr := newLockResolver(s.store)
-	status, err := lr.GetTxnStatus(txn.StartTS(), []byte("key"))
+	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	c.Assert(err, IsNil)
+
+	// Check the lock TTL of a transaction.
+	status, err := lr.GetTxnStatus(txn.StartTS(), callerStartTS, []byte("key"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -226,14 +229,14 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	c.Assert(err, IsNil)
 
 	// Check its status is rollbacked.
-	status, err = lr.GetTxnStatus(txn.StartTS(), []byte("key"))
+	status, err = lr.GetTxnStatus(txn.StartTS(), callerStartTS, []byte("key"))
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
 	// Check a committed txn.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = lr.GetTxnStatus(startTS, []byte("a"))
+	status, err = lr.GetTxnStatus(startTS, callerStartTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)
@@ -275,16 +278,21 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	currentTS, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
+	// Call getTxnStatus to check the lock status.
 	status, err := newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
 
-	// It is confusing here, getTxnStatus with currentTS = MaxUint64 really means rollback!
-	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, math.MaxUint64)
+	// Rollback the lock.
+	err = newLockResolver(s.store).resolveLock(bo,
+		&Lock{Key: []byte("key"), Primary: []byte("key"), TxnID: txn.StartTS()},
+		TxnStatus{},
+		make(map[RegionVerID]struct{}))
 	c.Assert(err, IsNil)
 
+	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
 	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
@@ -292,6 +300,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
+	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
 	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
 	c.Assert(err, IsNil)
