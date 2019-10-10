@@ -1083,7 +1083,7 @@ func generateRandomSel() []int {
 	var sel []int
 	count := 0
 	// Use constant 256 to make it faster to generate randomly arranged sel slices
-	num := rand.Intn(256)
+	num := rand.Intn(256) + 1
 	existed := make([]bool, 1024)
 	for i := 0; i < 1024; i++ {
 		existed[i] = false
