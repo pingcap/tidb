@@ -4336,7 +4336,6 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	tk.MustQuery("split table t partition (p4) index idx between (0) and (1000000) regions 5;").Check(testkit.Rows("4 1"))
 	re = tk.MustQuery("show table t regions")
 	rows = re.Rows()
-	//re.Check(testkit.Rows(""))
 	c.Assert(len(rows), Equals, 44)
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
