@@ -101,7 +101,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(tp.String(), Equals, "BTREE")
 	tp = IndexTypeHash
 	c.Assert(tp.String(), Equals, "HASH")
-	tp = 1E5
+	tp = 1e5
 	c.Assert(tp.String(), Equals, "")
 	has := index.HasPrefixIndex()
 	c.Assert(has, Equals, true)
