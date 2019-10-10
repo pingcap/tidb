@@ -611,15 +611,16 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
-	return VecCompareInt(b.args[0], b.args[1], result, buf, n, resOfLT, result)
+	return VecCompareInt(b.args[0], b.args[1], result, buf, resOfLT, result)
 }
 
 // VecCompareInt compares two integers.
-func VecCompareInt(lhsArg, rhsArg Expression, lColumn, rColumn *chunk.Column, n int, f func(val int64, isNull bool, err error) (int64, bool, error), result *chunk.Column) error {
+func VecCompareInt(lhsArg, rhsArg Expression, lColumn, rColumn *chunk.Column, f func(val int64, isNull bool, err error) (int64, bool, error), result *chunk.Column) error {
 	arg0 := lColumn.Int64s()
 	arg1 := rColumn.Int64s()
 	result.MergeNulls(lColumn, rColumn)
 	i64s := result.Int64s()
+	n := len(arg0)
 	for i := 0; i < n; i++ {
 		var res int64
 		var isNull bool = false
