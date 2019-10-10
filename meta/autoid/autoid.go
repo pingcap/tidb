@@ -45,7 +45,7 @@ var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid Tabl
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
-	// Alloc allocs N consecutive autoID for table with tableID.
+	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
 	Alloc(tableID int64, n uint64) (int64, int64, error)
