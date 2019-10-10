@@ -717,6 +717,11 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx, ds.blockOffset)
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
+		// If inner cop task need keep order, the extraHandleCol should be set.
+		if cop.keepOrder {
+			fmt.Println("fuck!!!!!!!!!!")
+			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+		}
 	}
 	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(path.index, ds)
