@@ -178,6 +178,8 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrInvalidGroupFuncUse returns for using invalid group functions.
+	ErrInvalidGroupFuncUse = terror.ClassDDL.New(codeInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
 	ErrTableMustHaveColumns = terror.ClassDDL.New(codeTableMustHaveColumns, mysql.MySQLErrName[mysql.ErrTableMustHaveColumns])
 	// ErrWrongNameForIndex returns for wrong index name.
@@ -700,6 +702,7 @@ const (
 	codeBlobCantHaveDefault                    = 1101
 	codeWrongDBName                            = 1102
 	codeWrongTableName                         = 1103
+	codeInvalidGroupFuncUse                    = terror.ErrCode(mysql.ErrInvalidGroupFuncUse)
 	codeTooManyFields                          = 1117
 	codeInvalidUseOfNull                       = 1138
 	codeWrongColumnName                        = 1166
@@ -776,6 +779,7 @@ func init() {
 		codeFileNotFound:                           mysql.ErrFileNotFound,
 		codeErrorOnRename:                          mysql.ErrErrorOnRename,
 		codeBadField:                               mysql.ErrBadField,
+		codeInvalidGroupFuncUse:                    mysql.ErrInvalidGroupFuncUse,
 		codeInvalidUseOfNull:                       mysql.ErrInvalidUseOfNull,
 		codeWrongFKOptionForGeneratedColumn:        mysql.ErrWrongFKOptionForGeneratedColumn,
 		codeUnsupportedOnGeneratedColumn:           mysql.ErrUnsupportedOnGeneratedColumn,
@@ -819,6 +823,7 @@ func init() {
 		codeFieldNotFoundPart:                      mysql.ErrFieldNotFoundPart,
 		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
+		codeGeneratedColumnFunctionIsNotAllowed:    mysql.ErrGeneratedColumnFunctionIsNotAllowed,
 		codeGeneratedColumnRefAutoInc:              mysql.ErrGeneratedColumnRefAutoInc,
 		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
 		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
