@@ -536,6 +536,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		corColInFilter: e.corColInTblSide,
 		plans:          e.tblPlans,
 	}
+	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
