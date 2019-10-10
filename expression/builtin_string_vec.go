@@ -733,11 +733,55 @@ func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinLocate2ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals LOCATE(substr,str), non case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf, buf1)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		subStr := buf.GetString(i)
+		str := buf1.GetString(i)
+		subStrLen := int64(len([]rune(subStr)))
+		if subStrLen == 0 {
+			i64s[i] = 1
+			continue
+		}
+		slice := string([]rune(str))
+		slice = strings.ToLower(slice)
+		subStr = strings.ToLower(subStr)
+		idx := strings.Index(slice, subStr)
+		if idx != -1 {
+			i64s[i] = int64(utf8.RuneCountInString(slice[:idx])) + 1
+			continue
+		}
+		i64s[i] = 0
+	}
+	return nil
 }
 
 func (b *builtinBitLengthSig) vectorized() bool {
@@ -983,11 +1027,50 @@ func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinFromBase64Sig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals FROM_BASE64(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_from-base64
 func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		needDecodeLen := base64NeededDecodedLength(len(str))
+		if needDecodeLen == -1 {
+			result.AppendNull()
+			continue
+		} else if needDecodeLen > int(b.maxAllowedPacket) {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("from_base64", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+
+		str = strings.Replace(str, "\t", "", -1)
+		str = strings.Replace(str, " ", "", -1)
+		newStr, err := base64.StdEncoding.DecodeString(str)
+		if err != nil {
+			// When error happens, take `from_base64("asc")` as an example, we should return NULL.
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(newStr))
+	}
+	return nil
 }
 
 func (b *builtinCharLengthSig) vectorized() bool {
