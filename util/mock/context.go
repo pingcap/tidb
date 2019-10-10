@@ -157,15 +157,11 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		membufCap := kv.DefaultTxnMembufCap
-		if c.sessionVars.LightningMode {
-			membufCap = kv.ImportingTxnMembufCap
-		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		txn.SetCap(membufCap)
+		txn.SetCap(kv.DefaultTxnMembufCap)
 		c.txn.Transaction = txn
 	}
 	return nil
