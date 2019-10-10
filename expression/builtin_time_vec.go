@@ -790,11 +790,30 @@ func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinCurrentDateSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+
+	tz := b.ctx.GetSessionVars().Location()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+
+	year, month, day := nowTs.In(tz).Date()
+	mysqlTm := types.FromDate(year, int(month), day, 0, 0, 0, 0)
+
+	n := input.NumRows()
+	result.ResizeTime(n, true)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		times[i] = types.Time{
+			Time: mysqlTm,
+			Type: mysql.TypeDate,
+			Fsp:  0}
+	}
+	return nil
 }
 
 func (b *builtinAddDateStringStringSig) vectorized() bool {
