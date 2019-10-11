@@ -104,6 +104,11 @@ const (
 	preferStreamAgg
 )
 
+const (
+	preferTiKV = 1 << iota
+	preferTiFlash
+)
+
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
@@ -368,6 +373,8 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
+	//preferStoreType means the DataSource is enforced to which storage.
+	preferStoreType int
 }
 
 // TableGather is a leaf logical operator of TiDB layer to gather
