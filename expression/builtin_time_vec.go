@@ -804,7 +804,7 @@ func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 	mysqlTm := types.FromDate(year, int(month), day, 0, 0, 0, 0)
 
 	n := input.NumRows()
-	result.ResizeTime(n, true)
+	result.ResizeTime(n, false)
 	times := result.Times()
 	for i := 0; i < n; i++ {
 		times[i] = types.Time{
