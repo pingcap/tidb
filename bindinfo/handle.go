@@ -462,7 +462,7 @@ func (h *BindHandle) CaptureBaselines(is infoschema.InfoSchema) {
 	for i := range sqls {
 		stmt, err := h.parser4Baseline.ParseOneStmt(sqls[i], "", "")
 		if err != nil {
-			logutil.BgLogger().Info("parse SQL failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("parse SQL failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
 		normalizedSQL, digiest := parser.NormalizeDigest(sqls[i])
@@ -470,9 +470,12 @@ func (h *BindHandle) CaptureBaselines(is infoschema.InfoSchema) {
 			continue
 		}
 		h.sctx.Lock()
-		h.sctx.Context.RefreshTxnCtx(context.TODO())
-		h.sctx.GetSessionVars().CurrentDB = schemas[i]
-		hints, err := GenHintsFromSQL(context.TODO(), h.sctx.Context, stmt, is)
+		err = h.sctx.RefreshTxnCtx(context.TODO())
+		var hints string
+		if err == nil {
+			h.sctx.GetSessionVars().CurrentDB = schemas[i]
+			hints, err = GenHintsFromSQL(context.TODO(), h.sctx.Context, stmt, is)
+		}
 		h.sctx.Unlock()
 		if err != nil {
 			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
@@ -483,7 +486,10 @@ func (h *BindHandle) CaptureBaselines(is infoschema.InfoSchema) {
 			continue
 		}
 		bindsql := strings.Replace(normalizedSQL, "select", fmt.Sprintf("select /*+ %s*/", hints), 1)
-		h.AddBindRecord(&BindRecord{OriginalSQL: sqls[i], BindSQL: bindsql, Db: schemas[i], Status: Using})
+		err = h.AddBindRecord(&BindRecord{OriginalSQL: sqls[i], BindSQL: bindsql, Db: schemas[i], Status: Using})
+		if err != nil {
+			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
+		}
 	}
 }
 
