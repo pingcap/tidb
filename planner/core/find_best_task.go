@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -451,6 +452,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			if tblTask.cost() < t.cost() {
 				t = tblTask
 			}
+			continue
+		}
+		// TiFlash storage do not support index scan.
+		if ds.preferStoreType&preferTiFlash != 0 {
 			continue
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
@@ -1041,6 +1046,11 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		AccessCondition: path.accessConds,
 		filterCondition: path.tableFilters,
 	}.Init(ds.ctx, ds.blockOffset)
+	if ds.preferStoreType&preferTiFlash != 0 {
+		ts.StoreType = kv.TiFlash
+	} else {
+		ts.StoreType = kv.TiKV
+	}
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
