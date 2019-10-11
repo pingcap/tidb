@@ -302,7 +302,7 @@ func (g *rangeRealGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}
-	if g.end <= g.begin {
+	if g.end < g.begin {
 		g.begin = -100
 		g.end = 100
 	}
@@ -656,6 +656,9 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
+	}
+	if len(cols) == 0 {
+		input.SetNumVirtualRows(1024)
 	}
 
 	var err error
