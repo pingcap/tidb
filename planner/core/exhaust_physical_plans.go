@@ -721,8 +721,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
 			schemaColumns := make([]*expression.Column, len(is.dataSourceSchema.Columns))
 			copy(schemaColumns, is.dataSourceSchema.Columns)
-			ts.schema = ts.schema.Clone()
-			ts.schema.Columns = schemaColumns
+			ts.schema = expression.NewSchema(schemaColumns...)
 			// If the double read need projection, the datasource schema will append a handle column during appendExtraHandleCol,
 			// So we need to delete the extra column in schema to avoid wrong plan.
 			if cop.doubleReadNeedProj {
