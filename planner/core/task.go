@@ -626,7 +626,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType: ts.StoreType,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
-		ts := p.TablePlans[0].(*PhysicalTableScan)
 		ts.ExpandVirtualColumn()
 		newTask.p = p
 	}
@@ -887,9 +886,9 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 		cols := expression.ExtractColumnsFromExpressions(result, aggFunc.Args, nil)
 		for _, col := range cols {
 			if col.VirtualExpr != nil {
-        				return nil, p.self
-      }
-    }
+				return nil, p.self
+			}
+		}
 		if copToFlash {
 			if !aggregation.CheckAggPushFlash(aggFunc) {
 				return nil, p.self
