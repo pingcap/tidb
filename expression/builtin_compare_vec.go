@@ -621,47 +621,116 @@ func VecCompareInt(lhsArg, rhsArg Expression, lColumn, rColumn *chunk.Column, f 
 	result.MergeNulls(lColumn, rColumn)
 	i64s := result.Int64s()
 	n := len(arg0)
-	for i := 0; i < n; i++ {
-		var res int64
-		var isNull bool = false
-		var err error = nil
-		// compare null values.
-		if result.IsNull(i) {
-			result.SetNull(i, true)
-			res, isNull, err = f(compareNull(lColumn.IsNull(i), rColumn.IsNull(i)), false, nil)
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().Flag), mysql.HasUnsignedFlag(rhsArg.GetType().Flag)
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			var res int64
+			var isNull bool = false
+			var err error = nil
+			// compare null values.
+			if result.IsNull(i) {
+				result.SetNull(i, true)
+				res, isNull, err = f(compareNull(lColumn.IsNull(i), rColumn.IsNull(i)), false, nil)
+				if err != nil {
+					return err
+				}
+				i64s[i] = res
+				continue
+			}
+			res, isNull, err = f(int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i]))), false, nil)
 			if err != nil {
-				return err
+				return nil
+			}
+			if isNull {
+				result.SetNull(i, true)
+				continue
 			}
 			i64s[i] = res
-			continue
 		}
-		isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().Flag), mysql.HasUnsignedFlag(rhsArg.GetType().Flag)
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			res, isNull, err = f(int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i]))), false, nil)
-		case isUnsigned0 && !isUnsigned1:
+	case isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			var res int64
+			var isNull bool = false
+			var err error = nil
+			// compare null values.
+			if result.IsNull(i) {
+				result.SetNull(i, true)
+				res, isNull, err = f(compareNull(lColumn.IsNull(i), rColumn.IsNull(i)), false, nil)
+				if err != nil {
+					return err
+				}
+				i64s[i] = res
+				continue
+			}
 			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
 				res, isNull, err = f(1, false, nil)
 			} else {
 				res, isNull, err = f(int64(types.CompareInt64(arg0[0], arg1[1])), false, nil)
 			}
-		case !isUnsigned0 && isUnsigned1:
+			if err != nil {
+				return nil
+			}
+			if isNull {
+				result.SetNull(i, true)
+				continue
+			}
+			i64s[i] = res
+		}
+	case !isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			var res int64
+			var isNull bool = false
+			var err error = nil
+			// compare null values.
+			if result.IsNull(i) {
+				result.SetNull(i, true)
+				res, isNull, err = f(compareNull(lColumn.IsNull(i), rColumn.IsNull(i)), false, nil)
+				if err != nil {
+					return err
+				}
+				i64s[i] = res
+				continue
+			}
 			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
 				res, isNull, err = f(-1, false, nil)
 			} else {
 				res, isNull, err = f(int64(types.CompareInt64(arg0[i], arg1[i])), false, nil)
 			}
-		case !isUnsigned0 && !isUnsigned1:
+			if err != nil {
+				return nil
+			}
+			if isNull {
+				result.SetNull(i, true)
+				continue
+			}
+			i64s[i] = res
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			var res int64
+			var isNull bool = false
+			var err error = nil
+			// compare null values.
+			if result.IsNull(i) {
+				result.SetNull(i, true)
+				res, isNull, err = f(compareNull(lColumn.IsNull(i), rColumn.IsNull(i)), false, nil)
+				if err != nil {
+					return err
+				}
+				i64s[i] = res
+				continue
+			}
 			res, isNull, err = f(int64((types.CompareInt64(arg0[i], arg1[i]))), false, nil)
+			if err != nil {
+				return nil
+			}
+			if isNull {
+				result.SetNull(i, true)
+				continue
+			}
+			i64s[i] = res
 		}
-		if err != nil {
-			return nil
-		}
-		if isNull {
-			result.SetNull(i, true)
-			continue
-		}
-		i64s[i] = res
 	}
 	return nil
 }
