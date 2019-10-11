@@ -459,6 +459,10 @@ func (s *testSuite) TestAdminShowDDLJobs(c *C) {
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+
+	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
+	row = re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
 }
 
 func (s *testSuite) TestAdminChecksumOfPartitionedTable(c *C) {
@@ -3731,10 +3735,13 @@ func (s *testSuite3) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
+		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
+	})
 	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
 }
 
 func (s *testSuite3) TestSelectHashPartitionTable(c *C) {

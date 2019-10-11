@@ -22,9 +22,15 @@ import (
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth: {},
-	ast.IsFalsity: {
+	ast.IsTruth: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.IsFalsity: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
@@ -36,6 +42,9 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.LogicAnd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
+	ast.Or: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
 	ast.UnaryNot: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
@@ -43,7 +52,11 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	},
 	ast.UnaryMinus: {},
 	ast.IsNull: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
