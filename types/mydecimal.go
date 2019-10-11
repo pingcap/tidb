@@ -1519,6 +1519,9 @@ func DecimalSub(from1, from2, to *MyDecimal) error {
 }
 
 func resetDecimal(d *MyDecimal) {
+	if d == nil {
+		return
+	}
 	for i := range d.wordBuf {
 		d.wordBuf[i] = 0
 	}
