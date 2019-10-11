@@ -671,7 +671,10 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
+		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
+		if err != nil {
+			return err
+		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	default:
@@ -681,7 +684,7 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) {
+func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) (err error) {
 	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
@@ -693,7 +696,10 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 			if e.explainedPlans[child.ID()] {
 				continue
 			}
-			e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+			err = e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+			if err != nil {
+				return
+			}
 		}
 	}
 
@@ -706,42 +712,44 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 		case kv.TiFlash:
 			storeType = "tiflash"
 		default:
-			storeType = "unknown"
+			err = errors.Errorf("the store type %v is unknown", x.StoreType)
+			return
 		}
-		e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
-		e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
-		e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i := 0; i < len(x.partialPlans); i++ {
 			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
-				e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, true)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, true)
 			} else {
-				e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, false)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, false)
 			}
 		}
 		if x.tablePlan != nil {
-			e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
+			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
-			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
 		}
 	case *Update:
 		if x.SelectPlan != nil {
-			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
 		}
 	case *Delete:
 		if x.SelectPlan != nil {
-			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
 		}
 	case *Execute:
 		if x.Plan != nil {
-			e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
 		}
 	}
+	return
 }
 
 // prepareOperatorInfo generates the following information for every plan:
