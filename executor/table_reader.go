@@ -233,8 +233,8 @@ func (e *TableReaderExecutor) buildVirtualColumnInfo() {
 		}
 	}
 	sort.Slice(e.virtualColumnIndex, func(i, j int) bool {
-		return model.FindColumnInfo(e.columns, e.schema.Columns[e.virtualColumnIndex[i]].OrigColName.String()).Offset <
-			model.FindColumnInfo(e.columns, e.schema.Columns[e.virtualColumnIndex[j]].OrigColName.String()).Offset
+		return plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[i]].ID).Offset <
+			plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[j]].ID).Offset
 	})
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, 0)

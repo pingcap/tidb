@@ -825,7 +825,8 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 	return genExprsMap, nil
 }
 
-func findColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
+// FindColumnInfoByID finds ColumnInfo in cols by ID.
+func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
 	for _, info := range colInfos {
 		if info.ID == id {
 			return info
@@ -870,7 +871,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	tblSchema := schema.Clone()
 	for _, col := range genCols {
 		if !colsMap.Exist(col.ID) {
-			info := findColumnInfoByID(tblInfo.Columns, col.ID)
+			info := FindColumnInfoByID(tblInfo.Columns, col.ID)
 			if info != nil {
 				tblReaderCols = append(tblReaderCols, info)
 				tblSchema.Append(col)

@@ -227,7 +227,7 @@ func (ts *PhysicalTableScan) ExpandVirtualColumn() {
 		for _, baseCol := range baseCols {
 			if !ts.schema.Contains(baseCol) {
 				ts.schema.Columns = append(ts.schema.Columns, baseCol)
-				ts.Columns = append(ts.Columns, model.FindColumnInfo(ts.Table.Columns, baseCol.OrigColName.String()))
+				ts.Columns = append(ts.Columns, FindColumnInfoByID(ts.Table.Columns, baseCol.ID))
 			}
 		}
 	}
