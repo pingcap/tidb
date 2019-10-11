@@ -280,6 +280,8 @@ func (c *Chunk) CopyReconstruct(dst *Chunk) *Chunk {
 	dst.sel = c.sel
 	if len(dst.columns) < len(c.columns) {
 		dst.columns = make([]*Column, len(c.columns))
+	} else {
+		dst.columns = dst.columns[:len(c.columns)]
 	}
 
 	for i := 0; i < len(c.columns); i++ {
