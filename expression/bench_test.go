@@ -1099,6 +1099,61 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestVecCompareIntFunc(c *C) {
+	fd := types.NewFieldType(mysql.TypeLong)
+
+	arg0 := chunk.NewColumn(fd, 3)
+	arg0.ResizeInt64(3, false)
+	vars1 := arg0.Int64s()
+	vars1[0] = 1
+	vars1[1] = 2
+	arg0.SetNull(2, true)
+
+	arg1 := chunk.NewColumn(fd, 3)
+	arg1.ResizeInt64(3, false)
+	vars2 := arg1.Int64s()
+	vars2[0] = 2
+	vars2[1] = 1
+	arg1.SetNull(2, true)
+
+	res := chunk.NewColumn(fd, 3)
+	res.ResizeInt64(3, false)
+	VecCompareInt(true, true, arg0, arg1, resOfLT, res)
+	vars3 := res.Int64s()
+	c.Assert(vars3[0], Equals, int64(1))
+	c.Assert(vars3[1], Equals, int64(0))
+	c.Assert(res.IsNull(2), Equals, true)
+
+	vars1[0] = -1
+	vars1[1] = -2
+	vars1[2] = -3
+	arg0.SetNull(2, false)
+	res.SetNull(2, false)
+
+	VecCompareInt(false, true, arg0, arg1, resOfLT, res)
+	c.Assert(vars3[0], Equals, int64(1))
+	c.Assert(vars3[1], Equals, int64(1))
+	c.Assert(res.IsNull(2), Equals, true)
+
+	arg0.SetNull(2, false)
+	res.SetNull(2, false)
+	VecCompareInt(true, false, arg1, arg0, resOfLT, res)
+	c.Assert(vars3[0], Equals, int64(0))
+	c.Assert(vars3[1], Equals, int64(0))
+	c.Assert(res.IsNull(2), Equals, true)
+
+	vars2[0] = -3
+	vars2[1] = -2
+	vars2[2] = -1
+	arg0.SetNull(2, false)
+	arg1.SetNull(2, false)
+	res.SetNull(2, false)
+	VecCompareInt(false, false, arg0, arg1, resOfLT, res)
+	c.Assert(vars3[0], Equals, int64(0))
+	c.Assert(vars3[1], Equals, int64(0))
+	c.Assert(vars3[2], Equals, int64(1))
+}
+
 func BenchmarkVecEvalBool(b *testing.B) {
 	ctx := mock.NewContext()
 	selected := make([]bool, 0, 1024)
