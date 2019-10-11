@@ -558,11 +558,11 @@ func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 		{
 			`;`,
 			`select @@sql_mode`,
-			testkit.Rows(`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`),
+			testkit.Rows(`STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`),
 		},
 		{
 			`;`,
-			"set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`",
+			"set session sql_mode = `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`",
 			nil,
 		},
 		{
@@ -583,7 +583,7 @@ func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 		// test without sql_mode: NO_AUTO_VALUE_ON_ZERO.
 		{
 			`;`,
-			"set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`",
+			"set session sql_mode = `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`",
 			nil,
 		},
 		// value 0 will be substitute by autoid.
@@ -633,8 +633,8 @@ func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 		} else {
 			tk.MustExec(tt.insert)
 		}
-		if tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
-			tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`" {
+		if tt.query == "set session sql_mode = `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
+			tt.query == "set session sql_mode = `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`" {
 			tk.MustExec(tt.query)
 		} else {
 			tk.MustQuery(tt.query).Check(tt.result)
