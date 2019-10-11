@@ -41,6 +41,11 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
+# VB = Vector Benchmark
+VB_FILE = ""
+VB_FUNC = ""
+
+
 .PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
@@ -266,3 +271,13 @@ tools/bin/misspell:tools/check/go.mod
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
+
+# Usage:
+#
+# 	$ make vectorized-bench VB_FILE=Time VB_FUNC=builtinCurrentDateSig
+vectorized-bench:
+	cd ./expression && \
+		go test -v -benchmem \
+			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
+			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
+			-args "$(VB_FUNC)"
