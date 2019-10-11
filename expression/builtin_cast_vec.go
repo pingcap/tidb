@@ -406,24 +406,27 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	f64s := buf.Float64s()
+	var res int64
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
+
 		if !mysql.HasUnsignedFlag(b.tp.Flag) {
-			i64s[i], err = types.ConvertFloatToInt(f64s[i], types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			res, err = types.ConvertFloatToInt(f64s[i], types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		} else if b.inUnion && f64s[i] < 0 {
-			i64s[i] = 0
+			res = 0
 		} else {
 			var uintVal uint64
 			sc := b.ctx.GetSessionVars().StmtCtx
 			uintVal, err = types.ConvertFloatToUint(sc, f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
-			i64s[i] = int64(uintVal)
+			res = int64(uintVal)
 		}
 
 		if err != nil {
 			return err
 		}
+		i64s[i] = res
 	}
 	return nil
 }
