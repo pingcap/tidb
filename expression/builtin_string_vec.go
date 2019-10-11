@@ -449,11 +449,37 @@ func (b *builtinExportSet3ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinASCIISig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals a builtinASCIISig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		if len(str) == 0 {
+			i64s[i] = 0
+			continue
+		}
+		i64s[i] = int64(str[0])
+	}
+	return nil
 }
 
 func (b *builtinLpadBinarySig) vectorized() bool {
