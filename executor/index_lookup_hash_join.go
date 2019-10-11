@@ -326,7 +326,7 @@ func (ow *indexHashJoinOuterWorker) buildTask(ctx context.Context) (*indexHashJo
 		matchedInnerRowPtrs [][]chunk.RowPtr
 	)
 	if ow.keepOuterOrder {
-		resultCh = make(chan *indexHashJoinResult, cap(ow.taskCh))
+		resultCh = make(chan *indexHashJoinResult, numResChkHold)
 		matchedInnerRowPtrs = make([][]chunk.RowPtr, task.outerResult.NumRows())
 	}
 	return &indexHashJoinTask{
