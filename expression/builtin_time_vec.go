@@ -776,13 +776,12 @@ func (b *builtinCurrentDateSig) vectorized() bool {
 }
 
 func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-
-	tz := b.ctx.GetSessionVars().Location()
 	nowTs, err := getStmtTimestamp(b.ctx)
 	if err != nil {
 		return err
 	}
 
+	tz := b.ctx.GetSessionVars().Location()
 	year, month, day := nowTs.In(tz).Date()
 	mysqlTm := types.FromDate(year, int(month), day, 0, 0, 0, 0)
 
