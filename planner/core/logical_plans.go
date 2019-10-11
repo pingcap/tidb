@@ -102,6 +102,11 @@ const (
 	preferStreamAgg
 )
 
+const (
+	preferTiKV = 1 << iota
+	preferTiFlash
+)
+
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
@@ -359,6 +364,8 @@ type DataSource struct {
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
+	//preferStoreType means the DataSource is enforced to which storage.
+	preferStoreType int
 }
 
 // accessPath tells how we access one index or just access table.

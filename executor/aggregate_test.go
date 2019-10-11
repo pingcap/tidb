@@ -650,7 +650,7 @@ func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
 		"└─Sort_4 10000.00 root col_1:asc",
 		"  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("select * from t order by i + 1 ")
 	rs.Check(testkit.Rows(
 		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
@@ -659,8 +659,8 @@ func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
 		"└─TopN_7 2.00 root col_1:asc, offset:0, count:2",
 		"  └─Projection_16 2.00 root test.t.i, plus(test.t.i, 1)",
 		"    └─TableReader_12 2.00 root data:TopN_11",
-		"      └─TopN_11 2.00 cop plus(test.t.i, 1):asc, offset:0, count:2",
-		"        └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TopN_11 2.00 cop[tikv] plus(test.t.i, 1):asc, offset:0, count:2",
+		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
 	rs.Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))

@@ -8,13 +8,21 @@
           "Projection_11 2.00 root 9_aux_0",
           "└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
           "  ├─TableReader_15 2.00 root data:TableScan_14",
-          "  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
+          "  │ └─TableScan_14 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
           "  └─StreamAgg_20 1.00 root funcs:count(1)",
+<<<<<<< HEAD
           "    └─IndexJoin_32 2.00 root inner join, inner:TableReader_31, outer key:test.s.a, inner key:test.t1.a",
           "      ├─IndexReader_27 2.00 root index:IndexScan_26",
           "      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
           "      └─TableReader_31 1.00 root data:TableScan_30",
           "        └─TableScan_30 1.00 cop table:t1, range: decided by [test.s.a], keep order:false"
+=======
+          "    └─IndexMergeJoin_44 2.00 root inner join, inner:TableReader_42, outer key:Column#6, inner key:Column#11",
+          "      ├─IndexReader_33 2.00 root index:IndexScan_32",
+          "      │ └─IndexScan_32 2.00 cop[tikv] table:s, index:b, c, d, range: decided by [eq(Column#7, 1) in(Column#8, 1, 2) eq(Column#9, Column#1)], keep order:false",
+          "      └─TableReader_42 1.00 root data:TableScan_41",
+          "        └─TableScan_41 1.00 cop[tikv] table:t1, range: decided by [Column#6], keep order:true"
+>>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
         ]
       },
       {

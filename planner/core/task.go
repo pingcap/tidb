@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -261,8 +262,16 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
-		splitCopAvg2CountAndSum(t.tablePlan)
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx)
+		tp := t.tablePlan
+		splitCopAvg2CountAndSum(tp)
+		for len(tp.Children()) > 0 {
+			tp = tp.Children()[0]
+		}
+		ts := tp.(*PhysicalTableScan)
+		p := PhysicalTableReader{
+			tablePlan: t.tablePlan,
+			StoreType: ts.StoreType,
+		}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
@@ -458,11 +467,19 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
+func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
+		if copToFlash {
+			if !aggregation.CheckAggPushFlash(aggFunc) {
+				return nil, p.self
+			}
+			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, p.GroupByItems...)); len(remain) > 0 {
+				return nil, p.self
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return nil, p.self
@@ -547,8 +564,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `doubleReadNeedProj` is always set if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
+		copToFlash := isFlashCopTask(cop)
 		if !cop.doubleReadNeedProj {
-			partialAgg, finalAgg := p.newPartialAggregate()
+			partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -575,11 +593,27 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	return t
 }
 
+func isFlashCopTask(cop *copTask) bool {
+	if cop.tablePlan == nil {
+		return false
+	}
+	tp := cop.tablePlan
+	for len(tp.Children()) > 0 {
+		tp = tp.Children()[0]
+	}
+	if ts, ok := tp.(*PhysicalTableScan); ok {
+		return ts.StoreType == kv.TiFlash
+	}
+	return false
+}
+
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	cardinality := p.statsInfo().RowCount
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
+		// copToFlash means whether the cop task is running on flash storage
+		copToFlash := isFlashCopTask(cop)
+		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()

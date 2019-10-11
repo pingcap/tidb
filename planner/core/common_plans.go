@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -585,7 +586,10 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
+		err := e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
+		if err != nil {
+			return err
+		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.StmtPlan.(PhysicalPlan))
 	default:
@@ -595,7 +599,7 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
+func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) (err error) {
 	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
@@ -605,18 +609,35 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
+		err = e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
+		if err != nil {
+			return err
+		}
 	}
 
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
-		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		var storeType string
+		switch copPlan.StoreType {
+		case kv.TiKV:
+			storeType = "tikv"
+		case kv.TiFlash:
+			storeType = "tiflash"
+		default:
+			err = errors.Errorf("the store type %v is unknown", copPlan.StoreType)
+			return
+		}
+		err = e.explainPlanInRowFormat(copPlan.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
-		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, true)
+		err = e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
-		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		err = e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
+		if err != nil {
+			return
+		}
+		err = e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
 	}
+	return
 }
 
 // prepareOperatorInfo generates the following information for every plan:

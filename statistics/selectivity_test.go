@@ -316,7 +316,7 @@ func (s *testStatsSuite) TestDiscreteDistribution(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
 		"IndexReader_6 0.00 root index:IndexScan_5",
-		"└─IndexScan_5 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
+		"└─IndexScan_5 0.00 cop[tikv] table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
 }
 
 func (s *testStatsSuite) TestSelectCombinedLowBound(c *C) {
@@ -329,7 +329,7 @@ func (s *testStatsSuite) TestSelectCombinedLowBound(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where kid = 1").Check(testkit.Rows(
 		"IndexReader_6 7.00 root index:IndexScan_5",
-		"└─IndexScan_5 7.00 cop table:t, index:kid, pid, range:[1,1], keep order:false"))
+		"└─IndexScan_5 7.00 cop[tikv] table:t, index:kid, pid, range:[1,1], keep order:false"))
 }
 
 func getRange(start, end int64) []*ranger.Range {
@@ -456,14 +456,13 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
 		"IndexLookUp_10 3333.33 root ",
-		"├─IndexScan_8 3333.33 cop table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
-		"└─TableScan_9 3333.33 cop table:t, keep order:false, stats:pseudo"))
-
+		"├─IndexScan_8 3333.33 cop[tikv] table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
+		"└─TableScan_9 3333.33 cop[tikv] table:t, keep order:false, stats:pseudo"))
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(a int primary key, b int)")
 	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
 		"TableReader_6 3333.33 root data:TableScan_5",
-		"└─TableScan_5 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo"))
+		"└─TableScan_5 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {
@@ -515,31 +514,31 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery(`explain select b from t where b is null`).Check(testkit.Rows(
 		"IndexReader_6 4.00 root index:IndexScan_5",
-		"└─IndexScan_5 4.00 cop table:t, index:b, range:[NULL,NULL], keep order:false",
+		"└─IndexScan_5 4.00 cop[tikv] table:t, index:b, range:[NULL,NULL], keep order:false",
 	))
 	testKit.MustQuery(`explain select b from t where b is not null`).Check(testkit.Rows(
 		"IndexReader_6 1.00 root index:IndexScan_5",
-		"└─IndexScan_5 1.00 cop table:t, index:b, range:[-inf,+inf], keep order:false",
+		"└─IndexScan_5 1.00 cop[tikv] table:t, index:b, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select b from t where b is null or b > 3`).Check(testkit.Rows(
 		"IndexReader_6 4.00 root index:IndexScan_5",
-		"└─IndexScan_5 4.00 cop table:t, index:b, range:[NULL,NULL], (3,+inf], keep order:false",
+		"└─IndexScan_5 4.00 cop[tikv] table:t, index:b, range:[NULL,NULL], (3,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select b from t use index(idx_b)`).Check(testkit.Rows(
 		"IndexReader_5 5.00 root index:IndexScan_4",
-		"└─IndexScan_4 5.00 cop table:t, index:b, range:[NULL,+inf], keep order:false",
+		"└─IndexScan_4 5.00 cop[tikv] table:t, index:b, range:[NULL,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select b from t where b < 4`).Check(testkit.Rows(
 		"IndexReader_6 1.00 root index:IndexScan_5",
-		"└─IndexScan_5 1.00 cop table:t, index:b, range:[-inf,4), keep order:false",
+		"└─IndexScan_5 1.00 cop[tikv] table:t, index:b, range:[-inf,4), keep order:false",
 	))
 	// Make sure column stats has been loaded.
 	testKit.MustExec(`explain select * from t where a is null`)
 	c.Assert(h.LoadNeededHistograms(), IsNil)
 	testKit.MustQuery(`explain select * from t where a is null`).Check(testkit.Rows(
 		"TableReader_7 1.00 root data:Selection_6",
-		"└─Selection_6 1.00 cop isnull(test.t.a)",
-		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 1.00 cop[tikv] isnull(test.t.a)",
+		"  └─TableScan_5 5.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t where a is not null`).Check(testkit.Rows(
 		"TableReader_7 4.00 root data:Selection_6",
@@ -548,16 +547,16 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	))
 	testKit.MustQuery(`explain select * from t where a is null or a > 3`).Check(testkit.Rows(
 		"TableReader_7 2.00 root data:Selection_6",
-		"└─Selection_6 2.00 cop or(isnull(test.t.a), gt(test.t.a, 3))",
-		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 2.00 cop[tikv] or(isnull(test.t.a), gt(test.t.a, 3))",
+		"  └─TableScan_5 5.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t`).Check(testkit.Rows(
 		"TableReader_5 5.00 root data:TableScan_4",
-		"└─TableScan_4 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─TableScan_4 5.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t where a < 4`).Check(testkit.Rows(
 		"TableReader_7 3.00 root data:Selection_6",
-		"└─Selection_6 3.00 cop lt(test.t.a, 4)",
-		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 3.00 cop[tikv] lt(test.t.a, 4)",
+		"  └─TableScan_5 5.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 }

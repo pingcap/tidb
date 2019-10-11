@@ -331,9 +331,9 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 		"Sort_6 100000000.00 root test.t1.a:asc, test.t2.a:asc",
 		"└─MergeJoin_9 100000000.00 root inner join",
 		"  ├─TableReader_11 10000.00 root data:TableScan_10",
-		"  │ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  │ └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_13 10000.00 root data:TableScan_12",
-		"    └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -352,9 +352,9 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 		"Projection_7 10000.00 root 6_aux_0",
 		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
 		"  ├─TableReader_10 10000.00 root data:TableScan_9",
-		"  │ └─TableScan_9 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  │ └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_12 10000.00 root data:TableScan_11",
-		"    └─TableScan_11 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableScan_11 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",

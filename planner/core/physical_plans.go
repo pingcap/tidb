@@ -178,6 +178,8 @@ type PhysicalTableScan struct {
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
+
+	StoreType kv.StoreType
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
