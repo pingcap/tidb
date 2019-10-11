@@ -96,6 +96,15 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error
 	return &rootTask{p: pShow}, nil
 }
 
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, error) {
+	if !prop.IsEmpty() {
+		return invalidTask, nil
+	}
+	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
+	pShow.SetSchema(p.schema)
+	return &rootTask{p: pShow}, nil
+}
+
 // findBestTask implements LogicalPlan interface.
 func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,

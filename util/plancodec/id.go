@@ -90,6 +90,8 @@ const (
 	TypeIndexMerge = "IndexMerge"
 	// TypePointGet is the type of PointGetPlan.
 	TypePointGet = "Point_Get"
+	// TypeShowDDLJobs is the type of show ddl jobs.
+	TypeShowDDLJobs = "ShowDDLJobs"
 )
 
 // plan id.
@@ -131,6 +133,7 @@ const (
 	typeTableGatherID
 	typeIndexMergeID
 	typePointGet
+	typeShowDDLJobs
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -210,6 +213,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexMergeID
 	case TypePointGet:
 		return typePointGet
+	case TypeShowDDLJobs:
+		return typeShowDDLJobs
 	}
 	// Should never reach here.
 	return 0
@@ -292,6 +297,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexMerge
 	case typePointGet:
 		return TypePointGet
+	case typeShowDDLJobs:
+		return TypeShowDDLJobs
 	}
 
 	// Should never reach here.
