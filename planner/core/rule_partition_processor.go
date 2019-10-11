@@ -125,14 +125,16 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 			}
 		}
 	}
+	if alwaysFalse {
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+		tableDual.schema = ds.Schema()
+		return tableDual, nil
+	}
 
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
-		if alwaysFalse {
-			break
-		}
 		// If the select condition would never be satisified, prune that partition.
 		pruned, err := s.canBePruned(ds.SCtx(), col, expr, presolvedFilters)
 		if err != nil {
