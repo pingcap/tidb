@@ -1518,17 +1518,26 @@ func DecimalSub(from1, from2, to *MyDecimal) error {
 	return doAdd(from1, from2, to)
 }
 
-func resetDecimal(d *MyDecimal) {
-	if d == nil {
-		return
+func validateArgs(f1, f2, to *MyDecimal) (*MyDecimal, *MyDecimal, *MyDecimal) {
+	if to == nil {
+		return f1, f2, to
 	}
-	for i := range d.wordBuf {
-		d.wordBuf[i] = 0
+	if f1 == to {
+		tmp := *f1
+		f1 = &tmp
 	}
+	if f2 == to {
+		tmp := *f2
+		f2 = &tmp
+	}
+	for i := range to.wordBuf {
+		to.wordBuf[i] = 0
+	}
+	return f1, f2, to
 }
 
 func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
-	resetDecimal(to)
+	from1, from2, to = validateArgs(from1, from2, to)
 	var (
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
 		wordsFrac1  = digitsToWords(int(from1.digitsFrac))
@@ -1694,7 +1703,7 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 }
 
 func doAdd(from1, from2, to *MyDecimal) error {
-	resetDecimal(to)
+	from1, from2, to = validateArgs(from1, from2, to)
 	var (
 		err         error
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
@@ -1849,7 +1858,7 @@ DecimalMul multiplies two decimals.
     digits, fast multiplication must be implemented.
 */
 func DecimalMul(from1, from2, to *MyDecimal) error {
-	resetDecimal(to)
+	from1, from2, to = validateArgs(from1, from2, to)
 	var (
 		err         error
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
@@ -2012,7 +2021,7 @@ func DecimalMod(from1, from2, to *MyDecimal) error {
 }
 
 func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
-	resetDecimal(mod)
+	from1, from2, to = validateArgs(from1, from2, to)
 	var (
 		frac1 = digitsToWords(int(from1.digitsFrac)) * digitsPerWord
 		prec1 = int(from1.digitsInt) + frac1
