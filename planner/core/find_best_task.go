@@ -715,7 +715,6 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCol
 		} else {
 			// TODO: try to reuse the col generated when building the DataSource.
 			indexCols = append(indexCols, &expression.Column{
-				ColName:  idx.Columns[i].Name,
 				ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
 				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
