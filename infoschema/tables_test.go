@@ -176,6 +176,16 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 18 36 4"))
+
+	// Test partition table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("3 18 54 6"))
 }
 
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
