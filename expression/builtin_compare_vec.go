@@ -650,8 +650,8 @@ func VecCompareInt(isUnsigned0, isUnsigned1 bool, lColumn, rColumn *chunk.Column
 	case isUnsigned0 && !isUnsigned1:
 		for i := 0; i < n; i++ {
 			var res int64
-			var isNull bool = false
-			var err error = nil
+			var isNull bool
+			var err error
 			// compare null values.
 			if result.IsNull(i) {
 				result.SetNull(i, true)
@@ -679,8 +679,8 @@ func VecCompareInt(isUnsigned0, isUnsigned1 bool, lColumn, rColumn *chunk.Column
 	case !isUnsigned0 && isUnsigned1:
 		for i := 0; i < n; i++ {
 			var res int64
-			var isNull bool = false
-			var err error = nil
+			var isNull bool
+			var err error
 			// compare null values.
 			if result.IsNull(i) {
 				result.SetNull(i, true)
@@ -708,8 +708,8 @@ func VecCompareInt(isUnsigned0, isUnsigned1 bool, lColumn, rColumn *chunk.Column
 	case !isUnsigned0 && !isUnsigned1:
 		for i := 0; i < n; i++ {
 			var res int64
-			var isNull bool = false
-			var err error = nil
+			var isNull bool
+			var err error
 			// compare null values.
 			if result.IsNull(i) {
 				result.SetNull(i, true)
