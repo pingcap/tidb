@@ -288,46 +288,55 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
-func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
+func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) ([]Expression, bool) {
 	newExprs := make([]Expression, 0, len(exprs))
+	flag := false
 	for _, expr := range exprs {
-		newExprs = append(newExprs, PushDownNot(ctx, expr, not))
+		newExpr, changed := PushDownNot(ctx, expr, not)
+		flag = changed || flag
+		newExprs = append(newExprs, newExpr)
 	}
-	return newExprs
+	return newExprs, flag
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
+func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
 			return PushDownNot(f.GetCtx(), f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
+				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
 			}
-			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
-		case ast.LogicAnd:
+			newArgs, changed := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			if !changed {
+				return f, false
+			}
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...), true
+		case ast.LogicAnd, ast.LogicOr:
+			var (
+				newArgs []Expression
+				changed bool
+			)
+			funcName := f.FuncName.L
 			if not {
-				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
-				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), newArgs...)
+				newArgs, _ = doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				funcName = oppositeOp[f.FuncName.L]
+				changed = true
+			} else {
+				newArgs, changed = doPushDownNot(f.GetCtx(), f.GetArgs(), false)
 			}
-			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
-		case ast.LogicOr:
-			if not {
-				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
-				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), newArgs...)
+			if !changed {
+				return f, false
 			}
-			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
+			return NewFunctionInternal(f.GetCtx(), funcName, f.GetType(), newArgs...), true
 		}
 	}
 	if not {
 		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
-	return expr
+	return expr, not
 }
 
 // Contains tests if `exprs` contains `e`.
