@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -666,7 +667,11 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 
 // getRowData decodes raw byte slice to row data.
 func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte) ([][]byte, error) {
-	values, err := tablecodec.CutRowNew(value, colIDs)
+	oldRow, err := rowcodec.RowToOldRow(value, nil)
+	if err != nil {
+		return nil, err
+	}
+	values, err := tablecodec.CutRowNew(oldRow, colIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

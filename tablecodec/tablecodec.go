@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 var (
@@ -241,6 +242,24 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 	}
 	valBuf = valBuf[:0]
 	if values == nil {
+		values = make([]types.Datum, len(row))
+	}
+	for i, c := range row {
+		err := flatten(sc, c, &values[i])
+		if err != nil {
+			return valBuf, errors.Trace(err)
+		}
+	}
+	var e rowcodec.Encoder
+	return e.Encode(colIDs, values, valBuf)
+}
+
+func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
+	if len(row) != len(colIDs) {
+		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
+	}
+	valBuf = valBuf[:0]
+	if values == nil {
 		values = make([]types.Datum, len(row)*2)
 	}
 	for i, c := range row {
@@ -309,6 +328,30 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
+func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	if row == nil {
+		row = make(map[int64]types.Datum, len(cols))
+	}
+	if b == nil {
+		return row, nil
+	}
+	if len(b) == 1 && b[0] == codec.NilFlag {
+		return row, nil
+	}
+
+	reqCols := make([]int64, 0, len(cols))
+	tps := make([]*types.FieldType, 0, len(cols))
+	for id, tp := range cols {
+		reqCols = append(reqCols, id)
+		tps = append(tps, tp)
+	}
+	rd, err := rowcodec.NewDecoder(reqCols, -1, tps, nil, loc)
+	if err != nil {
+		return nil, err
+	}
+	return rd.DecodeToOldDatumMap(b, -1, row)
+}
+
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
@@ -366,7 +409,10 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 // DecodeRow decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
-	return DecodeRowWithMap(b, cols, loc, nil)
+	if !rowcodec.IsNewFormat(b) {
+		return DecodeRowWithMap(b, cols, loc, nil)
+	}
+	return DecodeRowWithMapNew(b, cols, loc, nil)
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.

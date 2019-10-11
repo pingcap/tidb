@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -201,7 +202,11 @@ func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64
 			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
 	}
-	cutVals, err := tablecodec.CutRowNew(rowVal, colID2CutPos)
+	oldRow, err := rowcodec.RowToOldRow(rowVal, nil)
+	if err != nil {
+		return err
+	}
+	cutVals, err := tablecodec.CutRowNew(oldRow, colID2CutPos)
 	if err != nil {
 		return err
 	}

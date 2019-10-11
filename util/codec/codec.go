@@ -176,7 +176,7 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []b
 	if tp == mysql.TypeUnspecified {
 		tp = t.Type
 	}
-	if tp == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+	if tp == mysql.TypeTimestamp && sc != nil && sc.TimeZone != time.UTC {
 		err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 		if err != nil {
 			return nil, err

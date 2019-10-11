@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 type memIndexReader struct {
@@ -220,7 +221,11 @@ func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model
 // getRowData decodes raw byte slice to row data.
 func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([][]byte, error) {
 	pkIsHandle := tb.PKIsHandle
-	values, err := tablecodec.CutRowNew(value, colIDs)
+	oldRow, err := rowcodec.RowToOldRow(value, nil)
+	if err != nil {
+		return nil, err
+	}
+	values, err := tablecodec.CutRowNew(oldRow, colIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
