@@ -607,7 +607,8 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, b
 		return res, err != nil, err
 	}
 
-	err = types.DecimalAdd(res, types.NewDecFromInt(1), res)
+	tmp := *res
+	err = types.DecimalAdd(&tmp, types.NewDecFromInt(1), res)
 	return res, err != nil, err
 }
 
