@@ -192,7 +192,7 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 	}
 
 	for !chk.IsFull() {
-		if r.respChkIdx == len(r.selectResp.Chunks) && r.respArrowDecoder.Empty() {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return err
