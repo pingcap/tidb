@@ -36,7 +36,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 		}},
 	},
 	ast.GT:   {},
-	ast.EQ:   {},
+	ast.EQ:   {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}}},
 	ast.GE:   {},
 	ast.Date: {},
 	ast.Greatest: {

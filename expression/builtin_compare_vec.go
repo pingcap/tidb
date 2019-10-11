@@ -767,11 +767,46 @@ func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinEQRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	x := buf0.Float64s()
+	y := buf1.Float64s()
+	for i := 0; i < n; i++ {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		if isNull0 || isNull1 {
+			i64s[i] = compareNull(isNull0, isNull1)
+		} else {
+			if x[i] == y[i] {
+				i64s[i] = 1
+			} else {
+				i64s[i] = 0
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestRealSig) vectorized() bool {
