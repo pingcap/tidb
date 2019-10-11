@@ -93,6 +93,8 @@ const (
 	TypeTableGather = "TableGather"
 	// TypeIndexMerge is the type of IndexMergeReader
 	TypeIndexMerge = "IndexMerge"
+	// TypeShowDDLJobs is the type of show ddl jobs.
+	TypeShowDDLJobs = "ShowDDLJobs"
 )
 
 // Init initializes LogicalAggregation.
@@ -293,9 +295,23 @@ func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	return &p
 }
 
+// Init initializes LogicalShowDDLJobs.
+func (p LogicalShowDDLJobs) Init(ctx sessionctx.Context) *LogicalShowDDLJobs {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShowDDLJobs, &p, 0)
+	return &p
+}
+
 // Init initializes PhysicalShow.
 func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p, 0)
+	// Just use pseudo stats to avoid panic.
+	p.stats = &property.StatsInfo{RowCount: 1}
+	return &p
+}
+
+// Init initializes PhysicalShowDDLJobs.
+func (p PhysicalShowDDLJobs) Init(ctx sessionctx.Context) *PhysicalShowDDLJobs {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShowDDLJobs, &p, 0)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
