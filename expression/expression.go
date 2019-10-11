@@ -232,7 +232,7 @@ func allocSelSlice(n int) []int {
 }
 
 func deallocateSelSlice(sel []int) {
-	if len(sel) <= defaultChunkSize {
+	if cap(sel) <= defaultChunkSize {
 		selPool.Put(sel)
 	}
 }
@@ -244,9 +244,9 @@ func allocZeroSlice(n int) []int8 {
 	return zeroPool.Get().([]int8)
 }
 
-func deallocateZeroSlice(areZeros []int8) {
-	if len(areZeros) <= defaultChunkSize {
-		zeroPool.Put(areZeros)
+func deallocateZeroSlice(isZero []int8) {
+	if cap(isZero) <= defaultChunkSize {
+		zeroPool.Put(isZero)
 	}
 }
 
@@ -274,9 +274,9 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	}
 	input.SetSel(sel)
 
-	// In areZeros slice, -1 means Null, 0 means zero, 1 means not zero
-	areZeros := allocZeroSlice(n)
-	defer deallocateZeroSlice(areZeros)
+	// In isZero slice, -1 means Null, 0 means zero, 1 means not zero
+	isZero := allocZeroSlice(n)
+	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
@@ -288,7 +288,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, areZeros)
+		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -296,7 +296,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		j := 0
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		for i := range sel {
-			if areZeros[i] == -1 {
+			if isZero[i] == -1 {
 				if eType != types.ETInt && !isEQCondFromIn {
 					continue
 				}
@@ -308,7 +308,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				continue
 			}
 
-			if areZeros[i] == 0 {
+			if isZero[i] == 0 {
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -328,19 +328,19 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, areZeros []int8) error {
+func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	var err error
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
 		for i := range sel {
 			if buf.IsNull(i) {
-				areZeros[i] = -1
+				isZero[i] = -1
 			} else {
 				if i64s[i] == 0 {
-					areZeros[i] = 0
+					isZero[i] = 0
 				} else {
-					areZeros[i] = 1
+					isZero[i] = 1
 				}
 			}
 		}
@@ -348,12 +348,12 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		f64s := buf.Float64s()
 		for i := range sel {
 			if buf.IsNull(i) {
-				areZeros[i] = -1
+				isZero[i] = -1
 			} else {
 				if types.RoundFloat(f64s[i]) == 0 {
-					areZeros[i] = 0
+					isZero[i] = 0
 				} else {
-					areZeros[i] = 1
+					isZero[i] = 1
 				}
 			}
 		}
@@ -361,12 +361,12 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		d64s := buf.GoDurations()
 		for i := range sel {
 			if buf.IsNull(i) {
-				areZeros[i] = -1
+				isZero[i] = -1
 			} else {
 				if d64s[i] == 0 {
-					areZeros[i] = 0
+					isZero[i] = 0
 				} else {
-					areZeros[i] = 1
+					isZero[i] = 1
 				}
 			}
 		}
@@ -374,26 +374,26 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		t64s := buf.Times()
 		for i := range sel {
 			if buf.IsNull(i) {
-				areZeros[i] = -1
+				isZero[i] = -1
 			} else {
 				if t64s[i].IsZero() {
-					areZeros[i] = 0
+					isZero[i] = 0
 				} else {
-					areZeros[i] = 1
+					isZero[i] = 1
 				}
 			}
 		}
 	case types.ETString:
 		for i := range sel {
 			if buf.IsNull(i) {
-				areZeros[i] = -1
+				isZero[i] = -1
 			} else {
 				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
 				err = err1
 				if iVal == 0 {
-					areZeros[i] = 0
+					isZero[i] = 0
 				} else {
-					areZeros[i] = 1
+					isZero[i] = 1
 				}
 			}
 		}
@@ -401,14 +401,14 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		d64s := buf.Decimals()
 		for i := range sel {
 			if buf.IsNull(i) {
-				areZeros[i] = -1
+				isZero[i] = -1
 			} else {
 				v, err1 := d64s[i].ToFloat64()
 				err = err1
 				if types.RoundFloat(v) == 0 {
-					areZeros[i] = 0
+					isZero[i] = 0
 				} else {
-					areZeros[i] = 1
+					isZero[i] = 1
 				}
 			}
 		}
