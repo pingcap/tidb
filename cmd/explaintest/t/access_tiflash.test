@@ -1,0 +1,13 @@
+drop table if exists t, tt;
+
+create table t(a int, b int, index ia(a));
+
+desc select avg(a) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t;
