@@ -14,12 +14,11 @@
 package expression
 
 import (
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"strconv"
 )
 
 func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -583,11 +582,36 @@ func (b *builtinCastTimeAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 }
 
 func (b *builtinCastDurationAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	dec := b.tp.Decimal
+	var dur types.Duration
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	res := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			continue
+		}
+		dur, err = buf.GetDuration(i, -1).RoundFrac(int8(dec))
+		if err != nil {
+			return err
+		}
+		res[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsStringSig) vectorized() bool {
