@@ -793,7 +793,8 @@ func (b *builtinFloorDecToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 		return res, err != nil, err
 	}
 
-	err = types.DecimalSub(res, types.NewDecFromInt(1), res)
+	tmp := *res
+	err = types.DecimalSub(&tmp, types.NewDecFromInt(1), res)
 	return res, err != nil, err
 }
 
