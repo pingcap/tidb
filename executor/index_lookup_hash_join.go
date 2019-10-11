@@ -29,6 +29,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// numResChkHold indicates the number of resource chunks that a worker holds at
+// the same time. It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
+// Otherwise, there will be at most `concurrency` resource chunks throughout the
+// execution of IndexNestedLoopHashJoin.
+const numResChkHold = 4
+
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
 // execute concurrently. The output order is not promised.
 //
@@ -147,12 +153,24 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 	if !e.keepOuterOrder {
 		e.resultCh = make(chan *indexHashJoinResult, concurrency)
+	} else {
+		// When `keepOuterOrder` is true, each task holds their own `resultCh`
+		// individually, thus we do not need a global resultCh.
+		e.resultCh = nil
 	}
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
-		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- newFirstChunk(e)
+		if !e.keepOuterOrder {
+			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
+			e.joinChkResourceCh[i] <- newFirstChunk(e)
+		} else {
+			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
+			for j := 0; j < numResChkHold; j++ {
+				e.joinChkResourceCh[i] <- newFirstChunk(e)
+			}
+		}
 	}
+
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerID := i
@@ -383,6 +401,8 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	}
 	h, resultCh := fnv.New64(), iw.resultCh
 	defer func() {
+		// This check is used to closed the resultCh of the last task when
+		// task.keepOuterOrder is true.
 		if resultCh != iw.resultCh {
 			close(resultCh)
 		}
@@ -401,12 +421,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		if task.keepOuterOrder {
-			// `resultCh` will be nil in 2 cases:
-			//  1. Before the first task is fetched.
-			//  2. After a task is finished.
 			if resultCh != nil {
+				// resultCh is closed to notice the end of the previous task
+				// when a new task is fetched.
 				close(resultCh)
-				resultCh = nil
 			}
 			resultCh = task.resultCh
 		}
