@@ -719,11 +719,14 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+			schemaColumns := make([]*expression.Column, len(is.dataSourceSchema.Columns))
+			copy(schemaColumns, is.dataSourceSchema.Columns)
+			ts.schema = ts.schema.Clone()
+			ts.schema.Columns = schemaColumns
 			// If the double read need projection, the datasource schema will append a handle column during appendExtraHandleCol,
 			// So we need to delete the extra column in schema to avoid wrong plan.
 			if cop.doubleReadNeedProj {
 				defer func() {
-					copy(ts.Schema().Columns, is.dataSourceSchema.Columns)
 					ds.schema.Columns = ds.schema.Columns[:len(ds.schema.Columns)-1]
 				}()
 			}
