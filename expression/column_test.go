@@ -142,11 +142,11 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0 := &Column{UniqueID: 0, ID: 0, ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{UniqueID: 1, ID: 1, ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("col0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("col1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
+	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
