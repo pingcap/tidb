@@ -360,7 +360,7 @@ var defaultConf = Config{
 		ExpensiveThreshold:  10000,
 		DisableErrorStack:   true,
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
-		RecordPlanInSlowLog: 1,
+		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
