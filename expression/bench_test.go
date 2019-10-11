@@ -1323,7 +1323,7 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 			for _, ind := range randomSel {
 				unselected[ind] = false
 			}
-			for i, _ := range selected2 {
+			for i := range selected2 {
 				if selected2[i] && unselected[i] {
 					selected2[i] = false
 				}
