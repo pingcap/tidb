@@ -672,7 +672,7 @@ Projection_17	20.00	root	Column#1, Column#2, Column#39, Column#6, Column#36, Col
         │ └─TableReader_63	3017307.69	root	data:Selection_62
         │   └─Selection_62	3017307.69	cop	ge(Column#13, 1993-08-01 00:00:00.000000), lt(Column#13, 1993-11-01)
         │     └─TableScan_61	75000000.00	cop	table:orders, range:[-inf,+inf], keep order:false
-        └─Projection_37	1.00	root	Column#18, Column#23, Column#24, Column#26, Column#49
+        └─Projection_37	1.00	root	Column#18, Column#23, Column#24, Column#26
           └─IndexLookUp_36	1.00	root	
             ├─IndexScan_33	4.05	cop	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#18, Column#9)], keep order:true
             └─Selection_35	1.00	cop	eq(Column#26, "R")
