@@ -22,7 +22,9 @@ import (
 )
 
 var vecBuiltinStringCases = map[string][]vecExprBenchCase{
-	ast.Length:         {},
+	ast.Length: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{0, 10}}},
+	},
 	ast.ASCII:          {},
 	ast.Concat:         {},
 	ast.ConcatWS:       {},
