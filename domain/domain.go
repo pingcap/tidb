@@ -838,9 +838,11 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 		defer do.wg.Done()
 		defer recoverInDomain("globalBindHandleWorkerLoop", false)
 		loadTicker := time.NewTicker(bindinfo.Lease)
-		defer loadTicker.Stop()
 		captureBaselineTicker := time.NewTicker(bindinfo.Lease)
-		defer captureBaselineTicker.Stop()
+		defer func() {
+			captureBaselineTicker.Stop()
+			loadTicker.Stop()
+		}()
 		for {
 			select {
 			case <-do.exit:
