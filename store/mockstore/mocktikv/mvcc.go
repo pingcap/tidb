@@ -440,8 +440,9 @@ type MVCCStore interface {
 	Prewrite(req *kvrpcpb.PrewriteRequest) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error
-	Cleanup(key []byte, startTS uint64) error
+	Cleanup(key []byte, startTS, currentTS uint64) error
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
+	TxnHeartBeat(primaryKey []byte, startTS uint64, adviseTTL uint64) (uint64, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
 	DeleteRange(startKey, endKey []byte) error
