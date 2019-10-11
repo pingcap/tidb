@@ -34,49 +34,7 @@ func (b *builtinRegexpBinarySig) vectorized() bool {
 }
 
 func (b *builtinRegexpBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	bufExpr, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufExpr)
-	if err := b.args[0].VecEvalString(b.ctx, input, bufExpr); err != nil {
-		return err
-	}
-
-	bufPat, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufPat)
-	if err := b.args[1].VecEvalString(b.ctx, input, bufPat); err != nil {
-		return err
-	}
-
-	if isRegexpMemoizable(b.args[1]) && b.rm == nil {
-		b.rm = newRegexpMemoizer(bufPat, n, b)
-	}
-	getRegexp := func(pat string) (*regexp.Regexp, error) {
-		if b.rm != nil && b.rm.re != nil {
-			return b.rm.re, nil
-		}
-		return b.compile(pat)
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(bufExpr, bufPat)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		re, err := getRegexp(bufPat.GetString(i))
-		if err != nil {
-			return err
-		}
-		i64s[i] = boolToInt64(re.MatchString(bufExpr.GetString(i)))
-	}
-	return nil
+	return b.builtinRegexpSharedSig.vecEvalInt(input, result, b)
 }
 
 func (b *builtinRegexpSig) vectorized() bool {
@@ -84,6 +42,30 @@ func (b *builtinRegexpSig) vectorized() bool {
 }
 
 func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return b.builtinRegexpSharedSig.vecEvalInt(input, result, b)
+}
+
+func (b *builtinRegexpSharedSig) isMemoizedRegexpInitialized() bool {
+	return !(b.memoizedRegexp == nil && b.memoizeErr == nil)
+}
+
+func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int, rc regexpCompiler) {
+	// Precondition: patterns is generated from a constant expression
+	for i := 0; i < n; i++ {
+		if patterns.IsNull(i) {
+			continue
+		}
+		re, err := rc.compile(patterns.GetString(i))
+		b.memoizedRegexp = re
+		b.memoizeErr = err
+		break
+	}
+	if !b.isMemoizedRegexpInitialized() {
+		b.memoizeErr = errors.New("No valid regexp pattern found")
+	}
+}
+
+func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column, rc regexpCompiler) error {
 	n := input.NumRows()
 	bufExpr, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -103,18 +85,14 @@ func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 
-	if isRegexpMemoizable(b.args[1]) && b.rm == nil {
-		b.rm = newRegexpMemoizer(bufPat, n, b)
-		// Note that the existence of b.rm only means that we have initialized
-		// the regexp memoizer itself. b.rm.re could still be nil at this point,
-		// either because patterns are all NULL, or none of the patterns was
-		// compiled successfully.
+	if b.args[1].ConstItem() && !b.isMemoizedRegexpInitialized() {
+		b.initMemoizedRegexp(bufPat, n, rc)
 	}
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
-		if b.rm != nil && b.rm.re != nil {
-			return b.rm.re, nil
+		if b.memoizedRegexp != nil {
+			return b.memoizedRegexp, nil
 		}
-		return b.compile(pat)
+		return rc.compile(pat)
 	}
 
 	result.ResizeInt64(n, false)
@@ -131,8 +109,4 @@ func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		i64s[i] = boolToInt64(re.MatchString(bufExpr.GetString(i)))
 	}
 	return nil
-}
-
-func isRegexpMemoizable(argPat Expression) bool {
-	return argPat.ConstItem()
 }
