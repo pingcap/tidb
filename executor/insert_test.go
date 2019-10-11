@@ -473,7 +473,7 @@ func (s *testSuite) TestPartitionInsertOnDuplicate(c *C) {
 
 }
 
-func (s *testSuite3) TestBit(c *C) {
+func (s *testSuite) TestBitInRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a bit(3))`)
