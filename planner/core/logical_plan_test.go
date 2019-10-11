@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -968,6 +969,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// If this schema is not set correctly, table.RemoveRecord would fail when adding
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(Column#1,Column#14)->IndexReader(Index(t.c_d_e)[[42,42]])}(Column#2,Column#27)->Sel([or(Column#26, Column#40)])->Projection->Delete",
+		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(Column#2,Column#25)->Projection->Update",
 		},
 	}
 
@@ -2546,24 +2551,46 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	ctx := context.TODO()
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
-		p, err := builder.Build(ctx, stmt)
+		p, stmt, err := s.optimize(ctx, tt.sql)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
 			continue
 		}
+		c.Assert(ToString(p), Equals, tt.result, comment)
+
+		var sb strings.Builder
+		// After restore, the result should be the same.
+		err = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		lp, ok := p.(LogicalPlan)
-		c.Assert(ok, IsTrue)
-		p, err = physicalOptimize(lp)
-		c.Assert(err, IsNil)
+		p, _, err = s.optimize(ctx, sb.String())
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
 		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
+}
+
+func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan, ast.Node, error) {
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	err = Preprocess(s.ctx, stmt, s.is)
+	if err != nil {
+		return nil, nil, err
+	}
+	builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err = physicalOptimize(p.(LogicalPlan))
+	return p.(PhysicalPlan), stmt, err
 }
 
 func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {

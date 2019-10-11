@@ -36,6 +36,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -662,7 +663,7 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
 	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
 	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
-	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+	//     └─TableScan_10     | 3.00  | cop[tikv]  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
@@ -1052,4 +1053,32 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(variable.DefTiDBMaxDeltaSchemaCount))
+	gvc := domain.GetDomain(tk.Se).GetGlobalVarsCache()
+	gvc.Disable()
+
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '-1'"))
+	// Make sure a new session will load global variables.
+	tk.Se = nil
+	tk.MustExec("use test")
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(100))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_max_delta_schema_count= %v", uint64(math.MaxInt64)))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '%d'", uint64(math.MaxInt64))))
+	tk.Se = nil
+	tk.MustExec("use test")
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(16384))
+	_, err := tk.Exec("set @@global.tidb_max_delta_schema_count= invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
+	tk.Se = nil
+	tk.MustExec("use test")
+	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(2048))
+	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
 }

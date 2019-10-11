@@ -527,13 +527,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.PriKeyFlag
+				// Check PriKeyFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.PriKeyFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.PriKeyFlag
+				}
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
+				// Check UniqueFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.UniqueFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.UniqueKeyFlag
+				}
 			case ast.ColumnOptionDefaultValue:
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
@@ -1105,29 +1111,13 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
-			var fk model.FKInfo
-			fk.Name = model.NewCIStr(constr.Name)
-			fk.RefTable = constr.Refer.Table.Name
+			fk, err := buildFKInfo(model.NewCIStr(constr.Name), constr.Keys, constr.Refer, cols, tbInfo)
+			if err != nil {
+				return nil, err
+			}
 			fk.State = model.StatePublic
-			for _, key := range constr.Keys {
-				if table.FindCol(cols, key.Column.Name.O) == nil {
-					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
-				}
-				fk.Cols = append(fk.Cols, key.Column.Name)
-			}
-			for _, key := range constr.Refer.IndexColNames {
-				fk.RefCols = append(fk.RefCols, key.Column.Name)
-			}
-			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
-			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
-			if len(fk.Cols) != len(fk.RefCols) {
-				return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
-			}
-			if len(fk.Cols) == 0 {
-				// TODO: In MySQL, this case will report a parse error.
-				return nil, infoschema.ErrCannotAddForeign
-			}
-			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, &fk)
+
+			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, fk)
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
@@ -1345,11 +1335,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if pi != nil {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-			if len(pi.Columns) == 0 {
-				err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
-			} else {
-				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
-			}
+			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
 		case model.PartitionTypeHash:
 			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
@@ -1598,12 +1584,8 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
-	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column, s *ast.CreateTableStmt) error {
+	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
 	}
 
@@ -1615,31 +1597,28 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return err
 	}
 
-	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return err
+	if len(pi.Columns) == 0 {
+		if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+			return err
+		}
+
+		// s maybe nil when add partition.
+		if s == nil {
+			return nil
+		}
+
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, cols, tbInfo)
 	}
 
-	return checkPartitionFuncType(ctx, s, cols, tbInfo)
-}
-
-func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
+	// Check for range columns partition.
 	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
 		return err
 	}
 
-	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
-		return err
-	}
-
-	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return errors.Trace(err)
-	}
-
-	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
+	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
 }
 
 func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
@@ -1675,8 +1654,9 @@ func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.Table
 	if len(curr.LessThan) != len(pi.Columns) {
 		return errors.Trace(ast.ErrPartitionColumnList)
 	}
+	var prev *model.PartitionDefinition
 	for i := 1; i < len(defs); i++ {
-		prev, curr := curr, &defs[i]
+		prev, curr = curr, &defs[i]
 		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
 		if err != nil {
 			return err
@@ -2237,26 +2217,16 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkPartitionNameUnique(meta, partInfo)
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	tmp := *partInfo
+	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
+	err = checkPartitionByRange(ctx, meta, &tmp, t.Cols(), nil)
 	if err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return errors.Trace(err)
-	}
-
-	// partInfo contains only the new added partition, we have to combine it with the
-	// old partitions to check all partitions is strictly increasing.
-	tmp := *partInfo
-	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
-	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -3344,13 +3314,63 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
-	var fkInfo model.FKInfo
-	fkInfo.Name = fkName
-	fkInfo.RefTable = refer.Table.Name
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
+	if len(keys) != len(refer.IndexColNames) {
+		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs("foreign key without name")
+	}
 
-	fkInfo.Cols = make([]model.CIStr, len(keys))
+	// all base columns of stored generated columns
+	baseCols := make(map[string]struct{})
+	for _, col := range cols {
+		if col.IsGenerated() && col.GeneratedStored {
+			for name := range col.Dependences {
+				baseCols[name] = struct{}{}
+			}
+		}
+	}
+
+	fkInfo := &model.FKInfo{
+		Name:     fkName,
+		RefTable: refer.Table.Name,
+		Cols:     make([]model.CIStr, len(keys)),
+	}
+
 	for i, key := range keys {
+		// Check add foreign key to generated columns
+		// For more detail, see https://dev.mysql.com/doc/refman/8.0/en/innodb-foreign-key-constraints.html#innodb-foreign-key-generated-columns
+		for _, col := range cols {
+			if col.Name.L != key.Column.Name.L {
+				continue
+			}
+			if col.IsGenerated() {
+				// Check foreign key on virtual generated columns
+				if !col.GeneratedStored {
+					return nil, infoschema.ErrCannotAddForeign
+				}
+
+				// Check wrong reference options of foreign key on stored generated columns
+				switch refer.OnUpdate.ReferOpt {
+				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE " + refer.OnUpdate.ReferOpt.String())
+				}
+				switch refer.OnDelete.ReferOpt {
+				case ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, errWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE " + refer.OnDelete.ReferOpt.String())
+				}
+				continue
+			}
+			// Check wrong reference options of foreign key on base columns of stored generated columns
+			if _, ok := baseCols[col.Name.L]; ok {
+				switch refer.OnUpdate.ReferOpt {
+				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, infoschema.ErrCannotAddForeign
+				}
+				switch refer.OnDelete.ReferOpt {
+				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					return nil, infoschema.ErrCannotAddForeign
+				}
+			}
+		}
 		if table.FindCol(cols, key.Column.Name.O) == nil {
 			return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 		}
@@ -3365,8 +3385,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	fkInfo.OnDelete = int(refer.OnDelete.ReferOpt)
 	fkInfo.OnUpdate = int(refer.OnUpdate.ReferOpt)
 
-	return &fkInfo, nil
-
+	return fkInfo, nil
 }
 
 func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
@@ -3381,7 +3400,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
