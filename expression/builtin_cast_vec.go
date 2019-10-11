@@ -862,8 +862,8 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		}
 		dur, err = types.ParseDuration(ctx, s, int8(b.tp.Decimal))
 		if types.ErrTruncatedWrongVal.Equal(err) {
-			sc := b.ctx.GetSessionVars().StmtCtx
-			err = sc.HandleTruncate(err)
+			ctx := b.ctx.GetSessionVars().StmtCtx
+			err = ctx.HandleTruncate(err)
 		}
 		if err != nil {
 			return err
