@@ -2147,9 +2147,9 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
-	e.Open(ctx)
+	err = e.Open(ctx)
 
-	return e, nil
+	return e, err
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
