@@ -640,7 +640,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for admin
 		{"admin show ddl;", true, "ADMIN SHOW DDL"},
 		{"admin show ddl jobs;", true, "ADMIN SHOW DDL JOBS"},
-		{"admin show ddl jobs 20;", true, "ADMIN SHOW DDL JOBS 20"},
+		{"admin show ddl jobs where id > 0;", true, "ADMIN SHOW DDL JOBS WHERE `id`>0"},
+		{"admin show ddl jobs 20 where id=0;", true, "ADMIN SHOW DDL JOBS 20 WHERE `id`=0"},
 		{"admin show ddl jobs -1;", false, ""},
 		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
 		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
