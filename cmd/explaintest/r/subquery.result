@@ -8,9 +8,9 @@ explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	count	task	operator info
 HashLeftJoin_8	8000.00	root	CARTESIAN semi join, inner:TableReader_12, other cond:eq(Column#1, plus(Column#2, Column#5))
 ├─TableReader_10	10000.00	root	data:TableScan_9
-│ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─TableScan_9	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 └─TableReader_12	10000.00	root	data:TableScan_11
-  └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableScan_11	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
@@ -20,10 +20,10 @@ id	count	task	operator info
 Projection_11	5.00	root	Column#15
 └─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)
   ├─TableReader_15	5.00	root	data:TableScan_14
-  │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
+  │ └─TableScan_14	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_22	1.00	root	funcs:count(1)
     └─IndexMergeJoin_29	0.50	root	inner join, inner:TableReader_27, outer key:Column#5, inner key:Column#9
       ├─IndexReader_35	1.00	root	index:IndexScan_34
-      │ └─IndexScan_34	1.00	cop	table:s, index:b, c, d, range: decided by [eq(Column#6, 1) eq(Column#7, 1) eq(Column#8, Column#1)], keep order:false
+      │ └─IndexScan_34	1.00	cop[tikv]	table:s, index:b, c, d, range: decided by [eq(Column#6, 1) eq(Column#7, 1) eq(Column#8, Column#1)], keep order:false
       └─TableReader_27	1.00	root	data:TableScan_26
-        └─TableScan_26	1.00	cop	table:t1, range: decided by [Column#5], keep order:true
+        └─TableScan_26	1.00	cop[tikv]	table:t1, range: decided by [Column#5], keep order:true
