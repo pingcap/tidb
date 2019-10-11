@@ -247,6 +247,11 @@ func (s *testSuite3) TestCreateView(c *C) {
 	_, err = tk.Exec("select * from v")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create view v as (select * from t1)")
+	tk.MustExec("drop view v")
+	tk.MustExec("create view v as (select * from t1 union select * from t2)")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
