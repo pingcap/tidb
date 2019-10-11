@@ -35,7 +35,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
 	},
 	ast.Trim: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
 	},
 	ast.LTrim:     {},
 	ast.RTrim:     {},
