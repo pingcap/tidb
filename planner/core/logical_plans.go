@@ -864,3 +864,10 @@ type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
 }
+
+// LogicalShowDDLJobs is for showing DDL job list.
+type LogicalShowDDLJobs struct {
+	logicalSchemaProducer
+
+	JobNumber int64
+}
