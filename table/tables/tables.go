@@ -390,7 +390,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		}
 		// If txn is auto commit and index is untouched, no need to write index value.
 		if untouched && !ctx.GetSessionVars().InTxn() {
-			return nil
+			continue
 		}
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
