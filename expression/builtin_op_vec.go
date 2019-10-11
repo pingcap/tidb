@@ -375,9 +375,6 @@ func (b *builtinBitAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	args0 := result.Int64s()
 	args1 := buf.Int64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		args0[i] &= args1[i]
 	}
 	return nil
