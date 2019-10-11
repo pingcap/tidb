@@ -52,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
+	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -336,24 +337,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
-	// IsPointGetUnion indicates all the children are PointGet and
-	// all of them reference the same table and use the same `unique key`
-	IsPointGetUnion bool
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PhysicalUnionAll) OutputNames() types.NameSlice {
-	if p.IsPointGetUnion {
-		return p.children[0].OutputNames()
-	}
-	return p.physicalSchemaProducer.OutputNames()
-}
-
-// SetOutputNames sets the outputting name by the given slice.
-func (p *PhysicalUnionAll) SetOutputNames(names types.NameSlice) {
-	if p.IsPointGetUnion {
-		p.children[0].(*PointGetPlan).SetOutputNames(names)
-	}
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -528,6 +511,13 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+}
+
+// PhysicalShowDDLJobs is for showing DDL job list.
+type PhysicalShowDDLJobs struct {
+	physicalSchemaProducer
+
+	JobNumber int64
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

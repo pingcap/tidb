@@ -101,6 +101,11 @@ func (s *logicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
 
+func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
+	s.schema = schema
+	s.names = names
+}
+
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
 type physicalSchemaProducer struct {
 	schema *expression.Schema
@@ -154,16 +159,30 @@ func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names 
 	s.names = names
 }
 
+// Schema implements the Plan.Schema interface.
+func (p *LogicalMaxOneRow) Schema() *expression.Schema {
+	s := p.Children()[0].Schema().Clone()
+	resetNotNullFlag(s, 0, s.Len())
+	return s
+}
+
 func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Schema {
+	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
-		return join.Children()[0].Schema().Clone()
+		return leftSchema.Clone()
 	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := join.Children()[0].Schema().Clone()
+		newSchema := leftSchema.Clone()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
-	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
+	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
+	if joinType == LeftOuterJoin {
+		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+	} else if joinType == RightOuterJoin {
+		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+	}
+	return newSchema
 }
 
 func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {

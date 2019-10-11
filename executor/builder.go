@@ -126,6 +126,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildExplain(v)
 	case *plannercore.PointGetPlan:
 		return b.buildPointGet(v)
+	case *plannercore.BatchPointGetPlan:
+		return b.buildBatchPointGet(v)
 	case *plannercore.Insert:
 		return b.buildInsert(v)
 	case *plannercore.LoadData:
@@ -144,7 +146,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
 		return b.buildShowDDL(v)
-	case *plannercore.ShowDDLJobs:
+	case *plannercore.PhysicalShowDDLJobs:
 		return b.buildShowDDLJobs(v)
 	case *plannercore.ShowDDLJobQueries:
 		return b.buildShowDDLJobQueries(v)
@@ -282,7 +284,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildShowDDLJobs(v *plannercore.ShowDDLJobs) Executor {
+func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		jobNumber:    v.JobNumber,
 		is:           b.is,
@@ -1308,46 +1310,6 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 }
 
 func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executor {
-	if v.IsPointGetUnion {
-		startTS, err := b.getStartTS()
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		children := v.Children()
-		// It's OK to type assert here because `v.IsPointGetUnion == true` only if all children are PointGet
-		pointGet := children[0].(*plannercore.PointGetPlan)
-		e := &BatchPointGetExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			tblInfo:      pointGet.TblInfo,
-			idxInfo:      pointGet.IndexInfo,
-			startTS:      startTS,
-		}
-		if pointGet.IndexInfo != nil {
-			idxVals := make([][]types.Datum, len(children))
-			for i, child := range children {
-				idxVals[i] = child.(*plannercore.PointGetPlan).IndexValues
-			}
-			e.idxVals = idxVals
-		} else {
-			// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
-			handles := make([]int64, 0, len(children))
-			dedup := make(map[int64]struct{}, len(children))
-			for _, child := range children {
-				handle := child.(*plannercore.PointGetPlan).Handle
-				if _, found := dedup[handle]; found {
-					continue
-				}
-				dedup[handle] = struct{}{}
-				handles = append(handles, handle)
-			}
-			e.handles = handles
-		}
-		e.base().initCap = len(children)
-		e.base().maxChunkSize = len(children)
-		return e
-	}
-
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
@@ -2282,6 +2244,41 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 	}
+	return e
+}
+
+func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
+	startTS, err := b.getStartTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	e := &BatchPointGetExec{
+		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ExplainID()),
+		tblInfo:      plan.TblInfo,
+		idxInfo:      plan.IndexInfo,
+		startTS:      startTS,
+	}
+	var capacity int
+	if plan.IndexInfo != nil {
+		e.idxVals = plan.IndexValues
+		capacity = len(e.idxVals)
+	} else {
+		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
+		handles := make([]int64, 0, len(plan.Handles))
+		dedup := make(map[int64]struct{}, len(plan.Handles))
+		for _, handle := range plan.Handles {
+			if _, found := dedup[handle]; found {
+				continue
+			}
+			dedup[handle] = struct{}{}
+			handles = append(handles, handle)
+		}
+		e.handles = handles
+		capacity = len(e.handles)
+	}
+	e.base().initCap = capacity
+	e.base().maxChunkSize = capacity
 	return e
 }
 

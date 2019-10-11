@@ -14,8 +14,10 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -91,6 +93,8 @@ const (
 	TypeTableGather = "TableGather"
 	// TypeIndexMerge is the type of IndexMergeReader
 	TypeIndexMerge = "IndexMerge"
+	// TypeShowDDLJobs is the type of show ddl jobs.
+	TypeShowDDLJobs = "ShowDDLJobs"
 )
 
 // Init initializes LogicalAggregation.
@@ -291,9 +295,23 @@ func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	return &p
 }
 
+// Init initializes LogicalShowDDLJobs.
+func (p LogicalShowDDLJobs) Init(ctx sessionctx.Context) *LogicalShowDDLJobs {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeShowDDLJobs, &p, 0)
+	return &p
+}
+
 // Init initializes PhysicalShow.
 func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShow, &p, 0)
+	// Just use pseudo stats to avoid panic.
+	p.stats = &property.StatsInfo{RowCount: 1}
+	return &p
+}
+
+// Init initializes PhysicalShowDDLJobs.
+func (p PhysicalShowDDLJobs) Init(ctx sessionctx.Context) *PhysicalShowDDLJobs {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeShowDDLJobs, &p, 0)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
@@ -480,6 +498,15 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 	p.tp = TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
+	return &p
+}
+
+// Init initializes BatchPointGetPlan.
+func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName) *BatchPointGetPlan {
+	p.basePlan = newBasePlan(ctx, "Batch_Point_Get", 0)
+	p.schema = schema
+	p.names = names
+	p.stats = stats
 	return &p
 }
 
