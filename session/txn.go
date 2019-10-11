@@ -463,7 +463,9 @@ func (s *session) StmtCommit() error {
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
-	s.txn.ConfirmAssertions(false)
+	if s.txn.Valid() {
+		s.txn.ConfirmAssertions(false)
+	}
 	return
 }
 
