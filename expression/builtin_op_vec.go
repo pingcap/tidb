@@ -98,7 +98,6 @@ func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, numRows)
 	if err != nil {
@@ -108,12 +107,9 @@ func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
-
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
-
 	result.MergeNulls(buf)
-
 	for i := 0; i < numRows; i++ {
 		if result.IsNull(i) {
 			continue
