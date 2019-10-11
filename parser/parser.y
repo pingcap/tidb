@@ -7502,16 +7502,24 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS"
+|	"ADMIN" "SHOW" "DDL" "JOBS" WhereClauseOptional
 	{
-		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+		stmt := &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+		if $5 != nil {
+			stmt.Where = $5.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS" NUM
+|	"ADMIN" "SHOW" "DDL" "JOBS" NUM WhereClauseOptional
 	{
-		$$ = &ast.AdminStmt{
+		stmt := &ast.AdminStmt{
 		    Tp: ast.AdminShowDDLJobs,
 		    JobNumber: $5.(int64),
 		}
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"ADMIN" "SHOW" TableName "NEXT_ROW_ID"
 	{

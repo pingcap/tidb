@@ -1500,6 +1500,7 @@ type AdminStmt struct {
 	HandleRanges []HandleRange
 	ShowSlow     *ShowSlow
 	Plugins      []string
+	Where        ExprNode
 }
 
 // Restore implements Node interface.
@@ -1532,6 +1533,12 @@ func (n *AdminStmt) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("SHOW DDL JOBS")
 		if n.JobNumber != 0 {
 			ctx.WritePlainf(" %d", n.JobNumber)
+		}
+		if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Where")
+			}
 		}
 	case AdminShowNextRowID:
 		ctx.WriteKeyWord("SHOW ")
