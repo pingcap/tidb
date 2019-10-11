@@ -80,13 +80,14 @@ var (
 	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
 	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
 
-	transactionCounterInternalOK  = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK   = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-
-	transactionRollbackCounterInternal = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
+	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
+	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
+	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
+	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
+	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
+	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
 
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
@@ -469,7 +470,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(err)
+	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -964,6 +965,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
+	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1899,19 +1901,38 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	}
 }
 
-func (s *session) recordTransactionCounter(err error) {
+func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
+	if stmtNode == nil {
+		if s.isInternal() {
+			if err != nil {
+				transactionCounterInternalErr.Inc()
+			} else {
+				transactionCounterInternalOK.Inc()
+			}
+		} else {
+			if err != nil {
+				transactionCounterGeneralErr.Inc()
+			} else {
+				transactionCounterGeneralOK.Inc()
+			}
+		}
+		return
+	}
+
+	var isTxn bool
+	switch stmtNode.(type) {
+	case *ast.CommitStmt:
+		isTxn = true
+	case *ast.RollbackStmt:
+		isTxn = true
+	}
+	if !isTxn {
+		return
+	}
 	if s.isInternal() {
-		if err != nil {
-			transactionCounterInternalErr.Inc()
-		} else {
-			transactionCounterInternalOK.Inc()
-		}
+		transactionCounterInternalCommitRollback.Inc()
 	} else {
-		if err != nil {
-			transactionCounterGeneralErr.Inc()
-		} else {
-			transactionCounterGeneralOK.Inc()
-		}
+		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 
