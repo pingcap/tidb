@@ -111,9 +111,6 @@ func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
 	for i := 0; i < numRows; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		arg0s[i] |= arg1s[i]
 	}
 	return nil
