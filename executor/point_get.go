@@ -37,6 +37,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.err = err
 		return nil
 	}
+	decoder, err := newRowEncoder(b.ctx, p.Schema(), p.TblInfo)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
 		tblInfo:      p.TblInfo,
@@ -45,6 +50,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		handle:       p.Handle,
 		startTS:      startTS,
 		lock:         p.Lock,
+		rowDecoder:   decoder,
 	}
 	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
@@ -56,14 +62,15 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	tblInfo  *model.TableInfo
-	handle   int64
-	idxInfo  *model.IndexInfo
-	idxVals  []types.Datum
-	startTS  uint64
-	snapshot kv.Snapshot
-	done     bool
-	lock     bool
+	tblInfo    *model.TableInfo
+	handle     int64
+	idxInfo    *model.IndexInfo
+	idxVals    []types.Datum
+	startTS    uint64
+	snapshot   kv.Snapshot
+	done       bool
+	lock       bool
+	rowDecoder *rowcodec.Decoder
 }
 
 // Open implements the Executor interface.
@@ -144,7 +151,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req)
+	return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
@@ -195,18 +202,21 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 	return tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, encodedIdxVals), nil
 }
 
-func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
+func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.Decoder) error {
+	if rowcodec.IsNewFormat(rowVal) {
+		return rd.Decode(rowVal, handle, chk)
+	}
+	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
+}
+
+func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
 	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
 			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
 	}
-	oldRow, err := rowcodec.RowToOldRow(rowVal, nil)
-	if err != nil {
-		return err
-	}
-	cutVals, err := tablecodec.CutRowNew(oldRow, colID2CutPos)
+	cutVals, err := tablecodec.CutRowNew(rowVal, colID2CutPos)
 	if err != nil {
 		return err
 	}

@@ -221,7 +221,7 @@ func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model
 // getRowData decodes raw byte slice to row data.
 func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([][]byte, error) {
 	pkIsHandle := tb.PKIsHandle
-	oldRow, err := rowcodec.RowToOldRow(value, nil)
+	oldRow, err := rowcodec.RowToOldRow(value, nil) // TODO: decode byte into datums
 	if err != nil {
 		return nil, err
 	}

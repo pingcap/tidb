@@ -14,7 +14,6 @@
 package rowcodec
 
 import (
-	"math"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -71,12 +70,12 @@ func convertDefaultValue(d *types.Datum) (colVal []byte, err error) {
 		return encodeUint(nil, d.GetUint64()), nil
 	case types.KindString, types.KindBytes:
 		return d.GetBytes(), nil
-	case types.KindFloat32:
-		return encodeUint(nil, uint64(math.Float32bits(d.GetFloat32()))), nil
-	case types.KindFloat64:
-		return encodeUint(nil, math.Float64bits(d.GetFloat64())), nil
 	default:
-		return nil, errors.New("unknown kind")
+		tmpData, err := codec.EncodeValue(defaultStmtCtx, nil, *d)
+		if err != nil {
+			return nil, err
+		}
+		return tmpData[1:], nil
 	}
 }
 
@@ -284,7 +283,7 @@ func (decoder *Decoder) decodeColData(colIdx int, colData []byte, chk *chunk.Chu
 		if err != nil {
 			return err
 		}
-		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		if ft.Tp == mysql.TypeTimestamp && decoder.loc != nil && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, decoder.loc)
 			if err != nil {
 				return err
