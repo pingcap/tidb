@@ -14,6 +14,7 @@
 package decoder
 
 import (
+	"github.com/pingcap/tidb/util/rowcodec"
 	"testing"
 	"time"
 
@@ -119,12 +120,13 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 			[]types.Datum{types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)},
 		},
 	}
+	var rd rowcodec.Encoder
 	for i, row := range testRows {
 		// test case for pk is unsigned.
 		if i > 0 {
 			c7.Flag |= mysql.UnsignedFlag
 		}
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil)
+		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
 		c.Assert(err, IsNil)
 		c.Assert(bs, NotNil)
 

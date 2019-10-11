@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"strconv"
 	"strings"
 	"sync"
@@ -440,6 +441,9 @@ type SessionVars struct {
 	replicaRead kv.ReplicaReadType
 
 	PlannerSelectBlockAsName []model.CIStr
+
+	// RowEncoder is reused in session for encode row data.
+	RowEncoder rowcodec.Encoder
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.

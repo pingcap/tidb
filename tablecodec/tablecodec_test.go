@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -81,8 +82,9 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	var rd rowcodec.Encoder
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -203,8 +205,9 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	var rd rowcodec.Encoder
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 

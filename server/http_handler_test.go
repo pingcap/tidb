@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/rowcodec"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
@@ -420,8 +421,9 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	var rd rowcodec.Encoder
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 	bin := base64.StdEncoding.EncodeToString(bs)
