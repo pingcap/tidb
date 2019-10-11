@@ -205,6 +205,8 @@ type PhysicalTableScan struct {
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
 
+	StoreType kv.StoreType
+
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
@@ -506,6 +508,13 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+}
+
+// PhysicalShowDDLJobs is for showing DDL job list.
+type PhysicalShowDDLJobs struct {
+	physicalSchemaProducer
+
+	JobNumber int64
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

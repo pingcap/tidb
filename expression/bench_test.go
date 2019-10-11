@@ -669,6 +669,9 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
+	if len(cols) == 0 {
+		input.SetNumVirtualRows(1024)
+	}
 
 	var err error
 	if funcName == ast.Cast {
