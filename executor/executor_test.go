@@ -456,6 +456,10 @@ func (s *testSuite) TestAdminShowDDLJobs(c *C) {
 	err = tk.Se.CommitTxn(context.Background())
 	c.Assert(err, IsNil)
 
+	re = tk.MustQuery("admin show ddl jobs 1")
+	row = re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+
 	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
