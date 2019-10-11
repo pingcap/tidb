@@ -34,19 +34,6 @@ import (
 )
 
 const (
-	// NetworkFactor is the network cost of transferring 1 byte data.
-	NetworkFactor = 1.0
-	// CPUFactor is the CPU cost of processing one expression for one row.
-	CPUFactor = 3 * NetworkFactor
-	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
-	CopCPUFactor = 3 * NetworkFactor
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV.
-	ScanFactor = 1.5 * NetworkFactor
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV in desc order.
-	DescScanFactor    = 2 * ScanFactor
-	memoryFactor      = 0.001
-	concurrencyFactor = 3.0
-
 	selectionFactor = 0.8
 	distinctFactor  = 0.8
 )
@@ -105,6 +92,15 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error
 		return invalidTask, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
+	pShow.SetSchema(p.schema)
+	return &rootTask{p: pShow}, nil
+}
+
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, error) {
+	if !prop.IsEmpty() {
+		return invalidTask, nil
+	}
+	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
 	return &rootTask{p: pShow}, nil
 }
@@ -516,9 +512,10 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	rowSize := is.indexScanRowSize(idx, ds)
 	isCovered = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
 	indexConds := path.indexFilters
+	sessVars := ds.ctx.GetSessionVars()
 	if indexConds != nil {
 		var selectivity float64
-		partialCost += rowCount * CopCPUFactor
+		partialCost += rowCount * sessVars.CopCPUFactor
 		if path.countAfterAccess > 0 {
 			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
@@ -530,10 +527,10 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		}
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
-		partialCost += rowCount * rowSize * NetworkFactor
+		partialCost += rowCount * rowSize * sessVars.NetworkFactor
 		return indexPlan, partialCost, rowCount, isCovered
 	}
-	partialCost += rowCount * rowSize * NetworkFactor
+	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	indexPlan = is
 	return indexPlan, partialCost, rowCount, isCovered
 }
@@ -545,6 +542,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	isCovered bool) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
@@ -553,17 +551,18 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
-		partialCost += rowCount * CopCPUFactor
-		partialCost += selectivity * rowCount * rowSize * NetworkFactor
+		partialCost += rowCount * sessVars.CopCPUFactor
+		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
 		return tablePlan, partialCost, rowCount, true
 	}
-	partialCost += rowCount * rowSize * NetworkFactor
+	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	tablePlan = ts
 	return tablePlan, partialCost, rowCount, true
 }
 
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64) {
 	var partialCost float64
+	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -581,13 +580,13 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		}
 	}
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
-	partialCost += totalRowCount * rowSize * ScanFactor
+	partialCost += totalRowCount * rowSize * sessVars.ScanFactor
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
-		partialCost += totalRowCount * CopCPUFactor
+		partialCost += totalRowCount * sessVars.CopCPUFactor
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
@@ -743,8 +742,9 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCol
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
+	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
-		copTask.cst += copTask.count() * CopCPUFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		var selectivity float64
 		if path.countAfterAccess > 0 {
 			selectivity = path.countAfterIndex / path.countAfterAccess
@@ -757,7 +757,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * CopCPUFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
@@ -995,8 +995,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
+	sessVars := ts.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
-		copTask.cst += copTask.count() * CopCPUFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
@@ -1048,11 +1049,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
-	cost := rowCount * rowSize * ScanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true
-			cost = rowCount * rowSize * DescScanFactor
+			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
 	}
@@ -1090,11 +1092,12 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := is.indexScanRowSize(idx, ds)
-	cost := rowCount * rowSize * ScanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
 		if prop.Items[0].Desc {
 			is.Desc = true
-			cost = rowCount * rowSize * DescScanFactor
+			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		is.KeepOrder = true
 	}
