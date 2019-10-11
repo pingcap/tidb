@@ -459,11 +459,6 @@ func (e *InsertValues) fillRow(row []types.Datum, hasValue []bool) ([]types.Datu
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
-			if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, err
-			}
-		}
 
 		// Evaluate the generated columns.
 		if c.IsGenerated() {
@@ -477,9 +472,12 @@ func (e *InsertValues) fillRow(row []types.Datum, hasValue []bool) ([]types.Datu
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// Handle the bad null error.
+		}
+		// Handle the bad null error. Cause generated column with `not null` flag will get default value datum in fillColValue
+		// which should be override by generated expr first, then handle the bad null logic here.
+		if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
 			if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 	}
