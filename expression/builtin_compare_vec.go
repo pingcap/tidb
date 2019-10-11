@@ -611,17 +611,16 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
-	return VecCompareInt(b.args[0], b.args[1], result, buf, resOfLT, result)
+	return VecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), result, buf, resOfLT, result)
 }
 
 // VecCompareInt compares two integers.
-func VecCompareInt(lhsArg, rhsArg Expression, lColumn, rColumn *chunk.Column, f func(val int64, isNull bool, err error) (int64, bool, error), result *chunk.Column) error {
+func VecCompareInt(isUnsigned0, isUnsigned1 bool, lColumn, rColumn *chunk.Column, f func(val int64, isNull bool, err error) (int64, bool, error), result *chunk.Column) error {
 	arg0 := lColumn.Int64s()
 	arg1 := rColumn.Int64s()
 	result.MergeNulls(lColumn, rColumn)
 	i64s := result.Int64s()
 	n := len(arg0)
-	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().Flag), mysql.HasUnsignedFlag(rhsArg.GetType().Flag)
 	switch {
 	case isUnsigned0 && isUnsigned1:
 		for i := 0; i < n; i++ {
