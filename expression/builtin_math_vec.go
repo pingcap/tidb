@@ -665,11 +665,17 @@ func (b *builtinCRC32Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinPISig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinPISig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeFloat64(n, false)
+	f64s := result.Float64s()
+	for i := range f64s {
+		f64s[i] = math.Pi
+	}
+	return nil
 }
 
 func (b *builtinRandSig) vectorized() bool {
