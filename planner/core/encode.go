@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"sync"
 
-	"github.com/pingcap/tidb/planner/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 var encoderPool = sync.Pool{
@@ -42,11 +42,11 @@ func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.encodePlan(p, true, 0)
-	return codec.Compress(pn.buf.Bytes())
+	return plancodec.Compress(pn.buf.Bytes())
 }
 
 func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
-	codec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), &pn.buf)
+	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 
 	depth++

@@ -25,7 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	planCodec "github.com/pingcap/tidb/planner/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -687,6 +687,6 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	planTree, err := planCodec.DecodePlan(planString)
+	planTree, err := plancodec.DecodePlan(planString)
 	return planTree, false, err
 }

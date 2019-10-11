@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -132,7 +132,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 		// Not a deep copy.
 		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), codec.TypeTableScan, &newDataSource, ds.blockOffset)
+		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 		newDataSource.isPartition = true
 		newDataSource.physicalTableID = pi.Definitions[i].ID
 		// There are many expression nodes in the plan tree use the original datasource

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -388,7 +388,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:    newBasePlan(ctx, codec.TypePointGet, 0),
+		basePlan:    newBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:      dbName,
 		schema:      schema,
 		TblInfo:     tbl,

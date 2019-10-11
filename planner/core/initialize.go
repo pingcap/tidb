@@ -14,56 +14,56 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/planner/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
 // Init initializes LogicalAggregation.
 func (la LogicalAggregation) Init(ctx sessionctx.Context, offset int) *LogicalAggregation {
-	la.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeAgg, &la, offset)
+	la.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
 	return &la
 }
 
 // Init initializes LogicalJoin.
 func (p LogicalJoin) Init(ctx sessionctx.Context, offset int) *LogicalJoin {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeJoin, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
 	return &p
 }
 
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
-	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeTableScan, &ds, offset)
+	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ds, offset)
 	return &ds
 }
 
 // Init initializes TableGather.
 func (tg TableGather) Init(ctx sessionctx.Context, offset int) *TableGather {
-	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeTableGather, &tg, offset)
+	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableGather, &tg, offset)
 	return &tg
 }
 
 // Init initializes TableScan.
 func (ts TableScan) Init(ctx sessionctx.Context, offset int) *TableScan {
-	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeTableScan, &ts, offset)
+	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
 	return &ts
 }
 
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx sessionctx.Context, offset int) *LogicalApply {
-	la.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeApply, &la, offset)
+	la.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
 	return &la
 }
 
 // Init initializes LogicalSelection.
 func (p LogicalSelection) Init(ctx sessionctx.Context, offset int) *LogicalSelection {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeSel, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSel, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalSelection.
 func (p PhysicalSelection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalSelection {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeSel, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSel, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -71,19 +71,19 @@ func (p PhysicalSelection) Init(ctx sessionctx.Context, stats *property.StatsInf
 
 // Init initializes LogicalUnionScan.
 func (p LogicalUnionScan) Init(ctx sessionctx.Context, offset int) *LogicalUnionScan {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeUnionScan, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, offset)
 	return &p
 }
 
 // Init initializes LogicalProjection.
 func (p LogicalProjection) Init(ctx sessionctx.Context, offset int) *LogicalProjection {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeProj, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeProj, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalProjection.
 func (p PhysicalProjection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeProj, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -91,13 +91,13 @@ func (p PhysicalProjection) Init(ctx sessionctx.Context, stats *property.StatsIn
 
 // Init initializes LogicalUnionAll.
 func (p LogicalUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalUnionAll {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeUnion, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalUnionAll.
 func (p PhysicalUnionAll) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeUnion, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -105,13 +105,13 @@ func (p PhysicalUnionAll) Init(ctx sessionctx.Context, stats *property.StatsInfo
 
 // Init initializes LogicalSort.
 func (ls LogicalSort) Init(ctx sessionctx.Context, offset int) *LogicalSort {
-	ls.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeSort, &ls, offset)
+	ls.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
 	return &ls
 }
 
 // Init initializes PhysicalSort.
 func (p PhysicalSort) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalSort {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeSort, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSort, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -119,20 +119,20 @@ func (p PhysicalSort) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 
 // Init initializes NominalSort.
 func (p NominalSort) Init(ctx sessionctx.Context, offset int, props ...*property.PhysicalProperty) *NominalSort {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeSort, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSort, &p, offset)
 	p.childrenReqProps = props
 	return &p
 }
 
 // Init initializes LogicalTopN.
 func (lt LogicalTopN) Init(ctx sessionctx.Context, offset int) *LogicalTopN {
-	lt.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeTopN, &lt, offset)
+	lt.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTopN, &lt, offset)
 	return &lt
 }
 
 // Init initializes PhysicalTopN.
 func (p PhysicalTopN) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalTopN {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeTopN, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTopN, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -140,13 +140,13 @@ func (p PhysicalTopN) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 
 // Init initializes LogicalLimit.
 func (p LogicalLimit) Init(ctx sessionctx.Context, offset int) *LogicalLimit {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeLimit, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalLimit.
 func (p PhysicalLimit) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalLimit {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeLimit, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -154,26 +154,26 @@ func (p PhysicalLimit) Init(ctx sessionctx.Context, stats *property.StatsInfo, o
 
 // Init initializes LogicalTableDual.
 func (p LogicalTableDual) Init(ctx sessionctx.Context, offset int) *LogicalTableDual {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeDual, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalTableDual.
 func (p PhysicalTableDual) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalTableDual {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeDual, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
 	p.stats = stats
 	return &p
 }
 
 // Init initializes LogicalMaxOneRow.
 func (p LogicalMaxOneRow) Init(ctx sessionctx.Context, offset int) *LogicalMaxOneRow {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeMaxOneRow, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalMaxOneRow.
 func (p PhysicalMaxOneRow) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeMaxOneRow, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -181,13 +181,13 @@ func (p PhysicalMaxOneRow) Init(ctx sessionctx.Context, stats *property.StatsInf
 
 // Init initializes LogicalWindow.
 func (p LogicalWindow) Init(ctx sessionctx.Context, offset int) *LogicalWindow {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeWindow, &p, offset)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeWindow, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -195,31 +195,31 @@ func (p PhysicalWindow) Init(ctx sessionctx.Context, stats *property.StatsInfo, 
 
 // Init initializes Update.
 func (p Update) Init(ctx sessionctx.Context) *Update {
-	p.basePlan = newBasePlan(ctx, codec.TypeUpdate, 0)
+	p.basePlan = newBasePlan(ctx, plancodec.TypeUpdate, 0)
 	return &p
 }
 
 // Init initializes Delete.
 func (p Delete) Init(ctx sessionctx.Context) *Delete {
-	p.basePlan = newBasePlan(ctx, codec.TypeDelete, 0)
+	p.basePlan = newBasePlan(ctx, plancodec.TypeDelete, 0)
 	return &p
 }
 
 // Init initializes Insert.
 func (p Insert) Init(ctx sessionctx.Context) *Insert {
-	p.basePlan = newBasePlan(ctx, codec.TypeInsert, 0)
+	p.basePlan = newBasePlan(ctx, plancodec.TypeInsert, 0)
 	return &p
 }
 
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeShow, &p, 0)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
 	return &p
 }
 
 // Init initializes PhysicalShow.
 func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeShow, &p, 0)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShow, &p, 0)
 	// Just use pseudo stats to avoid panic.
 	p.stats = &property.StatsInfo{RowCount: 1}
 	return &p
@@ -227,13 +227,13 @@ func (p PhysicalShow) Init(ctx sessionctx.Context) *PhysicalShow {
 
 // Init initializes LogicalLock.
 func (p LogicalLock) Init(ctx sessionctx.Context) *LogicalLock {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, codec.TypeLock, &p, 0)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
 	return &p
 }
 
 // Init initializes PhysicalLock.
 func (p PhysicalLock) Init(ctx sessionctx.Context, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalLock {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeLock, &p, 0)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeLock, &p, 0)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -241,28 +241,28 @@ func (p PhysicalLock) Init(ctx sessionctx.Context, stats *property.StatsInfo, pr
 
 // Init initializes PhysicalTableScan.
 func (p PhysicalTableScan) Init(ctx sessionctx.Context, offset int) *PhysicalTableScan {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeTableScan, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableScan, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalIndexScan.
 func (p PhysicalIndexScan) Init(ctx sessionctx.Context, offset int) *PhysicalIndexScan {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeIdxScan, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
 	return &p
 }
 
 // Init initializes PhysicalMemTable.
 func (p PhysicalMemTable) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMemTable {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeMemTableScan, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
 	p.stats = stats
 	return &p
 }
 
 // Init initializes PhysicalHashJoin.
 func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashJoin {
-	tp := codec.TypeHashRightJoin
+	tp := plancodec.TypeHashRightJoin
 	if p.InnerChildIdx == 1 {
-		tp = codec.TypeHashLeftJoin
+		tp = plancodec.TypeHashLeftJoin
 	}
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
 	p.childrenReqProps = props
@@ -272,21 +272,21 @@ func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo
 
 // Init initializes PhysicalMergeJoin.
 func (p PhysicalMergeJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMergeJoin {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeMergeJoin, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMergeJoin, &p, offset)
 	p.stats = stats
 	return &p
 }
 
 // Init initializes basePhysicalAgg.
 func (base basePhysicalAgg) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *basePhysicalAgg {
-	base.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeHashAgg, &base, offset)
+	base.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeHashAgg, &base, offset)
 	base.stats = stats
 	return &base
 }
 
 func (base basePhysicalAgg) initForHash(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
 	p := &PhysicalHashAgg{base}
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeHashAgg, p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return p
@@ -294,7 +294,7 @@ func (base basePhysicalAgg) initForHash(ctx sessionctx.Context, stats *property.
 
 func (base basePhysicalAgg) initForStream(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalStreamAgg {
 	p := &PhysicalStreamAgg{base}
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeStreamAgg, p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return p
@@ -302,7 +302,7 @@ func (base basePhysicalAgg) initForStream(ctx sessionctx.Context, stats *propert
 
 // Init initializes PhysicalApply.
 func (p PhysicalApply) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalApply {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeApply, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeApply, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -310,7 +310,7 @@ func (p PhysicalApply) Init(ctx sessionctx.Context, stats *property.StatsInfo, o
 
 // Init initializes PhysicalUnionScan.
 func (p PhysicalUnionScan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionScan {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeUnionScan, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnionScan, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -318,7 +318,7 @@ func (p PhysicalUnionScan) Init(ctx sessionctx.Context, stats *property.StatsInf
 
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexLookUpReader {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeIndexLookUp, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	p.schema = p.tablePlan.Schema()
@@ -327,7 +327,7 @@ func (p PhysicalIndexLookUpReader) Init(ctx sessionctx.Context, offset int) *Phy
 
 // Init initializes PhysicalIndexMergeReader.
 func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexMergeReader {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeIndexMerge, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)
 	if p.tablePlan != nil {
 		p.stats = p.tablePlan.statsInfo()
 	} else {
@@ -360,7 +360,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 
 // Init initializes PhysicalTableReader.
 func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeTableReader, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
@@ -370,7 +370,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeIndexReader, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	switch p.indexPlan.(type) {
 	case *PhysicalHashAgg, *PhysicalStreamAgg:
@@ -385,7 +385,7 @@ func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalI
 
 // Init initializes PhysicalIndexJoin.
 func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalIndexJoin {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, codec.TypeIndexJoin, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexJoin, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -394,7 +394,7 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 // Init initializes PhysicalIndexMergeJoin.
 func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
 	ctx.GetSessionVars().PlanID++
-	p.tp = codec.TypeIndexMergeJoin
+	p.tp = plancodec.TypeIndexMergeJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
 	return &p
@@ -403,7 +403,7 @@ func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMerge
 // Init initializes PhysicalIndexHashJoin.
 func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJoin {
 	ctx.GetSessionVars().PlanID++
-	p.tp = codec.TypeIndexHashJoin
+	p.tp = plancodec.TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
 	return &p

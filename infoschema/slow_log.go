@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/planner/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -335,7 +335,7 @@ func parsePlan(planString string) string {
 		return planString
 	}
 	planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
-	decodePlanString, err := codec.DecodePlan(planString)
+	decodePlanString, err := plancodec.DecodePlan(planString)
 	if err == nil {
 		planString = decodePlanString
 	} else {
