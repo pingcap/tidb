@@ -44,13 +44,6 @@ type ShowDDL struct {
 	baseSchemaProducer
 }
 
-// ShowDDLJobs is for showing DDL job list.
-type ShowDDLJobs struct {
-	baseSchemaProducer
-
-	JobNumber int64
-}
-
 // ShowSlow is for showing slow queries.
 type ShowSlow struct {
 	baseSchemaProducer
