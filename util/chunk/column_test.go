@@ -302,7 +302,8 @@ func (s *testChunkSuite) TestMyDecimal(c *check.C) {
 		}
 		c.Assert(d.Compare(&ds[i]), check.Equals, 0)
 
-		if err := types.DecimalAdd(&ds[i], d, &ds[i]); err != nil {
+		tmp := ds[i]
+		if err := types.DecimalAdd(&tmp, d, &ds[i]); err != nil {
 			c.Fatal(err)
 		}
 	}
