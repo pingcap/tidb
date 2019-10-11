@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -200,6 +201,9 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
 	}
+	failpoint.Inject("commitOneTaskErr", func() error {
+		return errors.New("mock commit one task error")
+	})
 	if err = e.Ctx.StmtCommit(); err != nil {
 		logutil.Logger(ctx).Error("commit error commit", zap.Error(err))
 		return err
