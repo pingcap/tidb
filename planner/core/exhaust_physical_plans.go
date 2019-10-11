@@ -723,6 +723,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			// So we need to delete the extra column in schema to avoid wrong plan.
 			if cop.doubleReadNeedProj {
 				defer func() {
+					copy(ts.Schema().Columns, is.dataSourceSchema.Columns)
 					ds.schema.Columns = ds.schema.Columns[:len(ds.schema.Columns)-1]
 				}()
 			}
