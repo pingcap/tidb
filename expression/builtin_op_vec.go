@@ -332,11 +332,29 @@ func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinBitAndSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBitAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, numRows)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	arg0s := result.Int64s()
+	arg1s := buf.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < numRows; i++ {
+		arg0s[i] &= arg1s[i]
+	}
+	return nil
 }
 
 func (b *builtinRealIsFalseSig) vectorized() bool {
