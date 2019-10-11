@@ -398,6 +398,26 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		return nil
+	case *BatchPointGetPlan:
+		for i, param := range x.HandleParams {
+			if param != nil {
+				x.Handles[i], err = param.Datum.ToInt64(sc)
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+		for i, params := range x.IndexValueParams {
+			if len(params) < 1 {
+				continue
+			}
+			for j, param := range params {
+				if param != nil {
+					x.IndexValues[i][j] = param.Datum
+				}
+			}
+		}
 	case PhysicalPlan:
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)

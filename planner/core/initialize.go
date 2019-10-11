@@ -14,8 +14,10 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -496,6 +498,15 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 	p.tp = TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
+	return &p
+}
+
+// Init initializes BatchPointGetPlan.
+func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName) *BatchPointGetPlan {
+	p.basePlan = newBasePlan(ctx, "Batch_Point_Get", 0)
+	p.schema = schema
+	p.names = names
+	p.stats = stats
 	return &p
 }
 
