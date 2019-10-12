@@ -40,6 +40,9 @@ var vecBuiltinControlCases = map[string][]vecExprBenchCase{
 
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETInt, types.ETJson, types.ETJson}},
 	},
+	ast.Ifnull: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinControlEvalOneVec(c *C) {
