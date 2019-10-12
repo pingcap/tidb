@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"math"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -587,30 +589,24 @@ func (b *builtinCastDurationAsDurationSig) vectorized() bool {
 }
 
 func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDuration, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+	var err error
+	if err = b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
 		return err
 	}
 
-	dec := b.tp.Decimal
-	var dur types.Duration
-	result.ResizeGoDuration(n, false)
-	result.MergeNulls(buf)
 	res := result.GoDurations()
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+	dec := b.tp.Decimal
+	for i, v := range res {
+		if result.IsNull(i) {
 			continue
 		}
-		dur, err = buf.GetDuration(i, -1).RoundFrac(int8(dec))
+		dec, err := types.CheckFsp(dec)
 		if err != nil {
 			return err
 		}
-		res[i] = dur.Duration
+		n := time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
+		nd := n.Add(v).Round(time.Duration(math.Pow10(9-int(dec))) * time.Nanosecond).Sub(n)
+		res[i] = nd
 	}
 	return nil
 }
