@@ -949,6 +949,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return nil
 }
 
+// GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
+func (s *SessionVars) GetReadableTxnMode() string {
+	txnMode := s.TxnMode
+	if txnMode == "" {
+		txnMode = ast.Optimistic
+	}
+	return txnMode
+}
+
 func (s *SessionVars) setTxnMode(val string) error {
 	switch strings.ToUpper(val) {
 	case ast.Pessimistic:

@@ -690,6 +690,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
 				zap.String("sql", queryStrForLog(string(data[1:]))),
+				zap.String("txn_mode", cc.ctx.GetSessionVars().GetReadableTxnMode()),
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
