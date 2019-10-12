@@ -291,7 +291,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	lock := s.mustGetLock(c, []byte("second"))
 	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
-	c.Assert(timeBeforeExpire > int64(0), IsTrue)
+	c.Assert(timeBeforeExpire >= int64(0), IsTrue)
 
 	// Force rollback the lock using lock.TTL = 0.
 	lock.TTL = uint64(0)
