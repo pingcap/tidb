@@ -433,7 +433,10 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
+		if x.FuncName.L == ast.Cast {
+			return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
+		}
+		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
