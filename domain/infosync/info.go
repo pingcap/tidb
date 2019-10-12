@@ -81,7 +81,7 @@ type ServerVersionInfo struct {
 
 var globalInfoSyncer *InfoSyncer
 
-// GlobalInfoSyncerInit return new InfoSyncer. It is exported for testing.
+// GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
 	globalInfoSyncer = &InfoSyncer{
 		etcdCli:        etcdCli,
