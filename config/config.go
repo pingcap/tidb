@@ -286,7 +286,7 @@ type TiKVClient struct {
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
 	// EnableArrow indicate the data encode in arrow format.
 	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
-	// If a Region has not been accessed for more than the given duration, it
+	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
 }
