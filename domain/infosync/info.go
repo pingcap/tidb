@@ -110,7 +110,7 @@ func GetServerInfo() *ServerInfo {
 	return globalInfoSyncer.info
 }
 
-// GetServerInfoByID gets server static information from etcd.
+// GetServerInfoByID gets specified server static information from etcd.
 func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if globalInfoSyncer == nil {
 		return nil, nil
