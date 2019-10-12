@@ -18,20 +18,31 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
-	ast.LE:     {},
-	ast.Minus:  {},
-	ast.Div:    {},
+	ast.LE: {},
+	ast.Minus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+	},
+	ast.Div: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 0}}},
+	},
 	ast.IntDiv: {},
 	ast.Mod:    {},
 	ast.Or:     {},
-	ast.Mul:    {},
-	ast.Round:  {},
-	ast.And:    {},
-	ast.Plus:   {},
-	ast.NE:     {},
+	ast.Mul: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+	},
+	ast.Round: {},
+	ast.And:   {},
+	ast.Plus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+	},
+	ast.NE: {},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {

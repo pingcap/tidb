@@ -609,10 +609,11 @@ func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte
 		chunks = appendRow(chunks, requestedRow, i)
 	}
 	selResp.Chunks = chunks
+	selResp.EncodeType = tipb.EncodeType_TypeDefault
 }
 
 func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
-	rowBatchData := make([]byte, 0, 1024)
+	var chunks []tipb.Chunk
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
@@ -628,15 +629,20 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 			}
 		}
 		if i%rowsPerChunk == rowsPerChunk-1 {
-			rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+			chunks = append(chunks, tipb.Chunk{})
+			cur := &chunks[len(chunks)-1]
+			cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
 			chk.Reset()
 		}
 	}
 	if chk.NumRows() > 0 {
-		rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+		chunks = append(chunks, tipb.Chunk{})
+		cur := &chunks[len(chunks)-1]
+		cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
 		chk.Reset()
 	}
-	selResp.RowBatchData = rowBatchData
+	selResp.Chunks = chunks
+	selResp.EncodeType = tipb.EncodeType_TypeArrow
 	return nil
 }
 
