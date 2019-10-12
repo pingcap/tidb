@@ -311,6 +311,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -385,6 +386,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -429,6 +431,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -474,6 +477,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Streaming:      true,
 		NotFillCache:   false,
 		SyncLog:        false,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -550,6 +554,35 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+	}
+
+	c.Assert(actual, DeepEquals, expect)
+}
+
+func (s *testSuite) TestRequestBuilder7(c *C) {
+	vars := variable.NewSessionVars()
+	vars.ReplicaRead = kv.ReplicaReadFollower
+
+	concurrency := 10
+
+	actual, err := (&RequestBuilder{}).
+		SetFromSessionVars(vars).
+		SetConcurrency(concurrency).
+		Build()
+	c.Assert(err, IsNil)
+
+	expect := &kv.Request{
+		Tp:             0,
+		StartTs:        0x0,
+		KeepOrder:      false,
+		Desc:           false,
+		Concurrency:    concurrency,
+		IsolationLevel: 0,
+		Priority:       0,
+		NotFillCache:   false,
+		SyncLog:        false,
+		Streaming:      false,
+		ReplicaRead:    kv.ReplicaReadFollower,
 	}
 
 	c.Assert(actual, DeepEquals, expect)

@@ -113,7 +113,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	s.waitUntilErrorPlugIn(txn4.startTS)
 
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()}, 0)
 	_, batchgeterr := snapshot.BatchGet(keys)
 	c.Assert(batchgeterr, NotNil)
 	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
