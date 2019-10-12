@@ -292,8 +292,17 @@ const dateFormat = "%Y%m%d"
 // 2012-12-12T10:10:10 -> 20121212101010
 // 2012-12-12T10:10:10.123456 -> 20121212101010.123456
 func (t Time) ToNumber() *MyDecimal {
+	dec := new(MyDecimal)
+	t.FillNumber(dec)
+	return dec
+}
+
+// FillNumber is the same as ToNumber,
+// but reuses input decimal instead of allocating one.
+func (t Time) FillNumber(dec *MyDecimal) {
 	if t.IsZero() {
-		return &MyDecimal{}
+		dec.FromInt(0)
+		return
 	}
 
 	// Fix issue #1046
@@ -314,12 +323,9 @@ func (t Time) ToNumber() *MyDecimal {
 		s1 := fmt.Sprintf("%s.%06d", s, t.Time.Microsecond())
 		s = s1[:len(s)+int(t.Fsp)+1]
 	}
-
 	// We skip checking error here because time formatted string can be parsed certainly.
-	dec := new(MyDecimal)
 	err = dec.FromString([]byte(s))
 	terror.Log(errors.Trace(err))
-	return dec
 }
 
 // Convert converts t with type tp.

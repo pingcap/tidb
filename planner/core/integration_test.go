@@ -16,6 +16,8 @@ package core_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -24,6 +26,8 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
+	store    kv.Storage
+	dom      *domain.Domain
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
@@ -36,14 +40,20 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
-func (s *testIntegrationSuite) TestShowSubquery(c *C) {
-	store, dom, err := newStoreWithBootstrap()
+func (s *testIntegrationSuite) SetUpTest(c *C) {
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+}
+
+func (s *testIntegrationSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSuite) TestShowSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(10), b int, c int)")
@@ -74,13 +84,7 @@ func (s *testIntegrationSuite) TestShowSubquery(c *C) {
 }
 
 func (s *testIntegrationSuite) TestPpdWithSetVar(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 varchar(255))")
@@ -91,13 +95,7 @@ func (s *testIntegrationSuite) TestPpdWithSetVar(c *C) {
 }
 
 func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists bit_col_t")
@@ -110,19 +108,14 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 }
 
 func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl")
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -136,4 +129,45 @@ func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint);`)
+	s.runTestsWithTestData("TestIsFromUnixtimeNullRejective", tk, c)
+}
+
+func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit.TestKit, c *C) {
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCasesByName(caseName, c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestApplyNotNullFlag(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(x int not null)")
+	tk.MustExec("create table t2(x int)")
+	tk.MustExec("insert into t2 values (1)")
+
+	tk.MustQuery("select IFNULL((select t1.x from t1 where t1.x = t2.x), 'xxx') as col1 from t2").Check(testkit.Rows("xxx"))
 }
