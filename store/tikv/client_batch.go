@@ -526,7 +526,12 @@ func sendBatchRequest(
 func (c *rpcClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
-	for _, conn := range c.conns {
+	for _, conn := range c.readConns {
+		if conn.isIdle() {
+			addrs = append(addrs, conn.target)
+		}
+	}
+	for _, conn := range c.writeConns {
 		if conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
@@ -535,15 +540,24 @@ func (c *rpcClient) recycleIdleConnArray() {
 
 	for _, addr := range addrs {
 		c.Lock()
-		conn, ok := c.conns[addr]
+		connRead, ok := c.readConns[addr]
 		if ok {
-			delete(c.conns, addr)
+			delete(c.readConns, addr)
+			logutil.BgLogger().Info("recycle idle connection",
+				zap.String("target", addr))
+		}
+		connWrite, ok := c.writeConns[addr]
+		if ok {
+			delete(c.writeConns, addr)
 			logutil.BgLogger().Info("recycle idle connection",
 				zap.String("target", addr))
 		}
 		c.Unlock()
-		if conn != nil {
-			conn.Close()
+		if connRead != nil {
+			connRead.Close()
+		}
+		if connWrite != nil {
+			connWrite.Close()
 		}
 	}
 }

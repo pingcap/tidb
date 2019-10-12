@@ -194,6 +194,13 @@ func (a *connArray) Close() {
 	}
 }
 
+type connType int
+
+const (
+	Read connType = iota
+	Write
+)
+
 // rpcClient is RPC client struct.
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
 // Since we use shared client connection to communicate to the same TiKV, it's possible
@@ -202,7 +209,9 @@ type rpcClient struct {
 	sync.RWMutex
 	done chan struct{}
 
-	conns    map[string]*connArray
+	readConns  map[string]*connArray
+	writeConns map[string]*connArray
+
 	security config.Security
 
 	idleNotify uint32
@@ -213,9 +222,10 @@ type rpcClient struct {
 
 func newRPCClient(security config.Security) *rpcClient {
 	return &rpcClient{
-		done:     make(chan struct{}, 1),
-		conns:    make(map[string]*connArray),
-		security: security,
+		done:       make(chan struct{}, 1),
+		readConns:  make(map[string]*connArray),
+		writeConns: make(map[string]*connArray),
+		security:   security,
 	}
 }
 
@@ -224,17 +234,24 @@ func NewTestRPCClient() Client {
 	return newRPCClient(config.Security{})
 }
 
-func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
+func (c *rpcClient) getConnArray(addr string, ctype connType) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
 		return nil, errors.Errorf("rpcClient is closed")
 	}
-	array, ok := c.conns[addr]
+	var array *connArray
+	var ok bool
+	switch ctype {
+	case Read:
+		array, ok = c.readConns[addr]
+	case Write:
+		array, ok = c.writeConns[addr]
+	}
 	c.RUnlock()
 	if !ok {
 		var err error
-		array, err = c.createConnArray(addr)
+		array, err = c.createConnArray(addr, ctype)
 		if err != nil {
 			return nil, err
 		}
@@ -242,10 +259,17 @@ func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
+func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
-	array, ok := c.conns[addr]
+	var array *connArray
+	var ok bool
+	switch ctype {
+	case Read:
+		array, ok = c.readConns[addr]
+	case Write:
+		array, ok = c.writeConns[addr]
+	}
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
@@ -253,7 +277,12 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.conns[addr] = array
+		switch ctype {
+		case Read:
+			c.readConns[addr] = array
+		case Write:
+			c.writeConns[addr] = array
+		}
 	}
 	return array, nil
 }
@@ -263,7 +292,10 @@ func (c *rpcClient) closeConns() {
 	if !c.isClosed {
 		c.isClosed = true
 		// close all connections
-		for _, array := range c.conns {
+		for _, array := range c.readConns {
+			array.Close()
+		}
+		for _, array := range c.writeConns {
 			array.Close()
 		}
 	}
@@ -289,7 +321,12 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleIdleConnArray()
 	}
 
-	connArray, err := c.getConnArray(addr)
+	ctype := Read
+	if !req.IsReadOnly() {
+		ctype = Write
+	}
+
+	connArray, err := c.getConnArray(addr, ctype)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

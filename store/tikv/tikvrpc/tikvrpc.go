@@ -170,6 +170,16 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	return req
 }
 
+// Return if this request is readonly.
+func (req *Request) IsReadOnly() bool {
+	switch req.Type {
+	case CmdGet, CmdBatchGet, CmdRawGet, CmdRawScan, CmdCop:
+		return true
+	default:
+		return false
+	}
+}
+
 // Get returns GetRequest in request.
 func (req *Request) Get() *kvrpcpb.GetRequest {
 	return req.req.(*kvrpcpb.GetRequest)
