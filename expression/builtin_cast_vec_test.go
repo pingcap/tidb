@@ -23,10 +23,43 @@ import (
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
-		{types.ETInt, []types.EvalType{types.ETInt}, nil},
-		{types.ETReal, []types.EvalType{types.ETInt}, nil},
-		{types.ETDuration, []types.EvalType{types.ETInt}, []dataGenerator{new(randDurInt)}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime},
+			geners: []dataGenerator{&dateTimeGenerWithFsp{
+				defaultGener: defaultGener{nullRation: 0.2, eType: types.ETDatetime},
+				fsp:          1,
+			}},
+		},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETTimestamp}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal}},
 	},
+}
+
+type dateTimeGenerWithFsp struct {
+	defaultGener
+	fsp int8
+}
+
+func (g *dateTimeGenerWithFsp) gen() interface{} {
+	result := g.defaultGener.gen()
+	if t, ok := result.(types.Time); ok {
+		t.Fsp = g.fsp
+		return t
+	}
+	return result
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCastEvalOneVec(c *C) {

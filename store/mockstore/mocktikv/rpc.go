@@ -357,7 +357,7 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 		panic("KvCleanup: key not in region")
 	}
 	var resp kvrpcpb.CleanupResponse
-	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion())
+	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion(), req.GetCurrentTs())
 	if err != nil {
 		if commitTS, ok := errors.Cause(err).(ErrAlreadyCommitted); ok {
 			resp.CommitVersion = uint64(commitTS)
@@ -645,9 +645,7 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 		}
 		newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
 		newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, k, newPeerIDs, newPeerIDs[0])
-		// The mocktikv should return a deep copy of meta info to avoid data race
-		metaCloned := proto.Clone(newRegion.Meta)
-		resp.Regions = append(resp.Regions, metaCloned.(*metapb.Region))
+		resp.Regions = append(resp.Regions, newRegion)
 	}
 	return resp
 }

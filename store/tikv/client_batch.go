@@ -215,8 +215,8 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		c.batched.Store(requestID, entries[i])
 	}
 	if err := c.client.Send(request); err != nil {
-		logutil.BgLogger().Error(
-			"batch commands send error",
+		logutil.BgLogger().Info(
+			"sending batch commands meets error",
 			zap.String("target", c.target),
 			zap.Error(err),
 		)
@@ -260,7 +260,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
 
 		return nil
 	}
-	logutil.BgLogger().Error(
+	logutil.BgLogger().Info(
 		"batchRecvLoop re-create streaming fail",
 		zap.String("target", c.target),
 		zap.Error(err),
@@ -283,8 +283,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	for {
 		resp, err := c.recv()
 		if err != nil {
-			logutil.BgLogger().Error(
-				"batchRecvLoop error when receive",
+			if c.isStopped() {
+				return
+			}
+			logutil.BgLogger().Info(
+				"batchRecvLoop fails when receiving, needs to reconnect",
 				zap.String("target", c.target),
 				zap.Error(err),
 			)
@@ -418,8 +421,10 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) {
 	// Choose a connection by round-robbin.
-	var cli *batchCommandsClient = nil
-	var target string = ""
+	var (
+		cli    *batchCommandsClient
+		target string
+	)
 	for i := 0; i < len(a.batchCommandsClients); i++ {
 		a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
 		target = a.batchCommandsClients[a.index].target
