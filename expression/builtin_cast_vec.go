@@ -799,7 +799,8 @@ func (b *builtinCastDecimalAsIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 			continue
 		}
 
-		var to types.MyDecimal
+		// Round is needed for both unsigned and signed.
+		to := d64s[i]
 		err = d64s[i].Round(&to, 0, types.ModeHalfEven)
 		if err != nil {
 			result.SetNull(i, true)
