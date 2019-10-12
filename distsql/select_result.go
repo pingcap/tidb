@@ -186,7 +186,7 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
 	if r.respArrowDecoder == nil {
 		r.respArrowDecoder = chunk.NewArrowDecoder(
-			chunk.NewChunkWithCapacity(r.fieldTypes, r.ctx.GetSessionVars().MaxChunkSize),
+			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
 			r.fieldTypes,
 		)
 	}
@@ -207,6 +207,7 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 
 		if r.respArrowDecoder.Empty() {
 			r.respChkIdx++
+			return nil
 		}
 	}
 	return nil

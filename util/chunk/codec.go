@@ -207,6 +207,7 @@ func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
 // Decode decodes a Chunk from ArrowDecoder, save the remained unused bytes.
 func (c *ArrowDecoder) Decode(target *Chunk) {
 	requestRows := target.RequiredRows() - target.NumRows()
+	requestRows = (requestRows + 7) >> 3 << 3
 	if requestRows > c.rows-c.cur {
 		requestRows = c.rows - c.cur
 	}
@@ -238,19 +239,65 @@ func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int)
 	if numFixedBytes == -1 {
 		numDataBytes = colSource.offsets[requestRows] - colSource.offsets[0]
 		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows+1]...)
+		deltaOffset := -colSource.offsets[0] + colTarget.offsets[colTarget.length]
 		for i := colTarget.length + 1; i <= colTarget.length+requestRows; i++ {
-			colTarget.offsets[i] = colTarget.offsets[i] - colSource.offsets[0] + colTarget.offsets[colTarget.length]
+			colTarget.offsets[i] = colTarget.offsets[i] + deltaOffset
 		}
 		colSource.offsets = colSource.offsets[requestRows:]
 	} else if cap(colTarget.elemBuf) < numFixedBytes {
 		colTarget.elemBuf = make([]byte, numFixedBytes)
 	}
 
-	for i := c.cur; i < c.cur+requestRows; i++ {
-		colTarget.appendNullBitmap(!colSource.IsNull(i))
-		colTarget.length++
-	}
+	numNullBitmapBytes := (requestRows + 7) >> 3
+	colTarget.nullBitmap = append(colTarget.nullBitmap, colSource.nullBitmap[:numNullBitmapBytes]...)
+	colSource.nullBitmap = colSource.nullBitmap[numNullBitmapBytes:]
+	colTarget.length += requestRows
 
 	colTarget.data = append(colTarget.data, colSource.data[:numDataBytes]...)
 	colSource.data = colSource.data[numDataBytes:]
+}
+
+// DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.
+func (c *Codec) DecodeToChunkTest(buffer []byte, chk *Chunk) (remained []byte) {
+	for i := 0; i < len(chk.columns); i++ {
+		buffer = c.decodeColumnTest(buffer, chk.columns[i], i)
+	}
+	return buffer
+}
+
+// decodeColumn decodes a Column from a byte slice, return the remained unused bytes.
+func (c *Codec) decodeColumnTest(buffer []byte, col *Column, ordinal int) (remained []byte) {
+	// Todo(Shenghui Wu): Optimize all data is null.
+	// decode length.
+	col.length = int(binary.LittleEndian.Uint32(buffer))
+	buffer = buffer[4:]
+
+	// decode nullCount.
+	nullCount := int(binary.LittleEndian.Uint32(buffer))
+	buffer = buffer[4:]
+
+	// decode nullBitmap.
+	if nullCount > 0 {
+		numNullBitmapBytes := (col.length + 7) / 8
+		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
+		buffer = buffer[numNullBitmapBytes:]
+	} else {
+		c.setAllNotNull(col)
+	}
+
+	// decode offsets.
+	numFixedBytes := getFixedLen(c.colTypes[ordinal])
+	numDataBytes := int64(numFixedBytes * col.length)
+	if numFixedBytes == -1 {
+		numOffsetBytes := (col.length + 1) * 8
+		col.offsets = append(col.offsets[:0], bytesToI64Slice(buffer[:numOffsetBytes])...)
+		buffer = buffer[numOffsetBytes:]
+		numDataBytes = col.offsets[col.length]
+	} else if cap(col.elemBuf) < numFixedBytes {
+		col.elemBuf = make([]byte, numFixedBytes)
+	}
+
+	// decode data.
+	col.data = append(col.data[:0], buffer[:numDataBytes]...)
+	return buffer[numDataBytes:]
 }

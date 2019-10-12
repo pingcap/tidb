@@ -529,3 +529,129 @@ func BenchmarkDecodeToChunkWithNewChunk(b *testing.B) {
 		codec.DecodeToChunk(buffer, chk)
 	}
 }
+
+func BenchmarkDecodeToChunkWithRequestedRows_int(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendInt64(colOrdinal, 123)
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	acodec := chunk.NewArrowDecoder(
+		chunk.NewChunkWithCapacity(colTypes, 0),
+		colTypes)
+
+	chk.SetRequiredRows(1024, 1024)
+	chk.Reset()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		acodec.Reset(buffer)
+		for !acodec.Empty() {
+			for !chk.IsFull() && !acodec.Empty() {
+				acodec.Decode(chk)
+			}
+			chk.Reset()
+		}
+	}
+}
+
+func BenchmarkDecodeToChunk_int(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendInt64(colOrdinal, 123)
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		codec.DecodeToChunkTest(buffer, chk)
+	}
+}
+
+func BenchmarkDecodeToChunkWithRequestedRows_string(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendString(colOrdinal, "123456")
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	acodec := chunk.NewArrowDecoder(
+		chunk.NewChunkWithCapacity(colTypes, 0),
+		colTypes)
+
+	chk.SetRequiredRows(1024, 1024)
+	chk.Reset()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		acodec.Reset(buffer)
+		for !acodec.Empty() {
+			for !chk.IsFull() && !acodec.Empty() {
+				acodec.Decode(chk)
+			}
+			chk.Reset()
+		}
+	}
+}
+
+func BenchmarkDecodeToChunk_string(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendString(colOrdinal, "123456")
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		codec.DecodeToChunkTest(buffer, chk)
+	}
+}
