@@ -446,7 +446,8 @@
       {"SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)"},
       {"SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)"},
       {"SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)"},
-      {"SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b", "AggPushDown": true}
+      {"SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b", "AggPushDown": true},
+      {"SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e"}
     ]
   },
   {
