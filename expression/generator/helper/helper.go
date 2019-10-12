@@ -24,7 +24,7 @@ type TypeContext struct {
 	// {{ .TypeNameInColumn }}s.
 	// If undefined, it's same as TypeName.
 	TypeNameInColumn string
-	// Describe the type of in golang.
+	// Describe the type name in golang.
 	TypeNameGo string
 	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen() .
 	Fixed bool
