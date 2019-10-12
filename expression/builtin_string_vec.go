@@ -500,19 +500,22 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	result.ReserveString(n)
 	i64s := buf1.Int64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		str := buf.GetString(i)
 		targetLength := int(i64s[i])
-		padStr := buf2.GetString(i)
-
 		if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
 			result.AppendNull()
 			continue
 		}
+		if buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		padStr := buf2.GetString(i)
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
