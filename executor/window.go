@@ -142,7 +142,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err e
 	}
 
 	resultChk := chunk.New(e.retFieldTypes, 0, numRows)
-	err := e.copyChk(childResult, resultChk)
+	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err
 	}
