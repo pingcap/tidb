@@ -300,6 +300,12 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		return false
 	})
 
+	// Check blacklist first
+	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
+	if disallowPushdown {
+		return false
+	}
+
 	switch sf.FuncName.L {
 	case
 		// logical functions.
@@ -351,8 +357,22 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 		// date functions.
 		ast.DateFormat:
-		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
+		return true
+
+	case ast.Cast:
+		// Disable time related cast function temporarily
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsTime,
+			tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDurationAsTime,
+			tipb.ScalarFuncSig_CastJsonAsTime,
+			tipb.ScalarFuncSig_CastTimeAsTime:
+			return false
+		default:
+			return true
+		}
 	}
 	return false
 }
