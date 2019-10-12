@@ -15,6 +15,7 @@ package expression
 
 import (
 	"encoding/binary"
+	"github.com/google/uuid"
 	"math"
 	"net"
 
@@ -137,11 +138,22 @@ func (b *builtinDecimalAnyValueSig) vecEvalDecimal(input *chunk.Chunk, result *c
 }
 
 func (b *builtinUUIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	var id uuid.UUID
+	var err error
+	for i := 0; i < n; i++ {
+		id, err = uuid.NewUUID()
+		if err != nil {
+			return err
+		}
+		result.AppendString(id.String())
+	}
+	return nil
 }
 
 func (b *builtinNameConstDurationSig) vectorized() bool {
