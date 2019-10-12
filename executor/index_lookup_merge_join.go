@@ -91,7 +91,6 @@ type innerMergeCtx struct {
 type lookUpMergeJoinTask struct {
 	outerResult   *chunk.Chunk
 	outerOrderIdx []int
-	outerMatch    []bool
 
 	innerResult *chunk.Chunk
 	innerIter   chunk.Iterator
@@ -358,14 +357,6 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	if task.outerResult == nil || task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
-	if omw.filter != nil {
-		task.outerMatch = make([]bool, task.outerResult.NumRows())
-		task.memTracker.Consume(int64(cap(task.outerMatch)))
-		task.outerMatch, err = expression.VectorizedFilter(omw.ctx, omw.filter, chunk.NewIterator4Chunk(task.outerResult), task.outerMatch)
-		if err != nil {
-			return task, err
-		}
-	}
 
 	return task, nil
 }
@@ -404,11 +395,20 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	}
 }
 
-func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) error {
+func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	numOuterRows := task.outerResult.NumRows()
+	var outerMatch []bool
+	if imw.outerMergeCtx.filter != nil {
+		outerMatch = make([]bool, numOuterRows)
+		task.memTracker.Consume(int64(cap(outerMatch)))
+		outerMatch, err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(task.outerResult), outerMatch)
+		if err != nil {
+			return err
+		}
+	}
 	task.outerOrderIdx = make([]int, 0, numOuterRows)
 	for i := 0; i < numOuterRows; i++ {
-		if len(task.outerMatch) == 0 || task.outerMatch[i] {
+		if len(outerMatch) == 0 || outerMatch[i] {
 			task.outerOrderIdx = append(task.outerOrderIdx, i)
 		}
 	}
