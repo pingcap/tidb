@@ -205,6 +205,7 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	p.taskMap[string(key)] = task
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *baseLogicalPlan) BuildKeyInfo() {
 	for _, child := range p.children {
 		child.BuildKeyInfo()

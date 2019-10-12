@@ -28,6 +28,7 @@ func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return lp, nil
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (la *LogicalAggregation) BuildKeyInfo() {
 	la.schema.Keys = nil
 	la.baseLogicalPlan.BuildKeyInfo()
@@ -75,6 +76,7 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	return okCorCol
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo() {
 	p.baseLogicalPlan.BuildKeyInfo()
 	for _, cond := range p.Conditions {
@@ -87,6 +89,7 @@ func (p *LogicalSelection) BuildKeyInfo() {
 	}
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo() {
 	p.baseLogicalPlan.BuildKeyInfo()
 	if p.Count == 1 {
@@ -112,6 +115,7 @@ func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {
 	return schema
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalProjection) BuildKeyInfo() {
 	p.schema.Keys = nil
 	p.baseLogicalPlan.BuildKeyInfo()
@@ -129,6 +133,7 @@ func (p *LogicalProjection) BuildKeyInfo() {
 	}
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalJoin) BuildKeyInfo() {
 	p.schema.Keys = nil
 	p.baseLogicalPlan.BuildKeyInfo()
@@ -175,6 +180,7 @@ func (p *LogicalJoin) BuildKeyInfo() {
 	}
 }
 
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo() {
 	ds.schema.Keys = nil
 	ds.baseLogicalPlan.BuildKeyInfo()
