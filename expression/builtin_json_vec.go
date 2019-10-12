@@ -15,6 +15,8 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -91,11 +93,49 @@ func (b *builtinJSONSetSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinJSONObjectSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nr := input.NumRows()
+	if len(b.args)&1 == 1 {
+		err := ErrIncorrectParameterCount.GenWithStackByArgs(ast.JSONObject)
+		return err
+	}
+
+	jsons := make([]map[string]interface{}, nr)
+	for i := 0; i < nr; i++ {
+		jsons[i] = make(map[string]interface{}, len(b.args)>>1)
+	}
+
+	result.ReserveJSON(nr)
+	for i := 0; i < len(b.args); i++ {
+		if i&1 == 1 {
+			keyCol := input.Column(i - 1)
+			valueCol := input.Column(i)
+
+			var key string
+			var value json.BinaryJSON
+			for j := 0; j < nr; j++ {
+				if keyCol.IsNull(j) {
+					err := errors.New("JSON documents may not contain NULL member names")
+					return err
+				}
+				key = keyCol.GetString(j)
+				if valueCol.IsNull(j) {
+					value = json.CreateBinary(nil)
+				} else {
+					value = valueCol.GetJSON(j)
+				}
+				jsons[j][key] = value
+			}
+		}
+	}
+
+	for i := 0; i < nr; i++ {
+		result.AppendJSON(json.CreateBinary(jsons[i]))
+	}
+	return nil
 }
 
 func (b *builtinJSONArrayInsertSig) vectorized() bool {
