@@ -79,6 +79,8 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		// Do column prune here to reduce the output columns.
 		err = logic.PruneColumns(logic.Schema().Columns)
 		c.Assert(err, IsNil)
+		// Build keyInfo to test the unique key information.
+		logic.BuildKeyInfo()
 		group := convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)

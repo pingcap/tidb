@@ -77,7 +77,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 			for _, col := range key {
 				ukColStrs = append(ukColStrs, col.String())
 			}
-			ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
+			ukStrs = append(ukStrs, strings.Join(ukColStrs, ","))
 		}
 		fmt.Fprintf(groupLine, ", UniqueKey:[%s]", strings.Join(ukStrs, ","))
 	}
