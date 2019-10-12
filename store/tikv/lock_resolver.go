@@ -387,7 +387,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	var currentTS uint64
 	if l.TTL == 0 {
 		// NOTE: l.TTL = 0 is a special protocol!!!
-		// When the pessimistic txn prewrite meets locks of a txn, it should rollback that txn **unconditionally**.
+		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
 		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
 		// Set currentTS to max uint64 to make the lock expired.
 		currentTS = math.MaxUint64
