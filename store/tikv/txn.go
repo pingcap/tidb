@@ -273,6 +273,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
+	defer committer.ttlManager.close()
 	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
@@ -331,6 +332,7 @@ func (txn *tikvTxn) Rollback() error {
 	// Clean up pessimistic lock.
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
+		txn.committer.ttlManager.close()
 		if err != nil {
 			logutil.Logger(context.Background()).Error(err.Error())
 		}
@@ -411,6 +413,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 				txn.committer.primaryKey = nil
 			}
 			return err
+		}
+		if assignedPrimaryKey {
+			txn.committer.ttlManager.run(txn.committer)
 		}
 	}
 	txn.mu.Lock()
