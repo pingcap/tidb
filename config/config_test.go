@@ -41,6 +41,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Strategy = "hash"
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
+	conf.TiKVClient.RegionCacheTTL = 6000
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
@@ -70,6 +71,7 @@ txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
+region-cache-ttl=6000
 [stmt-summary]
 max-stmt-count=1000
 max-sql-length=1024
