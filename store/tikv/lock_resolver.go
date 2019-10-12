@@ -304,7 +304,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	for _, l := range expiredLocks {
-		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS, cleanTxns)
+		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
@@ -382,16 +382,11 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS)
 }
 
-func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, cleanTxns map[uint64]map[RegionVerID]struct{}) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
 	// NOTE: l.TTL = 0 is a special protocol!!!
 	// When the pessimistic txn prewrite meets locks of a txn, it should rollback that txn **unconditionally**.
 	// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
 	if l.TTL == 0 {
-		cleanRegions, exists := cleanTxns[l.TxnID]
-		if !exists {
-			cleanRegions = make(map[RegionVerID]struct{})
-			cleanTxns[l.TxnID] = cleanRegions
-		}
 		return lr.cleanupPrimaryLock(bo, l.TxnID, l.Primary)
 	}
 
