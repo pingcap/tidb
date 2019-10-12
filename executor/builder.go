@@ -2127,7 +2127,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
 	if !isDoubleRead {
-		return nil, errors.Errorf("it's a invalid plan when the projection is the inner child of indexMergeJoin and its child is not indexLookUpReader")
+		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
 	}
 	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
