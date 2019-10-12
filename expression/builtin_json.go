@@ -749,6 +749,8 @@ func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalInt evals a builtinJSONValidJSONSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
 func (b *builtinJSONValidJSONSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	return 1, isNull, err
@@ -764,6 +766,8 @@ func (b *builtinJSONValidStringSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalInt evals a builtinJSONValidStringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
 func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	if b.args[0].GetType().EvalType() != types.ETString {
 		return 0, false, nil
