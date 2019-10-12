@@ -121,11 +121,11 @@ func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinNameConstStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinDecimalAnyValueSig) vectorized() bool {
