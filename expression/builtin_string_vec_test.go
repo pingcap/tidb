@@ -14,12 +14,36 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
+
+type randSpaceStrGener struct {
+	lenBegin int
+	lenEnd   int
+}
+
+func (g *randSpaceStrGener) gen() interface{} {
+	n := rand.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(150)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else if x < 62 {
+			buf[i] = byte('A' + x - 10 - 26)
+		} else {
+			buf[i] = byte(' ')
+		}
+	}
+	return string(buf)
+}
 
 var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Length:         {},
