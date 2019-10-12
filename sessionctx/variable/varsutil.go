@@ -585,6 +585,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
+	case TiDBReplicaRead:
+		if strings.EqualFold(value, "follower") {
+			return "follower", nil
+		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
+			return "leader", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBAllowRemoveAutoInc:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":

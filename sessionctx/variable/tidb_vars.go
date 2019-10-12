@@ -146,6 +146,9 @@ const (
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
 
+	// TiDBReplicaRead is used for reading data from replicas, followers for example.
+	TiDBReplicaRead = "tidb_replica_read"
+
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 )

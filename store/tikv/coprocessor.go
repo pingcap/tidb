@@ -44,7 +44,8 @@ var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogr
 
 // CopClient is coprocessor client.
 type CopClient struct {
-	store *tikvStore
+	store           *tikvStore
+	replicaReadSeed uint32
 }
 
 // IsRequestTypeSupported checks whether reqType is supported.
@@ -93,12 +94,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:       c.store,
-		req:         req,
-		concurrency: req.Concurrency,
-		finishCh:    make(chan struct{}),
-		vars:        vars,
-		memTracker:  req.MemTracker,
+		store:           c.store,
+		req:             req,
+		concurrency:     req.Concurrency,
+		finishCh:        make(chan struct{}),
+		vars:            vars,
+		memTracker:      req.MemTracker,
+		replicaReadSeed: c.replicaReadSeed,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -386,6 +388,8 @@ type copIterator struct {
 	vars *kv.Variables
 
 	memTracker *memory.Tracker
+
+	replicaReadSeed uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -399,6 +403,8 @@ type copIteratorWorker struct {
 	vars     *kv.Variables
 
 	memTracker *memory.Tracker
+
+	replicaReadSeed uint32
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -498,6 +504,8 @@ func (it *copIterator) open(ctx context.Context) {
 			vars:     it.vars,
 
 			memTracker: it.memTracker,
+
+			replicaReadSeed: it.replicaReadSeed,
 		}
 		go worker.run(ctx)
 	}
@@ -666,6 +674,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
+
 	req := &tikvrpc.Request{
 		Type: task.cmdType,
 		Cop: &coprocessor.Request{
@@ -679,7 +688,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			NotFillCache:   worker.req.NotFillCache,
 			HandleTime:     true,
 			ScanDetail:     true,
+			ReplicaRead:    worker.req.ReplicaRead.IsFollowerRead(),
 		},
+		ReplicaReadSeed: worker.replicaReadSeed,
 	}
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
