@@ -282,7 +282,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Lock) (int64, error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil
@@ -304,7 +304,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, startTS uint64, locks []*Loc
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	for _, l := range expiredLocks {
-		status, err := lr.getTxnStatusFromLock(bo, l, startTS, cleanTxns)
+		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS, cleanTxns)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
