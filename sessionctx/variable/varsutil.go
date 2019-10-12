@@ -432,13 +432,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion, TiDBEnableStmtSummary:
+		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case MaxExecutionTime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case ThreadPoolSize:
+		return checkUInt64SystemVar(name, value, 1, 64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -586,6 +588,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "follower", nil
 		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
 			return "leader", nil
+	case TiDBEnableStmtSummary:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "1", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "0", nil
+		case value == "":
+			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}

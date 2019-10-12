@@ -637,6 +637,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
 	{ScopeSession, WarningCount, "0"},
 	{ScopeSession, ErrorCount, "0"},
+	{ScopeGlobal, "thread_pool_size", "16"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -710,8 +711,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBWaitSplitRegionTimeout, strconv.Itoa(DefWaitSplitRegionTimeout)},
 	{ScopeSession, TiDBLowResolutionTSO, "0"},
 	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
-	{ScopeGlobal, TiDBEnableStmtSummary, BoolToIntStr(DefTiDBEnableStmtSummary)},
 	{ScopeSession, TiDBReplicaRead, "leader"},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -948,6 +949,8 @@ const (
 	InnodbTableLocks = "innodb_table_locks"
 	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
+	// ThreadPoolSize is the name of 'thread_pool_size' variable.
+	ThreadPoolSize = "thread_pool_size"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
