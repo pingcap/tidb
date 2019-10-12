@@ -16,7 +16,9 @@ package expression
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -687,11 +689,33 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinRandWithSeedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+	var randGen *rand.Rand
+	i64s := buf.Int64s()
+	f64s := result.Float64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+		} else {
+			randGen = rand.New(rand.NewSource(i64s[i]))
+		}
+		f64s[i] = randGen.Float64()
+	}
+	return nil
 }
 
 func (b *builtinCeilIntToDecSig) vectorized() bool {
