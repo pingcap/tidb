@@ -1,0 +1,27 @@
+[
+  {
+    "name": "TestGroupStringer",
+    "cases": [
+      // Simple query.
+      "select b from t where a > 1 and b < 1",
+      // TableDual.
+      "select 3 * 10 + 1",
+      // Join.
+      "select t1.b from t t1, t t2 where t2.a=t1.b and t1.a > 10",
+      // Aggregation.
+      "select max(b), sum(a) from t where c > 10 group by d",
+      // Aggregation without group by.
+      "select avg(b) from t where b > 10",
+      // Subquery.
+      "select a from t t1 where exists(select 1 from t t2 where t2.a < t1.b) and a < 5",
+      // Join + Agg.
+      "select sum(t1.a) from t t1, t t2 where t1.a = t2.b",
+      // Limit.
+      "select a from t where a > 10 limit 3",
+      // Order by.
+      "select a from t where b > 1 order by c",
+      // Union ALL.
+      "select avg(a) from t union all select avg(b) from t"
+    ]
+  }
+]
