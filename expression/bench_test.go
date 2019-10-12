@@ -1284,7 +1284,6 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	for numCols := 1; numCols <= 10; numCols++ {
 		for round := 0; round < 64; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			input2 := input.CopyReconstruct(nil)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
 			ctx.GetSessionVars().EnableVectorizedExpression = false
@@ -1301,8 +1300,8 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 
 			// add test which sel is not nil
 			randomSel := generateRandomSel()
-			input2.SetSel(randomSel)
-			it2 := chunk.NewIterator4Chunk(input2)
+			input.SetSel(randomSel)
+			it2 := chunk.NewIterator4Chunk(input)
 			isNull = isNull[:0]
 			ctx.GetSessionVars().EnableVectorizedExpression = false
 			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
