@@ -416,11 +416,11 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
-type randJsonDurationWithLen struct {
+type randJSONDurationWithLen struct {
 	len int32
 }
 
-func (g *randJsonDurationWithLen) gen() interface{} {
+func (g *randJSONDurationWithLen) gen() interface{} {
 	j := new(json.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int31n(g.len)))); err != nil {
 		panic(err)
