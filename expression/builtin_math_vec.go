@@ -686,11 +686,11 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
+	b.mu.Lock()
 	for i := range f64s {
-		b.mu.Lock()
 		f64s[i] = b.randGen.Float64()
-		b.mu.Unlock()
 	}
+	b.mu.Unlock()
 	return nil
 }
 
