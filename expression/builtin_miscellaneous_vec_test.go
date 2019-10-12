@@ -36,6 +36,13 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.IsIPv4: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
+	ast.AnyValue: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.NameConst: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousCasesEvalOneVec(c *C) {
