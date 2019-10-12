@@ -748,8 +748,8 @@ func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetString(i)
-		i64s[i] = int64(len([]byte(str)))
+		str := buf.GetBytes(i)
+		i64s[i] = int64(len(str))
 	}
 	return nil
 }
