@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
@@ -81,7 +81,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
@@ -128,17 +128,17 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
 	return "index:" + p.indexPlan.ExplainID().String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
@@ -147,53 +147,43 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Exprs))
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalTableDual) ExplainInfo() string {
 	return fmt.Sprintf("rows:%v", p.RowCount)
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	for i, item := range p.ByItems {
-		order := "asc"
-		if item.Desc {
-			order = "desc"
-		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
-		if i+1 < len(p.ByItems) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer.String()
+	return explainByItems(buffer, p.ByItems).String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
 	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *basePhysicalAgg) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	if len(p.GroupByItems) > 0 {
@@ -212,7 +202,7 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
@@ -239,7 +229,7 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := new(bytes.Buffer)
 
@@ -266,7 +256,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	if len(p.LeftJoinKeys) > 0 {
@@ -291,19 +281,10 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	for i, item := range p.ByItems {
-		order := "asc"
-		if item.Desc {
-			order = "desc"
-		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
-		if i+1 < len(p.ByItems) {
-			buffer.WriteString(", ")
-		}
-	}
+	buffer = explainByItems(buffer, p.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
@@ -335,7 +316,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 	}
 }
 
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	formatWindowFuncDescs(buffer, p.WindowFuncDescs)
@@ -394,4 +375,135 @@ func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFunc
 		buffer.WriteString(desc.String())
 	}
 	return buffer
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalJoin) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.JoinType.String())
+	if len(p.EqualConditions) > 0 {
+		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
+	}
+	if len(p.LeftConditions) > 0 {
+		fmt.Fprintf(buffer, ", left cond:%s",
+			expression.SortedExplainExpressionList(p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			expression.SortedExplainExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			expression.SortedExplainExpressionList(p.OtherConditions))
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalAggregation) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	if len(p.GroupByItems) > 0 {
+		fmt.Fprintf(buffer, "group by:%s, ",
+			expression.SortedExplainExpressionList(p.GroupByItems))
+	}
+	if len(p.AggFuncs) > 0 {
+		buffer.WriteString("funcs:")
+		for i, agg := range p.AggFuncs {
+			buffer.WriteString(aggregation.ExplainAggFunc(agg))
+			if i+1 < len(p.AggFuncs) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalProjection) ExplainInfo() string {
+	return string(expression.ExplainExpressionList(p.Exprs))
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalSelection) ExplainInfo() string {
+	return string(expression.SortedExplainExpressionList(p.Conditions))
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalApply) ExplainInfo() string {
+	return p.LogicalJoin.ExplainInfo()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalTableDual) ExplainInfo() string {
+	return fmt.Sprintf("rowcount:%d", p.RowCount)
+}
+
+// ExplainInfo implements Plan interface.
+func (p *DataSource) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.tableInfo.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	fmt.Fprintf(buffer, "table:%s", tblName)
+	if p.isPartition {
+		if pi := p.tableInfo.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(p.physicalTableID)
+			fmt.Fprintf(buffer, ", partition:%s", partitionName)
+		}
+	}
+	if p.handleCol != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.handleCol.ExplainInfo())
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalUnionScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "conds:%s",
+		expression.SortedExplainExpressionList(p.conditions))
+	fmt.Fprintf(buffer, ", handle:%s", p.handleCol.ExplainInfo())
+	return buffer.String()
+}
+
+func explainByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
+	for i, item := range byItems {
+		order := "asc"
+		if item.Desc {
+			order = "desc"
+		}
+		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
+		if i+1 < len(byItems) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalSort) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	return explainByItems(buffer, p.ByItems).String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalTopN) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	buffer = explainByItems(buffer, p.ByItems)
+	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalLimit) ExplainInfo() string {
+	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+}
+
+// ExplainInfo implements Plan interface.
+func (p *TableScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
+	if len(p.AccessConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	}
+	return buffer.String()
 }

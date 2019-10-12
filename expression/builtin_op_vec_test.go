@@ -23,8 +23,9 @@ import (
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.IsTruth: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{&defaultGener{0.2, types.ETReal}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{&defaultGener{0.2, types.ETDecimal}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.IsFalsity: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
@@ -41,10 +42,22 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.LogicAnd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
+	ast.Or: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
 	ast.UnaryNot: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.And: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
+	ast.RightShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.LeftShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 	},
 	ast.UnaryMinus: {},
 	ast.IsNull: {
@@ -52,6 +65,7 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
