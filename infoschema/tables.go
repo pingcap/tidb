@@ -1066,7 +1066,7 @@ func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, erro
 	return colLengthMap, nil
 }
 
-func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
+func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
 	columnLength := make(map[string]uint64)
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
@@ -1076,7 +1076,7 @@ func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthM
 		if length != types.VarStorageLen {
 			columnLength[col.Name.L] = rowCount * uint64(length)
 		} else {
-			length := columnLengthMap[tableHistID{tableID: info.ID, histID: col.ID}]
+			length := columnLengthMap[tableHistID{tableID: physicalID, histID: col.ID}]
 			columnLength[col.Name.L] = length
 		}
 	}
@@ -1234,8 +1234,18 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					}
 				}
 
-				rowCount := tableRowsMap[table.ID]
-				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+				var rowCount, dataLength, indexLength uint64
+				if table.GetPartitionInfo() == nil {
+					rowCount = tableRowsMap[table.ID]
+					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				} else {
+					for _, pi := range table.GetPartitionInfo().Definitions {
+						rowCount += tableRowsMap[pi.ID]
+						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+						dataLength += parDataLen
+						indexLength += parIndexLen
+					}
+				}
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
