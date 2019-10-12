@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -107,6 +108,19 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[t1:a,t2:b]", digest, statsInfos, copTasks, memMax, true, sql)
+	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
+		TxnTS:       txnTS,
+		SQL:         sql,
+		Digest:      digest,
+		TimeTotal:   costTime,
+		TimeParse:   time.Duration(10),
+		TimeCompile: time.Duration(10),
+		IndexNames:  "[t1:a,t2:b]",
+		StatsInfos:  statsInfos,
+		CopTasks:    copTasks,
+		ExecDetail:  execDetail,
+		MemMax:      memMax,
+		Succ:        true,
+	})
 	c.Assert(logString, Equals, resultString)
 }
