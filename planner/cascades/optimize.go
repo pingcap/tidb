@@ -67,10 +67,21 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
-// optimization is composed of 2 phases: exploration and implementation.
+// optimization is composed of 3 phases: preprocessing, exploration and implementation.
 //
 //------------------------------------------------------------------------------
-// Phase 1: Exploration
+// Phase 1: Preprocessing
+//------------------------------------------------------------------------------
+//
+// The target of this phase is to preprocess the logical plan tree by some heuristic
+// rules which may traverse the whole plan tree.
+//
+// These rules can be more efficient by traversing the logical plan tree instead of
+// the expression groups, such as `Column Pruning`. What's more, the logical plan tree
+// won't be worse after applying these rules.
+//
+//------------------------------------------------------------------------------
+// Phase 2: Exploration
 //------------------------------------------------------------------------------
 //
 // The target of this phase is to explore all the logically equivalent
@@ -84,7 +95,7 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // rules.
 //
 //------------------------------------------------------------------------------
-// Phase 2: Implementation
+// Phase 3: Implementation
 //------------------------------------------------------------------------------
 //
 // The target of this phase is to search the best physical plan for a Group
@@ -95,6 +106,10 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
 func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
+	logical, err = opt.onPhasePreprocessing(sctx, logical)
+	if err != nil {
+		return nil, err
+	}
 	rootGroup := convert2Group(logical)
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
@@ -125,6 +140,15 @@ func convert2Group(node plannercore.LogicalPlan) *memo.Group {
 	g := memo.NewGroupWithSchema(e, node.Schema())
 	// Stats property for `Group` would be computed after exploration phase.
 	return g
+}
+
+func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+	err := plan.PruneColumns(plan.Schema().Columns)
+	if err != nil {
+		return nil, err
+	}
+	plan.BuildKeyInfo()
+	return plan, nil
 }
 
 func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
