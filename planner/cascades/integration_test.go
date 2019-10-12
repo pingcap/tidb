@@ -67,7 +67,7 @@ func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
 	tk.MustQuery("explain select b from t where a > 1").Check(testkit.Rows(
 		"Projection_8 3333.33 root Column#2",
 		"└─TableReader_9 3333.33 root data:TableScan_10",
-		"  └─TableScan_10 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo",
+		"  └─TableScan_10 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select b from t where a > 1").Check(testkit.Rows(
 		"4",
@@ -75,7 +75,7 @@ func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
 	tk.MustQuery("explain select b from t where a > 1 and a < 3").Check(testkit.Rows(
 		"Projection_8 2.00 root Column#2",
 		"└─TableReader_9 2.00 root data:TableScan_10",
-		"  └─TableScan_10 2.00 cop table:t, range:(1,3), keep order:false, stats:pseudo",
+		"  └─TableScan_10 2.00 cop[tikv] table:t, range:(1,3), keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select b from t where a > 1 and a < 3").Check(testkit.Rows())
 }
