@@ -387,14 +387,12 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	// When the pessimistic txn prewrite meets locks of a txn, it should rollback that txn **unconditionally**.
 	// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
 	if l.TTL == 0 {
-		var status TxnStatus
 		cleanRegions, exists := cleanTxns[l.TxnID]
 		if !exists {
 			cleanRegions = make(map[RegionVerID]struct{})
 			cleanTxns[l.TxnID] = cleanRegions
 		}
-		err := lr.resolveLock(bo, l, status, cleanRegions)
-		return status, err
+		return lr.cleanupPrimaryLock(bo, l.TxnID, l.Primary)
 	}
 
 	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
@@ -402,6 +400,63 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		return TxnStatus{}, err
 	}
 	return lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
+}
+
+func (lr *LockResolver) cleanupPrimaryLock(bo *Backoffer, txnID uint64, primary []byte) (TxnStatus, error) {
+	if s, ok := lr.getResolved(txnID); ok {
+		return s, nil
+	}
+
+	var status TxnStatus
+	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
+		Key:          primary,
+		StartVersion: txnID,
+		CurrentTs:    0,
+	})
+	for {
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
+		if err != nil {
+			return status, errors.Trace(err)
+		}
+		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return status, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return status, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return status, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return status, errors.Trace(ErrBodyMissing)
+		}
+		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
+		if keyErr := cmdResp.GetError(); keyErr != nil {
+			// If the TTL of the primary lock is not outdated, the proto returns a ErrLocked contains the TTL.
+			if lockInfo := keyErr.GetLocked(); lockInfo != nil {
+				status.ttl = lockInfo.LockTtl
+				status.commitTS = 0
+				return status, nil
+			}
+			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
+			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
+			return status, err
+		}
+		if cmdResp.CommitVersion != 0 {
+			status = TxnStatus{0, cmdResp.GetCommitVersion()}
+			tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+		} else {
+			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+		}
+		lr.saveResolved(txnID, status)
+		return status, nil
+	}
 }
 
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {

@@ -272,30 +272,37 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(kv.Key("second"), []byte("xxx"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
+	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
-	status, err := newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
 
-	// Rollback the lock.
-	err = newLockResolver(s.store).resolveLock(bo,
-		&Lock{Key: []byte("key"), Primary: []byte("key"), TxnID: txn.StartTS()},
-		TxnStatus{},
-		make(map[RegionVerID]struct{}))
+	// Test the ResolveLocks API
+	lock := s.mustGetLock(c, []byte("second"))
+	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
+	c.Assert(timeBeforeExpire > int64(0), IsTrue)
+
+	// Force rollback the lock using lock.TTL = 0.
+	lock.TTL = uint64(0)
+	timeBeforeExpire, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(timeBeforeExpire, Equals, int64(0))
 
 	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
