@@ -167,10 +167,9 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err e
 func (e *WindowExec) copyChk(src, dst *chunk.Chunk) error {
 	columns := e.Schema().Columns[:len(e.Schema().Columns)-e.numWindowFuncs]
 	for i, col := range columns {
-		if err := dst.MakeRefTo(i, src, col.Index); err != nil {
-			return err
-		}
+		dst.MakeRefTo(i, src, col.Index)
 	}
+	return nil
 }
 
 // windowProcessor is the interface for processing different kinds of windows.
