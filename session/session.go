@@ -866,6 +866,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	s.GetSessionVars().StmtCtx.StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -874,8 +875,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, errors.Trace(err)
 	}
+	durParse := time.Since(startTS)
+	s.GetSessionVars().StmtCtx.DurationParse = durParse
 	label := s.getSQLLabel()
-	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(durParse.Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
@@ -895,7 +898,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("sql", sql))
 			return nil, errors.Trace(err)
 		}
-		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+
+		durCompile := time.Since(startTS)
+		s.GetSessionVars().StmtCtx.DurationCompile = durCompile
+		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(durCompile.Seconds())
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
@@ -1009,6 +1015,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args .
 	}
 
 	s.PrepareTxnCtx(ctx)
+	s.sessionVars.StmtCtx.StartTime = time.Now()
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
