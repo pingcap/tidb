@@ -80,13 +80,14 @@ var (
 	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
 	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
 
-	transactionCounterInternalOK  = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK   = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-
-	transactionRollbackCounterInternal = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
+	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
+	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
+	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
+	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
+	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
+	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
 
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
@@ -185,6 +186,9 @@ type session struct {
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
+
+	// shared coprocessor client per session
+	client kv.Client
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -469,7 +473,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(err)
+	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -494,7 +498,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 }
 
 func (s *session) GetClient() kv.Client {
-	return s.store.GetClient()
+	return s.client
 }
 
 func (s *session) String() string {
@@ -964,6 +968,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
+	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1266,6 +1271,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
+		if s.sessionVars.ReplicaRead.IsFollowerRead() {
+			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		}
 	}
 	return &s.txn, nil
 }
@@ -1289,6 +1297,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
+	if s.GetSessionVars().ReplicaRead.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -1568,6 +1579,7 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1591,6 +1603,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1699,6 +1712,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBMaxDeltaSchemaCount,
 }
 
 var (
@@ -1898,19 +1912,38 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	}
 }
 
-func (s *session) recordTransactionCounter(err error) {
+func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
+	if stmtNode == nil {
+		if s.isInternal() {
+			if err != nil {
+				transactionCounterInternalErr.Inc()
+			} else {
+				transactionCounterInternalOK.Inc()
+			}
+		} else {
+			if err != nil {
+				transactionCounterGeneralErr.Inc()
+			} else {
+				transactionCounterGeneralOK.Inc()
+			}
+		}
+		return
+	}
+
+	var isTxn bool
+	switch stmtNode.(type) {
+	case *ast.CommitStmt:
+		isTxn = true
+	case *ast.RollbackStmt:
+		isTxn = true
+	}
+	if !isTxn {
+		return
+	}
 	if s.isInternal() {
-		if err != nil {
-			transactionCounterInternalErr.Inc()
-		} else {
-			transactionCounterInternalOK.Inc()
-		}
+		transactionCounterInternalCommitRollback.Inc()
 	} else {
-		if err != nil {
-			transactionCounterGeneralErr.Inc()
-		} else {
-			transactionCounterGeneralOK.Inc()
-		}
+		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 

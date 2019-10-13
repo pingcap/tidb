@@ -507,13 +507,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.PriKeyFlag
+				// Check PriKeyFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.PriKeyFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.PriKeyFlag
+				}
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
+				// Check UniqueFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.UniqueFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.UniqueKeyFlag
+				}
 			case ast.ColumnOptionDefaultValue:
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
@@ -599,8 +605,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
-	tp, fsp := t.Tp, t.Decimal
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, error) {
+	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
@@ -612,14 +618,14 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 					}
 				}
 				if defaultFsp != fsp {
-					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
 		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
-			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 		}
 
 		// Value is nil means `default null`.
@@ -660,19 +666,71 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 		return strconv.FormatUint(value, 10), nil
 	}
 
-	if tp == mysql.TypeDuration {
-		var err error
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
+	switch tp {
+	case mysql.TypeSet:
+		return setSetDefaultValue(v, col)
+	case mysql.TypeDuration:
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", errors.Trace(err)
 		}
-	}
-
-	if tp == mysql.TypeBit {
+	case mysql.TypeBit:
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
 			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
 		}
 	}
+
+	return v.ToString()
+}
+
+// setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
+func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
+	if v.Kind() == types.KindInt64 {
+		setCnt := len(col.Elems)
+		maxLimit := int64(1<<uint(setCnt) - 1)
+		val := v.GetInt64()
+		if val < 1 || val > maxLimit {
+			return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		}
+		setVal, err := types.ParseSetValue(col.Elems, uint64(val))
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v.SetMysqlSet(setVal)
+		return v.ToString()
+	}
+
+	str, err := v.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if str == "" {
+		return str, nil
+	}
+
+	valMap := make(map[string]struct{}, len(col.Elems))
+	dVals := strings.Split(strings.ToLower(str), ",")
+	for _, dv := range dVals {
+		valMap[dv] = struct{}{}
+	}
+	var existCnt int
+	for dv := range valMap {
+		for i := range col.Elems {
+			e := strings.ToLower(col.Elems[i])
+			if e == dv {
+				existCnt++
+				break
+			}
+		}
+	}
+	if existCnt != len(valMap) {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	setVal, err := types.ParseSetName(col.Elems, str)
+	if err != nil {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	v.SetMysqlSet(setVal)
 
 	return v.ToString()
 }
@@ -2409,7 +2467,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, err := getDefaultValue(ctx, col.Name.L, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, col, option)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}

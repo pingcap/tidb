@@ -142,6 +142,9 @@ const (
 
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
+
+	// TiDBReplicaRead is used for reading data from replicas, followers for example.
+	TiDBReplicaRead = "tidb_replica_read"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -245,6 +248,10 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
+	// deltaSchemaInfos is a queue that maintains the history of schema changes.
+	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
+
 	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
 
@@ -334,6 +341,7 @@ const (
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
@@ -347,7 +355,6 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
-	DefTiDBEnableStmtSummary           = false
 )
 
 // Process global variables.
@@ -357,6 +364,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
@@ -367,5 +375,4 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	EnableStmtSummary              int32  = BoolToInt32(DefTiDBEnableStmtSummary)
 )
