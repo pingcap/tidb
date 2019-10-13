@@ -158,7 +158,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(s.store, ver)
+	snapshot := newTiKVSnapshot(s.store, ver, 0)
 	m, err := snapshot.BatchGet(keys)
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
