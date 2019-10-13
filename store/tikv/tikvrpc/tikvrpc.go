@@ -167,6 +167,8 @@ type Request struct {
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 
 	Empty *tikvpb.BatchCommandsEmptyRequest
+
+	ReplicaReadSeed uint32
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.

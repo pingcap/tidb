@@ -432,7 +432,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion, TiDBEnableStmtSummary:
+		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
@@ -583,6 +583,23 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
+	case TiDBReplicaRead:
+		if strings.EqualFold(value, "follower") {
+			return "follower", nil
+		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
+			return "leader", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableStmtSummary:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "1", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "0", nil
+		case value == "":
+			return "", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}
 	return value, nil
 }
