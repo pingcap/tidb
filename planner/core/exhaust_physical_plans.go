@@ -358,7 +358,6 @@ func (p *LogicalJoin) constructIndexJoin(
 		innerTask:        innerTask,
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
-		KeepOuterOrder:   len(prop.Items) > 0,
 		CompareFilters:   compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
@@ -415,6 +414,32 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	return indexMergeJoins
 }
 
+func (p *LogicalJoin) constructIndexHashJoin(
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	innerTask task,
+	ranges []*ranger.Range,
+	keyOff2IdxOff []int,
+	path *accessPath,
+	compareFilters *ColWithCmpFuncManager,
+) []PhysicalPlan {
+	// TODO(xuhuaiyu): support keep outer order for indexHashJoin.
+	if !prop.IsEmpty() {
+		return nil
+	}
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
+	for _, plan := range indexJoins {
+		join := plan.(*PhysicalIndexJoin)
+		indexHashJoin := PhysicalIndexHashJoin{
+			PhysicalIndexJoin: *join,
+			keepOuterOrder:    false,
+		}.Init(p.ctx)
+		indexHashJoins = append(indexHashJoins, indexHashJoin)
+	}
+	return indexHashJoins
+}
+
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
@@ -439,7 +464,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
-	if !isDataSource && !isUnionScan {
+	if (!isDataSource && !isUnionScan) || (isDataSource && ds.preferStoreType&preferTiFlash != 0) {
 		return nil
 	}
 	if isUnionScan {
@@ -447,6 +472,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		ds, isDataSource = us.Children()[0].(*DataSource)
 		if !isDataSource {
 			return nil
+		}
+		// If one of the union scan children is a TiFlash table, then we can't choose index join.
+		for _, child := range us.Children() {
+			if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
+				return nil
+			}
 		}
 	}
 	var avgInnerRowCnt float64
@@ -495,13 +526,16 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	if !pkMatched {
 		return nil
 	}
-	joins = make([]PhysicalPlan, 0, 2)
+	joins = make([]PhysicalPlan, 0, 3)
 	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, avgInnerRowCnt)
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, avgInnerRowCnt)
 	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
+	// We can reuse the `innerTask` here since index nested loop hash join
+	// do not need the inner child to promise the order.
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	return joins
 }
 
@@ -533,7 +567,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			keyOff2IdxOff[keyOff] = idxOff
 		}
 	}
-	joins = make([]PhysicalPlan, 0, 2)
+	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
 	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, avgInnerRowCnt)
 
@@ -542,6 +576,9 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// should construct another inner plan for it.
 	innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, avgInnerRowCnt)
 	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	// We can reuse the `innerTask` here since index nested loop hash join
+	// do not need the inner child to promise the order.
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	return joins
 }
 
@@ -620,10 +657,11 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		ds.stats.Cardinality[i] = 1
 	}
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               ScanFactor * rowSize * ts.stats.RowCount,
+		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
@@ -683,12 +721,17 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	if !isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx, ds.blockOffset)
-		ts.SetSchema(is.dataSourceSchema)
+		ts.schema = is.dataSourceSchema.Clone()
+		// If inner cop task need keep order, the extraHandleCol should be set.
+		if cop.keepOrder {
+			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+		}
 		cop.tablePlan = ts
 	}
 	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(path.index, ds)
-	cop.cst = rowCount * rowSize * ScanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	tmpPath := &accessPath{
 		indexFilters:     indexConds,

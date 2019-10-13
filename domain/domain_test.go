@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"math"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -183,6 +185,29 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
 }
+
+type mockSessionManager struct {
+	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
+	for _, item := range msm.PS {
+		ret[item.ID] = item
+	}
+	return ret
+}
+
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	for _, item := range msm.PS {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return &util.ProcessInfo{}, false
+}
+
+func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
@@ -337,6 +362,28 @@ func (*testSuite) TestT(c *C) {
 	err = schemaChecker.Check(uint64(123456))
 	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
 	dom.SchemaValidator.Reset()
+
+	// Test for reporting min start timestamp.
+	infoSyncer := dom.InfoSyncer()
+	sm := &mockSessionManager{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	infoSyncer.SetSessionManager(sm)
+	beforeTS := variable.GoTimeToTS(time.Now())
+	infoSyncer.ReportMinStartTS(dom.Store())
+	afterTS := variable.GoTimeToTS(time.Now())
+	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
+	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
+	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
+	sm.PS = []*util.ProcessInfo{
+		{CurTxnStartTS: 0},
+		{CurTxnStartTS: math.MaxUint64},
+		{CurTxnStartTS: variable.GoTimeToTS(lowerLimit)},
+		{CurTxnStartTS: validTS},
+	}
+	infoSyncer.SetSessionManager(sm)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	c.Assert(infoSyncer.GetMinStartTS() == validTS, IsTrue)
 
 	err = store.Close()
 	c.Assert(err, IsNil)

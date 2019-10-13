@@ -31,12 +31,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Only print a log when out of memory quota.
-# Valid options: ["log", "cancel"]
-oom-action = "log"
-
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
+
+# Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
+oom-use-tmp-storage = true
+
+# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
 
 # Enable coprocessor streaming.
 enable-streaming = false
@@ -86,7 +89,7 @@ slow-threshold = 300
 expensive-threshold = 10000
 
 # Maximum query length recorded in log.
-query-log-max-len = 2048
+query-log-max-len = 4096
 
 # File logging.
 [log.file]
@@ -268,11 +271,6 @@ grpc-keepalive-timeout = 3
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
-# The max time a Txn may use (in seconds) from its startTS to commitTS.
-# We use it to guarantee GC worker will not influence any active txn. Please make sure that this
-# value is less than gc_life_time - 10s.
-max-txn-time-use = 590
-
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -281,6 +279,9 @@ overload-threshold = 200
 max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
+
+# Enable chunk encoded data.
+enable-arrow = true
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
