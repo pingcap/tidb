@@ -57,7 +57,7 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	rpcClient := newRPCClient(config.Security{})
 
 	// Start batchRecvLoop, and it should panic in `failPendingRequests`.
-	_, err := rpcClient.getConnArray(addr, Read)
+	_, err := rpcClient.getConnArray(addr, Other)
 	c.Assert(err, IsNil)
 
 	time.Sleep(time.Second)

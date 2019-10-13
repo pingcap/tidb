@@ -197,8 +197,8 @@ func (a *connArray) Close() {
 type connType int
 
 const (
-	Read connType = iota
-	Write
+	PointGet connType = iota
+	Other
 )
 
 // rpcClient is RPC client struct.
@@ -209,8 +209,8 @@ type rpcClient struct {
 	sync.RWMutex
 	done chan struct{}
 
-	readConns  map[string]*connArray
-	writeConns map[string]*connArray
+	pointGetConns map[string]*connArray
+	conns         map[string]*connArray
 
 	security config.Security
 
@@ -222,10 +222,10 @@ type rpcClient struct {
 
 func newRPCClient(security config.Security) *rpcClient {
 	return &rpcClient{
-		done:       make(chan struct{}, 1),
-		readConns:  make(map[string]*connArray),
-		writeConns: make(map[string]*connArray),
-		security:   security,
+		done:          make(chan struct{}, 1),
+		pointGetConns: make(map[string]*connArray),
+		conns:         make(map[string]*connArray),
+		security:      security,
 	}
 }
 
@@ -243,10 +243,10 @@ func (c *rpcClient) getConnArray(addr string, ctype connType) (*connArray, error
 	var array *connArray
 	var ok bool
 	switch ctype {
-	case Read:
-		array, ok = c.readConns[addr]
-	case Write:
-		array, ok = c.writeConns[addr]
+	case PointGet:
+		array, ok = c.pointGetConns[addr]
+	case Other:
+		array, ok = c.conns[addr]
 	}
 	c.RUnlock()
 	if !ok {
@@ -265,15 +265,15 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 	var array *connArray
 	var ok bool
 	switch ctype {
-	case Read:
-		array, ok = c.readConns[addr]
-	case Write:
-		array, ok = c.writeConns[addr]
+	case PointGet:
+		array, ok = c.pointGetConns[addr]
+	case Other:
+		array, ok = c.conns[addr]
 	}
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		if ctype == Read && connCount > 2 {
+		if ctype == PointGet && connCount > 2 {
 			connCount /= 2
 		}
 		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, c.done)
@@ -281,10 +281,10 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 			return nil, err
 		}
 		switch ctype {
-		case Read:
-			c.readConns[addr] = array
-		case Write:
-			c.writeConns[addr] = array
+		case PointGet:
+			c.pointGetConns[addr] = array
+		case Other:
+			c.conns[addr] = array
 		}
 	}
 	return array, nil
@@ -295,10 +295,10 @@ func (c *rpcClient) closeConns() {
 	if !c.isClosed {
 		c.isClosed = true
 		// close all connections
-		for _, array := range c.readConns {
+		for _, array := range c.pointGetConns {
 			array.Close()
 		}
-		for _, array := range c.writeConns {
+		for _, array := range c.conns {
 			array.Close()
 		}
 	}
@@ -324,9 +324,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleIdleConnArray()
 	}
 
-	ctype := Read
-	if !req.IsReadOnly() {
-		ctype = Write
+	ctype := Other
+	if req.IsPointGet() {
+		ctype = PointGet
 	}
 
 	connArray, err := c.getConnArray(addr, ctype)

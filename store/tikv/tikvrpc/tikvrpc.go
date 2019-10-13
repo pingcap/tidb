@@ -170,10 +170,10 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	return req
 }
 
-// Return if this request is readonly.
-func (req *Request) IsReadOnly() bool {
+// Return true if this request is point get.
+func (req *Request) IsPointGet() bool {
 	switch req.Type {
-	case CmdGet, CmdBatchGet, CmdRawGet, CmdRawScan:
+	case CmdGet, CmdBatchGet, CmdRawGet, CmdRawBatchGet:
 		return true
 	default:
 		return false

@@ -51,15 +51,15 @@ func (s *testClientSuite) TestConn(c *C) {
 	client := newRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
-	conn1, err := client.getConnArray(addr, Read)
+	conn1, err := client.getConnArray(addr, Other)
 	c.Assert(err, IsNil)
 
-	conn2, err := client.getConnArray(addr, Read)
+	conn2, err := client.getConnArray(addr, Other)
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
 	client.Close()
-	conn3, err := client.getConnArray(addr, Read)
+	conn3, err := client.getConnArray(addr, Other)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
 	setMaxBatchSize(maxBatchSize)
@@ -108,7 +108,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 
 	rpcClient := newRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr, Read)
+	conn, err := rpcClient.getConnArray(addr, Other)
 	c.Assert(err, IsNil)
 
 	// Suppose all connections are re-establishing.
