@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -517,11 +518,38 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 }
 
 func (b *builtinCastIntAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	col := input.Column(0)
+	nums := col.Int64s()
+	result.ReserveJSON(n)
+	if mysql.HasIsBooleanFlag(b.args[0].GetType().Flag) {
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				result.AppendJSON(json.CreateBinary(nil))
+			}
+			result.AppendJSON(json.CreateBinary(nums[i] != 0))
+		}
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				result.AppendJSON(json.CreateBinary(nil))
+			}
+			result.AppendJSON(json.CreateBinary(uint64(nums[i])))
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				// result.AppendJSON(json.CreateBinary(nil))
+				result.AppendNull()
+			}
+			result.AppendJSON(json.CreateBinary(nums[i]))
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastJSONAsJSONSig) vectorized() bool {
