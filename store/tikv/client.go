@@ -273,6 +273,9 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
+		if ctype == Read && connCount > 2 {
+			connCount /= 2
+		}
 		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, c.done)
 		if err != nil {
 			return nil, err

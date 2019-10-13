@@ -399,7 +399,7 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  4,
+		GrpcConnectionCount:  16,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
@@ -587,7 +587,6 @@ func (c *Config) Valid() error {
 	}
 
 	// For tikvclient.
-	c.TiKVClient.GrpcConnectionCount = 4
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
