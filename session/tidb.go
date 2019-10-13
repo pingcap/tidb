@@ -217,6 +217,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// then it could include the transaction commit time.
 		if rs == nil {
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
+			s.(*executor.ExecStmt).SummaryStmt()
 		}
 	}()
 

@@ -151,5 +151,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
 	prometheus.MustRegister(TiKVRangeTaskStats)
 	prometheus.MustRegister(TiKVRangeTaskPushDuration)
+	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 }

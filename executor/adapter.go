@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -133,6 +134,7 @@ func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
+	a.stmt.SummaryStmt()
 	return err
 }
 
@@ -614,9 +616,6 @@ func (a *ExecStmt) logAudit() {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	if level > zapcore.WarnLevel {
-		return
-	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.Ctx.GetSessionVars().StmtCtx.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
@@ -695,6 +694,27 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+// SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
+func (a *ExecStmt) SummaryStmt() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL || !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+		return
+	}
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, digest := stmtCtx.SQLDigest()
+	costTime := time.Since(sessVars.StmtCtx.StartTime)
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
+		SchemaName:    sessVars.CurrentDB,
+		OriginalSQL:   a.Text,
+		NormalizedSQL: normalizedSQL,
+		Digest:        digest,
+		TotalLatency:  uint64(costTime.Nanoseconds()),
+		AffectedRows:  stmtCtx.AffectedRows(),
+		SentRows:      0,
+		StartTime:     sessVars.StmtCtx.StartTime,
+	})
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:

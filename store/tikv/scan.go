@@ -197,7 +197,9 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			Context: pb.Context{
 				Priority:     s.snapshot.priority,
 				NotFillCache: s.snapshot.notFillCache,
+				ReplicaRead:  s.snapshot.replicaRead.IsFollowerRead(),
 			},
+			ReplicaReadSeed: s.snapshot.replicaReadSeed,
 		}
 		if s.reverse {
 			req.Scan.StartKey = s.nextEndKey

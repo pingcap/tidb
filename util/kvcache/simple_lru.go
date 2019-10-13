@@ -38,6 +38,7 @@ type cacheEntry struct {
 type SimpleLRUCache struct {
 	capacity uint
 	size     uint
+	// 0 indicates no quota
 	quota    uint64
 	guard    float64
 	elements map[string]*list.Element
@@ -88,6 +89,17 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	l.elements[hash] = element
 	l.size++
 
+	// Getting used memory is expensive and can be avoided by setting quota to 0.
+	if l.quota <= 0 {
+		if l.size > l.capacity {
+			lru := l.cache.Back()
+			l.cache.Remove(lru)
+			delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
+			l.size--
+		}
+		return
+	}
+
 	memUsed, err := memory.MemUsed()
 	if err != nil {
 		l.DeleteAll()
@@ -136,4 +148,14 @@ func (l *SimpleLRUCache) DeleteAll() {
 // Size gets the current cache size.
 func (l *SimpleLRUCache) Size() int {
 	return int(l.size)
+}
+
+// Values return all values in cache.
+func (l *SimpleLRUCache) Values() []Value {
+	values := make([]Value, 0, l.cache.Len())
+	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
+		value := ele.Value.(*cacheEntry).value
+		values = append(values, value)
+	}
+	return values
 }
