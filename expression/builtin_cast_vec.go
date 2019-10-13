@@ -530,25 +530,29 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 		for i := 0; i < n; i++ {
 			if col.IsNull(i) {
 				result.AppendJSON(json.CreateBinary(nil))
+			} else {
+				result.AppendJSON(json.CreateBinary(nums[i] != 0))
 			}
-			result.AppendJSON(json.CreateBinary(nums[i] != 0))
 		}
 	} else if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		for i := 0; i < n; i++ {
 			if col.IsNull(i) {
 				result.AppendJSON(json.CreateBinary(nil))
+			} else {
+				result.AppendJSON(json.CreateBinary(uint64(nums[i])))
 			}
-			result.AppendJSON(json.CreateBinary(uint64(nums[i])))
 		}
 	} else {
 		for i := 0; i < n; i++ {
 			if col.IsNull(i) {
 				// result.AppendJSON(json.CreateBinary(nil))
 				result.AppendNull()
+			} else {
+				result.AppendJSON(json.CreateBinary(nums[i]))
 			}
-			result.AppendJSON(json.CreateBinary(nums[i]))
 		}
 	}
+
 	return nil
 }
 
