@@ -223,4 +223,13 @@ var (
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
 			Help:    "duration to push sub tasks to range task workers",
 		}, []string{LblType})
+
+	TiKVTxnHeartBeatHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_heart_beat",
+			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 18), // 1ms ~ 292s
+		}, []string{LblType})
 )
