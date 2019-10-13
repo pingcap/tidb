@@ -496,13 +496,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.PriKeyFlag
+				// Check PriKeyFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.PriKeyFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.PriKeyFlag
+				}
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
+				// Check UniqueFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.UniqueFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.UniqueKeyFlag
+				}
 			case ast.ColumnOptionDefaultValue:
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
