@@ -142,12 +142,17 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
+		if y[i] == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
 		if result.IsNull(i) {
 			continue
 		}
-		if y[i] == 0 {
-			return handleDivisionByZeroError(b.ctx)
-		}
+
 		x[i] = math.Mod(x[i], y[i])
 	}
 	return nil
