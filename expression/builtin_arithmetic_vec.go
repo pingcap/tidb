@@ -117,7 +117,6 @@ func (b *builtinArithmeticMinusIntSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-
 	return errors.Errorf("not implemented")
 }
 
