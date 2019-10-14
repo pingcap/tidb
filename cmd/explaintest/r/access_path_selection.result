@@ -8,37 +8,37 @@ KEY `IDX_ab` (`a`, `b`)
 explain select a from access_path_selection where a < 3;
 id	count	task	operator info
 IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop	table:access_path_selection, index:a, range:[-inf,3), keep order:false, stats:pseudo
+└─IndexScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3;
 id	count	task	operator info
 IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+└─IndexScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where b < 3;
 id	count	task	operator info
 IndexReader_13	3323.33	root	index:Selection_12
-└─Selection_12	3323.33	cop	lt(Column#2, 3)
-  └─IndexScan_11	10000.00	cop	table:access_path_selection, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─Selection_12	3323.33	cop[tikv]	lt(Column#2, 3)
+  └─IndexScan_11	10000.00	cop[tikv]	table:access_path_selection, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3 and b < 3;
 id	count	task	operator info
 IndexReader_11	1104.45	root	index:Selection_10
-└─Selection_10	1104.45	cop	lt(Column#2, 3)
-  └─IndexScan_9	3323.33	cop	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+└─Selection_10	1104.45	cop[tikv]	lt(Column#2, 3)
+  └─IndexScan_9	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
 id	count	task	operator info
 Projection_6	3333.33	root	Column#1, Column#2
 └─TableReader_13	3333.33	root	data:Selection_12
-  └─Selection_12	3333.33	cop	gt(Column#1, 10)
-    └─TableScan_11	10000.00	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
+  └─Selection_12	3333.33	cop[tikv]	gt(Column#1, 10)
+    └─TableScan_11	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select max(_tidb_rowid) from access_path_selection;
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:max(Column#3)
 └─Limit_17	1.00	root	offset:0, count:1
   └─TableReader_27	1.00	root	data:Limit_26
-    └─Limit_26	1.00	cop	offset:0, count:1
-      └─TableScan_25	1.25	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
+    └─Limit_26	1.00	cop[tikv]	offset:0, count:1
+      └─TableScan_25	1.25	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
 explain select count(1) from access_path_selection;
 id	count	task	operator info
 StreamAgg_28	1.00	root	funcs:count(Column#7)
 └─IndexReader_29	1.00	root	index:StreamAgg_8
-  └─StreamAgg_8	1.00	cop	funcs:count(1)
-    └─IndexScan_25	10000.00	cop	table:access_path_selection, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+  └─StreamAgg_8	1.00	cop[tikv]	funcs:count(1)
+    └─IndexScan_25	10000.00	cop[tikv]	table:access_path_selection, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
