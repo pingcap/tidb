@@ -26,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -166,7 +165,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
