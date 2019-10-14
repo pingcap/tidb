@@ -701,11 +701,25 @@ func getColumnLen(col *chunk.Column, eType types.EvalType) int {
 	return chk.NumRows()
 }
 
+// removeTestOptions removes all not needed options like '-test.timeout=' from argument list
+func removeTestOptions(args []string) []string {
+	argList := args[:0]
+
+	// args contains '-test.timeout=' option for example
+	// excluding it to be able to run all tests
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "builtin") {
+			argList = append(argList, arg)
+		}
+	}
+	return argList
+}
+
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	testFunc := make(map[string]bool)
-	argList := flag.Args()
+	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
 	for _, arg := range argList {
 		testFunc[arg] = true
@@ -862,7 +876,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 	testFunc := make(map[string]bool)
-	argList := flag.Args()
+	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
 	for _, arg := range argList {
 		testFunc[arg] = true
