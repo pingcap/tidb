@@ -2033,7 +2033,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 		// 	2. PK is not handle
 		// 	3. The inner child needs to keep order
 		// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
-		// Then we need a Projection upon IndexLookupReaderto prune the redundant column.
+		// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *mockPhysicalIndexReader:
