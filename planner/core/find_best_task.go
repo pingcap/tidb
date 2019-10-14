@@ -821,6 +821,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}.Init(ds.ctx)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
+		ts.AccessCondition = nil
+		ts.Ranges = ranger.FullNotNullRange()
 	} else {
 		ts.StoreType = kv.TiKV
 	}
