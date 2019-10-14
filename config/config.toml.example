@@ -89,7 +89,7 @@ slow-threshold = 300
 expensive-threshold = 10000
 
 # Maximum query length recorded in log.
-query-log-max-len = 2048
+query-log-max-len = 4096
 
 # File logging.
 [log.file]
