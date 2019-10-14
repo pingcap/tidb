@@ -1023,6 +1023,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}.Init(ds.ctx, ds.blockOffset)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
+		ts.AccessCondition = nil
 	} else {
 		ts.StoreType = kv.TiKV
 	}
