@@ -170,7 +170,7 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	return req
 }
 
-// Return true if this request is point get.
+// IsPointGet returns true if this request is point get.
 func (req *Request) IsPointGet() bool {
 	switch req.Type {
 	case CmdGet, CmdBatchGet, CmdRawGet, CmdRawBatchGet:

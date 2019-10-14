@@ -197,8 +197,10 @@ func (a *connArray) Close() {
 type connType int
 
 const (
-	PointGet connType = iota
-	Other
+	// PointGetConn represent this type of connections are used by point get requests
+	PointGetConn connType = iota
+	// OtherConn represent this type of connections are used by other requests
+	OtherConn
 )
 
 // rpcClient is RPC client struct.
@@ -243,9 +245,9 @@ func (c *rpcClient) getConnArray(addr string, ctype connType) (*connArray, error
 	var array *connArray
 	var ok bool
 	switch ctype {
-	case PointGet:
+	case PointGetConn:
 		array, ok = c.pointGetConns[addr]
-	case Other:
+	case OtherConn:
 		array, ok = c.conns[addr]
 	}
 	c.RUnlock()
@@ -265,15 +267,15 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 	var array *connArray
 	var ok bool
 	switch ctype {
-	case PointGet:
+	case PointGetConn:
 		array, ok = c.pointGetConns[addr]
-	case Other:
+	case OtherConn:
 		array, ok = c.conns[addr]
 	}
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		if ctype == PointGet && connCount > 2 {
+		if ctype == PointGetConn && connCount > 2 {
 			connCount /= 2
 		}
 		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, c.done)
@@ -281,9 +283,9 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 			return nil, err
 		}
 		switch ctype {
-		case PointGet:
+		case PointGetConn:
 			c.pointGetConns[addr] = array
-		case Other:
+		case OtherConn:
 			c.conns[addr] = array
 		}
 	}
@@ -324,9 +326,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleIdleConnArray()
 	}
 
-	ctype := Other
+	ctype := OtherConn
 	if req.IsPointGet() {
-		ctype = PointGet
+		ctype = PointGetConn
 	}
 
 	connArray, err := c.getConnArray(addr, ctype)
