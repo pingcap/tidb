@@ -269,12 +269,14 @@ func timeZone2Duration(tz string) time.Duration {
 }
 
 var oppositeOp = map[string]string{
-	ast.LT: ast.GE,
-	ast.GE: ast.LT,
-	ast.GT: ast.LE,
-	ast.LE: ast.GT,
-	ast.EQ: ast.NE,
-	ast.NE: ast.EQ,
+	ast.LT:       ast.GE,
+	ast.GE:       ast.LT,
+	ast.GT:       ast.LE,
+	ast.LE:       ast.GT,
+	ast.EQ:       ast.NE,
+	ast.NE:       ast.EQ,
+	ast.LogicOr:  ast.LogicAnd,
+	ast.LogicAnd: ast.LogicOr,
 }
 
 // a op b is equal to b symmetricOp a

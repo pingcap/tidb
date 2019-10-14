@@ -151,7 +151,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		for i := 0; i < len(args); i++ {
 			switch x := args[i].(type) {
 			case *Constant:
-				isDeferredConst = isDeferredConst || x.DeferredExpr != nil
+				isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil
 				argIsConst[i] = true
 				hasNullArg = hasNullArg || x.Value.IsNull()
 			default:
