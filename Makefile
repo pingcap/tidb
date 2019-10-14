@@ -42,8 +42,8 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 TARGET = ""
 
 # VB = Vector Benchmark
-VB_FILE = ""
-VB_FUNC = ""
+VB_FILE =
+VB_FUNC =
 
 
 .PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
