@@ -595,18 +595,18 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 	}
 
 	res := result.GoDurations()
-	dec := b.tp.Decimal
+	var fsp int8
+	fsp, err = types.CheckFsp(b.tp.Decimal)
+	if err != nil {
+		return err
+	}
 	var zeroT time.Time
 	for i, v := range res {
 		if result.IsNull(i) {
 			continue
 		}
-		dec, err := types.CheckFsp(dec)
-		if err != nil {
-			return err
-		}
 		zeroT = time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
-		nd := zeroT.Add(v).Round(time.Duration(math.Pow10(9-int(dec))) * time.Nanosecond).Sub(zeroT)
+		nd := zeroT.Add(v).Round(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond).Sub(zeroT)
 		res[i] = nd
 	}
 	return nil
