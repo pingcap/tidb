@@ -801,16 +801,16 @@ func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 
 	tz := b.ctx.GetSessionVars().Location()
 	year, month, day := nowTs.In(tz).Date()
-	mysqlTm := types.FromDate(year, int(month), day, 0, 0, 0, 0)
+	timeValue := types.Time{
+		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0}
 
 	n := input.NumRows()
 	result.ResizeTime(n, false)
 	times := result.Times()
 	for i := 0; i < n; i++ {
-		times[i] = types.Time{
-			Time: mysqlTm,
-			Type: mysql.TypeDate,
-			Fsp:  0}
+		times[i] = timeValue
 	}
 	return nil
 }
