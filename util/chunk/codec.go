@@ -270,7 +270,7 @@ func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int)
 	colSource.data = colSource.data[numDataBytes:]
 }
 
-// DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.
+// DecodeToChunkTest decodes a Chunk from a byte slice, return the remained unused bytes. (Only test, will remove before I merge this pr)
 func (c *Codec) DecodeToChunkTest(buffer []byte, chk *Chunk) (remained []byte) {
 	for i := 0; i < len(chk.columns); i++ {
 		buffer = c.decodeColumnTest(buffer, chk.columns[i], i)

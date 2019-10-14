@@ -1,0 +1,177 @@
+[
+  {
+    "Name": "TestGroupStringer",
+    "Cases": [
+      {
+        "SQL": "select b from t where a > 1 and b < 1",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#2",
+          "Group#1 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_5 input:[Group#2]",
+          "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Selection_8 input:[Group#3], lt(Column#2, 1)",
+          "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_7 table:t, pk col:Column#1, cond:[gt(Column#1, 1)]"
+        ]
+      },
+      {
+        "SQL": "select 3 * 10 + 1",
+        "Result": [
+          "Group#0 Schema:[Column#1]",
+          "    Projection_2 input:[Group#1], 31",
+          "Group#1 Schema:[]",
+          "    TableDual_1 rowcount:1"
+        ]
+      },
+      {
+        "SQL": "select t1.b from t t1, t t2 where t2.a=t1.b and t1.a > 10",
+        "Result": [
+          "Group#0 Schema:[Column#25]",
+          "    Projection_5 input:[Group#1], Column#2",
+          "Group#1 Schema:[Column#1,Column#2,Column#13]",
+          "    Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)",
+          "Group#2 Schema:[Column#1,Column#2,Column#13]",
+          "    Join_3 input:[Group#3,Group#4], inner join",
+          "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_7 input:[Group#5]",
+          "Group#5 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_6 table:t1, pk col:Column#1",
+          "Group#4 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    TableGather_9 input:[Group#6]",
+          "Group#6 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    TableScan_8 table:t2, pk col:Column#13"
+        ]
+      },
+      {
+        "SQL": "select max(b), sum(a) from t where c > 10 group by d",
+        "Result": [
+          "Group#0 Schema:[Column#15,Column#16]",
+          "    Projection_4 input:[Group#1], Column#13, Column#14",
+          "Group#1 Schema:[Column#13,Column#14]",
+          "    Aggregation_3 input:[Group#2], group by:Column#4, funcs:max(Column#2), sum(Column#1)",
+          "Group#2 Schema:[Column#1,Column#2,Column#3,Column#4], UniqueKey:[Column#1]",
+          "    TableGather_6 input:[Group#3]",
+          "Group#3 Schema:[Column#1,Column#2,Column#3,Column#4], UniqueKey:[Column#1]",
+          "    Selection_7 input:[Group#4], gt(Column#3, 10)",
+          "Group#4 Schema:[Column#1,Column#2,Column#3,Column#4], UniqueKey:[Column#1]",
+          "    TableScan_5 table:t, pk col:Column#1"
+        ]
+      },
+      {
+        "SQL": "select avg(b) from t where b > 10",
+        "Result": [
+          "Group#0 Schema:[Column#14]",
+          "    Projection_4 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_3 input:[Group#2], funcs:avg(Column#2)",
+          "Group#2 Schema:[Column#2]",
+          "    TableGather_6 input:[Group#3]",
+          "Group#3 Schema:[Column#2]",
+          "    Selection_7 input:[Group#4], gt(Column#2, 10)",
+          "Group#4 Schema:[Column#2]",
+          "    TableScan_5 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from t t1 where exists(select 1 from t t2 where t2.a < t1.b) and a < 5",
+        "Result": [
+          "Group#0 Schema:[Column#26], UniqueKey:[Column#26]",
+          "    Projection_7 input:[Group#1], Column#1",
+          "Group#1 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Selection_2 input:[Group#2], lt(Column#1, 5)",
+          "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Apply_6 input:[Group#3,Group#4], semi join",
+          "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_9 input:[Group#5]",
+          "Group#5 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_8 table:t1, pk col:Column#1",
+          "Group#4 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    TableGather_11 input:[Group#6]",
+          "Group#6 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    Selection_12 input:[Group#7], lt(Column#13, Column#2)",
+          "Group#7 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    TableScan_10 table:t2, pk col:Column#13"
+        ]
+      },
+      {
+        "SQL": "select sum(t1.a) from t t1, t t2 where t1.a = t2.b",
+        "Result": [
+          "Group#0 Schema:[Column#26]",
+          "    Projection_6 input:[Group#1], Column#25",
+          "Group#1 Schema:[Column#25]",
+          "    Aggregation_5 input:[Group#2], funcs:sum(Column#1)",
+          "Group#2 Schema:[Column#1,Column#14]",
+          "    Selection_4 input:[Group#3], eq(Column#1, Column#14)",
+          "Group#3 Schema:[Column#1,Column#14]",
+          "    Join_3 input:[Group#4,Group#5], inner join",
+          "Group#4 Schema:[Column#1], UniqueKey:[Column#1]",
+          "    TableGather_8 input:[Group#6]",
+          "Group#6 Schema:[Column#1], UniqueKey:[Column#1]",
+          "    TableScan_7 table:t1, pk col:Column#1",
+          "Group#5 Schema:[Column#14]",
+          "    TableGather_10 input:[Group#7]",
+          "Group#7 Schema:[Column#14]",
+          "    TableScan_9 table:t2"
+        ]
+      },
+      {
+        "SQL": "select a from t where a > 10 limit 3",
+        "Result": [
+          "Group#0 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    Limit_4 input:[Group#1], offset:0, count:3",
+          "Group#1 Schema:[Column#13], UniqueKey:[Column#13]",
+          "    Projection_3 input:[Group#2], Column#1",
+          "Group#2 Schema:[Column#1], UniqueKey:[Column#1]",
+          "    TableGather_6 input:[Group#3]",
+          "Group#3 Schema:[Column#1], UniqueKey:[Column#1]",
+          "    TableScan_8 table:t, pk col:Column#1, cond:[gt(Column#1, 10)]"
+        ]
+      },
+      {
+        "SQL": "select a from t where b > 1 order by c",
+        "Result": [
+          "Group#0 Schema:[Column#15], UniqueKey:[Column#15]",
+          "    Projection_5 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "    Sort_4 input:[Group#2], Column#14:asc",
+          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "    Projection_3 input:[Group#3], Column#1, Column#3",
+          "Group#3 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    TableGather_7 input:[Group#4]",
+          "Group#4 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    Selection_8 input:[Group#5], gt(Column#2, 1)",
+          "Group#5 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    TableScan_6 table:t, pk col:Column#1"
+        ]
+      },
+      {
+        "SQL": "select avg(a) from t union all select avg(b) from t",
+        "Result": [
+          "Group#0 Schema:[Column#29]",
+          "    Union_7 input:[Group#1,Group#2]",
+          "Group#1 Schema:[Column#29]",
+          "    Projection_8 input:[Group#3], Column#28",
+          "Group#3 Schema:[Column#28]",
+          "    Projection_6 input:[Group#4], Column#27",
+          "Group#4 Schema:[Column#27]",
+          "    Aggregation_5 input:[Group#5], funcs:avg(Column#15)",
+          "Group#5 Schema:[Column#15], UniqueKey:[Column#15]",
+          "    TableGather_11 input:[Group#6]",
+          "Group#6 Schema:[Column#15], UniqueKey:[Column#15]",
+          "    TableScan_10 table:t, pk col:Column#15",
+          "Group#2 Schema:[Column#29]",
+          "    Projection_9 input:[Group#7], Column#14",
+          "Group#7 Schema:[Column#14]",
+          "    Projection_3 input:[Group#8], Column#13",
+          "Group#8 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#9], funcs:avg(Column#2)",
+          "Group#9 Schema:[Column#2]",
+          "    TableGather_13 input:[Group#10]",
+          "Group#10 Schema:[Column#2]",
+          "    TableScan_12 table:t"
+        ]
+      }
+    ]
+  }
+]
