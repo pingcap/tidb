@@ -97,11 +97,11 @@ func (b *builtinJSONAnyValueSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinRealAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRealAnyValueSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalReal(b.ctx, input, result)
 }
 
 func (b *builtinStringAnyValueSig) vectorized() bool {
@@ -193,11 +193,11 @@ func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinNameConstTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalTime(b.ctx, input, result)
 }
 
 func (b *builtinSleepSig) vectorized() bool {
