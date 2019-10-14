@@ -339,6 +339,15 @@ type SessionVars struct {
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
+
+	// StartTime is the start time of the last query.
+	StartTime time.Time
+
+	// DurationParse is the duration of pasing SQL string to AST of the last query.
+	DurationParse time.Duration
+
+	// DurationCompile is the duration of compiling AST to execution plan of the last query.
+	DurationCompile time.Duration
 }
 
 // ConnectionInfo present connection used by audit.
