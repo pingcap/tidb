@@ -60,6 +60,7 @@ type tableHintInfo struct {
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
 	indexHintList             []indexHintInfo
+	flashTables               []hintTableInfo
 	aggHints                  aggHintInfo
 }
 
@@ -100,6 +101,10 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.flashTables)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -739,9 +744,18 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.SetSchema(buildShowDDLFields())
 		ret = p
 	case ast.AdminShowDDLJobs:
-		p := &ShowDDLJobs{JobNumber: as.JobNumber}
+		p := LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
 		p.SetSchema(buildShowDDLJobsFields())
+		for _, col := range p.schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
 		ret = p
+		if as.Where != nil {
+			ret, err = b.buildSelection(ctx, p, as.Where, nil)
+			if err != nil {
+				return nil, err
+			}
+		}
 	case ast.AdminCancelDDLJobs:
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
@@ -1968,8 +1982,9 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 
 	p := &SplitRegion{
-		TableInfo: tblInfo,
-		IndexInfo: indexInfo,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
+		IndexInfo:      indexInfo,
 	}
 	p.SetSchema(buildSplitRegionsSchema())
 	// Split index regions by user specified value lists.
@@ -2085,7 +2100,8 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 
 	p := &SplitRegion{
-		TableInfo: tblInfo,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
 	}
 	p.SetSchema(buildSplitRegionsSchema())
 	if len(node.SplitOpt.ValueLists) > 0 {

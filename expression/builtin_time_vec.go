@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -660,11 +662,27 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinUTCDateSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUTCDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	year, month, day := nowTs.UTC().Date()
+	utcDate := types.Time{
+		Time: types.FromGoTime(time.Date(year, month, day, 0, 0, 0, 0, time.UTC)),
+		Type: mysql.TypeDate,
+		Fsp:  types.UnspecifiedFsp}
+
+	n := input.NumRows()
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		times[i] = utcDate
+	}
+	return nil
 }
 
 func (b *builtinWeekWithoutModeSig) vectorized() bool {
@@ -772,11 +790,29 @@ func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinCurrentDateSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+
+	tz := b.ctx.GetSessionVars().Location()
+	year, month, day := nowTs.In(tz).Date()
+	timeValue := types.Time{
+		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0}
+
+	n := input.NumRows()
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		times[i] = timeValue
+	}
+	return nil
 }
 
 func (b *builtinAddDateStringStringSig) vectorized() bool {

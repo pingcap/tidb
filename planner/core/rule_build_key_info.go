@@ -24,13 +24,14 @@ import (
 type buildKeySolver struct{}
 
 func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	lp.buildKeyInfo()
+	lp.BuildKeyInfo()
 	return lp, nil
 }
 
-func (la *LogicalAggregation) buildKeyInfo() {
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (la *LogicalAggregation) BuildKeyInfo() {
 	la.schema.Keys = nil
-	la.baseLogicalPlan.buildKeyInfo()
+	la.baseLogicalPlan.BuildKeyInfo()
 	for _, key := range la.Children()[0].Schema().Keys {
 		indices := la.schema.ColumnsIndices(key)
 		if indices == nil {
@@ -75,8 +76,9 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	return okCorCol
 }
 
-func (p *LogicalSelection) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalSelection) BuildKeyInfo() {
+	p.baseLogicalPlan.BuildKeyInfo()
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
 			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0]) {
@@ -87,8 +89,9 @@ func (p *LogicalSelection) buildKeyInfo() {
 	}
 }
 
-func (p *LogicalLimit) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalLimit) BuildKeyInfo() {
+	p.baseLogicalPlan.BuildKeyInfo()
 	if p.Count == 1 {
 		p.maxOneRow = true
 	}
@@ -112,9 +115,10 @@ func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {
 	return schema
 }
 
-func (p *LogicalProjection) buildKeyInfo() {
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalProjection) BuildKeyInfo() {
 	p.schema.Keys = nil
-	p.baseLogicalPlan.buildKeyInfo()
+	p.baseLogicalPlan.BuildKeyInfo()
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := schema.ColumnsIndices(key)
@@ -129,9 +133,10 @@ func (p *LogicalProjection) buildKeyInfo() {
 	}
 }
 
-func (p *LogicalJoin) buildKeyInfo() {
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalJoin) BuildKeyInfo() {
 	p.schema.Keys = nil
-	p.baseLogicalPlan.buildKeyInfo()
+	p.baseLogicalPlan.BuildKeyInfo()
 	p.maxOneRow = p.children[0].MaxOneRow() && p.children[1].MaxOneRow()
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
@@ -175,9 +180,10 @@ func (p *LogicalJoin) buildKeyInfo() {
 	}
 }
 
-func (ds *DataSource) buildKeyInfo() {
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (ds *DataSource) BuildKeyInfo() {
 	ds.schema.Keys = nil
-	ds.baseLogicalPlan.buildKeyInfo()
+	ds.baseLogicalPlan.BuildKeyInfo()
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			continue
