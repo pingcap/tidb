@@ -4145,12 +4145,12 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
 	tk.MustQuery("split table t between (0) and (1000000) regions 5;").Check(testkit.Rows("20 1"))
 	// Test for `split for region` syntax.
-	tk.MustExec("split region for partition table t between (0) and (1000000) regions 10;")
+	tk.MustQuery("split region for partition table t between (1000000) and (100000000) regions 10;").Check(testkit.Rows("45 1"))
 
 	// Test split region for partition table with specified partition.
-	tk.MustExec("split table t partition (p1,p2) between (1000000) and (100000000) regions 5;")
+	tk.MustQuery("split table t partition (p1,p2) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 	// Test for `split for region` syntax.
-	tk.MustExec("split region for partition table t partition (p3,p4) between (1000000) and (100000000) regions 5;")
+	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
 func (s *testSuite) TestShowTableRegion(c *C) {
