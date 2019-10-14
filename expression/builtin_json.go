@@ -76,6 +76,7 @@ var (
 	_ builtinFunc = &builtinJSONLengthSig{}
 	_ builtinFunc = &builtinJSONValidJSONSig{}
 	_ builtinFunc = &builtinJSONValidStringSig{}
+	_ builtinFunc = &builtinJSONValidOthersSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -731,10 +732,14 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
 		sig = &builtinJSONValidJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
+	case types.ETString:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+		sig = &builtinJSONValidStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
 	default:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argType)
 		sig = &builtinJSONValidStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidOthersSig)
 	}
 	return sig, nil
 }
@@ -769,9 +774,6 @@ func (b *builtinJSONValidStringSig) Clone() builtinFunc {
 // evalInt evals a builtinJSONValidStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
 func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	if b.args[0].GetType().EvalType() != types.ETString {
-		return 0, false, nil
-	}
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return 0, isNull, err
@@ -784,6 +786,22 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 		res = 0
 	}
 	return res, false, nil
+}
+
+type builtinJSONValidOthersSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidOthersSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinJSONValidOthersSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
+func (b *builtinJSONValidOthersSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	return 0, false, nil
 }
 
 type jsonArrayAppendFunctionClass struct {
