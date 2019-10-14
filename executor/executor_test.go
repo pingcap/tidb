@@ -4143,7 +4143,7 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 	// Test split region for partition table.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
-	tk.MustExec("split table t between (0) and (1000000) regions 5;")
+	tk.MustQuery("split table t between (0) and (1000000) regions 5;").Check(testkit.Rows("20 1"))
 	// Test for `split for region` syntax.
 	tk.MustExec("split region for partition table t between (0) and (1000000) regions 10;")
 
