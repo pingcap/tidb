@@ -701,7 +701,7 @@ func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		str := buf.GetString(i)
-		val, err := strconv.ParseUint(str, 0, 64)
+		val, err := strconv.ParseUint(str, 10, 64)
 		if err != nil {
 			return err
 		}
