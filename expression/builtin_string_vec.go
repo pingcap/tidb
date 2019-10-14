@@ -516,7 +516,7 @@ func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
