@@ -199,13 +199,13 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 
 // MustIndexLookup checks whether the plan for the sql is Point_Get.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
-	tk.c.Assert(tk.HasPlan(sql, "IndexLookUp", args), check.IsTrue)
+	tk.c.Assert(tk.HasPlan(sql, "IndexLookUp", args...), check.IsTrue)
 	return tk.MustQuery(sql, args...)
 }
 
 // MustTableDual checks whether the plan for the sql is TableDual.
 func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
-	tk.c.Assert(tk.HasPlan(sql, "TableDual", args), check.IsTrue)
+	tk.c.Assert(tk.HasPlan(sql, "TableDual", args...), check.IsTrue)
 	return tk.MustQuery(sql, args...)
 }
 
