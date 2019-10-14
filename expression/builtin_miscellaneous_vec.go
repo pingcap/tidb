@@ -105,11 +105,11 @@ func (b *builtinRealAnyValueSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinStringAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinStringAnyValueSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinIsIPv6Sig) vectorized() bool {
