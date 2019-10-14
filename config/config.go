@@ -267,6 +267,9 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// PointGetGrpcConnectionCount is the max gRPC connections that will be established
+	// with each tikv-server used for point get.
+	PointGetGrpcConnectionCount uint `toml:"point-get-grpc-connection-count" json:"point-get-grpc-connection-count"`
 	// After a duration of this time in seconds if the client doesn't see any activity it pings
 	// the server to see if the transport is still alive.
 	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -399,10 +402,11 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  4,
-		GrpcKeepAliveTime:    10,
-		GrpcKeepAliveTimeout: 3,
-		CommitTimeout:        "41s",
+		GrpcConnectionCount:         4,
+		PointGetGrpcConnectionCount: 4,
+		GrpcKeepAliveTime:           10,
+		GrpcKeepAliveTimeout:        3,
+		CommitTimeout:               "41s",
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -589,6 +593,9 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+	if c.TiKVClient.PointGetGrpcConnectionCount == 0 {
+		return fmt.Errorf("point-get-grpc-connection-count should be greater than 0")
 	}
 	if c.PessimisticTxn.TTL != "" {
 		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
