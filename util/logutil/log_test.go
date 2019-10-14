@@ -67,7 +67,12 @@ func (s *testLogSuite) TestStringToLogLevel(c *C) {
 
 // TestLogging assure log format and log redirection works.
 func (s *testLogSuite) TestLogging(c *C) {
+<<<<<<< HEAD
 	conf := NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
+=======
+	conf := NewLogConfig("warn", DefaultLogFormat, "", NewFileLogConfig(0), false)
+	conf.File.Filename = "log_file"
+>>>>>>> 455b2d3... config: remove the log-rotate config (#12594)
 	c.Assert(InitLogger(conf), IsNil)
 
 	log.SetOutput(s.buf)
@@ -90,7 +95,12 @@ func (s *testLogSuite) TestLogging(c *C) {
 
 func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 	fileName := "slow_query"
+<<<<<<< HEAD
 	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
+=======
+	conf := NewLogConfig("info", DefaultLogFormat, fileName, NewFileLogConfig(DefaultLogMaxSize), false)
+	c.Assert(conf.File.MaxSize, Equals, DefaultLogMaxSize)
+>>>>>>> 455b2d3... config: remove the log-rotate config (#12594)
 	err := InitLogger(conf)
 	c.Assert(err, IsNil)
 	defer os.Remove(fileName)
