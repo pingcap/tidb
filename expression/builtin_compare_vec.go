@@ -448,7 +448,7 @@ func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
