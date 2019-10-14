@@ -45,14 +45,25 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*prope
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	// A fake count, just to avoid panic now.
+	p.stats = getFakeStats(p.Schema().Len())
+	return p.stats, nil
+}
+
+func getFakeStats(length int) *property.StatsInfo {
 	profile := &property.StatsInfo{
 		RowCount:    1,
-		Cardinality: make([]float64, p.Schema().Len()),
+		Cardinality: make([]float64, length),
 	}
 	for i := range profile.Cardinality {
 		profile.Cardinality[i] = 1
 	}
-	p.stats = profile
+	return profile
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	// A fake count, just to avoid panic now.
+	p.stats = getFakeStats(p.Schema().Len())
 	return p.stats, nil
 }
 
@@ -166,7 +177,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		}
 	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().EnableIndexMerge {
+	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().GetEnableIndexMerge() {
 		needConsiderIndexMerge := true
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
 			if len(ds.possibleAccessPaths[i].accessConds) != 0 {

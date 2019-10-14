@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -174,7 +175,8 @@ func (lr *LockResolver) getResolved(txnID uint64) (TxnStatus, bool) {
 	return s, ok
 }
 
-// BatchResolveLocks resolve locks in a batch
+// BatchResolveLocks resolve locks in a batch.
+// Used it in gcworker only!
 func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc RegionVerID) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
@@ -182,7 +184,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	tikvLockResolverCountWithBatchResolve.Inc()
 
-	var expiredLocks []*Lock
+	expiredLocks := make([]*Lock, 0, len(locks))
 	for _, l := range locks {
 		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
 			tikvLockResolverCountWithExpired.Inc()
@@ -198,17 +200,32 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
-	startTime := time.Now()
+	startTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
 	txnInfos := make(map[uint64]uint64)
+	startTime := time.Now()
 	for _, l := range expiredLocks {
 		if _, ok := txnInfos[l.TxnID]; ok {
 			continue
 		}
 
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary)
+		currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, startTS, currentTS)
+		if err != nil {
+			return false, err
+		}
+
+		if status.ttl > 0 {
+			// Do not clean lock that is not expired.
+			continue
+		}
+
 		txnInfos[l.TxnID] = uint64(status.commitTS)
 	}
 	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
@@ -266,9 +283,12 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnExpired int64, resolved []uint64, err error) {
+// The second return value of `pushed` is the lock owner transactions whose
+// minCommitTS have been pushed.
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
+	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
-		return
+		return msBeforeTxnExpired.value(), nil, nil
 	}
 
 	tikvLockResolverCountWithResolve.Inc()
@@ -277,61 +297,115 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 	for _, l := range locks {
 		msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
 		if msBeforeLockExpired <= 0 {
-			tikvLockResolverCountWithExpired.Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
-			if msBeforeTxnExpired == 0 || msBeforeLockExpired < msBeforeTxnExpired {
-				msBeforeTxnExpired = msBeforeLockExpired
-			}
+			msBeforeTxnExpired.update(int64(l.TTL))
 			tikvLockResolverCountWithNotExpired.Inc()
 		}
 	}
-	if len(expiredLocks) == 0 {
-		if msBeforeTxnExpired > 0 {
-			tikvLockResolverCountWithWaitExpired.Inc()
-		}
-		return
-	}
-
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
+	pushed := make([]uint64, 0, len(locks))
 	for _, l := range expiredLocks {
-		var status TxnStatus
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary)
+		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
-			msBeforeTxnExpired = 0
+			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
-			return
+			return msBeforeTxnExpired.value(), nil, err
 		}
 
-		cleanRegions, exists := cleanTxns[l.TxnID]
-		if !exists {
-			cleanRegions = make(map[RegionVerID]struct{})
-			cleanTxns[l.TxnID] = cleanRegions
-		}
+		if status.ttl == 0 {
+			tikvLockResolverCountWithExpired.Inc()
+			// If the lock is committed or rollbacked, resolve lock.
+			cleanRegions, exists := cleanTxns[l.TxnID]
+			if !exists {
+				cleanRegions = make(map[RegionVerID]struct{})
+				cleanTxns[l.TxnID] = cleanRegions
+			}
 
-		err = lr.resolveLock(bo, l, status, cleanRegions)
-		if err != nil {
-			msBeforeTxnExpired = 0
-			err = errors.Trace(err)
-			return
+			err = lr.resolveLock(bo, l, status, cleanRegions)
+			if err != nil {
+				msBeforeTxnExpired.update(0)
+				err = errors.Trace(err)
+				return msBeforeTxnExpired.value(), nil, err
+			}
+		} else {
+			tikvLockResolverCountWithNotExpired.Inc()
+			// If the lock is valid, the txn may be a pessimistic transaction.
+			// Update the txn expire time.
+			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
+			msBeforeTxnExpired.update(msBeforeLockExpired)
+			pushed = append(pushed, l.TxnID)
 		}
 	}
+
+	if msBeforeTxnExpired.value() > 0 {
+		tikvLockResolverCountWithWaitExpired.Inc()
+	}
+	return msBeforeTxnExpired.value(), pushed, nil
+}
+
+type txnExpireTime struct {
+	initialized bool
+	txnExpire   int64
+}
+
+func (t *txnExpireTime) update(lockExpire int64) {
+	if lockExpire <= 0 {
+		lockExpire = 0
+	}
+	if !t.initialized {
+		t.txnExpire = lockExpire
+		t.initialized = true
+		return
+	}
+	if lockExpire < t.txnExpire {
+		t.txnExpire = lockExpire
+	}
 	return
+}
+
+func (t *txnExpireTime) value() int64 {
+	if !t.initialized {
+		return 0
+	}
+	return t.txnExpire
 }
 
 // GetTxnStatus queries tikv-server for a txn's status (commit/rollback).
 // If the primary key is still locked, it will launch a Rollback to abort it.
 // To avoid unnecessarily aborting too many txns, it is wiser to wait a few
 // seconds before calling it after Prewrite.
-func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, error) {
+func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary []byte) (TxnStatus, error) {
+	var status TxnStatus
 	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
-	status, err := lr.getTxnStatus(bo, txnID, primary)
-	return status, errors.Trace(err)
+	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
+	if err != nil {
+		return status, err
+	}
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS)
 }
 
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
+	var currentTS uint64
+	if l.TTL == 0 {
+		// NOTE: l.TTL = 0 is a special protocol!!!
+		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
+		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
+		// Set currentTS to max uint64 to make the lock expired.
+		currentTS = math.MaxUint64
+	} else {
+		var err error
+		currentTS, err = lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
+		if err != nil {
+			return TxnStatus{}, err
+		}
+	}
+	return lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
+}
+
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -339,9 +413,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
 	var status TxnStatus
-	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
-		Key:          primary,
-		StartVersion: txnID,
+	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
+		PrimaryKey:    primary,
+		LockTs:        txnID,
+		CallerStartTs: callerStartTS,
+		CurrentTs:     currentTS,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
@@ -366,19 +442,24 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if resp.Resp == nil {
 			return status, errors.Trace(ErrBodyMissing)
 		}
-		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
+		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
+			err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
-		if cmdResp.CommitVersion != 0 {
-			status = TxnStatus{0, cmdResp.GetCommitVersion()}
-			tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+		if cmdResp.LockTtl != 0 {
+			status.ttl = cmdResp.LockTtl
 		} else {
-			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+			if cmdResp.CommitVersion == 0 {
+				tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+			} else {
+				tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+			}
+
+			status.commitTS = cmdResp.CommitVersion
+			lr.saveResolved(txnID, status)
 		}
-		lr.saveResolved(txnID, status)
 		return status, nil
 	}
 }

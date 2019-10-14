@@ -104,6 +104,11 @@ const (
 	preferStreamAgg
 )
 
+const (
+	preferTiKV = 1 << iota
+	preferTiFlash
+)
+
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
@@ -368,6 +373,8 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
+	//preferStoreType means the DataSource is enforced to which storage.
+	preferStoreType int
 }
 
 // TableGather is a leaf logical operator of TiDB layer to gather
@@ -843,7 +850,8 @@ func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expr
 	return resultCorCols[:length]
 }
 
-type baseShowContent struct {
+// ShowContents stores the contents for the `SHOW` statement.
+type ShowContents struct {
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
 	Table       *ast.TableName  // Used for showing columns.
@@ -861,5 +869,12 @@ type baseShowContent struct {
 // LogicalShow represents a show plan.
 type LogicalShow struct {
 	logicalSchemaProducer
-	baseShowContent
+	ShowContents
+}
+
+// LogicalShowDDLJobs is for showing DDL job list.
+type LogicalShowDDLJobs struct {
+	logicalSchemaProducer
+
+	JobNumber int64
 }
