@@ -537,11 +537,48 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 }
 
 func (b *builtinCastIntAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	nums := buf.Int64s()
+	result.ReserveJSON(n)
+	if mysql.HasIsBooleanFlag(b.args[0].GetType().Flag) {
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+			} else {
+				result.AppendJSON(json.CreateBinary(nums[i] != 0))
+			}
+		}
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+			} else {
+				result.AppendJSON(json.CreateBinary(uint64(nums[i])))
+			}
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+			} else {
+				result.AppendJSON(json.CreateBinary(nums[i]))
+			}
+		}
+	}
+
+	return nil
 }
 
 func (b *builtinCastJSONAsJSONSig) vectorized() bool {
