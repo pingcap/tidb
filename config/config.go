@@ -396,6 +396,7 @@ var defaultConf = Config{
 	LowerCaseTableNames: 2,
 	ServerVersion:       "",
 	Log: Log{
+<<<<<<< HEAD
 		Level:               "info",
 		Format:              "text",
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
@@ -405,6 +406,16 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		DisableErrorStack:   true,
+=======
+		Level:              "info",
+		Format:             "text",
+		File:               logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
+		SlowQueryFile:      "tidb-slow.log",
+		SlowThreshold:      logutil.DefaultSlowThreshold,
+		ExpensiveThreshold: 10000,
+		DisableErrorStack:  true,
+		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+>>>>>>> 455b2d3... config: remove the log-rotate config (#12594)
 	},
 	Status: Status{
 		ReportStatus:    true,

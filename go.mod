@@ -33,6 +33,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20200317043902-2838e21ca222
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
 	github.com/pingcap/parser v3.1.2-0.20200507065358-a5eade012146+incompatible
@@ -41,6 +42,18 @@ require (
 	github.com/pingcap/tipb v0.0.0-20200426072603-ce17d2d03251
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
+=======
+	github.com/pingcap/kvproto v0.0.0-20190910074005-0e61b6f435c1
+	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
+	github.com/pingcap/parser v0.0.0-20191012071233-32876040fefb
+	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
+	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
+	github.com/pingcap/tipb v0.0.0-20191008064422-018b2fadf414
+	github.com/prometheus/client_golang v0.9.0
+	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
+	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
+	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
+>>>>>>> 455b2d3... config: remove the log-rotate config (#12594)
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
 	github.com/shirou/gopsutil v2.19.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
@@ -52,11 +65,22 @@ require (
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
+<<<<<<< HEAD
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.5.0
 	go.uber.org/zap v1.13.0
 	golang.org/x/crypto v0.0.0-20191227163750-53104e6ec876 // indirect
 	golang.org/x/net v0.0.0-20200202094626-16171245cfb2
+=======
+	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
+	go.etcd.io/bbolt v1.3.3 // indirect
+	go.uber.org/atomic v1.4.0
+	go.uber.org/multierr v1.2.0 // indirect
+	go.uber.org/zap v1.10.0
+	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7 // indirect
+	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
+	golang.org/x/sys v0.0.0-20190910064555-bbd175535a8b
+>>>>>>> 455b2d3... config: remove the log-rotate config (#12594)
 	golang.org/x/text v0.3.2
 	golang.org/x/tools v0.0.0-20200216192241-b320d3a0f5a2
 	google.golang.org/grpc v1.25.1
