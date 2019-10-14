@@ -249,8 +249,21 @@ func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int)
 	}
 
 	numNullBitmapBytes := (requestRows + 7) >> 3
-	colTarget.nullBitmap = append(colTarget.nullBitmap, colSource.nullBitmap[:numNullBitmapBytes]...)
-	colSource.nullBitmap = colSource.nullBitmap[numNullBitmapBytes:]
+	if colTarget.length%8 == 0 {
+		colTarget.nullBitmap = append(colTarget.nullBitmap, colSource.nullBitmap[:numNullBitmapBytes]...)
+		colSource.nullBitmap = colSource.nullBitmap[numNullBitmapBytes:]
+	} else {
+		colTarget.appendMultiSameNullBitmap(false, requestRows)
+		bitMapLen := len(colTarget.nullBitmap)
+		bitOffset := colTarget.length % 8
+		bitMapStartIndex := (colTarget.length - 1) >> 3
+		for i := 0; i < numNullBitmapBytes; i++ {
+			colTarget.nullBitmap[bitMapStartIndex+i] |= colSource.nullBitmap[i] << bitOffset
+			if bitMapLen > bitMapStartIndex+i+1 {
+				colTarget.nullBitmap[bitMapStartIndex+i+1] |= colSource.nullBitmap[i] >> (8 - bitOffset)
+			}
+		}
+	}
 	colTarget.length += requestRows
 
 	colTarget.data = append(colTarget.data, colSource.data[:numDataBytes]...)
