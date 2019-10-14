@@ -294,11 +294,30 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinCastRealAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastRealAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	f64s := buf.Float64s()
+	result.ReserveJSON(n)
+	for i := 0; i < n; i++ {
+		// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.```
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendJSON(json.CreateBinary(f64s[i]))
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastJSONAsRealSig) vectorized() bool {
