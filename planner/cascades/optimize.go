@@ -73,12 +73,8 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // Phase 1: Preprocessing
 //------------------------------------------------------------------------------
 //
-// The target of this phase is to preprocess the logical plan tree by some heuristic
-// rules which may traverse the whole plan tree.
-//
-// These rules can be more efficient by traversing the logical plan tree instead of
-// the expression groups, such as `Column Pruning`. What's more, the logical plan tree
-// won't be worse after applying these rules.
+// The target of this phase is to preprocess the plan tree by some heuristic
+// rules which should always be beneficial, for example Column Pruning.
 //
 //------------------------------------------------------------------------------
 // Phase 2: Exploration
