@@ -778,11 +778,39 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinCastTimeAsIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	times := buf.Times()
+	i64s := result.Int64s()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		t, err := times[i].RoundFrac(sc, types.DefaultFsp)
+		if err != nil {
+			return err
+		}
+		i64s[i], err = t.ToNumber().ToInt()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastTimeAsTimeSig) vectorized() bool {
