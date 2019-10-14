@@ -246,6 +246,7 @@ const (
 	Version        = "version"
 	TiDBVersion    = "tidb_version"
 	TiDBIsDDLOwner = "tidb_is_ddl_owner"
+	TiDBDecodePlan = "tidb_decode_plan"
 
 	// control functions
 	If     = "if"
