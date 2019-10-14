@@ -464,7 +464,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
-	if !isDataSource && !isUnionScan {
+	if (!isDataSource && !isUnionScan) || (isDataSource && ds.preferStoreType&preferTiFlash != 0) {
 		return nil
 	}
 	if isUnionScan {
@@ -472,6 +472,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		ds, isDataSource = us.Children()[0].(*DataSource)
 		if !isDataSource {
 			return nil
+		}
+		// If one of the union scan children is a TiFlash table, then we can't choose index join.
+		for _, child := range us.Children() {
+			if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
+				return nil
+			}
 		}
 	}
 	var avgInnerRowCnt float64
@@ -715,7 +721,11 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	if !isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx, ds.blockOffset)
-		ts.SetSchema(is.dataSourceSchema)
+		ts.schema = is.dataSourceSchema.Clone()
+		// If inner cop task need keep order, the extraHandleCol should be set.
+		if cop.keepOrder {
+			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+		}
 		cop.tablePlan = ts
 	}
 	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
