@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -735,11 +737,27 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinUTCDateSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUTCDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	year, month, day := nowTs.UTC().Date()
+	utcDate := types.Time{
+		Time: types.FromGoTime(time.Date(year, month, day, 0, 0, 0, 0, time.UTC)),
+		Type: mysql.TypeDate,
+		Fsp:  types.UnspecifiedFsp}
+
+	n := input.NumRows()
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		times[i] = utcDate
+	}
+	return nil
 }
 
 func (b *builtinWeekWithoutModeSig) vectorized() bool {

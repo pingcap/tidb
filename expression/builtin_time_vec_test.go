@@ -122,6 +122,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			},
 		},
 	},
+	ast.UTCDate: {
+		{retEvalType: types.ETDatetime},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
