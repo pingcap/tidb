@@ -15,10 +15,10 @@ package expression
 
 import (
 	"encoding/binary"
-	"github.com/google/uuid"
 	"math"
 	"net"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
