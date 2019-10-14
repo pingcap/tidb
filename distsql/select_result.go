@@ -207,7 +207,6 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 
 		if r.respArrowDecoder.Empty() {
 			r.respChkIdx++
-			return nil
 		}
 	}
 	return nil
