@@ -289,6 +289,9 @@ type TiKVClient struct {
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
 	// EnableArrow indicate the data encode in arrow format.
 	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
+	// If a Region has not been accessed for more than the given duration (in seconds), it
+	// will be reloaded from the PD.
+	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
 }
 
 // Binlog is the config for binlog.
@@ -414,6 +417,8 @@ var defaultConf = Config{
 		BatchWaitSize:     8,
 
 		EnableArrow: true,
+
+		RegionCacheTTL: 600,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
