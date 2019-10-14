@@ -143,6 +143,7 @@ func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan planner
 	if err != nil {
 		return nil, err
 	}
+	// TODO: Build key info when convert LogicalPlan to GroupExpr.
 	plan.BuildKeyInfo()
 	return plan, nil
 }
