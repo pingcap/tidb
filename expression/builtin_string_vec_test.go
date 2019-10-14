@@ -40,6 +40,16 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			geners:        []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 20}},
 		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}, &rangeInt64Gener{-10, 20}},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 10}, &rangeInt64Gener{0, 8}},
+		},
 	},
 	ast.Hex: {},
 	ast.Unhex: {
