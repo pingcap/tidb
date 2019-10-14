@@ -616,12 +616,13 @@ type LoadStats struct {
 type SplitRegion struct {
 	baseSchemaProducer
 
-	TableInfo  *model.TableInfo
-	IndexInfo  *model.IndexInfo
-	Lower      []types.Datum
-	Upper      []types.Datum
-	Num        int
-	ValueLists [][]types.Datum
+	TableInfo      *model.TableInfo
+	PartitionNames []model.CIStr
+	IndexInfo      *model.IndexInfo
+	Lower          []types.Datum
+	Upper          []types.Datum
+	Num            int
+	ValueLists     [][]types.Datum
 }
 
 // SplitRegionStatus represents a split regions status plan.
