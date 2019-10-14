@@ -85,6 +85,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.flag |= inCreateOrDropTable
@@ -741,6 +742,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.User.Hostname = currentUser.Hostname
 			node.User.AuthUsername = currentUser.AuthUsername
 			node.User.AuthHostname = currentUser.AuthHostname
+		}
+	}
+}
+
+func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
+	for _, val := range node.Constraints {
+		if val.Refer != nil && val.Refer.Table.Schema.String() == "" {
+			val.Refer.Table.Schema = node.Table.Schema
 		}
 	}
 }

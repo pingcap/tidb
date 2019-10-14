@@ -193,11 +193,11 @@ func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinNameConstTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalTime(b.ctx, input, result)
 }
 
 func (b *builtinSleepSig) vectorized() bool {
