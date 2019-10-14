@@ -38,7 +38,7 @@ require (
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190910074005-0e61b6f435c1
+	github.com/pingcap/kvproto v0.0.0-20191011042334-8ee4fd8fb4ca
 	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
 	github.com/pingcap/parser v0.0.0-20191011021308-7586d610b7aa
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
@@ -76,5 +76,9 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/kvproto => github.com/TennyZhuang/kvproto v0.0.0-20191014051905-14a9d2ffcaeb
+
+replace github.com/pingcap/pd => github.com/TennyZhuang/pd v0.0.0-20191014112351-59b7c129fc63
 
 go 1.13
