@@ -936,3 +936,17 @@ func (s *testIntegrationSuite) TestBitDefaultValue(c *C) {
 	tk.MustExec("update t_bit set c = b'11100000000111'")
 	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
 }
+
+func (s *testIntegrationSuite) TestMultipleUnique(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists multi_unique")
+	tk.MustExec("create table multi_unique (a int unique unique)")
+	tk.MustExec("drop table multi_unique")
+	tk.MustExec("create table multi_unique (a int key primary key unique unique)")
+	tk.MustExec("drop table multi_unique")
+	tk.MustExec("create table multi_unique (a int key unique unique key unique)")
+	tk.MustExec("drop table multi_unique")
+}
