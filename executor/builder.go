@@ -2028,8 +2028,12 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
-	// If the index lookup reader need to keep order and the pk is not handle. Then the planner will generate a projection as its parent.
-	// Because the extra column row_id will be appended in this case.
+		// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
+		// 	1. The inner child fetch data using indexLookupReader
+		// 	2. PK is not handle
+		// 	3. The inner child needs to keep order
+		// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
+		// Then we need a Projection upon IndexLookupReaderto prune the redundant column.
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *mockPhysicalIndexReader:
