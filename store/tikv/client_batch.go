@@ -52,9 +52,21 @@ type batchConn struct {
 	pendingRequests prometheus.Gauge
 
 	index uint32
+
+	// Max wait time
+	maxWaitTime time.Duration
+
+	// Max wait batch size
+	maxWaitBatchSize uint
+
+	// Max batch size
+	maxBatchSize uint
+
+	// Overload threshold
+	overloadThreshold uint64
 }
 
-func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
+func newBatchConn(connCount, maxBatchSize uint, maxWaitTime time.Duration, maxWaitBatchSize uint, overloadThreshold uint64, idleNotify *uint32) *batchConn {
 	return &batchConn{
 		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
@@ -63,6 +75,10 @@ func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
 
 		idleNotify: idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
+		maxWaitTime: maxWaitTime,
+		maxWaitBatchSize: maxWaitBatchSize,
+		maxBatchSize: maxBatchSize,
+		overloadThreshold: overloadThreshold,
 	}
 }
 
@@ -381,7 +397,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
 
-	var bestBatchWaitSize = cfg.BatchWaitSize
+	var bestBatchWaitSize = a.maxWaitBatchSize
 	for {
 		entries = entries[:0]
 		requests = requests[:0]
@@ -390,12 +406,12 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
 
-		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
+		if len(entries) < int(a.maxBatchSize) && a.maxWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
 			if atomic.LoadUint64(&a.tikvTransportLayerLoad) >= uint64(cfg.OverloadThreshold) {
 				fetchMorePendingRequests(
-					a.batchCommandsCh, int(cfg.MaxBatchSize), int(bestBatchWaitSize),
-					cfg.MaxBatchWaitTime, &entries, &requests,
+					a.batchCommandsCh, int(a.maxBatchSize), int(bestBatchWaitSize),
+					a.maxWaitTime, &entries, &requests,
 				)
 			}
 		}

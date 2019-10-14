@@ -80,19 +80,19 @@ type connArray struct {
 	*batchConn
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32, done <-chan struct{}) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32, done <-chan struct{}, ctype connType) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 	}
-	if err := a.Init(addr, security, idleNotify, done); err != nil {
+	if err := a.Init(addr, security, idleNotify, done, ctype); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, done <-chan struct{}) error {
+func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, done <-chan struct{}, ctype connType) error {
 	a.target = addr
 
 	opt := grpc.WithInsecure()
@@ -116,7 +116,25 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
 	if allowBatch {
-		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, idleNotify)
+		var (
+			maxWaitTime time.Duration
+			maxWaitBatchSize uint
+			maxBatchSize uint
+			overloadThreshold uint
+		)
+		switch ctype {
+		case PointGetConn:
+			maxWaitTime = cfg.TiKVClient.PointGetMaxBatchWaitTime
+			maxWaitBatchSize = cfg.TiKVClient.PointGetBatchWaitSize
+			maxBatchSize = cfg.TiKVClient.PointGetMaxBatchSize
+			overloadThreshold = cfg.TiKVClient.PointGetOverloadThreshold
+		case OtherConn:
+			maxWaitTime = cfg.TiKVClient.MaxBatchWaitTime
+			maxWaitBatchSize = cfg.TiKVClient.BatchWaitSize
+			maxBatchSize = cfg.TiKVClient.MaxBatchSize
+			overloadThreshold = cfg.TiKVClient.OverloadThreshold
+		}
+		a.batchConn = newBatchConn(uint(len(a.v)), maxBatchSize, maxWaitTime, maxWaitBatchSize, uint64(overloadThreshold), idleNotify)
 		a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
 	}
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
@@ -281,7 +299,7 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 		case OtherConn:
 			connCount = config.GetGlobalConfig().TiKVClient.PointGetGrpcConnectionCount
 		}
-		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, c.done)
+		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, c.done, ctype)
 		if err != nil {
 			return nil, err
 		}

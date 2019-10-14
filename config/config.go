@@ -287,6 +287,14 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+	// PointGetMaxBatchSize is the max batch size when calling batch commands API.
+	PointGetMaxBatchSize uint `toml:"point-get-max-batch-size" json:"point-get-max-batch-size"`
+	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
+	PointGetOverloadThreshold uint `toml:"point-get-overload-threshold" json:"point-get-overload-threshold"`
+	// PointGetMaxBatchWaitTime in nanosecond is the max wait time for batch.
+	PointGetMaxBatchWaitTime time.Duration `toml:"point-get-max-batch-wait-time" json:"point-get-max-batch-wait-time"`
+	// PointGetBatchWaitSize is the max wait size for batch.
+	PointGetBatchWaitSize uint `toml:"point-get-batch-wait-size" json:"point-get-batch-wait-size"`
 	// EnableArrow indicate the data encode in arrow format.
 	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
 }
@@ -412,6 +420,11 @@ var defaultConf = Config{
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
+
+		PointGetMaxBatchSize:      256,
+		PointGetOverloadThreshold: 280,
+		PointGetMaxBatchWaitTime:  100000,
+		PointGetBatchWaitSize:     32,
 
 		EnableArrow: true,
 	},
