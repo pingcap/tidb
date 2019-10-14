@@ -44,7 +44,7 @@ const (
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
-	DefaultQueryLogMaxLen = 2048
+	DefaultQueryLogMaxLen = 4096
 	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
 	DefaultRecordPlanInSlowLog = 1
 )

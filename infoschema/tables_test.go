@@ -14,6 +14,7 @@
 package infoschema_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -176,6 +178,16 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 18 36 4"))
+
+	// Test partition table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("3 18 54 6"))
 }
 
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
@@ -527,6 +539,26 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+}
+
+func (s *testTableSuite) TestForServersInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(serversInfo), Equals, 1)
+
+	for _, info := range serversInfo {
+		c.Assert(result.Rows()[0][0], Equals, info.ID)
+		c.Assert(result.Rows()[0][1], Equals, info.IP)
+		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
+		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
+		c.Assert(result.Rows()[0][4], Equals, info.Lease)
+		c.Assert(result.Rows()[0][5], Equals, info.Version)
+		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	}
 }
 
 func (s *testTableSuite) TestColumnStatistics(c *C) {

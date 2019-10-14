@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
@@ -81,6 +83,7 @@ const (
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
+	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 )
 
 type columnInfo struct {
@@ -646,6 +649,16 @@ var tableTiKVRegionPeersCols = []columnInfo{
 	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
 }
 
+var tableTiDBServersInfoCols = []columnInfo{
+	{"DDL_ID", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STATUS_PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEASE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1066,7 +1079,7 @@ func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, erro
 	return colLengthMap, nil
 }
 
-func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
+func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
 	columnLength := make(map[string]uint64)
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
@@ -1076,7 +1089,7 @@ func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthM
 		if length != types.VarStorageLen {
 			columnLength[col.Name.L] = rowCount * uint64(length)
 		} else {
-			length := columnLengthMap[tableHistID{tableID: info.ID, histID: col.ID}]
+			length := columnLengthMap[tableHistID{tableID: physicalID, histID: col.ID}]
 			columnLength[col.Name.L] = length
 		}
 	}
@@ -1234,8 +1247,18 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					}
 				}
 
-				rowCount := tableRowsMap[table.ID]
-				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+				var rowCount, dataLength, indexLength uint64
+				if table.GetPartitionInfo() == nil {
+					rowCount = tableRowsMap[table.ID]
+					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				} else {
+					for _, pi := range table.GetPartitionInfo().Definitions {
+						rowCount += tableRowsMap[pi.ID]
+						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+						dataLength += parDataLen
+						indexLength += parIndexLen
+					}
+				}
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1784,6 +1807,27 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 	return
 }
 
+func dataForServersInfo() ([][]types.Datum, error) {
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]types.Datum, 0, len(serversInfo))
+	for _, info := range serversInfo {
+		row := types.MakeDatums(
+			info.ID,              // DDL_ID
+			info.IP,              // IP
+			int(info.Port),       // PORT
+			int(info.StatusPort), // STATUS_PORT
+			info.Lease,           // LEASE
+			info.Version,         // VERSION
+			info.GitHash,         // GIT_HASH
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -1824,6 +1868,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
+	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1927,6 +1972,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiKVRegionPeers:
 		fullRows, err = dataForTikVRegionPeers(ctx)
+	case tableTiDBServersInfo:
+		fullRows, err = dataForServersInfo()
 	}
 	if err != nil {
 		return nil, err

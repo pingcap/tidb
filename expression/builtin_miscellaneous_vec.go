@@ -145,11 +145,11 @@ func (b *builtinUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinNameConstDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalDuration(b.ctx, input, result)
 }
 
 func (b *builtinLockSig) vectorized() bool {
@@ -161,19 +161,19 @@ func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDurationAnyValueSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalDuration(b.ctx, input, result)
 }
 
 func (b *builtinIntAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntAnyValueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinIsIPv4CompatSig) vectorized() bool {
