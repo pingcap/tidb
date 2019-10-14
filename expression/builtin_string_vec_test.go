@@ -29,8 +29,29 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Convert:        {},
 	ast.Substring:      {},
 	ast.SubstringIndex: {},
-	ast.Locate:         {},
-	ast.Hex:            {},
+	ast.Locate: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}, &rangeInt64Gener{-10, 20}},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 10}, &rangeInt64Gener{0, 8}},
+		},
+	},
+	ast.Hex: {},
 	ast.Unhex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
 	},
@@ -56,8 +77,10 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.ToBase64: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{0, 10}}},
 	},
-	ast.FromBase64: {},
-	ast.ExportSet:  {},
+	ast.FromBase64: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 100}}},
+	},
+	ast.ExportSet: {},
 	ast.Repeat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},

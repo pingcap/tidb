@@ -160,7 +160,7 @@ type clientConn struct {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
+	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
@@ -538,6 +538,20 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	return err
 }
 
+func (cc *clientConn) SessionStatusToString() string {
+	status := cc.ctx.Status()
+	inTxn, autoCommit := 0, 0
+	if status&mysql.ServerStatusInTrans > 0 {
+		inTxn = 1
+	}
+	if status&mysql.ServerStatusAutocommit > 0 {
+		autoCommit = 1
+	}
+	return fmt.Sprintf("inTxn:%d, autocommit:%d",
+		inTxn, autoCommit,
+	)
+}
+
 func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
@@ -674,6 +688,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
+				zap.String("status", cc.SessionStatusToString()),
 				zap.String("sql", queryStrForLog(string(data[1:]))),
 				zap.String("err", errStrForLog(err)),
 			)
@@ -1089,23 +1104,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	go processStream(ctx, cc, loadDataInfo)
 	err = loadDataInfo.CommitWork(ctx)
 	loadDataInfo.SetMessage()
-
-	var txn kv.Transaction
-	var err1 error
-	txn, err1 = loadDataInfo.Ctx.Txn(true)
-	if err1 == nil {
-		if txn != nil && txn.Valid() {
-			if err != nil {
-				if err1 := txn.Rollback(); err1 != nil {
-					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
-				}
-				return err
-			}
-			return cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx))
-		}
-	}
-	// Should never reach here.
-	panic(err1)
+	return err
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
