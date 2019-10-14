@@ -596,6 +596,7 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 
 	res := result.GoDurations()
 	dec := b.tp.Decimal
+	var zeroT time.Time
 	for i, v := range res {
 		if result.IsNull(i) {
 			continue
@@ -604,8 +605,8 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 		if err != nil {
 			return err
 		}
-		n := time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
-		nd := n.Add(v).Round(time.Duration(math.Pow10(9-int(dec))) * time.Nanosecond).Sub(n)
+		zeroT = time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
+		nd := zeroT.Add(v).Round(time.Duration(math.Pow10(9-int(dec))) * time.Nanosecond).Sub(zeroT)
 		res[i] = nd
 	}
 	return nil
