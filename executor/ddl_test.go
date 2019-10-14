@@ -171,6 +171,14 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+
+	// test for table option pre_split_region_count
+	_, err = tk.Exec("create table t_pre_split_region_count (a int, b int) shard_row_id_bits = 4 pre_split_region_count=3")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "pre_split_region_count=3 is invalid, it should be 2^N and less than or equal to 2^shard_row_id_bits")
+	_, err = tk.Exec("create table t_pre_split_region_count (a int, b int) shard_row_id_bits = 4 pre_split_region_count=64")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "pre_split_region_count=64 is invalid, it should be 2^N and less than or equal to 2^shard_row_id_bits")
 }
 
 func (s *testSuite3) TestCreateView(c *C) {

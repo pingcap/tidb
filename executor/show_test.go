@@ -529,6 +529,16 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec("drop table t")
 
+	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_region_count=8;")
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGION_COUNT=8 */",
+	))
+	tk.MustExec("drop table t")
+
 	tk.MustExec("CREATE TABLE `log` (" +
 		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
 		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +

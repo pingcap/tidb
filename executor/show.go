@@ -816,6 +816,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		if tb.Meta().PreSplitRegions > 0 {
 			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
 		}
+		if tb.Meta().PreSplitRegionCount > 0 {
+			fmt.Fprintf(&buf, "PRE_SPLIT_REGION_COUNT=%d ", tb.Meta().PreSplitRegionCount)
+		}
 		buf.WriteString("*/")
 	}
 

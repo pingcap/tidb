@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -35,7 +34,7 @@ func splitPartitionTableRegion(store kv.SplitableStore, pi *model.PartitionInfo,
 }
 
 func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
-	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+	if tbInfo.ShardRowIDBits > 0 && (tbInfo.PreSplitRegions > 0 || tbInfo.PreSplitRegionCount > 0) {
 		splitPreSplitedTable(store, tbInfo, scatter)
 	} else {
 		regionID := splitRecordRegion(store, tbInfo.ID, scatter)
@@ -70,9 +69,17 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
 
 	// Split table region.
-	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
+	preSplitRegionCount := tbInfo.PreSplitRegionCount
+	if preSplitRegionCount == 0 {
+		preSplitRegionCount = 1 << tbInfo.PreSplitRegions
+	}
+
+	step := int64((1 << tbInfo.ShardRowIDBits) / preSplitRegionCount)
+	if step == 0 {
+		return
+	}
 	max := int64(1 << tbInfo.ShardRowIDBits)
-	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
+	splitTableKeys := make([][]byte, 0, preSplitRegionCount)
 	for p := int64(step); p < max; p += step {
 		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)

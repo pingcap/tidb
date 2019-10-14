@@ -1795,13 +1795,21 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			tbInfo.PreSplitRegions = op.UintValue
+		case ast.TableOptionPreSplitRegionCount:
+			tbInfo.PreSplitRegionCount = op.UintValue
 		}
 	}
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
 		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
 	}
-
+	if tbInfo.PreSplitRegionCount > 0 && !isPowerOf2(tbInfo.PreSplitRegionCount) || tbInfo.PreSplitRegionCount > (1<<tbInfo.ShardRowIDBits) {
+		return errors.Errorf("pre_split_region_count=%v is invalid, it should be 2^N and less than or equal to 2^shard_row_id_bits", tbInfo.PreSplitRegionCount)
+	}
 	return nil
+}
+
+func isPowerOf2(i uint64) bool {
+	return i > 0 && ((i & (i - 1)) == 0)
 }
 
 // isIgnorableSpec checks if the spec type is ignorable.
