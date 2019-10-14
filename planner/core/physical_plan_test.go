@@ -908,3 +908,40 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
 }
+
+func (s *testPlanSuite) TestSimplifyOuterJoinWithCast(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, test := range input {
+		comment := Commentf("case:%v sql:%s", i, test)
+		stmt, err := s.ParseOneStmt(test, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, err := planner.Optimize(context.Background(), se, stmt, s.is)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Best = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best)
+
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(warnings, HasLen, 0, comment)
+	}
+}
