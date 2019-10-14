@@ -295,9 +295,9 @@ func (c *rpcClient) createConnArray(addr string, ctype connType) (*connArray, er
 		var connCount uint
 		switch ctype {
 		case PointGetConn:
-			connCount = config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		case OtherConn:
 			connCount = config.GetGlobalConfig().TiKVClient.PointGetGrpcConnectionCount
+		case OtherConn:
+			connCount = config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
 		}
 		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, c.done, ctype)
 		if err != nil {

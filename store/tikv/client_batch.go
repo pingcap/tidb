@@ -404,7 +404,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		requestIDs = requestIDs[:0]
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
-		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
+		a.fetchAllPendingRequests(int(a.maxBatchSize), &entries, &requests)
 
 		if len(entries) < int(a.maxBatchSize) && a.maxWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
