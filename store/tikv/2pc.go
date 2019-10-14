@@ -407,9 +407,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		// The backoffer instance is created outside of the goroutine to avoid
-		// potencial data race in unit test since `CommitMaxBackoff` will be updated
+		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
+		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
@@ -565,7 +565,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -722,7 +722,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			}
 			locks = append(locks, lock)
 		}
-		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
+		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
