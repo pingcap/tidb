@@ -974,6 +974,7 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Sort().Check(testkit.Rows("-277544960", "-277544960"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Sort().Check(testkit.Rows("-1327693824", "-277544960", "-277544960", "148307968"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Sort().Check(testkit.Rows("-277544960", "-277544960", "<nil>", "<nil>", "<nil>", "<nil>"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a order by t.a desc").Check(testkit.Rows("148307968", "-277544960", "-277544960", "-1327693824"))
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")
@@ -1006,15 +1007,15 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec("create table t2(a int primary key)")
 	tk.MustExec("insert into t2 values(0)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t2)*/ * from t1 left join t2 on t1.b = t2.a;").Check(testkit.Rows(
-		`1 0 0`,
 		`2 <nil> <nil>`,
+		`1 0 0`,
 	))
 
 	tk.MustExec("create table t3(a int, key(a))")
 	tk.MustExec("insert into t3 values(0)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t3)*/ * from t1 left join t3 on t1.b = t3.a;").Check(testkit.Rows(
-		`1 0 0`,
 		`2 <nil> <nil>`,
+		`1 0 0`,
 	))
 }
 
