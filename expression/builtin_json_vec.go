@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -108,11 +109,38 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		jsons[i] = make(map[string]interface{}, len(b.args)>>1)
 	}
 
+	argBuffers := make([]*chunk.Column, len(b.args))
+	var err error
+	for i := 0; i < len(b.args); i++ {
+		if i&1 == 0 {
+			argBuffers[i], err = b.bufAllocator.get(types.ETString, nr)
+			if err != nil {
+				return err
+			}
+			if err := b.args[i].VecEvalString(b.ctx, input, argBuffers[i]); err != nil {
+				return err
+			}
+		} else {
+			argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr)
+			if err != nil {
+				return err
+			}
+			if err := b.args[i].VecEvalJSON(b.ctx, input, argBuffers[i]); err != nil {
+				return err
+			}
+		}
+	}
+	defer func() {
+		for i := 0; i < len(argBuffers); i++ {
+			b.bufAllocator.put(argBuffers[i])
+		}
+	}()
+
 	result.ReserveJSON(nr)
 	for i := 0; i < len(b.args); i++ {
 		if i&1 == 1 {
-			keyCol := input.Column(i - 1)
-			valueCol := input.Column(i)
+			keyCol := argBuffers[i-1]
+			valueCol := argBuffers[i]
 
 			var key string
 			var value json.BinaryJSON
