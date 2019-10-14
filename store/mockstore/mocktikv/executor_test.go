@@ -15,7 +15,6 @@ package mocktikv_test
 
 import (
 	"context"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -83,18 +82,15 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	c.Assert(pairs, HasLen, 1)
 	c.Assert(pairs[0].Err, IsNil)
 
-	// TODO: Implement resolve lock to make the following code work.
-	c.Skip("Implement resolve lock to make the following code work")
-
 	// Simulate a large txn (holding a pk lock with large TTL).
-	ttl := uint64(10 * time.Second)
-	mocktikv.MustPrewriteOK(c, s.mvccStore, mocktikv.PutMutations("primary", "value"), "primary", tso, ttl)
-	mocktikv.MustPrewriteOK(c, s.mvccStore, mocktikv.PutMutations(string(key), "value"), "primary", tso, ttl)
+	// Secondary lock 200ms, primary lock 100s
+	mocktikv.MustPrewriteOK(c, s.mvccStore, mocktikv.PutMutations("primary", "value"), "primary", tso, 100000)
+	mocktikv.MustPrewriteOK(c, s.mvccStore, mocktikv.PutMutations(string(key), "value"), "primary", tso, 200)
 
 	// Simulate the action of reading meet the lock of a large txn.
 	// The lock of the large transaction should not block read.
 	// The first time, this query should meet a lock on the secondary key, then resolve lock.
-	// After that, the query should read the previous version.
+	// After that, the query should read the previous version data.
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 
 	// And check the large txn is still alive.

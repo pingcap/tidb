@@ -51,6 +51,7 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
+// PutMutations is exported for testing.
 var PutMutations func(kvpairs ...string) []*kvrpcpb.Mutation = putMutations
 
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {

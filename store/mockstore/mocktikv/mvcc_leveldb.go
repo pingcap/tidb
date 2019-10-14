@@ -267,6 +267,7 @@ func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.Isolat
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
+	// TODO: Update the nil here to support point-get for non-block reading on the large transaction.
 	return mvcc.getValue(key, startTS, isoLevel, nil)
 }
 

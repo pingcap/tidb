@@ -478,7 +478,7 @@ func (it *copIterator) open(ctx context.Context) {
 			clientHelper: clientHelper{
 				LockResolver:        it.store.lockResolver,
 				RegionRequestSender: sender,
-				resolved:            make(map[RegionVerID][]uint64),
+				minCommitTSPushed:   make(map[RegionVerID][]uint64),
 			},
 
 			memTracker: it.memTracker,
@@ -662,9 +662,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		HandleTime:     true,
 		ScanDetail:     true,
 	})
-	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	startTime := time.Now()
-	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)
+	resp, rpcCtx, err := worker.SendReqCtx(bo, req, task.region, task.storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -695,28 +694,32 @@ type clientHelper struct {
 	*LockResolver
 	*RegionRequestSender
 
-	resolved map[RegionVerID][]uint64
+	minCommitTSPushed map[RegionVerID][]uint64
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
 func (ch *clientHelper) ResolveLocks(bo *Backoffer, region RegionVerID, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, resolvedLocks, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	msBeforeTxnExpired, minCommitTSPushed, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
-	if len(resolvedLocks) > 0 {
-		if locks, ok := ch.resolved[region]; !ok {
-			resolvedLocks = append(resolvedLocks, locks...)
+	if len(minCommitTSPushed) > 0 {
+		value, ok := ch.minCommitTSPushed[region]
+		if !ok {
+			value = minCommitTSPushed
+		} else {
+			// Should we deduplicate here?
+			value = append(value, minCommitTSPushed...)
 		}
-		ch.resolved[region] = resolvedLocks
+		ch.minCommitTSPushed[region] = value
 	}
 	return msBeforeTxnExpired, nil
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
 func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, error) {
-	if resolvedLocks, ok := ch.resolved[regionID]; ok {
-		req.Context.ResolvedLocks = resolvedLocks
+	if minCommitTSPushed, ok := ch.minCommitTSPushed[regionID]; ok {
+		req.Context.ResolvedLocks = minCommitTSPushed
 	}
 	return ch.RegionRequestSender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
 }
