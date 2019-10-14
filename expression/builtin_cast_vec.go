@@ -310,6 +310,7 @@ func (b *builtinCastRealAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	f64s := buf.Float64s()
 	result.ReserveJSON(n)
 	for i := 0; i < n; i++ {
+		// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.```
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
