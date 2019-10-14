@@ -265,11 +265,11 @@ func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinNameConstRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalReal(b.ctx, input, result)
 }
 
 func (b *builtinReleaseLockSig) vectorized() bool {
