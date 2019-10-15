@@ -325,6 +325,9 @@ const (
 
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
+	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
 )
 
 // Default TiDB system variable values.
@@ -399,6 +402,7 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
+	DefTiDBUsePlanBaselines            = true
 )
 
 // Process global variables.
