@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"encoding/binary"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -116,11 +118,60 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinCompressSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals COMPRESS(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+
+		// According to doc: Empty strings are stored as empty strings.
+		if len(str) == 0 {
+			result.AppendString("")
+		}
+
+		compressed, err := deflate([]byte(str))
+		if err != nil {
+			result.AppendString(string(""))
+		}
+
+		resultLength := 4 + len(compressed)
+
+		// append "." if ends with space
+		shouldAppendSuffix := compressed[len(compressed)-1] == 32
+		if shouldAppendSuffix {
+			resultLength++
+		}
+
+		buffer := make([]byte, resultLength)
+		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		copy(buffer[4:], compressed)
+
+		if shouldAppendSuffix {
+			buffer[len(buffer)-1] = '.'
+		}
+
+		result.AppendString(string(buffer))
+	}
+	return nil
 }
 
 func (b *builtinAesEncryptSig) vectorized() bool {
