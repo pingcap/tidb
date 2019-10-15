@@ -401,34 +401,6 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	return lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
 }
 
-func sendRequestHandleRegionErr(bo *Backoffer, store Storage, key []byte, req *tikvrpc.Request, timeout time.Duration) (interface{}, *KeyLocation, error) {
-	for {
-		loc, err := store.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		resp, err := store.SendReq(bo, req, loc.Region, timeout)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			continue
-		}
-		if resp.Resp == nil {
-			return nil, loc, errors.Trace(ErrBodyMissing)
-		}
-		return resp.Resp, loc, nil
-	}
-}
-
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
@@ -506,4 +478,32 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 	}
 
 	return nil
+}
+
+func sendRequestHandleRegionErr(bo *Backoffer, store Storage, key []byte, req *tikvrpc.Request, timeout time.Duration) (interface{}, *KeyLocation, error) {
+	for {
+		loc, err := store.GetRegionCache().LocateKey(bo, key)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		resp, err := store.SendReq(bo, req, loc.Region, timeout)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return nil, loc, errors.Trace(ErrBodyMissing)
+		}
+		return resp.Resp, loc, nil
+	}
 }
