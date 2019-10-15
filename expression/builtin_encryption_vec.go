@@ -14,6 +14,9 @@
 package expression
 
 import (
+	"crypto/md5"
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -100,11 +103,30 @@ func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinMD5Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		sum := md5.Sum([]byte(str))
+		result.AppendString(fmt.Sprintf("%x", sum))
+	}
+	return nil
 }
 
 func (b *builtinSHA2Sig) vectorized() bool {
