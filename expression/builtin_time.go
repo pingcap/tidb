@@ -1789,14 +1789,18 @@ func (c *strToDateFunctionClass) getRetTp(ctx sessionctx.Context, arg Expression
 	if err != nil || isNull {
 		return
 	}
+
+	if strings.Contains(format, "%f") {
+		tp = mysql.TypeDatetime
+		fsp = types.MaxFsp
+		return
+	}
+
 	isDuration, isDate := types.GetFormatType(format)
 	if isDuration && !isDate {
 		tp = mysql.TypeDuration
 	} else if !isDuration && isDate {
 		tp = mysql.TypeDate
-	}
-	if strings.Contains(format, "%f") {
-		fsp = types.MaxFsp
 	}
 	return
 }
