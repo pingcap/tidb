@@ -707,9 +707,10 @@ func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	var randGen *rand.Rand
 	i64s := buf.Int64s()
 	f64s := result.Float64s()
+	rander := rand.NewSource(time.Now().UnixNano())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+			randGen = rand.New(rander)
 		} else {
 			randGen = rand.New(rand.NewSource(i64s[i]))
 		}
