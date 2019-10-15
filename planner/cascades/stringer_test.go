@@ -76,11 +76,8 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		c.Assert(err, IsNil)
 		logic, ok := p.(plannercore.LogicalPlan)
 		c.Assert(ok, IsTrue)
-		// Do column prune here to reduce the output columns.
-		err = logic.PruneColumns(logic.Schema().Columns)
+		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
 		c.Assert(err, IsNil)
-		// Build keyInfo to test the unique key information.
-		logic.BuildKeyInfo()
 		group := convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)

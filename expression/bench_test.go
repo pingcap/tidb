@@ -713,11 +713,25 @@ func getColumnLen(col *chunk.Column, eType types.EvalType) int {
 	return chk.NumRows()
 }
 
+// removeTestOptions removes all not needed options like '-test.timeout=' from argument list
+func removeTestOptions(args []string) []string {
+	argList := args[:0]
+
+	// args contains '-test.timeout=' option for example
+	// excluding it to be able to run all tests
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "builtin") {
+			argList = append(argList, arg)
+		}
+	}
+	return argList
+}
+
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	testFunc := make(map[string]bool)
-	argList := flag.Args()
+	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
 	for _, arg := range argList {
 		testFunc[arg] = true
@@ -874,7 +888,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 	testFunc := make(map[string]bool)
-	argList := flag.Args()
+	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
 	for _, arg := range argList {
 		testFunc[arg] = true
@@ -1056,8 +1070,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 }
 
-func genVecEvalBool(numCols int, colTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *chunk.Chunk) {
 	gens := make([]dataGenerator, 0, len(eTypes))
 	for _, eType := range eTypes {
 		if eType == types.ETString {
@@ -1094,11 +1107,37 @@ func genVecEvalBool(numCols int, colTypes []types.EvalType) (CNFExprs, *chunk.Ch
 	return exprs, input
 }
 
+func generateRandomSel() []int {
+	rand.Seed(int64(time.Now().UnixNano()))
+	var sel []int
+	count := 0
+	// Use constant 256 to make it faster to generate randomly arranged sel slices
+	num := rand.Intn(256) + 1
+	existed := make([]bool, 1024)
+	for i := 0; i < 1024; i++ {
+		existed[i] = false
+	}
+	for count < num {
+		val := rand.Intn(1024)
+		if !existed[val] {
+			existed[val] = true
+			count++
+		}
+	}
+	for i := 0; i < 1024; i++ {
+		if existed[i] {
+			sel = append(sel, i)
+		}
+	}
+	return sel
+}
+
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 10; numCols++ {
 		for round := 0; round < 64; round++ {
-			exprs, input := genVecEvalBool(numCols, nil)
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
 			c.Assert(err, IsNil)
 			it := chunk.NewIterator4Chunk(input)
@@ -1133,7 +1172,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 						}
 					}
 				}
-				exprs, input := genVecEvalBool(numCols, typeCombination)
+				exprs, input := genVecEvalBool(numCols, typeCombination, eTypes)
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
@@ -1165,4 +1204,159 @@ func BenchmarkVecEvalBool(b *testing.B) {
 
 		combFunc(numCols)
 	}
+}
+
+func (s *testEvaluatorSuite) TestRowBasedFilterAndVectorizedFilter(c *C) {
+	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for numCols := 1; numCols <= 10; numCols++ {
+		for round := 0; round < 64; round++ {
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
+			it := chunk.NewIterator4Chunk(input)
+			isNull := make([]bool, it.Len())
+			selected, nulls, err := rowBasedFilter(ctx, exprs, it, nil, isNull)
+			c.Assert(err, IsNil)
+			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, isNull)
+			c.Assert(err2, IsNil)
+			length := it.Len()
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+		}
+	}
+}
+
+func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
+	ctx := mock.NewContext()
+	selected := make([]bool, 0, 1024)
+	nulls := make([]bool, 0, 1024)
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for numCols := 1; numCols <= 2; numCols++ {
+		typeCombination := make([]types.EvalType, numCols)
+		var combFunc func(nCols int)
+		combFunc = func(nCols int) {
+			if nCols == 0 {
+				name := ""
+				for _, t := range typeCombination {
+					for i := range eTypes {
+						if t == eTypes[i] {
+							name += tNames[t] + "/"
+						}
+					}
+				}
+				exprs, input := genVecEvalBool(numCols, typeCombination, eTypes)
+				it := chunk.NewIterator4Chunk(input)
+				b.Run("Vec-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _, err := vectorizedFilter(ctx, exprs, it, selected, nulls)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+				b.Run("Row-"+name, func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _, err := rowBasedFilter(ctx, exprs, it, selected, nulls)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+				return
+			}
+			for _, eType := range eTypes {
+				typeCombination[nCols-1] = eType
+				combFunc(nCols - 1)
+			}
+		}
+		combFunc(numCols)
+	}
+
+	// Add special case to prove when some calculations are added,
+	// the vectorizedFilter for int types will be more faster than rowBasedFilter.
+	funcName := ast.Least
+	testCase := vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}}
+	expr, _, input, _ := genVecExprBenchCase(ctx, funcName, testCase)
+	it := chunk.NewIterator4Chunk(input)
+
+	b.Run("Vec-special case", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, err := vectorizedFilter(ctx, []Expression{expr}, it, selected, nulls)
+			if err != nil {
+				panic(err)
+			}
+		}
+	})
+	b.Run("Row-special case", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, err := rowBasedFilter(ctx, []Expression{expr}, it, selected, nulls)
+			if err != nil {
+				panic(err)
+			}
+		}
+	})
+}
+
+func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
+	ctx := mock.NewContext()
+	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for numCols := 1; numCols <= 10; numCols++ {
+		for round := 0; round < 64; round++ {
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
+			it := chunk.NewIterator4Chunk(input)
+			isNull := make([]bool, it.Len())
+			ctx.GetSessionVars().EnableVectorizedExpression = false
+			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			c.Assert(err, IsNil)
+			ctx.GetSessionVars().EnableVectorizedExpression = true
+			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			c.Assert(err2, IsNil)
+			length := it.Len()
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+
+			// add test which sel is not nil
+			randomSel := generateRandomSel()
+			input.SetSel(randomSel)
+			it2 := chunk.NewIterator4Chunk(input)
+			isNull = isNull[:0]
+			ctx.GetSessionVars().EnableVectorizedExpression = false
+			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
+			c.Assert(err, IsNil)
+			ctx.GetSessionVars().EnableVectorizedExpression = true
+			selected4, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
+			c.Assert(err2, IsNil)
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected4[i], Equals, selected3[i])
+			}
+
+			unselected := make([]bool, length)
+			// unselected[i] == false means that the i-th row is selected
+			for i := 0; i < length; i++ {
+				unselected[i] = true
+			}
+			for _, idx := range randomSel {
+				unselected[idx] = false
+			}
+			for i := range selected2 {
+				if selected2[i] && unselected[i] {
+					selected2[i] = false
+				}
+			}
+			for i := 0; i < length; i++ {
+				c.Assert(selected2[i], Equals, selected4[i])
+			}
+		}
+	}
+	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
 }
