@@ -110,25 +110,29 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	partitionDefs := ds.table.Meta().Partition.Definitions
 
-	sctx := ds.SCtx()
-	filterConds := make([]expression.Expression, len(ds.allConds))
-	copy(filterConds, ds.allConds)
-	filterConds = expression.PropagateConstant(sctx, filterConds)
-	presolvedFilters := solver.Solve(sctx, filterConds)
-	alwaysFalse := false
-	if len(presolvedFilters) == 1 {
-		// Constant false.
-		if con, ok := presolvedFilters[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
-			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
-				alwaysFalse = true
+	filterConds := ds.allConds
+	// do preSolve with filter exprs for situations like
+	// where    c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 amd c3 = c1 - 10
+	// no need to do partition pruning work for "alwaysFalse" filter results
+	if len(partitionExprs) > 3 {
+		sctx := ds.SCtx()
+		filterConds = expression.PropagateConstant(sctx, filterConds)
+		filterConds = solver.Solve(sctx, filterConds)
+		alwaysFalse := false
+		if len(filterConds) == 1 {
+			// Constant false.
+			if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
+				ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+				if err == nil && ret == false {
+					alwaysFalse = true
+				}
 			}
 		}
-	}
-	if alwaysFalse {
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-		tableDual.schema = ds.Schema()
-		return tableDual, nil
+		if alwaysFalse {
+			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+			tableDual.schema = ds.Schema()
+			return tableDual, nil
+		}
 	}
 
 	// Rewrite data source to union all partitions, during which we may prune some
@@ -136,7 +140,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.SCtx(), col, expr, presolvedFilters)
+		pruned, err := s.canBePruned(ds.SCtx(), col, expr, filterConds)
 		if err != nil {
 			return nil, err
 		}

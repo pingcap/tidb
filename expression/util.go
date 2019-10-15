@@ -33,6 +33,26 @@ import (
 	"golang.org/x/tools/container/intsets"
 )
 
+type cowExprRef struct {
+	ref []Expression
+	new []Expression
+}
+
+func (c *cowExprRef) Set(i int, val Expression) {
+	if c.new == nil {
+		c.new = make([]Expression, len(c.ref))
+		copy(c.new, c.ref[:i])
+	}
+	c.new[i] = val
+}
+
+func (c *cowExprRef) Result() []Expression {
+	if c.new != nil {
+		return c.new
+	}
+	return c.ref
+}
+
 // Filter the input expressions, append the results to result.
 func Filter(result []Expression, input []Expression, filter func(Expression) bool) []Expression {
 	for _, e := range input {
@@ -170,17 +190,21 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
 			return true, newFunc
 		}
-		newArgs := make([]Expression, 0, len(v.GetArgs()))
+		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
-		for _, arg := range v.GetArgs() {
+		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
-			if changed {
-				substituted = true
+			if substituted {
+				refExprArr.Set(idx, newFuncExpr)
+			} else {
+				if changed {
+					substituted = true
+					refExprArr.Set(idx, newFuncExpr)
+				}
 			}
-			newArgs = append(newArgs, newFuncExpr)
 		}
 		if substituted {
-			return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
+			return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
 		}
 	}
 	return false, expr
