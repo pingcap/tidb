@@ -116,6 +116,10 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 			if argBuffers[i], err = b.bufAllocator.get(types.ETString, nr); err != nil {
 				return err
 			}
+			defer func(buf *chunk.Column) {
+				b.bufAllocator.put(buf)
+			}(argBuffers[i])
+
 			if err = b.args[i].VecEvalString(b.ctx, input, argBuffers[i]); err != nil {
 				return err
 			}
@@ -123,16 +127,15 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 			if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
 				return err
 			}
+			defer func(buf *chunk.Column) {
+				b.bufAllocator.put(buf)
+			}(argBuffers[i])
+
 			if err = b.args[i].VecEvalJSON(b.ctx, input, argBuffers[i]); err != nil {
 				return err
 			}
 		}
 	}
-	defer func() {
-		for i := 0; i < len(argBuffers); i++ {
-			b.bufAllocator.put(argBuffers[i])
-		}
-	}()
 
 	result.ReserveJSON(nr)
 	for i := 0; i < len(b.args); i++ {
