@@ -1715,6 +1715,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
+	result = tk.MustQuery("select str_to_date('20190101','%Y%m%d%!'), str_to_date('20190101','%Y%m%d%f'), str_to_date('20190101','%Y%m%d%H%i%s')")
+	result.Check(testkit.Rows("2019-01-01 2019-01-01 00:00:00.000000 2019-01-01 00:00:00"))
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
