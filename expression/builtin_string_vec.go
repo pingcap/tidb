@@ -700,12 +700,27 @@ func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
+		negative, overflow := false, false
 		str := buf.GetString(i)
-		val, err := strconv.ParseUint(str, 10, 64)
-		if err != nil {
-			return err
+		str = getValidPrefix(strings.TrimSpace(str), 10)
+		if len(str) == 0 {
+			result.AppendString("0")
 		}
-		result.AppendString(strconv.FormatUint(val, 8))
+		if str[0] == '-' {
+			negative, str = true, str[1:]
+		}
+		numVal, err := strconv.ParseUint(str, 10, 64)
+		if err != nil {
+			numError, ok := err.(*strconv.NumError)
+			if !ok || numError.Err != strconv.ErrRange {
+				return err
+			}
+			overflow = true
+		}
+		if negative && !overflow {
+			numVal = -numVal
+		}
+		result.AppendString(strconv.FormatUint(numVal, 8))
 	}
 	return nil
 }
