@@ -14,6 +14,11 @@
 package expression
 
 import (
+	"crypto/sha256"
+	"crypto/sha512"
+	"fmt"
+	"hash"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -108,11 +113,66 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinSHA2Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	i64s := buf1.Int64s()
+	var (
+		hasher    *hash.Hash
+		hasher256 = sha256.New()
+		hasher224 = sha256.New224()
+		hasher384 = sha512.New384()
+		hasher512 = sha512.New()
+	)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		hashLength := i64s[i]
+		hasher = nil
+		switch int(hashLength) {
+		case SHA0, SHA256:
+			hasher = &hasher256
+		case SHA224:
+			hasher = &hasher224
+		case SHA384:
+			hasher = &hasher384
+		case SHA512:
+			hasher = &hasher512
+		}
+		if hasher == nil {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		_, err = (*hasher).Write([]byte(str))
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", (*hasher).Sum(nil)))
+		(*hasher).Reset()
+	}
+	return nil
 }
 
 func (b *builtinCompressSig) vectorized() bool {
