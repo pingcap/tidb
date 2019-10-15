@@ -53,10 +53,9 @@ func (b *builtinJSONKeysSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colum
 
 		j = buf.GetJSON(i)
 		if j.TypeCode != json.TypeCodeObject {
-			result.AppendNull()
-		} else {
-			result.AppendJSON(j.GetKeys())
+			return json.ErrInvalidJSONData
 		}
+		result.AppendJSON(j.GetKeys())
 	}
 	return nil
 }
