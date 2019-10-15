@@ -22,10 +22,12 @@ import (
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.NE:       {},
-	ast.IsNull:   {},
-	ast.LE:       {},
-	ast.LT:       {},
+	ast.NE:     {},
+	ast.IsNull: {},
+	ast.LE:     {},
+	ast.LT: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
 	ast.Coalesce: {},
 	ast.NullEQ: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},

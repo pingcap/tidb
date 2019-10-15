@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"math"
 )
 
 // vecEvalDecimal evals a builtinGreatestDecimalSig.
@@ -590,11 +591,112 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinLTIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	vecCompareNull(buf0, buf1, result)
+	VecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[0].GetType().Flag), buf0, buf1, result)
+	vecResOfLT(result)
+	return nil
+}
+
+func vecResOfLT(result *chunk.Column) {
+	res := result.Int64s()
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			res[i] = 0
+		}
+		if res[i] < 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
+}
+
+func vecCompareNull(largs, rargs, result *chunk.Column) {
+	res := result.Int64s()
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if largs.IsNull(i) && rargs.IsNull(i) {
+			res[i] = 0
+		} else if largs.IsNull(i) {
+			res[i] = -1
+		} else {
+			res[i] = 1
+		}
+	}
+}
+
+func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
+	arg0 := largs.Int64s()
+	arg1 := rargs.Int64s()
+	res := result.Int64s()
+	n := len(arg0)
+
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			res[i] = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
+		}
+	case isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
+				res[i] = 1
+			} else {
+				res[i] = int64(types.CompareInt64(arg0[i], arg1[i]))
+			}
+		}
+
+	case !isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
+				res[i] = -1
+			} else {
+				res[i] = int64(types.CompareInt64(arg0[i], arg1[i]))
+			}
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			res[i] = int64(types.CompareInt64(arg0[i], arg1[i]))
+		}
+	}
 }
 
 func (b *builtinLEJSONSig) vectorized() bool {
