@@ -89,7 +89,7 @@ slow-threshold = 300
 expensive-threshold = 10000
 
 # Maximum query length recorded in log.
-query-log-max-len = 2048
+query-log-max-len = 4096
 
 # File logging.
 [log.file]
@@ -104,9 +104,6 @@ max-days = 0
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
-
-# Rotate log by day
-log-rotate = true
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
@@ -282,6 +279,10 @@ batch-wait-size = 8
 
 # Enable chunk encoded data.
 enable-arrow = true
+
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when

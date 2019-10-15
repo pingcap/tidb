@@ -357,7 +357,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-					join.buildKeyInfo()
+					join.BuildKeyInfo()
 					proj := a.tryToEliminateAggregation(agg)
 					if proj != nil {
 						p = proj
