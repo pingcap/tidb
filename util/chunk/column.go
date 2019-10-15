@@ -80,6 +80,11 @@ func newColumn(typeSize, cap int) *Column {
 	return col
 }
 
+// GetPhysicLength returns the physic length of the column
+func (c *Column) GetPhysicLength() int {
+	return c.length
+}
+
 func (c *Column) typeSize() int {
 	if len(c.elemBuf) > 0 {
 		return len(c.elemBuf)
@@ -488,6 +493,11 @@ func (c *Column) GetFloat64(rowID int) float64 {
 // GetDecimal returns the decimal in the specific row.
 func (c *Column) GetDecimal(rowID int) *types.MyDecimal {
 	return (*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*types.MyDecimalStructSize]))
+}
+
+// GetFixedTypeBytes returns the byte slice in the specific row for fixed size type
+func (c *Column) GetFixedTypeBytes(rowID int) []byte {
+	return c.data[rowID*8 : (rowID+1)*8]
 }
 
 // GetString returns the string in the specific row.

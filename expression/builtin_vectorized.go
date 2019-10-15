@@ -67,6 +67,17 @@ func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
 }
 
+// GetColumn allocates a column buffer with the specific eval type and capacity.
+// the allocator is not responsible for initializing the column, so please initialize it before using.
+func GetColumn(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+	return globalColumnAllocator.get(evalType, capacity)
+}
+
+// PutColumn releases a column buffer.
+func PutColumn(buf *chunk.Column) {
+	globalColumnAllocator.put(buf)
+}
+
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	r.Lock()
 	if r.size > 0 {
