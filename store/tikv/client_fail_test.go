@@ -57,8 +57,10 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	rpcClient := newRPCClient(config.Security{})
 
 	// Start batchRecvLoop, and it should panic in `failPendingRequests`.
-	_, err := rpcClient.getConnArray(addr)
+	conn, err := rpcClient.getConnArray(addr)
 	c.Assert(err, IsNil)
+
+	<-conn.estReady
 
 	time.Sleep(time.Second)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)

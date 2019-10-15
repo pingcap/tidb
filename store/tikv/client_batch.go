@@ -52,6 +52,10 @@ type batchConn struct {
 	pendingRequests prometheus.Gauge
 
 	index uint32
+
+	estDone  int32
+	estError error
+	estReady chan struct{}
 }
 
 func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
@@ -60,9 +64,9 @@ func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
 		tikvTransportLayerLoad: 0,
 		closed:                 make(chan struct{}),
-
-		idleNotify: idleNotify,
-		idleDetect: time.NewTimer(idleTimeout),
+		idleNotify:             idleNotify,
+		idleDetect:             time.NewTimer(idleTimeout),
+		estReady:               make(chan struct{}),
 	}
 }
 
@@ -488,10 +492,11 @@ func removeCanceledRequests(entries []*batchCommandsEntry,
 func sendBatchRequest(
 	ctx context.Context,
 	addr string,
-	batchConn *batchConn,
+	connArray *connArray,
 	req *tikvpb.BatchCommandsRequest_Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
+	batchConn := connArray.batchConn
 	entry := &batchCommandsEntry{
 		ctx:      ctx,
 		req:      req,
@@ -501,6 +506,22 @@ func sendBatchRequest(
 	}
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	established := atomic.LoadInt32(&batchConn.estDone) == 1
+	if !established {
+		select {
+		case <-batchConn.estReady:
+			if batchConn.estError != nil {
+				connArray.Close()
+				return nil, batchConn.estError
+			}
+			break
+		case <-ctx1.Done():
+			logutil.BgLogger().Warn("wait connection establish is cancelled",
+				zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+			return nil, errors.Trace(ctx1.Err())
+		}
+	}
+
 	select {
 	case batchConn.batchCommandsCh <- entry:
 	case <-ctx1.Done():

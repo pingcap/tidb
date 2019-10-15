@@ -146,33 +146,39 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 			return errors.Trace(err)
 		}
 		a.v[i] = conn
-
-		if allowBatch {
-			// Initialize batch streaming clients.
-			tikvClient := tikvpb.NewTikvClient(conn)
-			streamClient, err := tikvClient.BatchCommands(context.TODO())
-			if err != nil {
-				a.Close()
-				return errors.Trace(err)
-			}
-			batchClient := &batchCommandsClient{
-				target:  a.target,
-				conn:    conn,
-				client:  streamClient,
-				batched: sync.Map{},
-				idAlloc: 0,
-				closed:  0,
-			}
-			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-			go batchClient.batchRecvLoop(cfg.TiKVClient, &a.tikvTransportLayerLoad)
-		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout, done)
 	if allowBatch {
-		go a.batchSendLoop(cfg.TiKVClient)
+		go a.establishBatchClient(cfg.TiKVClient)
 	}
-
 	return nil
+}
+
+func (a *connArray) establishBatchClient(client config.TiKVClient) {
+	for i := range a.v {
+		conn := a.v[i]
+		// Initialize batch streaming clients.
+		tikvClient := tikvpb.NewTikvClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+		streamClient, err := tikvClient.BatchCommands(ctx)
+		cancel()
+		if err != nil {
+			a.estError = errors.Trace(err)
+			close(a.batchConn.estReady)
+			return
+		}
+		batchClient := &batchCommandsClient{
+			target: a.target,
+			conn:   conn,
+			client: streamClient,
+		}
+		a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
+		go batchClient.batchRecvLoop(client, &a.tikvTransportLayerLoad)
+	}
+	go a.batchSendLoop(client)
+
+	atomic.StoreInt32(&a.estDone, 1)
+	close(a.batchConn.estReady)
 }
 
 func (a *connArray) Get() *grpc.ClientConn {
@@ -296,7 +302,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			return sendBatchRequest(ctx, addr, connArray, batchReq, timeout)
 		}
 	}
 
