@@ -653,6 +653,7 @@ func vecCompareNull(largs, rargs, result *chunk.Column) {
 	}
 }
 
+//vectorized CompareInt()
 func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	arg0 := largs.Int64s()
 	arg1 := rargs.Int64s()
