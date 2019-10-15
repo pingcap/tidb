@@ -46,8 +46,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.PrepareTxnFuture(ctx)
 
 	var oriHint *bindinfo.HintsSet
-	if stmtNode, ok := node.(ast.StmtNode); ok {
-		oriHint = addHint(sctx, stmtNode)
+	if sctx.GetSessionVars().UsePlanBaselines {
+		if stmtNode, ok := node.(ast.StmtNode); ok {
+			oriHint = addHint(sctx, stmtNode)
+		}
 	}
 	plan, err := optimize(ctx, sctx, node, is)
 	// Restore the original hint in case of prepare stmt.
@@ -105,7 +107,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sctx.GetSessionVars().EnableCascadesPlanner {
-		return cascades.FindBestPlan(sctx, logic)
+		return cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 	}
 	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
 }

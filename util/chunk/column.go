@@ -612,6 +612,21 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		return c.CopyConstruct(dst)
 	}
 
+	selLength := len(sel)
+	if selLength == c.length {
+		// The variable 'ascend' is used to check if the sel array is in ascending order
+		ascend := true
+		for i := 1; i < selLength; i++ {
+			if sel[i] < sel[i-1] {
+				ascend = false
+				break
+			}
+		}
+		if ascend {
+			return c.CopyConstruct(dst)
+		}
+	}
+
 	if dst == nil {
 		dst = newColumn(c.typeSize(), len(sel))
 	} else {
@@ -645,8 +660,8 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // MergeNulls merges these columns' null bitmaps.
 // For a row, if any column of it is null, the result is null.
 // It works like: if col1.IsNull || col2.IsNull || col3.IsNull.
-// The user should ensure that all these columns have the same length, and
-// data stored in these columns are fixed-length type.
+// The caller should ensure that all these columns have the same
+// length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
 	for _, col := range cols {
 		for i := range c.nullBitmap {

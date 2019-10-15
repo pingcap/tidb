@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -42,13 +43,6 @@ var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	baseSchemaProducer
-}
-
-// ShowDDLJobs is for showing DDL job list.
-type ShowDDLJobs struct {
-	baseSchemaProducer
-
-	JobNumber int64
 }
 
 // ShowSlow is for showing slow queries.
@@ -283,6 +277,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 		e.names = plan.OutputNames()
 		e.Plan = plan
+		sctx.GetSessionVars().StmtCtx.PointExec = true
 		return nil
 	}
 	var cacheKey kvcache.Key
@@ -312,19 +307,47 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return err
 	}
-	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+	err = e.tryCachePointPlan(ctx, sctx, prepared, is, p)
 	if err != nil {
 		return err
-	}
-	if ok {
-		// just cache point plan now
-		prepared.CachedPlan = p
 	}
 	e.names = p.OutputNames()
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
+	}
+	return err
+}
+
+// tryCachePointPlan will try to cache point execution plan, there may be some
+// short paths for these executions, currently "point select" and "point update"
+func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
+	prepared *ast.Prepared, is infoschema.InfoSchema, p Plan) error {
+	var (
+		ok  bool
+		err error
+	)
+	switch p.(type) {
+	case *PointGetPlan:
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		if err != nil {
+			return err
+		}
+	case *Update:
+		ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		if err != nil {
+			return err
+		}
+		if ok {
+			// make constant expression store paramMarker
+			sctx.GetSessionVars().StmtCtx.PointExec = true
+			p, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		}
+	}
+	if ok {
+		// just cache point plan now
+		prepared.CachedPlan = p
 	}
 	return err
 }
@@ -376,6 +399,26 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		return nil
+	case *BatchPointGetPlan:
+		for i, param := range x.HandleParams {
+			if param != nil {
+				x.Handles[i], err = param.Datum.ToInt64(sc)
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+		for i, params := range x.IndexValueParams {
+			if len(params) < 1 {
+				continue
+			}
+			for j, param := range params {
+				if param != nil {
+					x.IndexValues[i][j] = param.Datum
+				}
+			}
+		}
 	case PhysicalPlan:
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
@@ -573,12 +616,13 @@ type LoadStats struct {
 type SplitRegion struct {
 	baseSchemaProducer
 
-	TableInfo  *model.TableInfo
-	IndexInfo  *model.IndexInfo
-	Lower      []types.Datum
-	Upper      []types.Datum
-	Num        int
-	ValueLists [][]types.Datum
+	TableInfo      *model.TableInfo
+	PartitionNames []model.CIStr
+	IndexInfo      *model.IndexInfo
+	Lower          []types.Datum
+	Upper          []types.Datum
+	Num            int
+	ValueLists     [][]types.Datum
 }
 
 // SplitRegionStatus represents a split regions status plan.
@@ -641,7 +685,10 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
+		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
+		if err != nil {
+			return err
+		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	default:
@@ -651,7 +698,7 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) {
+func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) (err error) {
 	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
@@ -663,46 +710,60 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 			if e.explainedPlans[child.ID()] {
 				continue
 			}
-			e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+			err = e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+			if err != nil {
+				return
+			}
 		}
 	}
 
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+		var storeType string
+		switch x.StoreType {
+		case kv.TiKV:
+			storeType = "tikv"
+		case kv.TiFlash:
+			storeType = "tiflash"
+		default:
+			err = errors.Errorf("the store type %v is unknown", x.StoreType)
+			return
+		}
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
-		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, false)
-		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i := 0; i < len(x.partialPlans); i++ {
 			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
-				e.explainPlanInRowFormat(x.partialPlans[i], "cop", childIndent, true)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, true)
 			} else {
-				e.explainPlanInRowFormat(x.partialPlans[i], "cop", childIndent, false)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, false)
 			}
 		}
 		if x.tablePlan != nil {
-			e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
-			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
 		}
 	case *Update:
 		if x.SelectPlan != nil {
-			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
 		}
 	case *Delete:
 		if x.SelectPlan != nil {
-			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
 		}
 	case *Execute:
 		if x.Plan != nil {
-			e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
 		}
 	}
+	return
 }
 
 // prepareOperatorInfo generates the following information for every plan:
@@ -881,17 +942,11 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 //  2. txn is not valid
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
-	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
+	ok, err := IsAutoCommitNonValidTxn(ctx)
 	if err != nil {
 		return false, err
 	}
-	if txn.Valid() {
+	if !ok {
 		return false, nil
 	}
 
@@ -915,4 +970,44 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	default:
 		return false, nil
 	}
+}
+
+// IsAutoCommitNonValidTxn checks if session is in autocommit mode and txn not valid
+// used for fast plan like point get
+func IsAutoCommitNonValidTxn(ctx sessionctx.Context) (bool, error) {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false, nil
+	}
+
+	// check txn
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, err
+	}
+	if txn.Valid() {
+		return false, nil
+	}
+	return true, nil
+}
+
+// IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
+func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	ok, err := IsAutoCommitNonValidTxn(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+
+	// check plan
+	updPlan, ok := p.(*Update)
+	if !ok {
+		return false, nil
+	}
+	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
+		return true, nil
+	}
+	return false, nil
 }

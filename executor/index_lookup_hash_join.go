@@ -29,10 +29,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// numResChkHold indicates the number of resource chunks that a worker holds at
-// the same time. It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
-// Otherwise, there will be at most `concurrency` resource chunks throughout the
-// execution of IndexNestedLoopHashJoin.
+// numResChkHold indicates the number of resource chunks that an inner worker
+// holds at the same time.
+// It's used in 2 cases individually:
+// 1. IndexMergeJoin
+// 2. IndexNestedLoopHashJoin:
+//    It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
+//    Otherwise, there will be at most `concurrency` resource chunks throughout
+//    the execution of IndexNestedLoopHashJoin.
 const numResChkHold = 4
 
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
