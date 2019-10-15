@@ -283,12 +283,12 @@ func (b *builtinCastDurationAsIntSig) vectorized() bool {
 
 func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
 		return err
 	}
 
