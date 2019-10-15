@@ -146,35 +146,13 @@ func setExprColumnInOperand(expr Expression) Expression {
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
-	switch v := expr.(type) {
-	case *Column:
-		id := schema.ColumnIndex(v)
-		if id == -1 {
-			return v
-		}
-		newExpr := newExprs[id]
-		if v.InOperand {
-			newExpr = setExprColumnInOperand(newExpr)
-		}
-		return newExpr
-	case *ScalarFunction:
-		if v.FuncName.L == ast.Cast {
-			newFunc := v.Clone().(*ScalarFunction)
-			newFunc.GetArgs()[0] = ColumnSubstitute(newFunc.GetArgs()[0], schema, newExprs)
-			return newFunc
-		}
-		newArgs := make([]Expression, 0, len(v.GetArgs()))
-		for _, arg := range v.GetArgs() {
-			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
-		}
-		return NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
-	}
-	return expr
+	_, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	return resExpr
 }
 
-// ColumnSubstitutePartPrune same as ColumnSubstitute except that it will return if the
-// input expr is substituted, the newFunctionInternal is only called if its child is substituted
-func ColumnSubstitutePartPrune(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+// ColumnSubstituteImpl tries to substitute column expr using newExprs,
+// the newFunctionInternal is only called if its child is substituted
+func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -189,13 +167,13 @@ func ColumnSubstitutePartPrune(expr Expression, schema *Schema, newExprs []Expre
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			_, newFunc.GetArgs()[0] = ColumnSubstitutePartPrune(newFunc.GetArgs()[0], schema, newExprs)
+			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
 			return true, newFunc
 		}
 		newArgs := make([]Expression, 0, len(v.GetArgs()))
 		substituted := false
 		for _, arg := range v.GetArgs() {
-			changed, newFuncExpr := ColumnSubstitutePartPrune(arg, schema, newExprs)
+			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
 			if changed {
 				substituted = true
 			}
