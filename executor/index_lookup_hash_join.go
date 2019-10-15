@@ -400,13 +400,6 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		return
 	}
 	h, resultCh := fnv.New64(), iw.resultCh
-	defer func() {
-		// This check is used to closed the resultCh of the last task when
-		// task.keepOuterOrder is true.
-		if resultCh != iw.resultCh {
-			close(resultCh)
-		}
-	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -421,11 +414,6 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		if task.keepOuterOrder {
-			if resultCh != nil {
-				// resultCh is closed to notice the end of the previous task
-				// when a new task is fetched.
-				close(resultCh)
-			}
 			resultCh = task.resultCh
 		}
 		err := iw.handleTask(ctx, cancelFunc, task, joinResult, h, resultCh)
@@ -639,6 +627,16 @@ func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx contex
 //   2.2 call tryToMatchInners for every outer row
 //   2.3 call onMissMatch when no inner rows are matched
 func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
+	defer func() {
+		if err == nil && joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
+			select {
+			case resultCh <- joinResult:
+			case <-ctx.Done():
+				return
+			}
+		}
+		close(resultCh)
+	}()
 	for i, numChunks := 0, task.innerResult.NumChunks(); i < numChunks; i++ {
 		for j, chk := 0, task.innerResult.GetChunk(i); j < chk.NumRows(); j++ {
 			row := chk.GetRow(j)
