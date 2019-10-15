@@ -838,8 +838,7 @@ func (b *builtinCastDecimalAsIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		to := d64s[i]
 		err = d64s[i].Round(&to, 0, types.ModeHalfEven)
 		if err != nil {
-			result.SetNull(i, true)
-			continue
+			return err
 		}
 
 		if !mysql.HasUnsignedFlag(b.tp.Flag) {
