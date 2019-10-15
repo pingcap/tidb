@@ -401,6 +401,34 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	return lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
 }
 
+func sendRequestHandleRegionErr(bo *Backoffer, store Storage, key []byte, req *tikvrpc.Request, timeout time.Duration) (interface{}, *KeyLocation, error) {
+	for {
+		loc, err := store.GetRegionCache().LocateKey(bo, key)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		resp, err := store.SendReq(bo, req, loc.Region, timeout)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return nil, loc, errors.Trace(ErrBodyMissing)
+		}
+		return resp.Resp, loc, nil
+	}
+}
+
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
@@ -415,102 +443,67 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		CallerStartTs: callerStartTS,
 		CurrentTs:     currentTS,
 	})
-	for {
-		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return status, errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return status, errors.Trace(err)
-			}
-			continue
-		}
-		if resp.Resp == nil {
-			return status, errors.Trace(ErrBodyMissing)
-		}
-		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
-		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
-			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
-			return status, err
-		}
-		if cmdResp.LockTtl != 0 {
-			status.ttl = cmdResp.LockTtl
-		} else {
-			if cmdResp.CommitVersion == 0 {
-				tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
-			} else {
-				tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
-			}
-
-			status.commitTS = cmdResp.CommitVersion
-			lr.saveResolved(txnID, status)
-		}
-		return status, nil
+	resp, _, err := sendRequestHandleRegionErr(bo, lr.store, primary, req, readTimeoutShort)
+	if err != nil {
+		return status, err
 	}
+	cmdResp := resp.(*kvrpcpb.CheckTxnStatusResponse)
+	if keyErr := cmdResp.GetError(); keyErr != nil {
+		err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
+		logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
+		return status, err
+	}
+	if cmdResp.LockTtl != 0 {
+		status.ttl = cmdResp.LockTtl
+	} else {
+		if cmdResp.CommitVersion == 0 {
+			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
+		} else {
+			tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
+		}
+
+		status.commitTS = cmdResp.CommitVersion
+		lr.saveResolved(txnID, status)
+	}
+	return status, nil
 }
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	tikvLockResolverCountWithResolveLocks.Inc()
+	lreq := &kvrpcpb.ResolveLockRequest{
+		StartVersion:  l.TxnID,
+		CommitVersion: status.CommitTS(), // 0 if status is rollbacked.
+	}
 	cleanWholeRegion := l.TxnSize >= bigTxnThreshold
-	for {
-		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if _, ok := cleanRegions[loc.Region]; ok {
-			return nil
-		}
-		lreq := &kvrpcpb.ResolveLockRequest{
-			StartVersion: l.TxnID,
-		}
-		if status.IsCommitted() {
-			lreq.CommitVersion = status.CommitTS()
-		}
-		if l.TxnSize < bigTxnThreshold {
-			// Only resolve specified keys when it is a small transaction,
-			// prevent from scanning the whole region in this case.
-			tikvLockResolverCountWithResolveLockLite.Inc()
-			lreq.Keys = [][]byte{l.Key}
-		}
-		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
-		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
-		}
-		cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
-		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
-			logutil.BgLogger().Error("resolveLock error", zap.Error(err))
-			return err
-		}
-		if cleanWholeRegion {
-			cleanRegions[loc.Region] = struct{}{}
-		}
+	if !cleanWholeRegion {
+		// Only resolve specified keys when it is a small transaction,
+		// prevent from scanning the whole region in this case.
+		tikvLockResolverCountWithResolveLockLite.Inc()
+		lreq.Keys = [][]byte{l.Key}
+	}
+
+	loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, ok := cleanRegions[loc.Region]; ok {
 		return nil
 	}
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
+	resp, loc, err := sendRequestHandleRegionErr(bo, lr.store, l.Key, req, readTimeoutShort)
+	if err != nil {
+		return err
+	}
+	cmdResp := resp.(*kvrpcpb.ResolveLockResponse)
+	if keyErr := cmdResp.GetError(); keyErr != nil {
+		err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
+		logutil.BgLogger().Error("resolveLock error", zap.Error(err))
+		return err
+	}
+	if cleanWholeRegion {
+		cleanRegions[loc.Region] = struct{}{}
+	}
+
+	return nil
 }
