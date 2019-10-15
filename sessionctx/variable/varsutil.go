@@ -604,7 +604,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
-	case TiDBAllowRemoveAutoInc:
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil

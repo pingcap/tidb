@@ -1836,6 +1836,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
+	variable.TiDBUsePlanBaselines,
 }
 
 var (
