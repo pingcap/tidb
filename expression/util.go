@@ -33,19 +33,28 @@ import (
 	"golang.org/x/tools/container/intsets"
 )
 
+// cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
+// to reduce unnecessary allocation for Expression arguments array
 type cowExprRef struct {
 	ref []Expression
 	new []Expression
 }
 
-func (c *cowExprRef) Set(i int, val Expression) {
-	if c.new == nil {
-		c.new = make([]Expression, len(c.ref))
-		copy(c.new, c.ref[:i])
+// Set will allocate new array if changed flag true
+func (c *cowExprRef) Set(i int, changed bool, val Expression) {
+	if c.new != nil {
+		c.new[i] = val
+		return
 	}
+	if !changed {
+		return
+	}
+	c.new = make([]Expression, len(c.ref))
+	copy(c.new, c.ref[:i])
 	c.new[i] = val
 }
 
+// Result return the final reference
 func (c *cowExprRef) Result() []Expression {
 	if c.new != nil {
 		return c.new
@@ -190,17 +199,15 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
 			return true, newFunc
 		}
+		// cowExprRef is a copy-on-write util, args array allocation happens only
+		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
-			if substituted {
-				refExprArr.Set(idx, newFuncExpr)
-			} else {
-				if changed {
-					substituted = true
-					refExprArr.Set(idx, newFuncExpr)
-				}
+			refExprArr.Set(idx, changed, newFuncExpr)
+			if changed {
+				substituted = true
 			}
 		}
 		if substituted {
