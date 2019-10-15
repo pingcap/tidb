@@ -100,6 +100,10 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	ds.allConds = predicates
+	if ds.preferStoreType&preferTiFlash != 0 {
+		ds.pushedDownConds, predicates = expression.CheckExprPushFlash(predicates)
+		return predicates, ds
+	}
 	_, ds.pushedDownConds, predicates = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient())
 	return predicates, ds
 }
@@ -186,7 +190,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	p.mergeSchema()
-	p.buildKeyInfo()
+	p.BuildKeyInfo()
 	return ret, p.self
 }
 
