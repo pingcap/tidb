@@ -736,6 +736,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Ranges:           ranger.FullRange(),
 		rangeInfo:        rangeInfo,
 		Desc:             desc,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
@@ -746,7 +748,13 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	if !isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table, TableAsName: ds.TableAsName}.Init(ds.ctx, ds.blockOffset)
+		ts := PhysicalTableScan{
+			Columns:         ds.Columns,
+			Table:           is.Table,
+			TableAsName:     ds.TableAsName,
+			isPartition:     ds.isPartition,
+			physicalTableID: ds.physicalTableID,
+		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
