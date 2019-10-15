@@ -84,3 +84,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
+
+go 1.13
+
+replace github.com/pingcap/tipb => github.com/SunRunAway/tipb v0.0.0-20191015062550-6a2d99cc954a
