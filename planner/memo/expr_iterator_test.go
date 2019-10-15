@@ -256,4 +256,15 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
 	)
 	c.Assert(countMatchedIter(g4, p7), Equals, 16)
+
+	// This is not a test case for EngineType. This case is to test
+	// the Pattern without a leaf AnyOperand. It is more efficient to
+	// test it here.
+	p8 := BuildPattern(
+		OperandJoin,
+		EngineTiDBOnly,
+		BuildPattern(OperandTableGather, EngineTiDBOnly),
+		BuildPattern(OperandTableGather, EngineTiDBOnly),
+	)
+	c.Assert(countMatchedIter(g4, p8), Equals, 4)
 }
