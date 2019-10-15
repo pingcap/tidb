@@ -276,10 +276,10 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.memMax, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogSucc:
 		st.succ, err = strconv.ParseBool(value)
-	case variable.SlowLogQuerySQLStr:
-		st.sql = value
 	case variable.SlowLogPlan:
 		st.plan = value
+	case variable.SlowLogQuerySQLStr:
+		st.sql = value
 	}
 	if err != nil {
 		return errors.Wrap(err, "parse slow log failed `"+field+"` error")

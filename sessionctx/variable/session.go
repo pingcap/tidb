@@ -1281,7 +1281,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlan, SlowLogPlanPrefix+logItems.Plan+SlowLogPlanSuffix)
+		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
 	}
 
 	if logItems.PrevStmt != "" {

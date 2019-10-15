@@ -838,16 +838,17 @@ func getPlanTree(p plannercore.Plan) string {
 		case *plannercore.Update:
 			selectPlan = x.SelectPlan
 		case *plannercore.Insert:
-			if x.SelectPlan != nil {
-				selectPlan = x.SelectPlan
-			}
+			selectPlan = x.SelectPlan
 		}
 	}
 	if selectPlan == nil {
 		return ""
 	}
 	planTree := plannercore.EncodePlan(selectPlan)
-	return planTree
+	if len(planTree) == 0 {
+		return planTree
+	}
+	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
