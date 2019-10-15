@@ -37,6 +37,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 0}}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{&rangeRealGener{0, 0, 0}, nil}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 1}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{0, 1000}}},
 	},
 	ast.Or: {},
 	ast.Mul: {

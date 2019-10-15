@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -65,11 +66,63 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 }
 
 func (b *builtinArithmeticModIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	x := result.Int64s()
+	y := buf.Int64s()
+	tagx := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	tagy := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		if y[i] == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		if result.IsNull(i) {
+			continue
+		}
+		switch {
+		case tagx && tagy:
+			x[i] = x[i] % y[i]
+		case tagx && !tagy:
+			if y[i] < 0 {
+				x[i] = int64(uint64(x[i]) % uint64(-y[i]))
+			} else {
+				x[i] = int64(uint64(x[i]) % uint64(y[i]))
+			}
+		case !tagx && tagy:
+			if x[i] < 0 {
+				x[i] = -int64(uint64(-x[i])) % y[i]
+			} else {
+				x[i] = int64(uint64(x[i])) % y[i]
+			}
+		case !tagx && !tagy:
+			x[i] = x[i] % y[i]
+		}
+
+	}
+	return nil
 }
 
 func (b *builtinArithmeticMinusRealSig) vectorized() bool {
