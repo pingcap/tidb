@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/types"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -31,6 +32,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.CurrentRole:    {},
 	ast.TiDBIsDDLOwner: {},
 	ast.ConnectionID:   {},
+	ast.LastInsertId: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
