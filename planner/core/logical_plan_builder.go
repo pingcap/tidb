@@ -70,6 +70,12 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
+	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
+	HintReadFromStorage = "read_from_storage"
+	// HintTiFlash is a label represents the tiflash storage type.
+	HintTiFlash = "tiflash"
+	// HintTiKV is a label represents the tikv storage type.
+	HintTiKV = "tikv"
 )
 
 const (
@@ -249,14 +255,14 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				var leftCol, rightCol *expression.Column
-				if left.Schema().Contains(arg0) && right.Schema().Contains(arg1) {
-					leftCol, rightCol = arg0, arg1
+				leftCol := left.Schema().RetrieveColumn(arg0)
+				rightCol := right.Schema().RetrieveColumn(arg1)
+				if leftCol == nil || rightCol == nil {
+					leftCol = left.Schema().RetrieveColumn(arg1)
+					rightCol = right.Schema().RetrieveColumn(arg0)
+					arg0, arg1 = arg1, arg0
 				}
-				if leftCol == nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
-					leftCol, rightCol = arg1, arg0
-				}
-				if leftCol != nil {
+				if leftCol != nil && rightCol != nil {
 					// Do not derive `is not null` for anti join, since it may cause wrong results.
 					// For example:
 					// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
@@ -274,16 +280,16 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-				}
-				// For quries like `select a in (select a from s where s.b = t.b) from t`,
-				// if subquery is empty caused by `s.b = t.b`, the result should always be
-				// false even if t.a is null or s.a is null. To make this join "empty aware",
-				// we should differentiate `t.a = s.a` from other column equal conditions, so
-				// we put it into OtherConditions instead of EqualConditions of join.
-				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
-					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
-					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-					continue
+					// For queries like `select a in (select a from s where s.b = t.b) from t`,
+					// if subquery is empty caused by `s.b = t.b`, the result should always be
+					// false even if t.a is null or s.a is null. To make this join "empty aware",
+					// we should differentiate `t.a = s.a` from other column equal conditions, so
+					// we put it into OtherConditions instead of EqualConditions of join.
+					if binop.FuncName.L == ast.EQ && !arg0.InOperand && !arg1.InOperand {
+						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+						continue
+					}
 				}
 			}
 		}
@@ -376,6 +382,22 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+}
+
+func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	var alias *hintTableInfo
+	if len(ds.TableAsName.L) != 0 {
+		alias = &hintTableInfo{name: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
+	} else {
+		alias = &hintTableInfo{name: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
+		ds.preferStoreType |= preferTiFlash
 	}
 }
 
@@ -1973,6 +1995,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
+		tiflashTables                               []hintTableInfo
 		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2011,6 +2034,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintReadFromStorage:
+			if hint.StoreType.L == HintTiFlash {
+				tiflashTables = tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2020,6 +2047,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		indexNestedLoopJoinTables: INLJTables,
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
+		flashTables:               tiflashTables,
 		aggHints:                  aggHints,
 	})
 }
@@ -2387,6 +2415,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.handleHelper.pushMap(nil)
 	}
 	ds.SetSchema(schema)
+	ds.setPreferredStoreType(b.TableHints())
 
 	// Init fullIdxCols, fullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
@@ -2547,6 +2576,11 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+	// Note that, tp can only be LeftOuterJoin or InnerJoin, so we don't consider other outer joins.
+	if tp == LeftOuterJoin {
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
+		resetNotNullFlag(ap.schema, outerPlan.Schema().Len(), ap.schema.Len())
+	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.schema.Columns[i].IsReferenced = true
 	}
