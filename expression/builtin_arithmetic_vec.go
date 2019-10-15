@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -226,11 +227,38 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 }
 
 func (b *builtinArithmeticMultiplyDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf)
+	x := result.Decimals()
+	y := buf.Decimals()
+	var to types.MyDecimal
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		err = types.DecimalMul(&x[i], &y[i], &to)
+		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+			return err
+		}
+		x[i] = to
+	}
+	return nil
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
