@@ -112,7 +112,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 	filterConds := ds.allConds
 	// do preSolve with filter exprs for situations like
-	// where    c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 amd c3 = c1 - 10
+	// where c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 and c3 = c1 - 10
 	// no need to do partition pruning work for "alwaysFalse" filter results
 	if len(partitionExprs) > 3 {
 		sctx := ds.SCtx()
