@@ -24,10 +24,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -95,11 +93,7 @@ type twoPhaseCommitter struct {
 	priority  pb.CommandPri
 	connID    uint64 // connID is used for log.
 	cleanWg   sync.WaitGroup
-	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
-	// We use it to guarantee GC worker will not influence any active txn. The value
-	// should be less than GC life time.
-	maxTxnTimeUse uint64
-	detail        unsafe.Pointer
+	detail    unsafe.Pointer
 
 	primaryKey     []byte
 	forUpdateTS    uint64
@@ -314,9 +308,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
-	// Convert from sec to ms
-	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
-
 	// Sanity check for startTS.
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
@@ -329,7 +320,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
-	c.maxTxnTimeUse = maxTxnTimeUse
 	c.keys = keys
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
@@ -417,9 +407,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		// The backoffer instance is created outside of the goroutine to avoid
-		// potencial data race in unit test since `CommitMaxBackoff` will be updated
+		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
+		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
@@ -575,7 +565,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -732,7 +722,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			}
 			locks = append(locks, lock)
 		}
-		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
+		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1034,13 +1024,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
-		if tmpMaxTxnTime := uint64(val.(int)); tmpMaxTxnTime > 0 {
-			c.maxTxnTimeUse = tmpMaxTxnTime
-		}
-	})
-
-	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err

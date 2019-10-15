@@ -970,6 +970,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(Column#1,Column#14)->IndexReader(Index(t.c_d_e)[[42,42]])}(Column#2,Column#27)->Sel([or(Column#26, Column#40)])->Projection->Delete",
 		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(Column#2,Column#25)->Projection->Update",
+		},
 	}
 
 	ctx := context.Background()

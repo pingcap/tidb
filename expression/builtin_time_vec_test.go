@@ -25,26 +25,32 @@ import (
 )
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
-	ast.DateLiteral:      {},
-	ast.DateDiff:         {},
-	ast.TimeDiff:         {},
-	ast.DateFormat:       {},
-	ast.Hour:             {},
-	ast.Minute:           {},
-	ast.Second:           {},
-	ast.MicroSecond:      {},
-	ast.Now:              {},
-	ast.DayOfWeek:        {},
-	ast.DayOfYear:        {},
-	ast.Day:              {},
-	ast.CurrentTime:      {},
-	ast.CurrentDate:      {},
-	ast.MakeDate:         {},
-	ast.MakeTime:         {},
-	ast.PeriodAdd:        {},
-	ast.PeriodDiff:       {},
-	ast.Quarter:          {},
-	ast.TimeFormat:       {},
+	ast.DateLiteral: {},
+	ast.DateDiff:    {},
+	ast.TimeDiff:    {},
+	ast.DateFormat:  {},
+	ast.Hour: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.Minute:      {},
+	ast.Second:      {},
+	ast.MicroSecond: {},
+	ast.Now:         {},
+	ast.DayOfWeek:   {},
+	ast.DayOfYear:   {},
+	ast.Day:         {},
+	ast.CurrentTime: {},
+	ast.CurrentDate: {
+		{retEvalType: types.ETDatetime},
+	},
+	ast.MakeDate:   {},
+	ast.MakeTime:   {},
+	ast.PeriodAdd:  {},
+	ast.PeriodDiff: {},
+	ast.Quarter:    {},
+	ast.TimeFormat: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
+	},
 	ast.TimeToSec:        {},
 	ast.TimestampAdd:     {},
 	ast.TimestampDiff:    {},
@@ -96,6 +102,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.DayOfMonth: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.UTCDate: {
+		{retEvalType: types.ETDatetime},
 	},
 }
 

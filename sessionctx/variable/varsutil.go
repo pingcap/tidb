@@ -437,6 +437,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case MaxExecutionTime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case ThreadPoolSize:
+		return checkUInt64SystemVar(name, value, 1, 64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -485,6 +487,21 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
 		if v < 0 || v > 1 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
+	case TiDBOptCPUFactor,
+		TiDBOptCopCPUFactor,
+		TiDBOptNetworkFactor,
+		TiDBOptScanFactor,
+		TiDBOptDescScanFactor,
+		TiDBOptMemoryFactor,
+		TiDBOptConcurrencyFactor:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
@@ -586,7 +603,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
-	case TiDBAllowRemoveAutoInc:
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil
