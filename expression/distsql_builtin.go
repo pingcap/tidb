@@ -376,17 +376,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinCaseWhenIntSig{base}
 
 	case tipb.ScalarFuncSig_IntIsFalse:
-		f = &builtinIntIsFalseSig{base}
+		f = &builtinIntIsFalseSig{base, false}
 	case tipb.ScalarFuncSig_RealIsFalse:
-		f = &builtinRealIsFalseSig{base}
+		f = &builtinRealIsFalseSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
-		f = &builtinDecimalIsFalseSig{base}
+		f = &builtinDecimalIsFalseSig{base, false}
 	case tipb.ScalarFuncSig_IntIsTrue:
-		f = &builtinIntIsTrueSig{base}
+		f = &builtinIntIsTrueSig{base, false}
 	case tipb.ScalarFuncSig_RealIsTrue:
-		f = &builtinRealIsTrueSig{base}
+		f = &builtinRealIsTrueSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
-		f = &builtinDecimalIsTrueSig{base}
+		f = &builtinDecimalIsTrueSig{base, false}
 
 	case tipb.ScalarFuncSig_IfNullReal:
 		f = &builtinIfNullRealSig{base}
@@ -453,6 +453,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONDepthSig{base}
 	case tipb.ScalarFuncSig_JsonSearchSig:
 		f = &builtinJSONSearchSig{base}
+	case tipb.ScalarFuncSig_JsonValidJsonSig:
+		f = &builtinJSONValidJSONSig{base}
+	case tipb.ScalarFuncSig_JsonValidStringSig:
+		f = &builtinJSONValidStringSig{base}
+	case tipb.ScalarFuncSig_JsonValidOthersSig:
+		f = &builtinJSONValidOthersSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
