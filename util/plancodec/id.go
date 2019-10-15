@@ -92,7 +92,7 @@ const (
 	TypePointGet = "Point_Get"
 	// TypeShowDDLJobs is the type of show ddl jobs.
 	TypeShowDDLJobs = "ShowDDLJobs"
-	// TypePointGet is the type of PointGetPlan.
+	// TypeBatchPointGet is the type of BatchPointGetPlan.
 	TypeBatchPointGet = "Batch_Point_Get"
 )
 
