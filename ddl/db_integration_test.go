@@ -950,3 +950,14 @@ func (s *testIntegrationSuite) TestMultipleUnique(c *C) {
 	tk.MustExec("create table multi_unique (a int key unique unique key unique)")
 	tk.MustExec("drop table multi_unique")
 }
+
+func (s *testIntegrationSuite) TestParserIssue284(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
+	_, err := tk.Exec("create table test.t_parser_issue_284_2(id int not null primary key, c1 int not null, constraint foreign key (c1) references t_parser_issue_284(c1))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table test.t_parser_issue_284")
+	tk.MustExec("drop table test.t_parser_issue_284_2")
+}
