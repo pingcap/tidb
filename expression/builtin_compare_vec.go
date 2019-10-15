@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"math"
 )
 
 // vecEvalDecimal evals a builtinGreatestDecimalSig.
@@ -334,11 +335,67 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinNullEQIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag),
+		mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+
+	args0 := buf0.Int64s()
+	args1 := buf1.Int64s()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		switch {
+		case isNull0 && isNull1:
+			i64s[i] = 1
+		case isNull0 != isNull1:
+			break
+		case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(args0[i]), uint64(args1[i])) == 0:
+			i64s[i] = 1
+		case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(args0[i], args1[i]) == 0:
+			i64s[i] = 1
+		case isUnsigned0 && !isUnsigned1:
+			if args1[i] < 0 || args0[i] > math.MaxInt64 {
+				break
+			}
+			if types.CompareInt64(args0[i], args1[i]) == 0 {
+				i64s[i] = 1
+			}
+		case !isUnsigned0 && isUnsigned1:
+			if args0[i] < 0 || args1[i] > math.MaxInt64 {
+				break
+			}
+			if types.CompareInt64(args0[i], args1[i]) == 0 {
+				i64s[i] = 1
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNullEQRealSig) vectorized() bool {
