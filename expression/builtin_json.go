@@ -738,7 +738,7 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
 	default:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argType)
-		sig = &builtinJSONValidStringSig{bf}
+		sig = &builtinJSONValidOthersSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidOthersSig)
 	}
 	return sig, nil
