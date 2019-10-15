@@ -47,6 +47,7 @@ const (
 )
 
 const (
+	idSeparator    = "_"
 	lineBreaker    = '\n'
 	lineBreakerStr = "\n"
 	separator      = '\t'
@@ -132,7 +133,6 @@ func (pd *planDecoder) decode(planString string) (string, error) {
 			pd.buf.WriteString(p.fields[j])
 		}
 	}
-
 	return pd.buf.String(), nil
 }
 
@@ -271,8 +271,6 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteString(explainInfo)
 	buf.WriteByte(lineBreaker)
 }
-
-const idSeparator = "_"
 
 func encodeID(planType string, id int) string {
 	planID := TypeStringToPhysicalID(planType)
