@@ -41,6 +41,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETTimestamp}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.NameConst: {
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}},
