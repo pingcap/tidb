@@ -14,15 +14,12 @@
 package expression
 
 import (
-	"math"
-	"strconv"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"strconv"
 )
 
 func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -710,19 +707,20 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 	}
 
 	res := result.GoDurations()
-	var fsp int8
-	fsp, err = types.CheckFsp(b.tp.Decimal)
-	if err != nil {
-		return err
+	dur := &types.Duration{
+		Fsp: types.UnspecifiedFsp,
 	}
-	var zeroT time.Time
+	var rd types.Duration
 	for i, v := range res {
 		if result.IsNull(i) {
 			continue
 		}
-		zeroT = time.Date(0, 0, 0, 0, 0, 0, 0, time.Local)
-		nd := zeroT.Add(v).Round(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond).Sub(zeroT)
-		res[i] = nd
+		dur.Duration = v
+		rd, err = dur.RoundFrac(int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		res[i] = rd.Duration
 	}
 	return nil
 }
