@@ -152,6 +152,12 @@ func (b *builtinArithmeticModRealSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+<<<<<<< HEAD
+=======
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+>>>>>>> f907a727c01681e0e1344967215b633ce0b59c41
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
