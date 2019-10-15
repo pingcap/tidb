@@ -699,7 +699,7 @@ func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 
