@@ -630,6 +630,7 @@ func vecResOfLT(result *chunk.Column) {
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			res[i] = 0
+			continue
 		}
 		if res[i] < 0 {
 			res[i] = 1
