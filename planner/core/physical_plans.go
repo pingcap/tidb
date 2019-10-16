@@ -226,7 +226,7 @@ func (ts *PhysicalTableScan) ExpandVirtualColumn() {
 			continue
 		}
 
-		baseCols := expression.ExtractColumnWithVirtualExpr(col.VirtualExpr)
+		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
 		for _, baseCol := range baseCols {
 			if !ts.schema.Contains(baseCol) {
 				ts.schema.Columns = append(ts.schema.Columns, baseCol)

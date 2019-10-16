@@ -56,30 +56,30 @@ func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remaine
 	return input, filteredOut
 }
 
-// ExtractColumnWithVirtualExpr extracts all columns from an expression with virtual expr.
-func ExtractColumnWithVirtualExpr(expr Expression) (cols []*Column) {
+// ExtractDependentColumns extracts all dependent columns from a virtual column.
+func ExtractDependentColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
-	return extractColumnsWithVirtualExpr(result, expr)
+	return extractDependentColumns(result, expr)
 }
 
-func extractColumnsWithVirtualExpr(result []*Column, expr Expression) []*Column {
+func extractDependentColumns(result []*Column, expr Expression) []*Column {
 	switch v := expr.(type) {
 	case *Column:
 		result = append(result, v)
 		if v.VirtualExpr != nil {
-			result = extractColumnsWithVirtualExpr(result, v.VirtualExpr)
+			result = extractDependentColumns(result, v.VirtualExpr)
 		}
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
-			result = extractColumnsWithVirtualExpr(result, arg)
+			result = extractDependentColumns(result, arg)
 		}
 	}
 	return result
 }
 
 // ExtractColumns extracts all columns from an expression.
-func ExtractColumns(expr Expression) (cols []*Column) {
+func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
