@@ -731,7 +731,8 @@ func (s *testSuite1) TestIssue10608(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(100292, 508931), (120002, 508932)")
 	tk.MustExec("insert into t values(508931), (508932)")
-	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 
 }
 
