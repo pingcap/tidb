@@ -37,7 +37,7 @@ func CompareUint64(x, y uint64) int {
 	return 1
 }
 
-//comparing the []uint64 x to y
+//VecComparUU returns []int64 comparing the []uint64 x to []uint64 y
 func VecComparUU(x, y []uint64, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
@@ -51,7 +51,7 @@ func VecComparUU(x, y []uint64, res []int64) {
 	}
 }
 
-//comparing the []int64 x to y
+//VecCompareII returns []int64 comparing the []int64 x to []int64 y
 func VecCompareII(x, y, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
@@ -65,7 +65,7 @@ func VecCompareII(x, y, res []int64) {
 	}
 }
 
-//comparing the []uint64 x to []int64y
+//VecComparUI returns []int64 comparing the []uint64 x to []int64y
 func VecComparUI(x []uint64, y, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
