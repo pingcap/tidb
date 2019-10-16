@@ -402,14 +402,17 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 }
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	numOuterRows := task.outerResult.Len()
-	var outerMatch []bool
+	numOuterChks, numOuterRows := task.outerResult.NumChunks(), task.outerResult.Len()
+	var outerMatch [][]bool
 	if imw.outerMergeCtx.filter != nil {
-		outerMatch = make([]bool, numOuterRows)
-		task.memTracker.Consume(int64(cap(outerMatch)))
-		outerMatch, err = expression.VectorizedFilterForList(imw.ctx, imw.outerMergeCtx.filter, task.outerResult, outerMatch)
-		if err != nil {
-			return err
+		outerMatch = make([][]bool, numOuterChks)
+		for i := 0; i < numOuterChks; i++ {
+			chk := task.outerResult.GetChunk(i)
+			outerMatch[i] = make([]bool, chk.NumRows())
+			outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), outerMatch[i])
+			if err != nil {
+				return err
+			}
 		}
 	}
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, numOuterRows)
@@ -417,7 +420,9 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	for i := uint32(0); i < numChunk; i++ {
 		numRow := uint32(task.outerResult.GetChunk(int(i)).NumRows())
 		for j := uint32(0); j < numRow; j++ {
-			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: i, RowIdx: j})
+			if len(outerMatch) == 0 || outerMatch[i][j] {
+				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: i, RowIdx: j})
+			}
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
