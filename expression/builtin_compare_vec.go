@@ -618,8 +618,8 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
-	vecCompareNull(buf0, buf1, result)
 	VecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[0].GetType().Flag), buf0, buf1, result)
+	vecCompareNull(buf0, buf1, result)
 	vecResOfLT(result)
 	return nil
 }
