@@ -431,7 +431,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		logutil.Logger(ctx).Error("indexHashJoinInnerWorker.run failed", zap.Error(joinResult.err))
 		return
 	}
-	if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
+	// When task.keepOuterOrder is true, the last joinResult will be checked
+	// when the a task has been processed, thus we do not need to check it here
+	// again.
+	if !task.keepOuterOrder && joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
 		select {
 		case resultCh <- joinResult:
 		case <-ctx.Done():
