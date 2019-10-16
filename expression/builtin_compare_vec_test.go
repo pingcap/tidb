@@ -35,7 +35,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
 		}},
 	},
-	ast.GT:   {},
+	ast.GT:   {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}}},
 	ast.EQ:   {},
 	ast.GE:   {},
 	ast.Date: {},
