@@ -85,42 +85,47 @@ func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 
 	x := result.Int64s()
 	y := buf.Int64s()
-	tagx := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	tagy := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-		if y[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				return err
+	xIsunsiged := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	yIsunsiged := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	switch {
+	case xIsunsiged && yIsunsiged:
+		for i := 0; i < n; i++ {
+			if y[i] == 0 {
+				if err := handleDivisionByZeroError(b.ctx); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
 			}
-			result.SetNull(i, true)
-			continue
-		}
-		if result.IsNull(i) {
-			continue
-		}
-		switch {
-		case tagx && tagy:
 			x[i] = x[i] % y[i]
-		case tagx && !tagy:
+		}
+	case xIsunsiged && !yIsunsiged:
+		for i := 0; i < n; i++ {
+			if y[i] == 0 {
+				if err := handleDivisionByZeroError(b.ctx); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
 			if y[i] < 0 {
 				x[i] = int64(uint64(x[i]) % uint64(-y[i]))
 			} else {
 				x[i] = int64(uint64(x[i]) % uint64(y[i]))
 			}
-		case !tagx && tagy:
+		}
+	case !xIsunsiged && yIsunsiged:
+		for i := 0; i < n; i++ {
 			if x[i] < 0 {
 				x[i] = -int64(uint64(-x[i])) % y[i]
 			} else {
 				x[i] = int64(uint64(x[i])) % y[i]
 			}
-		case !tagx && !tagy:
+		}
+	case !xIsunsiged && !yIsunsiged:
+		for i := 0; i < n; i++ {
 			x[i] = x[i] % y[i]
 		}
-
 	}
 	return nil
 }
