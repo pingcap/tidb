@@ -862,7 +862,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 				i64s[i] = 1
 			}
 		} else {
-			if x[i] == y[i] {
+			if types.CompareFloat64(x[i], y[i]) == 0 {
 				i64s[i] = 0
 			} else {
 				i64s[i] = 1
