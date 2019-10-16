@@ -207,7 +207,6 @@ func (e *HashAggExec) Close() error {
 		}
 		close(e.finalOutputCh)
 	}
-	e.executed = false
 	close(e.finishCh)
 	for _, ch := range e.partialOutputChs {
 		for range ch {
@@ -215,6 +214,7 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
+	e.executed = false
 	return e.baseExecutor.Close()
 }
 
