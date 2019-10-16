@@ -836,7 +836,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
+	if err = b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get(types.ETReal, n)
@@ -844,7 +844,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+	if err = b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
