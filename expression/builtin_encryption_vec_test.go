@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
@@ -32,6 +33,12 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.SHA1:               {},
 	ast.PasswordFunc:       {},
 	ast.SHA2:               {},
+	ast.Encode: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+	},
+	ast.Decode: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinEncryptionFunc(c *C) {

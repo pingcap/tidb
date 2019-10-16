@@ -15,7 +15,9 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/encrypt"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -35,19 +37,81 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinDecodeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err1 := b.bufAllocator.get(types.ETString, n)
+	if err1 != nil {
+		return err1
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		dataStr := buf.GetString(i)
+		passwordStr := buf1.GetString(i)
+		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(decodeStr)
+	}
+	return nil
 }
 
 func (b *builtinEncodeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err1 := b.bufAllocator.get(types.ETString, n)
+	if err1 != nil {
+		return err1
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		decodeStr := buf.GetString(i)
+		passwordStr := buf1.GetString(i)
+		dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(dataStr)
+	}
+	return nil
 }
 
 func (b *builtinAesDecryptIVSig) vectorized() bool {
