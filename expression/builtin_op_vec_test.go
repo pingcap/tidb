@@ -53,7 +53,15 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.And: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
-	ast.UnaryMinus: {},
+	ast.RightShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.LeftShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.UnaryMinus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+	},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},

@@ -859,7 +859,6 @@ func prepare4IndexOuterHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 	return idxHash
 }
 
-/*
 func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
@@ -918,7 +917,6 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	e.joiners = joiners
 	return e
 }
-*/
 
 type indexJoinType int8
 
@@ -945,7 +943,7 @@ func benchmarkIndexJoinExecWithCase(
 		case indexOuterHashJoin:
 			exec = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
 		case indexMergeJoin:
-			// exec = prepare4IndexMergeJoin(tc, outerDS, innerDS)
+			exec = prepare4IndexMergeJoin(tc, outerDS, innerDS)
 		}
 
 		tmpCtx := context.Background()
@@ -985,15 +983,15 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 	outerDS := buildMockDataSourceWithIndex(outerOpt, tc.innerIdx)
 	innerDS := buildMockDataSourceWithIndex(innerOpt, tc.innerIdx)
 
-	// tc.needOuterSort = true
-	// b.Run(fmt.Sprintf("index merge join need outer sort %v", tc), func(b *testing.B) {
-	// 	benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
-	// })
+	tc.needOuterSort = true
+	b.Run(fmt.Sprintf("index merge join need outer sort %v", tc), func(b *testing.B) {
+		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
+	})
 
-	// tc.needOuterSort = false
-	// b.Run(fmt.Sprintf("index merge join %v", tc), func(b *testing.B) {
-	// 	benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
-	// })
+	tc.needOuterSort = false
+	b.Run(fmt.Sprintf("index merge join %v", tc), func(b *testing.B) {
+		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexMergeJoin)
+	})
 
 	b.Run(fmt.Sprintf("index inner hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexInnerHashJoin)
