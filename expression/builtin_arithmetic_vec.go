@@ -90,22 +90,36 @@ func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 	switch {
 	case xIsunsiged && yIsunsiged:
 		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
 			if y[i] == 0 {
+				result.SetNull(i, true)
 				if err := handleDivisionByZeroError(b.ctx); err != nil {
 					return err
 				}
-				result.SetNull(i, true)
+				continue
+			}
+			if result.IsNull(i) {
 				continue
 			}
 			x[i] = x[i] % y[i]
 		}
 	case xIsunsiged && !yIsunsiged:
 		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
 			if y[i] == 0 {
+				result.SetNull(i, true)
 				if err := handleDivisionByZeroError(b.ctx); err != nil {
 					return err
 				}
-				result.SetNull(i, true)
+				continue
+			}
+			if result.IsNull(i) {
 				continue
 			}
 			if y[i] < 0 {
@@ -116,6 +130,20 @@ func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 	case !xIsunsiged && yIsunsiged:
 		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
+			if y[i] == 0 {
+				result.SetNull(i, true)
+				if err := handleDivisionByZeroError(b.ctx); err != nil {
+					return err
+				}
+				continue
+			}
+			if result.IsNull(i) {
+				continue
+			}
 			if x[i] < 0 {
 				x[i] = -int64(uint64(-x[i])) % y[i]
 			} else {
@@ -124,6 +152,20 @@ func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 	case !xIsunsiged && !yIsunsiged:
 		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
+			if y[i] == 0 {
+				result.SetNull(i, true)
+				if err := handleDivisionByZeroError(b.ctx); err != nil {
+					return err
+				}
+				continue
+			}
+			if result.IsNull(i) {
+				continue
+			}
 			x[i] = x[i] % y[i]
 		}
 	}
