@@ -836,22 +836,17 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 	go func() {
 		defer do.wg.Done()
 		defer recoverInDomain("globalBindHandleWorkerLoop", false)
-		loadTicker := time.NewTicker(bindinfo.Lease)
-		captureBaselineTicker := time.NewTicker(bindinfo.Lease)
-		defer func() {
-			captureBaselineTicker.Stop()
-			loadTicker.Stop()
-		}()
+		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
+		defer bindWorkerTicker.Stop()
 		for {
 			select {
 			case <-do.exit:
 				return
-			case <-loadTicker.C:
+			case <-bindWorkerTicker.C:
 				err := do.bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-			case <-captureBaselineTicker.C:
 				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
 					continue
 				}
