@@ -30,7 +30,7 @@ import (
 // It is stored and retrieved by context.Value and context.SetValue method.
 type DirtyDB struct {
 	sync.Mutex
-	
+
 	// tables is a map whose key is tableID.
 	tables map[int64]*DirtyTable
 }
