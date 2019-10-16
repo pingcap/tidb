@@ -300,12 +300,6 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		return false
 	})
 
-	// Check blacklist first
-	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-	if disallowPushdown {
-		return false
-	}
-
 	switch sf.FuncName.L {
 	case
 		// logical functions.
@@ -357,7 +351,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 		// date functions.
 		ast.DateFormat:
-		return true
+		return isPushdownEnabled(sf.FuncName.L)
 
 	case ast.Cast:
 		// Disable time related cast function temporarily
@@ -371,10 +365,15 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastTimeAsTime:
 			return false
 		default:
-			return true
+			return isPushdownEnabled(sf.FuncName.L)
 		}
 	}
 	return false
+}
+
+func isPushdownEnabled(name string) bool {
+	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[name]
+	return !disallowPushdown
 }
 
 // DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
