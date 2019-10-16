@@ -160,6 +160,7 @@ type HashAggExec struct {
 	// we can remove this attribute.
 	isUnparallelExec bool
 	prepared         bool
+	executed         bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -603,10 +604,14 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		}
 	})
 
+	if e.executed {
+		return nil
+	}
 	for !chk.IsFull() {
 		e.finalInputCh <- chk
 		result, ok := <-e.finalOutputCh
 		if !ok { // all finalWorkers exited
+			e.executed = true
 			if chk.NumRows() > 0 { // but there are some data left
 				return nil
 			}
