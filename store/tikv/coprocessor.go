@@ -466,7 +466,6 @@ func (it *copIterator) open(ctx context.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 		worker := &copIteratorWorker{
 			taskCh:   taskCh,
 			wg:       &it.wg,
@@ -476,8 +475,10 @@ func (it *copIterator) open(ctx context.Context) {
 			finishCh: it.finishCh,
 			vars:     it.vars,
 			clientHelper: clientHelper{
-				LockResolver:        it.store.lockResolver,
-				RegionRequestSender: sender,
+				LockResolver:      it.store.lockResolver,
+				RegionCache:       it.store.regionCache,
+				Client:            it.store.client,
+				minCommitTSPushed: make(map[uint64]struct{}),
 			},
 
 			memTracker: it.memTracker,
@@ -662,12 +663,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ScanDetail:     true,
 	})
 	startTime := time.Now()
-	resp, rpcCtx, err := worker.SendReqCtx(bo, req, task.region, task.storeType)
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, task.storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
-	task.storeAddr = worker.RegionRequestSender.storeAddr
+	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
@@ -691,9 +692,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 // meet the secondary lock again and run into a deadloop.
 type clientHelper struct {
 	*LockResolver
-	*RegionRequestSender
+	*RegionCache
+	Client
 
-	minCommitTSPushed []uint64
+	minCommitTSPushed map[uint64]struct{}
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
@@ -702,15 +704,24 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, region RegionVerID, callerSt
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
-	// Should we deduplicate here?
-	ch.minCommitTSPushed = append(ch.minCommitTSPushed, minCommitTSPushed...)
+	for _, v := range minCommitTSPushed {
+		ch.minCommitTSPushed[v] = struct{}{}
+	}
 	return msBeforeTxnExpired, nil
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
-func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, error) {
-	req.Context.ResolvedLocks = ch.minCommitTSPushed
-	return ch.RegionRequestSender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
+func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, string, error) {
+	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
+	if len(ch.minCommitTSPushed) > 0 {
+		resolvedLocks := make([]uint64, 0, len(ch.minCommitTSPushed))
+		for k, _ := range ch.minCommitTSPushed {
+			resolvedLocks = append(resolvedLocks, k)
+		}
+		req.Context.ResolvedLocks = resolvedLocks
+	}
+	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
+	return resp, ctx, sender.storeAddr, err
 }
 
 const (
