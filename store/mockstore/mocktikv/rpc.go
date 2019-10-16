@@ -369,15 +369,17 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 }
 
 func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) *kvrpcpb.CheckTxnStatusResponse {
-	if !h.checkKeyInRegion(req.PrimaryKey) {
+	if !h.checkKeyInRegion(req.Key) {
 		panic("KvCheckTxnStatus: key not in region")
 	}
 	var resp kvrpcpb.CheckTxnStatusResponse
-	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs())
+	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion(), req.GetCurrentTs())
 	if err != nil {
-		resp.Error = convertToKeyError(err)
-	} else {
-		resp.LockTtl, resp.CommitVersion = ttl, commitTS
+		if commitTS, ok := errors.Cause(err).(ErrAlreadyCommitted); ok {
+			resp.CommitVersion = uint64(commitTS)
+		} else {
+			resp.Error = convertToKeyError(err)
+		}
 	}
 	return &resp
 }

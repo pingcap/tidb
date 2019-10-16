@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -368,18 +369,21 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, e
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock) (TxnStatus, error) {
-	// NOTE: l.TTL = 0 is a special protocol!!!
-	// When the pessimistic txn prewrite meets locks of a txn, it should rollback that txn **unconditionally**.
-	// In this case, TiKV set the lock TTL = 0, and TiDB use currentTS = 0 to call
-	// getTxnStatus, and getTxnStatus with currentTS = 0 would rollback the transaction.
+	var currentTS uint64
 	if l.TTL == 0 {
-		return lr.getTxnStatus(bo, l.TxnID, l.Primary, 0)
+		// NOTE: l.TTL = 0 is a special protocol!!!
+		// When the pessimistic txn prewrite meets locks of a txn, it should rollback that lock **unconditionally**.
+		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
+		// Set currentTS to max uint64 to make the lock expired.
+		currentTS = math.MaxUint64
+	} else {
+		var err error
+		currentTS, err = lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
+		if err != nil {
+			return TxnStatus{}, err
+		}
 	}
 
-	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
-	if err != nil {
-		return TxnStatus{}, err
-	}
 	return lr.getTxnStatus(bo, l.TxnID, l.Primary, currentTS)
 }
 
@@ -391,7 +395,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
 	var status TxnStatus
-	req := tikvrpc.NewRequest(tikvrpc.CmdCleanup, &kvrpcpb.CleanupRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
 		Key:          primary,
 		StartVersion: txnID,
 		CurrentTs:    currentTS,
@@ -419,7 +423,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if resp.Resp == nil {
 			return status, errors.Trace(ErrBodyMissing)
 		}
-		cmdResp := resp.Resp.(*kvrpcpb.CleanupResponse)
+		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			// If the TTL of the primary lock is not outdated, the proto returns a ErrLocked contains the TTL.
 			if lockInfo := keyErr.GetLocked(); lockInfo != nil {
