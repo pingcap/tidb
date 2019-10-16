@@ -1247,7 +1247,7 @@
     "Cases": [
       {
         "SQL": "select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.c_str as float) = '2.3'",
-        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->Sel([eq(cast(Column#6), 2.3)])->TableReader(Table(t))}(Column#1,Column#13)"
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t)->Sel([eq(cast(Column#6), 2.3)]))->TableReader(Table(t))}(Column#1,Column#13)"
       }
     ]
   }
