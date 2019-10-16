@@ -308,10 +308,12 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
-
-	// TODO: remove this when implement sever side wait.
-	h.simulateServerSideWaitLock(errs)
+	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
+		req.GetLockTtl(), req.Nowait)
+	if !req.Nowait {
+		// TODO: remove this when implement sever side wait.
+		h.simulateServerSideWaitLock(errs)
+	}
 	return &kvrpcpb.PessimisticLockResponse{
 		Errors: convertToKeyErrors(errs),
 	}

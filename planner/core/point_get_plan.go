@@ -53,6 +53,7 @@ type PointGetPlan struct {
 	Lock             bool
 	IsForUpdate      bool
 	outputNames      []*types.FieldName
+	ForUpdateNoWait  bool
 }
 
 type nameValuePair struct {
@@ -240,7 +241,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
-			if x.LockTp == ast.SelectLockForUpdate {
+			if x.LockTp == ast.SelectLockForUpdate || x.LockTp == ast.SelectLockForUpdateNoWait {
 				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 				// is disabled (either by beginning transaction with START TRANSACTION or by setting
 				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -249,6 +250,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
+					fp.ForUpdateNoWait = x.LockTp == ast.SelectLockForUpdateNoWait
 				}
 			}
 			return fp

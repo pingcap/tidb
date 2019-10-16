@@ -79,3 +79,7 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/cfzjywxk/parser v0.0.0-20191016072124-6c2853d8b1ae
+
+replace github.com/pingcap/kvproto => github.com/youjiali1995/kvproto v0.0.0-20191016061501-6883cfe78a90

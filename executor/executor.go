@@ -779,7 +779,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.tblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+	if len(e.tblID2Handle) == 0 || (e.Lock != ast.SelectLockForUpdate && e.Lock != ast.SelectLockForUpdateNoWait) {
 		return nil
 	}
 	if req.NumRows() != 0 {
@@ -793,18 +793,27 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return doLockKeys(ctx, e.ctx, e.keys...)
+	return doLockKeys(ctx, e.ctx, e.Lock == ast.SelectLockForUpdateNoWait, e.keys...)
 }
 
-func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+// doLockKeys is the main entry for pessimistic lock keys
+// lockNoWait means the lock operation will report error immediately if target key is already
+// locked by others. used for (select for update nowait) situation
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockNoWait bool, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
+	// TODO this is a problem, maybe we need to update forUpdateTS every time to avoid such case
+	// begin;  select for update key1(here ErrLocked or other errors(or max_execution_time like util),
+	//         key1 lock not get and async rollback key1 is raised)
+	//         select for update key1 again(this time lock succ(maybe lock released by others))
+	//         the async rollback operation rollbacked the lock just acquired from
+	se.GetSessionVars().TxnCtx.SetForUpdateTS(se.GetSessionVars().TxnCtx.GetForUpdateTS() + 1)
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, keys...)
+	return txn.LockKeys(ctx, forUpdateTS, lockNoWait, keys...)
 }
 
 // LimitExec represents limit executor
