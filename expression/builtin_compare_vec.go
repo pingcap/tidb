@@ -637,19 +637,6 @@ func vecResOfLT(result *chunk.Column) {
 	}
 }
 
-func vecCompareNull(largs, rargs *chunk.Column, res []int64) {
-	n := len(res)
-	for i := 0; i < n; i++ {
-		if largs.IsNull(i) && rargs.IsNull(i) {
-			res[i] = 0
-		} else if largs.IsNull(i) && !rargs.IsNull(i) {
-			res[i] = -1
-		} else if !largs.IsNull(i) && rargs.IsNull(i) {
-			res[i] = 1
-		}
-	}
-}
-
 //VecCompareInt is vectorized CompareInt()
 func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	switch {
