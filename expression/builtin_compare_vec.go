@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -655,49 +653,15 @@ func vecCompareNull(largs, rargs *chunk.Column, res []int64) {
 
 //vectorized CompareInt()
 func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
-	arg0 := largs.Int64s()
-	arg1 := rargs.Int64s()
-	res := result.Int64s()
-	n := len(arg0)
-
 	switch {
 	case isUnsigned0 && isUnsigned1:
-		for i := 0; i < n; i++ {
-			if result.IsNull(i) {
-				continue
-			}
-			res[i] = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		}
+		types.VecComparUU(largs.Uint64s(), rargs.Uint64s(), result.Int64s())
 	case isUnsigned0 && !isUnsigned1:
-		for i := 0; i < n; i++ {
-			if result.IsNull(i) {
-				continue
-			}
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				res[i] = 1
-			} else {
-				res[i] = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		}
-
+		types.VecComparUI(largs.Uint64s(), rargs.Int64s(), result.Int64s())
 	case !isUnsigned0 && isUnsigned1:
-		for i := 0; i < n; i++ {
-			if result.IsNull(i) {
-				continue
-			}
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				res[i] = -1
-			} else {
-				res[i] = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		}
+		types.VecComparUI(rargs.Uint64s(), largs.Int64s(), result.Int64s())
 	case !isUnsigned0 && !isUnsigned1:
-		for i := 0; i < n; i++ {
-			if result.IsNull(i) {
-				continue
-			}
-			res[i] = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
+		types.VecCompareII(largs.Int64s(), rargs.Int64s(), result.Int64s())
 	}
 }
 

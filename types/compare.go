@@ -13,6 +13,8 @@
 
 package types
 
+import "math"
+
 // CompareInt64 returns an integer comparing the int64 x to y.
 func CompareInt64(x, y int64) int {
 	if x < y {
@@ -33,6 +35,50 @@ func CompareUint64(x, y uint64) int {
 	}
 
 	return 1
+}
+
+//comparing the []uint64 x to y
+func VecComparUU(x, y []uint64, res []int64) {
+	n := len(x)
+	for i := 0; i < n; i++ {
+		if x[i] < y[i] {
+			res[i] = -1
+		} else if x[i] == y[i] {
+			res[i] = 0
+		} else {
+			res[i] = 1
+		}
+	}
+}
+
+//comparing the []int64 x to y
+func VecCompareII(x, y, res []int64) {
+	n := len(x)
+	for i := 0; i < n; i++ {
+		if x[i] < y[i] {
+			res[i] = -1
+		} else if x[i] == y[i] {
+			res[i] = 0
+		} else {
+			res[i] = 1
+		}
+	}
+}
+
+//comparing the []uint64 x to []int64y
+func VecComparUI(x []uint64, y, res []int64) {
+	n := len(x)
+	for i := 0; i < n; i++ {
+		if y[i] < 0 || x[i] > math.MaxInt64 {
+			res[i] = 1
+		} else if int64(x[i]) < y[i] {
+			res[i] = -1
+		} else if int64(x[i]) == y[i] {
+			res[i] = 0
+		} else {
+			res[i] = 1
+		}
+	}
 }
 
 // CompareFloat64 returns an integer comparing the float64 x to y.
