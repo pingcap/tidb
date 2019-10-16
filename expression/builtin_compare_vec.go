@@ -616,8 +616,8 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
-	vecCompareNull(buf0, buf1, result.Int64s())
 	VecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[0].GetType().Flag), buf0, buf1, result)
+	vecCompareNull(buf0, buf1, result.Int64s())
 	vecResOfLT(result)
 	return nil
 }
@@ -651,7 +651,7 @@ func vecCompareNull(largs, rargs *chunk.Column, res []int64) {
 	}
 }
 
-//vectorized CompareInt()
+//VecCompareInt is vectorized CompareInt()
 func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	switch {
 	case isUnsigned0 && isUnsigned1:
