@@ -339,9 +339,11 @@ func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.F
 // Filters is executed vectorized.
 func VectorizedFilterForList(ctx sessionctx.Context, filters []Expression, list *chunk.List, selected []bool) (_ []bool, err error) {
 	totalChkSize := 0
-	for i := 0; i < list.NumChunks(); i++ {
+	numChk := list.NumChunks()
+	for i := 0; i < numChk; i++ {
 		chk := list.GetChunk(i)
 		rows := chk.NumRows()
+		totalChkSize += rows
 		_, err = VectorizedFilter(ctx, filters, chunk.NewIterator4Chunk(chk), selected[totalChkSize:totalChkSize+rows])
 		if err != nil {
 			return selected, err

@@ -413,15 +413,11 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, numOuterRows)
-	totalChkSize, chkIdx, nowChkSize := task.outerResult.GetChunk(0).NumRows(), 0, 0
-	for i := 0; i < numOuterRows; i++ {
-		if i >= totalChkSize {
-			nowChkSize = totalChkSize
-			chkIdx++
-			totalChkSize += task.outerResult.GetChunk(chkIdx).NumRows()
-		}
-		if len(outerMatch) == 0 || outerMatch[i] {
-			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(i - nowChkSize)})
+	numChunk := uint32(task.outerResult.NumChunks())
+	for i := uint32(0); i < numChunk; i++ {
+		numRow := uint32(task.outerResult.GetChunk(int(i)).NumRows())
+		for j := uint32(0); j < numRow; j++ {
+			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: i, RowIdx: j})
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
