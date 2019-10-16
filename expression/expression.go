@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -210,15 +212,53 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 }
 
 var (
-	selPool = sync.Pool{
+	defaultChunkSize = 1024
+	selPool          = sync.Pool{
 		New: func() interface{} {
-			return make([]int, 1024)
+			return make([]int, defaultChunkSize)
+		},
+	}
+	zeroPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int8, defaultChunkSize)
 		},
 	}
 )
 
+func allocSelSlice(n int) []int {
+	if n > defaultChunkSize {
+		return make([]int, n)
+	}
+	return selPool.Get().([]int)
+}
+
+func deallocateSelSlice(sel []int) {
+	if cap(sel) <= defaultChunkSize {
+		selPool.Put(sel)
+	}
+}
+
+func allocZeroSlice(n int) []int8 {
+	if n > defaultChunkSize {
+		return make([]int8, n)
+	}
+	return zeroPool.Get().([]int8)
+}
+
+func deallocateZeroSlice(isZero []int8) {
+	if cap(isZero) <= defaultChunkSize {
+		zeroPool.Put(isZero)
+	}
+}
+
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the input.Sel().
+	// The caller will handle the input.Sel() and selected slices.
+	defer input.SetSel(input.Sel())
+	input.SetSel(nil)
+
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
@@ -227,15 +267,17 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		nulls = append(nulls, false)
 	}
 
-	sel := selPool.Get().([]int)
-	defer selPool.Put(sel)
+	sel := allocSelSlice(n)
+	defer deallocateSelSlice(sel)
 	sel = sel[:0]
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
-	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
+	// In isZero slice, -1 means Null, 0 means zero, 1 means not zero
+	isZero := allocZeroSlice(n)
+	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
@@ -247,13 +289,16 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
+		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		j := 0
 		isEQCondFromIn := IsEQCondFromIn(expr)
-		hasUnsignedFlag := mysql.HasUnsignedFlag(expr.GetType().Flag)
-		d, j := types.Datum{}, 0
 		for i := range sel {
-			if buf.IsNull(i) {
-				if !isEQCondFromIn {
-					nulls[sel[i]] = false
+			if isZero[i] == -1 {
+				if eType != types.ETInt && !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -264,32 +309,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				continue
 			}
 
-			switch eType {
-			case types.ETInt:
-				if hasUnsignedFlag {
-					d.SetUint64(buf.GetUint64(i))
-				} else {
-					d.SetInt64(buf.GetInt64(i))
-				}
-			case types.ETReal:
-				d.SetFloat64(buf.GetFloat64(i))
-			case types.ETDuration:
-				d.SetMysqlDuration(buf.GetDuration(i, 0))
-			case types.ETDatetime, types.ETTimestamp:
-				d.SetMysqlTime(buf.GetTime(i))
-			case types.ETString:
-				d.SetString(buf.GetString(i))
-			case types.ETJson:
-				d.SetMysqlJSON(buf.GetJSON(i))
-			case types.ETDecimal:
-				d.SetMysqlDecimal(buf.GetDecimal(i))
-			}
-
-			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return nil, nil, err
-			}
-			if b == 0 {
+			if isZero[i] == 0 {
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -307,6 +327,96 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	}
 
 	return selected, nulls, nil
+}
+
+func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+	var err error
+	switch eType {
+	case types.ETInt:
+		i64s := buf.Int64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if i64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETReal:
+		f64s := buf.Float64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if types.RoundFloat(f64s[i]) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDuration:
+		d64s := buf.GoDurations()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if d64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		t64s := buf.Times()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if t64s[i].IsZero() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETString:
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
+				err = err1
+				if iVal == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDecimal:
+		d64s := buf.Decimals()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				v, err1 := d64s[i].ToFloat64()
+				err = err1
+				if types.RoundFloat(v) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETJson:
+		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+	}
+	return errors.Trace(err)
 }
 
 func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
@@ -432,7 +542,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -532,4 +642,51 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
+}
+
+// CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
+func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
+	for _, expr := range exprs {
+		switch x := expr.(type) {
+		case *Constant, *CorrelatedColumn, *Column:
+			exprPush = append(exprPush, expr)
+		case *ScalarFunction:
+			switch x.FuncName.L {
+			case ast.Plus, ast.Minus, ast.Div, ast.Mul,
+				ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
+				ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
+				ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+				ast.Like, ast.UnaryNot:
+				if _, r := CheckExprPushFlash(x.GetArgs()); len(r) > 0 {
+					remain = append(remain, expr)
+				} else {
+					exprPush = append(exprPush, expr)
+				}
+			default:
+				remain = append(remain, expr)
+			}
+		}
+	}
+	return
+}
+
+// wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
+// type int, otherwise, returns `arg` directly.
+// The `keepNull` controls what the istrue function will return when `arg` is null:
+// 1. keepNull is true and arg is null, the istrue function returns null.
+// 2. keepNull is false and arg is null, the istrue function returns 0.
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+	if arg.GetType().EvalType() == types.ETInt {
+		return arg, nil
+	}
+	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	if err != nil {
+		return nil, err
+	}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}, nil
 }
