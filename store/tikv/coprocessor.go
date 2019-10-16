@@ -715,7 +715,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
 	if len(ch.minCommitTSPushed) > 0 {
 		resolvedLocks := make([]uint64, 0, len(ch.minCommitTSPushed))
-		for k, _ := range ch.minCommitTSPushed {
+		for k := range ch.minCommitTSPushed {
 			resolvedLocks = append(resolvedLocks, k)
 		}
 		req.Context.ResolvedLocks = resolvedLocks
