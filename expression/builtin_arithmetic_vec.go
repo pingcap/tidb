@@ -431,7 +431,7 @@ func (b *builtinArithmeticPlusIntSig) plusSS(result *chunk.Column, lhi64s, rhi64
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if (lh > 0 && rh > math.MaxInt64-lh) || (lh < 0 && rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 
 		resulti64s[i] = lh + rh
