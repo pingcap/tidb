@@ -92,8 +92,8 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		b.initMemoizedRegexp(bufPat, n, rc)
 	}
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
-		if b.memoizedRegexp != nil {
-			return b.memoizedRegexp, nil
+		if b.isMemoizedRegexpInitialized() {
+			return b.memoizedRegexp, b.memoizedErr
 		}
 		return rc.compile(pat)
 	}

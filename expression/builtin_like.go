@@ -120,8 +120,6 @@ func (b *builtinRegexpSharedSig) clone(from *builtinRegexpSharedSig) {
 	b.cloneFrom(&from.baseBuiltinFunc)
 	if from.memoizedRegexp != nil {
 		b.memoizedRegexp = from.memoizedRegexp.Copy()
-	} else {
-		b.memoizedRegexp = nil
 	}
 	b.memoizedErr = from.memoizedErr
 }
