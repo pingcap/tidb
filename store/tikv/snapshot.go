@@ -195,7 +195,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, &s.store.storeLimit)
 
 	pending := batch.keys
 	for {
@@ -291,8 +291,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
 		panic("cache miss")
 	})
-
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, &s.store.storeLimit)
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{

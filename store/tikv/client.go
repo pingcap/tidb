@@ -310,7 +310,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		return tikvrpc.CallRPC(ctx1, client, req)
+
+		resp, err := tikvrpc.CallRPC(ctx1, client, req)
+		return resp, err
 	}
 
 	// Coprocessor streaming request.

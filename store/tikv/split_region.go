@@ -121,7 +121,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		Priority: kvrpcpb.CommandPri_Normal,
 	})
 
-	sender := NewRegionRequestSender(s.regionCache, s.client)
+	sender := NewRegionRequestSender(s.regionCache, s.client, &s.storeLimit)
 	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}

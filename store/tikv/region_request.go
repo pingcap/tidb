@@ -58,13 +58,15 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
+	storeLimit   *StoreLimit
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
+func NewRegionRequestSender(regionCache *RegionCache, client Client, limit *StoreLimit) *RegionRequestSender {
 	return &RegionRequestSender{
 		regionCache: regionCache,
 		client:      client,
+		storeLimit:  limit,
 	}
 }
 
@@ -167,7 +169,12 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
+	storeId := req.Context.GetPeer().GetStoreId()
+	if err := s.getStoreToken(storeId); err != nil {
+		return nil, false, errors.Trace(err)
+	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+	s.releaseStoreToken(storeId)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
@@ -176,6 +183,31 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, true, nil
 	}
 	return
+}
+
+func (s *RegionRequestSender) getStoreToken(storeId uint64) error {
+	s.storeLimit.Lock()
+	if s.storeLimit.limit == nil {
+		s.storeLimit.limit = make(map[uint64]int32)
+	}
+	limit, ok := s.storeLimit.limit[storeId]
+	if !ok {
+		// initial token limit for new store is 500
+		limit = 500
+	}
+	if limit > 0 {
+		s.storeLimit.limit[storeId] = limit - 1
+		s.storeLimit.Unlock()
+		return nil
+	}
+	s.storeLimit.Unlock()
+	return errors.New("store token is up to the limit.")
+}
+
+func (s *RegionRequestSender) releaseStoreToken(storeId uint64) {
+	s.storeLimit.Lock()
+	s.storeLimit.limit[storeId]++
+	s.storeLimit.Unlock()
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {

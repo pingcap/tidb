@@ -60,6 +60,7 @@ type RawKVClient struct {
 	regionCache *RegionCache
 	pdClient    pd.Client
 	rpcClient   Client
+	storeLimit  *StoreLimit
 }
 
 // NewRawKVClient creates a client with PD cluster addrs.
@@ -363,7 +364,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient, c.storeLimit)
 	for {
 		var loc *KeyLocation
 		var err error
@@ -454,7 +455,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 		})
 	}
 
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient, c.storeLimit)
 	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
 
 	batchResp := singleBatchResp{}
@@ -503,7 +504,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 // TODO: Is there any better way to avoid duplicating code with func `sendReq` ?
 func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvrpc.Response, []byte, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient, c.storeLimit)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)
 		if err != nil {
@@ -624,7 +625,7 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawBatchPut, &kvrpcpb.RawBatchPutRequest{Pairs: kvPair})
 
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient, c.storeLimit)
 	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)

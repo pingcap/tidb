@@ -41,6 +41,7 @@ type testRegionRequestSuite struct {
 	bo                  *Backoffer
 	regionRequestSender *RegionRequestSender
 	mvccStore           mocktikv.MVCCStore
+	storeLimit          *StoreLimit
 }
 
 var _ = Suite(&testRegionRequestSuite{})
@@ -52,8 +53,9 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
+	s.storeLimit = &StoreLimit{}
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
-	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client, s.storeLimit)
 }
 
 func (s *testRegionRequestSuite) TearDownTest(c *C) {
@@ -335,7 +337,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	}()
 
 	client := newRPCClient(config.Security{})
-	sender := NewRegionRequestSender(s.cache, client)
+	sender := NewRegionRequestSender(s.cache, client, s.storeLimit)
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
 		Value: []byte("value"),
@@ -354,7 +356,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 		Client:       newRPCClient(config.Security{}),
 		redirectAddr: addr,
 	}
-	sender = NewRegionRequestSender(s.cache, client1)
+	sender = NewRegionRequestSender(s.cache, client1, s.storeLimit)
 	sender.SendReq(s.bo, req, region.Region, 3*time.Second)
 
 	// cleanup

@@ -141,6 +141,10 @@ func (r *Region) init(c *RegionCache) {
 	r.lastAccess = time.Now().Unix()
 }
 
+func (r *Region) GetStore() (store *RegionStore) {
+	return r.getStore()
+}
+
 func (r *Region) getStore() (store *RegionStore) {
 	store = (*RegionStore)(atomic.LoadPointer(&r.store))
 	return
