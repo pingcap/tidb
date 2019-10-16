@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"github.com/pingcap/tidb/config"
 	"sync/atomic"
 	"time"
 
@@ -169,12 +170,12 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	storeId := req.Context.GetPeer().GetStoreId()
-	if err := s.getStoreToken(storeId); err != nil {
+	storeID := req.Context.GetPeer().GetStoreId()
+	if err := s.getStoreToken(storeID); err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
-	s.releaseStoreToken(storeId)
+	s.releaseStoreToken(storeID)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
@@ -185,28 +186,28 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	return
 }
 
-func (s *RegionRequestSender) getStoreToken(storeId uint64) error {
+func (s *RegionRequestSender) getStoreToken(storeID uint64) error {
 	s.storeLimit.Lock()
 	if s.storeLimit.limit == nil {
-		s.storeLimit.limit = make(map[uint64]int32)
+		s.storeLimit.limit = make(map[uint64]uint32)
 	}
-	limit, ok := s.storeLimit.limit[storeId]
+	limit, ok := s.storeLimit.limit[storeID]
 	if !ok {
 		// initial token limit for new store is 500
-		limit = 500
+		limit = atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit)
 	}
 	if limit > 0 {
-		s.storeLimit.limit[storeId] = limit - 1
+		s.storeLimit.limit[storeID] = limit - 1
 		s.storeLimit.Unlock()
 		return nil
 	}
 	s.storeLimit.Unlock()
-	return errors.New("store token is up to the limit.")
+	return errors.New("store token is up to the limit")
 }
 
-func (s *RegionRequestSender) releaseStoreToken(storeId uint64) {
+func (s *RegionRequestSender) releaseStoreToken(storeID uint64) {
 	s.storeLimit.Lock()
-	s.storeLimit.limit[storeId]++
+	s.storeLimit.limit[storeID]++
 	s.storeLimit.Unlock()
 }
 

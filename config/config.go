@@ -66,6 +66,7 @@ type Config struct {
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
+	StoreLimit       uint32          `toml:"store-limit" json:"store-limit"`
 	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
@@ -424,6 +425,7 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        "45s",
 	TokenLimit:                   1000,
+	StoreLimit:                   500,
 	OOMUseTmpStorage:             true,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,

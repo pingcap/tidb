@@ -41,6 +41,7 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 		regionCache: NewRegionCache(pdClient),
 		pdClient:    pdClient,
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		storeLimit:  &StoreLimit{},
 	}
 	s.bo = NewBackoffer(context.Background(), 5000)
 }

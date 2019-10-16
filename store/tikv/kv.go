@@ -152,11 +152,10 @@ type tikvStore struct {
 	storeLimit      StoreLimit
 }
 
-// All sender share global SendAndRespRadio, sender is responsible for updating the num of request sent and response succeed for each store.
+// StoreLimit will record store limit for each store in store cluster.
 type StoreLimit struct {
 	sync.Mutex
-	// sendResp map[uint64]struct{requestSend uint64; respSucceed uint64}
-	limit map[uint64]int32
+	limit map[uint64]uint32
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
