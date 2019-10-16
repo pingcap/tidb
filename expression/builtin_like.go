@@ -110,7 +110,20 @@ type regexpCompiler interface {
 type builtinRegexpSharedSig struct {
 	baseBuiltinFunc
 	memoizedRegexp *regexp.Regexp
-	memoizeErr     error
+	memoizedErr    error
+	// TODO: By having this struct store a compile() func pointer that is
+	// customized for builtinRegexpBinarySig and builtinRegexpSig, we can
+	// remove the regexpCompiler interface and dedupe Clone()/evalInt()/vecEvalInt().
+}
+
+func (b *builtinRegexpSharedSig) clone(from *builtinRegexpSharedSig) {
+	b.cloneFrom(&from.baseBuiltinFunc)
+	if from.memoizedRegexp != nil {
+		b.memoizedRegexp = from.memoizedRegexp.Copy()
+	} else {
+		b.memoizedRegexp = nil
+	}
+	b.memoizedErr = from.memoizedErr
 }
 
 type builtinRegexpBinarySig struct {
@@ -119,7 +132,7 @@ type builtinRegexpBinarySig struct {
 
 func (b *builtinRegexpBinarySig) Clone() builtinFunc {
 	newSig := &builtinRegexpBinarySig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.clone(&b.builtinRegexpSharedSig)
 	return newSig
 }
 
@@ -153,7 +166,7 @@ type builtinRegexpSig struct {
 
 func (b *builtinRegexpSig) Clone() builtinFunc {
 	newSig := &builtinRegexpSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.clone(&b.builtinRegexpSharedSig)
 	return newSig
 }
 

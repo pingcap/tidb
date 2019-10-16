@@ -46,7 +46,7 @@ func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinRegexpSharedSig) isMemoizedRegexpInitialized() bool {
-	return !(b.memoizedRegexp == nil && b.memoizeErr == nil)
+	return !(b.memoizedRegexp == nil && b.memoizedErr == nil)
 }
 
 func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int, rc regexpCompiler) {
@@ -57,11 +57,14 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 		}
 		re, err := rc.compile(patterns.GetString(i))
 		b.memoizedRegexp = re
-		b.memoizeErr = err
+		b.memoizedErr = err
 		break
 	}
 	if !b.isMemoizedRegexpInitialized() {
-		b.memoizeErr = errors.New("No valid regexp pattern found")
+		b.memoizedErr = errors.New("No valid regexp pattern found")
+	}
+	if b.memoizedErr != nil {
+		b.memoizedRegexp = nil
 	}
 }
 
