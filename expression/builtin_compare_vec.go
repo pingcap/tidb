@@ -798,12 +798,12 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		isNull1 := buf1.IsNull(i)
 		if isNull0 || isNull1 {
 			i64s[i] = compareNull(isNull0, isNull1)
+			continue
+		}
+		if types.CompareFloat64(x[i], y[i]) == 0 {
+			i64s[i] = 1
 		} else {
-			if x[i] == y[i] {
-				i64s[i] = 1
-			} else {
-				i64s[i] = 0
-			}
+			i64s[i] = 0
 		}
 	}
 	return nil
