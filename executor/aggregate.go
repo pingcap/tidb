@@ -161,6 +161,7 @@ type HashAggExec struct {
 	isChildReturnEmpty bool
 
 	childResult *chunk.Chunk
+	executed    bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -602,10 +603,14 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
+	if e.executed {
+		return nil
+	}
 	for !chk.IsFull() {
 		e.finalInputCh <- chk
 		result, ok := <-e.finalOutputCh
 		if !ok { // all finalWorkers exited
+			e.executed = true
 			if chk.NumRows() > 0 { // but there are some data left
 				return nil
 			}
