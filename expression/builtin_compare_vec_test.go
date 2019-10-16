@@ -25,7 +25,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.NE:       {},
 	ast.IsNull:   {},
 	ast.LE:       {},
-	ast.LT:       {},
+	ast.LT:       {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}}},
 	ast.Coalesce: {},
 	ast.NullEQ: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
