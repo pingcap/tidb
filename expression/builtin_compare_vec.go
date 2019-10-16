@@ -171,11 +171,54 @@ func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinGEIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	i64s0 := buf0.Int64s()
+	i64s1 := buf1.Int64s()
+
+	for i := 0; i < n; i++ {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+
+		if isNull0 || isNull1 {
+			if compareNull(isNull0, isNull1) >= 0 {
+				i64s[i] = 1
+			} else {
+				i64s[i] = 0
+			}
+		} else {
+			if types.CompareInt64(i64s0[i], i64s1[i]) >= 0 {
+				i64s[i] = 1
+			} else {
+				i64s[i] = 0
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinLeastRealSig) vectorized() bool {
