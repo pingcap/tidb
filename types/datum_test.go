@@ -68,6 +68,8 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, uint64(0), 0)
 	testDatumToBool(c, float32(0.1), 0)
 	testDatumToBool(c, float64(0.1), 0)
+	testDatumToBool(c, float64(0.5), 1)
+	testDatumToBool(c, float64(0.499), 0)
 	testDatumToBool(c, "", 0)
 	testDatumToBool(c, "0.1", 0)
 	testDatumToBool(c, []byte{}, 0)
