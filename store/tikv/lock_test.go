@@ -185,19 +185,19 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 
 func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err := s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	status, err := s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Equals, commitTS)
 
 	startTS, commitTS = s.lockKey(c, []byte("a"), []byte("a"), []byte("a"), []byte("a"), true)
-	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Equals, commitTS)
 
 	startTS, _ = s.lockKey(c, []byte("a"), []byte("a"), []byte("a"), []byte("a"), false)
-	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
+	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -209,10 +209,13 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
-	// Check the lock TTL of a transaction.
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
 	lr := newLockResolver(s.store)
-	status, err := lr.GetTxnStatus(txn.StartTS(), []byte("key"))
+	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	c.Assert(err, IsNil)
+
+	// Check the lock TTL of a transaction.
+	status, err := lr.GetTxnStatus(txn.StartTS(), callerStartTS, []byte("key"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -226,14 +229,14 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	c.Assert(err, IsNil)
 
 	// Check its status is rollbacked.
-	status, err = lr.GetTxnStatus(txn.StartTS(), []byte("key"))
+	status, err = lr.GetTxnStatus(txn.StartTS(), callerStartTS, []byte("key"))
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
 	// Check a committed txn.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = lr.GetTxnStatus(startTS, []byte("a"))
+	status, err = lr.GetTxnStatus(startTS, callerStartTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)
@@ -263,6 +266,53 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
 	c.Assert(err, NotNil)
 	c.Assert(newTTL, Equals, uint64(0))
+}
+
+func (s *testLockSuite) TestCheckTxnStatus(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	txn.Set(kv.Key("second"), []byte("xxx"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+
+	oracle := s.store.GetOracle()
+	currentTS, err := oracle.GetTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
+	resolver := newLockResolver(s.store)
+	// Call getTxnStatus to check the lock status.
+	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	c.Assert(err, IsNil)
+	c.Assert(status.IsCommitted(), IsFalse)
+	c.Assert(status.ttl, Greater, uint64(0))
+	c.Assert(status.CommitTS(), Equals, uint64(0))
+
+	// Test the ResolveLocks API
+	lock := s.mustGetLock(c, []byte("second"))
+	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(timeBeforeExpire >= int64(0), IsTrue)
+
+	// Force rollback the lock using lock.TTL = 0.
+	lock.TTL = uint64(0)
+	timeBeforeExpire, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(timeBeforeExpire, Equals, int64(0))
+
+	// Then call getTxnStatus again and check the lock status.
+	currentTS, err = oracle.GetTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, uint64(0))
+
+	// Call getTxnStatus on a committed transaction.
+	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
+	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, commitTS)
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {

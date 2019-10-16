@@ -18,6 +18,7 @@ import (
 	"math"
 	"net"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -105,11 +106,11 @@ func (b *builtinRealAnyValueSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinStringAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinStringAnyValueSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinIsIPv6Sig) vectorized() bool {
@@ -121,11 +122,11 @@ func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinNameConstStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinDecimalAnyValueSig) vectorized() bool {
@@ -137,11 +138,22 @@ func (b *builtinDecimalAnyValueSig) vecEvalDecimal(input *chunk.Chunk, result *c
 }
 
 func (b *builtinUUIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	var id uuid.UUID
+	var err error
+	for i := 0; i < n; i++ {
+		id, err = uuid.NewUUID()
+		if err != nil {
+			return err
+		}
+		result.AppendString(id.String())
+	}
+	return nil
 }
 
 func (b *builtinNameConstDurationSig) vectorized() bool {
@@ -241,11 +253,11 @@ func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinTimeAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimeAnyValueSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalTime(b.ctx, input, result)
 }
 
 func (b *builtinInetAtonSig) vectorized() bool {
@@ -265,11 +277,11 @@ func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinNameConstRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalReal(b.ctx, input, result)
 }
 
 func (b *builtinReleaseLockSig) vectorized() bool {
