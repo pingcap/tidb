@@ -672,11 +672,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		if len(handles) == 0 {
 			return count, nil
 		}
-
-		if w.idxLookup.table.Meta().Name.L == "admin_test_p" {
-			fmt.Printf("------------\ntid : %v, get handles: %v,  %v\n----------\n", w.idxLookup.table.(table.PhysicalTable).GetPhysicalID(), count, handles)
-		}
-
 		task := w.buildTableTask(handles, retChunk)
 		select {
 		case <-ctx.Done():

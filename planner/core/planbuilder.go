@@ -934,17 +934,13 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(tblSchema)
-
 	if tbl.Meta().GetPartitionInfo() != nil {
-		if tbl, ok := tbl.(table.PhysicalTable); ok {
-			pid := tbl.GetPhysicalID()
-			is.physicalTableID = pid
-			is.isPartition = true
-			ts.isPartition = true
-			ts.physicalTableID = pid
-		}
+		pid := tbl.(table.PhysicalTable).GetPhysicalID()
+		is.physicalTableID = pid
+		is.isPartition = true
+		ts.physicalTableID = pid
+		ts.isPartition = true
 	}
-
 	cop := &copTask{
 		indexPlan:   is,
 		tablePlan:   ts,
@@ -968,7 +964,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
 			continue
 		}
-
 		indexInfos = append(indexInfos, idxInfo)
 		// For partition tables.
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
@@ -982,7 +977,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			}
 			continue
 		}
-
 		// For non-partition tables.
 		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo)
 		if err != nil {
@@ -1003,12 +997,10 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
 	}
-
 	p := &CheckTable{
 		DBName: tbl.Schema.O,
 		Table:  table,
 	}
-
 	readerPlans, indexInfos, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)

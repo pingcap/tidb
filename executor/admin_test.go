@@ -620,8 +620,8 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists test`)
 	tk.MustExec(`create table test (
 		a time,
- 		PRIMARY KEY (a)
- 		);`)
+		PRIMARY KEY (a)
+		);`)
 
 	tk.MustExec(`insert into test set a='12:10:36';`)
 	tk.MustExec(`admin check table test`)

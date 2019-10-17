@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table/tables"
 	"runtime"
 	"strconv"
 	"sync"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -516,6 +516,7 @@ func (e *CheckTableExec) Close() error {
 }
 
 func (e *CheckTableExec) checkTableIndexHandle(ctx context.Context, idxInfo *model.IndexInfo) error {
+	// For partition table, there will be multi same index indexLookUpReaders on different partitions.
 	for _, src := range e.srcs {
 		if src.index.Name.L == idxInfo.Name.L {
 			err := e.checkIndexHandle(ctx, src)
@@ -573,7 +574,6 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		idxNames = append(idxNames, idx.Name.O)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
-	fmt.Printf("---------\nCheckIndicesCount: %#v, src: %v\n\n", greater, len(e.srcs))
 	if err != nil {
 		if greater == admin.IdxCntGreater {
 			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
@@ -584,11 +584,6 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 		}
 		return errors.Trace(err)
-	}
-
-	err = e.checkTableRecord(idxOffset)
-	if err != nil && admin.ErrDataInConsistent.Equal(err) {
-		return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 	}
 
 	// The number of table rows is equal to the number of index rows.
@@ -623,21 +618,21 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	idxInfo := e.indexInfos[idxOffset]
+	// TODO: Fix me later, can not use genExprs in indexLookUpReader, because the schema of expression is different.
 	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	tbl := e.table
-	if tbl.Meta().GetPartitionInfo() == nil {
+	if e.table.Meta().GetPartitionInfo() == nil {
 		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
-		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
+		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx, genExprs)
 	}
 
-	info := tbl.Meta().GetPartitionInfo()
+	info := e.table.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := e.table.(table.PartitionedTable).GetPartition(pid)
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)

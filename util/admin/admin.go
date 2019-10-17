@@ -293,20 +293,13 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	// For partition table, there will be same indices from different partitions.
-	checkedIndexs := make(map[string]struct{})
 	for i, idx := range indices {
-		if _, ok := checkedIndexs[idx]; ok {
-			continue
-		}
-		checkedIndexs[idx] = struct{}{}
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
-		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+		logutil.Logger(context.Background()).Info("check indices count",
 			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
@@ -477,7 +470,6 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	}
 
 	startKey := t.RecordKey(math.MinInt64)
-	//tableID, handle, err := tablecodec.DecodeRecordKey(startKey)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -494,9 +486,6 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			}
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
-		//key, _, _ := idx.GenIndexKey(sc, vals1, h1, nil)
-		//tableIDIdx, handleIdx, _, errIdx := tablecodec.DecodeIndexKey(key)
-
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
@@ -505,18 +494,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		//fmt.Printf("---------\noutsite tid %v, h: %v\n ------\n", tableIDIdx, h1)
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			//fmt.Printf("---------\ntid %v, h: %v, h1: %v, %v\n%v ------\n", tableID, handle, h1, t.Meta().GetPartitionInfo())
-			//fmt.Printf("---------\ntid %v, h: %v, %v\n ------\n", tableIDIdx, handleIdx, errIdx)
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
 		}
 
 		return true, nil
 	}
 	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
