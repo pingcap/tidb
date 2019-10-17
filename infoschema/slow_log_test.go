@@ -172,4 +172,16 @@ select * from t;`)
 	c.Assert(err, IsNil)
 	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, IsNil)
+
+	// Test parser error
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-05-12-11:23:29.614327491 +0800
+# Txn_start_ts: 405888132465033227#
+`)
+
+	scanner = bufio.NewReader(slowLog)
+	_, err = infoschema.ParseSlowLog(loc, scanner)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "parse slow log on line 2 failed `Txn_start_ts` error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
+
 }
