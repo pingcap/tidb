@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"sync"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlock"
@@ -479,7 +479,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		if err != nil {
 			anyError = true
 		}
-		if lockWaitTime == config.LockNoWait {
+		if lockWaitTime == kv.LockNoWait {
 			if _, ok := err.(*ErrLocked); ok {
 				break
 			}

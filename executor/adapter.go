@@ -557,7 +557,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, forUpdateTS, config.LockAlwaysWait, keys...)
+		err = txn.LockKeys(ctx, forUpdateTS, kv.LockAlwaysWait, keys...)
 		if err == nil {
 			return nil
 		}

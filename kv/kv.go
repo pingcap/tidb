@@ -364,3 +364,9 @@ type SplitableStore interface {
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
+
+// Used for pessimistic lock wait time
+var (
+	LockAlwaysWait = uint64(0)
+	LockNoWait     = uint64(1)
+)

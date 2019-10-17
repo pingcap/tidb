@@ -663,9 +663,3 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
-
-// Used for pessimistic lock wait time
-var (
-	LockAlwaysWait = uint64(0)
-	LockNoWait     = uint64(1)
-)

@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"io"
 	"math"
 	"strconv"
@@ -311,7 +310,7 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	h.cluster.handleDelay(startTS, regionID)
 	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
 		req.GetLockTtl(), req.WaitTimeout)
-	if req.WaitTimeout == config.LockAlwaysWait {
+	if req.WaitTimeout == kv.LockAlwaysWait {
 		// TODO: remove this when implement sever side wait.
 		h.simulateServerSideWaitLock(errs)
 	}

@@ -793,9 +793,9 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	var lockWaitTime = config.LockAlwaysWait
+	var lockWaitTime = kv.LockAlwaysWait
 	if e.Lock == ast.SelectLockForUpdateNoWait {
-		lockWaitTime = config.LockNoWait
+		lockWaitTime = kv.LockNoWait
 	}
 	return doLockKeys(ctx, e.ctx, lockWaitTime, e.keys...)
 }

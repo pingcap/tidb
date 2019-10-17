@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -708,7 +707,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		for _, keyErr := range keyErrs {
 			// Check lock conflict error for nowait, if nowait set and key locked by others
 			// report error immediately and do no more resolve locks
-			if c.lockWaitTime == config.LockNoWait {
+			if c.lockWaitTime == kv.LockNoWait {
 				if keyErr.GetLocked() != nil {
 					return ErrLockFailNoWait
 				}
