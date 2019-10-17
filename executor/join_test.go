@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
-	"math/rand"
 )
 
 func (s *testSuite2) TestJoinPanic(c *C) {
