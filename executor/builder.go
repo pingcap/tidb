@@ -1775,16 +1775,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
-	idxHash := &IndexNestedLoopHashJoin{
-		IndexLookUpJoin: *e,
-		keepOuterOrder:  true,
-	}
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
-	idxHash.joiners = make([]joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
-		idxHash.joiners[i] = e.joiner.Clone()
-	}
-	return idxHash
+	return e
 }
 
 func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
