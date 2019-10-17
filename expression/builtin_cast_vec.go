@@ -159,7 +159,7 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		return err
 	}
 
