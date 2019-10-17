@@ -814,6 +814,7 @@ func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		str = getValidPrefix(strings.TrimSpace(str), 10)
 		if len(str) == 0 {
 			result.AppendString("0")
+			continue
 		}
 		if str[0] == '-' {
 			negative, str = true, str[1:]
