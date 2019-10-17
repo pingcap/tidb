@@ -826,25 +826,31 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 		return err
 	}
 
-	do.loadBindInfoLoop()
+	do.globalBindHandleWorkerLoop()
 	do.handleInvalidBindTaskLoop()
 	return nil
 }
 
-func (do *Domain) loadBindInfoLoop() {
+func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
-		defer recoverInDomain("loadBindInfoLoop", false)
+		defer recoverInDomain("globalBindHandleWorkerLoop", false)
+		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
+		defer bindWorkerTicker.Stop()
 		for {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(bindinfo.Lease):
-			}
-			err := do.bindHandle.Update(false)
-			if err != nil {
-				logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+			case <-bindWorkerTicker.C:
+				err := do.bindHandle.Update(false)
+				if err != nil {
+					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+				}
+				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					continue
+				}
+				do.bindHandle.CaptureBaselines(do.InfoSchema())
 			}
 		}
 	}()
