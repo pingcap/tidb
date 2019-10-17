@@ -661,11 +661,34 @@ func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinRTrimSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinRTrimSig
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
 func (b *builtinRTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		result.AppendString(strings.TrimRight(str, spaceChars))
+	}
+
+	return nil
 }
 
 func (b *builtinStrcmpSig) vectorized() bool {

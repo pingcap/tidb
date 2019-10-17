@@ -90,7 +90,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.LTrim: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
 	},
-	ast.RTrim: {},
+	ast.RTrim: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
+	},
 	ast.Lpad: {
 		{
 			retEvalType:   types.ETString,
