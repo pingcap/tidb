@@ -2109,12 +2109,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		p = b.buildTableDual()
 	}
 
+	originalFields := sel.Fields.Fields
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
 		return nil, err
 	}
+	if b.capFlag&canExpandAST != 0 {
+		originalFields = sel.Fields.Fields
+	}
 
-	originalFields := sel.Fields.Fields
 	if sel.GroupBy != nil {
 		p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
