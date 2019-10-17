@@ -33,10 +33,12 @@ import (
 )
 
 const (
-	btreeDegree                = 32
-	rcDefaultRegionCacheTTLSec = 600
-	invalidatedLastAccessTime  = -1
+	btreeDegree               = 32
+	invalidatedLastAccessTime = -1
 )
+
+// RegionCacheTTLSec is the max idle time for regions in the region cache.
+var RegionCacheTTLSec int64 = 600
 
 var (
 	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_region_from_cache", "ok")
@@ -121,7 +123,7 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
-		if ts-lastAccess > rcDefaultRegionCacheTTLSec {
+		if ts-lastAccess > RegionCacheTTLSec {
 			return false
 		}
 		if atomic.CompareAndSwapInt64(&r.lastAccess, lastAccess, ts) {

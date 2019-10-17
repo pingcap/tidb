@@ -267,6 +267,10 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
+
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
