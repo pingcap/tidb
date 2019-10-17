@@ -1271,7 +1271,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		}
 	}
 	if logItems.MemMax > 0 {
-		writeSlowLogItem(&buf, SlowLogMemMax, fmt.Sprintf("%d bytes (%s)", logItems.MemMax, formatMemoryUsage(logItems.MemMax)))
+		writeSlowLogItem(&buf, SlowLogMemMax, fmt.Sprintf("%d bytes (%s)", logItems.MemMax, FormatMemoryUsage(logItems.MemMax)))
 	}
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
@@ -1289,7 +1289,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	return buf.String()
 }
 
-func formatMemoryUsage(bytes int64) string {
+// FormatMemoryUsage formats the number of bytes to a string with unit suffixes which is easy to read.
+func FormatMemoryUsage(bytes int64) string {
 	if bytes >= (1 << 30) {
 		return fmt.Sprintf("%.2f GB", float64(bytes)/(1<<30))
 	} else if bytes >= (1 << 20) {

@@ -14,6 +14,7 @@
 package variable_test
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -192,4 +193,16 @@ select * from t;`
 		Succ:           true,
 	})
 	c.Assert(logString, Equals, resultString)
+}
+
+func (*testSessionSuite) TestFormatMemoryUsage(c *C) {
+	bytes := (1 << 30) * 1.23
+	c.Assert(variable.FormatMemoryUsage(int64(bytes)), Equals, "1.23 GB")
+	fmt.Println(variable.FormatMemoryUsage(int64(bytes)))
+	bytes = (1 << 20) * 2.34
+	c.Assert(variable.FormatMemoryUsage(int64(bytes)), Equals, "2.34 MB")
+	bytes = (1 << 10) * 3.45
+	c.Assert(variable.FormatMemoryUsage(int64(bytes)), Equals, "3.45 KB")
+	bytes = 456
+	c.Assert(variable.FormatMemoryUsage(int64(bytes)), Equals, "456 bytes")
 }
