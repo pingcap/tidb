@@ -635,11 +635,15 @@ func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx contex
 //   2.3 call onMissMatch when no inner rows are matched
 func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
 	defer func() {
-		if err == nil && joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
-			select {
-			case resultCh <- joinResult:
-			case <-ctx.Done():
-				return
+		if err == nil && joinResult.chk != nil {
+			if joinResult.chk.NumRows() > 0 {
+				select {
+				case resultCh <- joinResult:
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				joinResult.src <- joinResult.chk
 			}
 		}
 		close(resultCh)
