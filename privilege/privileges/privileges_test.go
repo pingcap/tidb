@@ -697,21 +697,18 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustExec("create user superadmin")
 	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
 
 	var buf bytes.Buffer
 	var res bytes.Buffer
 	buf.WriteString("select ")
 	i := 0
-	for _, priv := range mysql.Priv2UserCol {
-		if priv == mysql.Priv2UserCol[mysql.GrantPriv] {
-			continue
-		}
+	for _, priv := range mysql.AllGlobalPrivs {
 		if i != 0 {
 			buf.WriteString(", ")
 			res.WriteString(" ")
 		}
-		buf.WriteString(priv)
+		buf.WriteString(mysql.Priv2UserCol[priv])
 		res.WriteString("Y")
 		i++
 	}
