@@ -215,6 +215,7 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			return err
 		}
 		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
+		hasher.Reset()
 	}
 	return nil
 }
