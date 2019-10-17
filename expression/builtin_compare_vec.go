@@ -862,50 +862,51 @@ func (b *builtinGreatestStringSig) vectorized() bool {
 }
 
 func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	// reuse result
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if len(b.args) == 1 {
+	if len(b.args) == 0 {
 		return nil
 	}
 
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	arg, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
+	defer b.bufAllocator.put(arg)
 
-	temp, err := b.bufAllocator.get(types.ETString, n)
+	dst, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(temp)
+	defer b.bufAllocator.put(dst)
 
+	src := result
 	for j := 1; j < len(b.args); j++ {
-		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
+		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
 		}
 
-		buf.MergeNulls(result)
+		src.MergeNulls(arg)
 		for i := 0; i < n; i++ {
-			if buf.IsNull(i) {
-				temp.AppendNull()
+			if src.IsNull(i) {
+				dst.AppendNull()
 				continue
 			}
-			v := buf.GetString(i)
-			maxStr := result.GetString(i)
-			if types.CompareString(v, maxStr) > 0 {
-				temp.AppendString(v)
+			srcStr := src.GetString(i)
+			argStr := arg.GetString(i)
+			if types.CompareString(srcStr, argStr) > 0 {
+				dst.AppendString(srcStr)
 			} else {
-				temp.AppendString(maxStr)
+				dst.AppendString(argStr)
 			}
 		}
-		temp.CopyConstruct(result)
-		temp.Reset()
-		buf.Reset()
+		src, dst = dst, src
+		arg.Reset()
+		dst.Reset()
 	}
+	src.CopyConstruct(result)
 	return nil
 }
 
