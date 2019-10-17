@@ -1023,7 +1023,7 @@ func (b *builtinCastDurationAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *c
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
 		return err
 	}
 
