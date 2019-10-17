@@ -256,6 +256,19 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		res, isNull, err = sf.EvalReal(sf.GetCtx(), row)
 	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(sf.GetCtx(), row)
+		if !isNull && res != nil {
+			dec := res.(*types.MyDecimal)
+			frac := sf.RetType.Decimal
+			if frac == -1 {
+				frac = mysql.MaxDecimalScale
+			}
+			if int(dec.GetDigitsFrac()) > frac {
+				to := new(types.MyDecimal)
+				err := dec.Round(to, frac, types.ModeHalfEven)
+				terror.Log(err)
+				res = to
+			}
+		}
 	case types.ETDatetime, types.ETTimestamp:
 		res, isNull, err = sf.EvalTime(sf.GetCtx(), row)
 	case types.ETDuration:
