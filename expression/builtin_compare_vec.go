@@ -20,6 +20,16 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+func vecResOfGT(res []int64, n int) {
+	for i := 0; i < n; i++ {
+		if res[i] > 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
+}
+
 // vecEvalDecimal evals a builtinGreatestDecimalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func (b *builtinGreatestDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
@@ -766,26 +776,8 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	x := buf0.Float64s()
-	y := buf1.Float64s()
-	for i := 0; i < n; i++ {
-		isNull0 := buf0.IsNull(i)
-		isNull1 := buf1.IsNull(i)
-		if isNull0 || isNull1 {
-			if compareNull(isNull0, isNull1) > 0 {
-				i64s[i] = 1
-			} else {
-				i64s[i] = 0
-			}
-		} else {
-			if types.CompareFloat64(x[i], y[i]) > 0 {
-				i64s[i] = 1
-			} else {
-				i64s[i] = 0
-			}
-		}
-	}
+	types.VecCompareFloat64(buf0.Float64s(), buf1.Float64s(), result.Int64s(), n)
+	vecResOfGT(result.Int64s(), n)
 	return nil
 }
 
