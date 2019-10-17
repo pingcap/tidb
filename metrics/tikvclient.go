@@ -206,6 +206,15 @@ var (
 			Help:      "batch client unavailable",
 		})
 
+	TiKVBatchClientWaitEstablish = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_wait_establish_seconds",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1000s
+			Help:      "batch client wait establish time",
+		})
+
 	TiKVRangeTaskStats = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",

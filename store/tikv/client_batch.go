@@ -252,15 +252,18 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
 	c.failPendingRequests(perr) // fail all pending requests.
 	var err error
+	start := time.Now()
 	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
 			cancel()
+			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
 			break
 		}
 		if !c.conn.WaitForStateChange(dialCtx, s) {
 			cancel()
+			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
 			err = dialCtx.Err()
 			break
 		}
@@ -475,6 +478,11 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 
 	if err := cli.initBatchClient(); err != nil {
+		logutil.BgLogger().Warn(
+			"init create streaming fail",
+			zap.String("target", cli.target),
+			zap.Error(err),
+		)
 		return
 	}
 
@@ -487,15 +495,18 @@ func (c *batchCommandsClient) initBatchClient() error {
 		return nil
 	}
 
+	start := time.Now()
 	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
 			cancel()
+			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
 			break
 		}
 		if !c.conn.WaitForStateChange(dialCtx, s) {
 			cancel()
+			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
 			return dialCtx.Err()
 		}
 	}
