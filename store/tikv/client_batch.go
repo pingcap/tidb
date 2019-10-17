@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"google.golang.org/grpc/connectivity"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -200,6 +201,9 @@ type batchCommandsClient struct {
 	batched sync.Map
 	idAlloc uint64
 
+	tikvClientCfg config.TiKVClient
+	tikvLoad      *uint64
+
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
 	// tryLock protects client when re-create the streaming.
@@ -245,20 +249,35 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
-	c.failPendingRequests(err) // fail all pending requests.
-
-	// Re-establish a application layer stream. TCP layer is handled by gRPC.
-	tikvClient := tikvpb.NewTikvClient(c.conn)
-	streamClient, err := tikvClient.BatchCommands(context.TODO())
+func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
+	c.failPendingRequests(perr) // fail all pending requests.
+	var err error
+	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	for {
+		s := c.conn.GetState()
+		if s == connectivity.Ready {
+			cancel()
+			break
+		}
+		if !c.conn.WaitForStateChange(dialCtx, s) {
+			cancel()
+			err = dialCtx.Err()
+			break
+		}
+	}
 	if err == nil {
-		logutil.BgLogger().Info(
-			"batchRecvLoop re-create streaming success",
-			zap.String("target", c.target),
-		)
-		c.client = streamClient
+		// Re-establish a application layer stream. TCP layer is handled by gRPC.
+		tikvClient := tikvpb.NewTikvClient(c.conn)
+		streamClient, err := tikvClient.BatchCommands(context.TODO())
+		if err == nil {
+			logutil.BgLogger().Info(
+				"batchRecvLoop re-create streaming success",
+				zap.String("target", c.target),
+			)
+			c.client = streamClient
 
-		return nil
+			return nil
+		}
 	}
 	logutil.BgLogger().Info(
 		"batchRecvLoop re-create streaming fail",
@@ -455,8 +474,41 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 		RequestIds: requestIDs,
 	}
 
+	if err := cli.initBatchClient(); err != nil {
+		return
+	}
+
 	cli.send(req, entries)
 	return
+}
+
+func (c *batchCommandsClient) initBatchClient() error {
+	if c.client != nil {
+		return nil
+	}
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	for {
+		s := c.conn.GetState()
+		if s == connectivity.Ready {
+			cancel()
+			break
+		}
+		if !c.conn.WaitForStateChange(dialCtx, s) {
+			cancel()
+			return dialCtx.Err()
+		}
+	}
+
+	// Initialize batch streaming clients.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.client = streamClient
+	go c.batchRecvLoop(c.tikvClientCfg, c.tikvLoad)
+	return nil
 }
 
 func (a *batchConn) Close() {
