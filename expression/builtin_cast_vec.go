@@ -1024,8 +1024,7 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *ch
 	var f float64
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendJSON(json.BinaryJSON{})
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 		// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
