@@ -32,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-const numResChkHold = 4
-
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
 // It preserves the order of the outer table and support batch lookup.
 //

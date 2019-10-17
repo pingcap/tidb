@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -1017,6 +1018,40 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 		`2 <nil> <nil>`,
 		`1 0 0`,
 	))
+}
+
+func (s *testSuite2) TestIndexNestedLoopHashJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_init_chunk_size=2")
+	tk.MustExec("set @@tidb_index_join_batch_size=10")
+	tk.MustExec("DROP TABLE IF EXISTS t, s")
+	tk.MustExec("create table t(pk int primary key, a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
+	}
+	tk.MustExec("create table s(a int primary key)")
+	for i := 0; i < 100; i++ {
+		if rand.Float32() < 0.3 {
+			tk.MustExec(fmt.Sprintf("insert into s values(%d)", i))
+		} else {
+			tk.MustExec(fmt.Sprintf("insert into s values(%d)", i*100))
+		}
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table s")
+	// Test IndexNestedLoopHashJoin keepOrder.
+	tk.MustQuery("explain select /*+ TIDB_INLJ(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
+		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:Column#2, inner key:Column#3",
+		"├─TableReader_30 100.00 root data:TableScan_29",
+		"│ └─TableScan_29 100.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true",
+		"└─TableReader_22 1.00 root data:TableScan_21",
+		"  └─TableScan_21 1.00 cop[tikv] table:s, range: decided by [Column#2], keep order:false",
+	))
+	rs := tk.MustQuery("select /*+ TIDB_INLJ(s) */ * from t left join s on t.a=s.a order by t.pk")
+	for i, row := range rs.Rows() {
+		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
+	}
 }
 
 func (s *testSuite2) TestMergejoinOrder(c *C) {
