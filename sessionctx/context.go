@@ -16,7 +16,6 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"

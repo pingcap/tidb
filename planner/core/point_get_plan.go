@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -53,7 +54,7 @@ type PointGetPlan struct {
 	Lock             bool
 	IsForUpdate      bool
 	outputNames      []*types.FieldName
-	ForUpdateNoWait  bool
+	LockWaitTime     uint64
 }
 
 type nameValuePair struct {
@@ -250,7 +251,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
-					fp.ForUpdateNoWait = x.LockTp == ast.SelectLockForUpdateNoWait
+					fp.LockWaitTime = config.LockAlwaysWait
+					if x.LockTp == ast.SelectLockForUpdateNoWait {
+						fp.LockWaitTime = config.LockNoWait
+					}
 				}
 			}
 			return fp
@@ -601,11 +605,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:    newBasePlan(ctx, "Point_Get", 0),
-		dbName:      dbName,
-		schema:      schema,
-		TblInfo:     tbl,
-		outputNames: names,
+		basePlan:     newBasePlan(ctx, "Point_Get", 0),
+		dbName:       dbName,
+		schema:       schema,
+		TblInfo:      tbl,
+		outputNames:  names,
+		LockWaitTime: config.LockAlwaysWait,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p

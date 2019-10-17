@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -112,8 +113,8 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
-	// Used for select for update nowait
-	lockNoWait bool
+	// Used for select for update in ms, 0 means always wait, 1 means nowait
+	lockWaitTime uint64
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -676,7 +677,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      c.pessimisticTTL,
 		IsFirstLock:  c.isFirstLock,
-		Nowait:       c.lockNoWait,
+		WaitTimeout:  c.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
@@ -706,8 +707,8 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		var locks []*Lock
 		for _, keyErr := range keyErrs {
 			// Check lock conflict error for nowait, if nowait set and key locked by others
-			// report error immediately and do no resolve locks any more
-			if c.lockNoWait {
+			// report error immediately and do no more resolve locks
+			if c.lockWaitTime == config.LockNoWait {
 				if keyErr.GetLocked() != nil {
 					return ErrLockFailNoWait
 				}

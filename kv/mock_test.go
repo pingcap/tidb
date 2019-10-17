@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 )
 
 var _ = Suite(testMockSuite{})
@@ -38,7 +39,7 @@ func (s testMockSuite) TestInterface(c *C) {
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
-	err = transaction.LockKeys(context.Background(), 0, false, Key("lock"))
+	err = transaction.LockKeys(context.Background(), 0, config.LockAlwaysWait, Key("lock"))
 	c.Check(err, IsNil)
 	transaction.SetOption(Option(23), struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {

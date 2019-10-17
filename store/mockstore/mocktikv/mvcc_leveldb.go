@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"sync"
 
@@ -465,7 +466,7 @@ func reverse(values []mvccValue) {
 
 // PessimisticLock writes the pessimistic lock.
 func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
-	forUpdateTS uint64, ttl uint64, lockNoWait bool) []error {
+	forUpdateTS uint64, ttl uint64, lockWaitTime uint64) []error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -478,7 +479,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		if err != nil {
 			anyError = true
 		}
-		if lockNoWait {
+		if lockWaitTime == config.LockNoWait {
 			if _, ok := err.(*ErrLocked); ok {
 				break
 			}

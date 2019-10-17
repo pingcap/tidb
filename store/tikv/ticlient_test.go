@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
@@ -119,7 +120,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set(encodeKey(s.prefix, "key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), 0, false, encodeKey(s.prefix, "key"))
+	err = txn.LockKeys(context.Background(), 0, config.LockAlwaysWait, encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

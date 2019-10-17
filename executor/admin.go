@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -432,7 +433,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		}
 
 		recordKey := e.table.RecordKey(row.handle)
-		err := txn.LockKeys(ctx, 0, false, recordKey)
+		err := txn.LockKeys(ctx, 0, config.LockAlwaysWait, recordKey)
 		if err != nil {
 			return result, err
 		}

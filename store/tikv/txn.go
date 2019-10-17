@@ -380,7 +380,8 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
 }
 
-func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, lockNoWait bool, keysInput ...kv.Key) error {
+// lockWaitTime in ms, except that 0 means always wait lock, 1 means nowait lock
+func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, lockWaitTime uint64, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
@@ -424,7 +425,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, lockNoWait
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		txn.committer.lockNoWait = lockNoWait
+		txn.committer.lockWaitTime = lockWaitTime
 		err := txn.committer.pessimisticLockKeys(bo, keys)
 		if err != nil {
 			for _, key := range keys {

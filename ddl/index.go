@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -869,7 +870,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 			// Lock the row key to notify us that someone delete or update the row,
 			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(context.Background(), 0, false, idxRecord.key)
+			err := txn.LockKeys(context.Background(), 0, config.LockAlwaysWait, idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
