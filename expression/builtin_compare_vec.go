@@ -640,7 +640,7 @@ func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	case isUnsigned0 && !isUnsigned1:
 		types.VecComparUI(largs.Uint64s(), rargs.Int64s(), result.Int64s())
 	case !isUnsigned0 && isUnsigned1:
-		types.VecComparUI(rargs.Uint64s(), largs.Int64s(), result.Int64s())
+		types.VecComparIU(largs.Int64s(), rargs.Uint64s(), result.Int64s())
 	case !isUnsigned0 && !isUnsigned1:
 		types.VecCompareII(largs.Int64s(), rargs.Int64s(), result.Int64s())
 	}

@@ -81,6 +81,22 @@ func VecComparUI(x []uint64, y, res []int64) {
 	}
 }
 
+//VecComparIU returns []int64 comparing the []int64 x to []uint64y
+func VecComparIU(x []int64, y []uint64, res []int64) {
+	n := len(x)
+	for i := 0; i < n; i++ {
+		if x[i] < 0 || uint64(y[i]) > math.MaxInt64 {
+			res[i] = -1
+		} else if x[i] < int64(y[i]) {
+			res[i] = -1
+		} else if x[i] == int64(y[i]) {
+			res[i] = 0
+		} else {
+			res[i] = 1
+		}
+	}
+}
+
 // CompareFloat64 returns an integer comparing the float64 x to y.
 func CompareFloat64(x, y float64) int {
 	if x < y {
