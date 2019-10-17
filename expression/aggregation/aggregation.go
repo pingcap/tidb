@@ -153,7 +153,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 			return nil
 		}
 	}
-	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
+	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value, a.GetType())
 	if err != nil {
 		return err
 	}

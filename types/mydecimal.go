@@ -250,11 +250,6 @@ func (d *MyDecimal) GetDigitsFrac() int8 {
 	return d.digitsFrac
 }
 
-// GetResultFrac returns the resultFrac.
-func (d *MyDecimal) GetResultFrac() int8 {
-	return d.resultFrac
-}
-
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d

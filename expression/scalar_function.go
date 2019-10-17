@@ -256,21 +256,6 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		res, isNull, err = sf.EvalReal(sf.GetCtx(), row)
 	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(sf.GetCtx(), row)
-		if isNull || res == nil {
-			break
-		}
-		dec := res.(*types.MyDecimal)
-		// var nilDec Expression = (*types.MyDecimal)(nil)
-		// `nilDec != nil` but `nilDec.(*types.MyDecimal) == nil`
-		if dec == nil {
-			break
-		}
-		if frac := dec.GetResultFrac(); dec.GetDigitsFrac() > frac {
-			to := new(types.MyDecimal)
-			err := dec.Round(to, int(frac), types.ModeHalfEven)
-			terror.Log(err)
-			res = to
-		}
 	case types.ETDatetime, types.ETTimestamp:
 		res, isNull, err = sf.EvalTime(sf.GetCtx(), row)
 	case types.ETDuration:

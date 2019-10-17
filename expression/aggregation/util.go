@@ -15,6 +15,8 @@ package aggregation
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -54,7 +56,7 @@ func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
 }
 
 // calculateSum adds v to sum.
-func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
+func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum, retType *types.FieldType) (data types.Datum, err error) {
 	// for avg and sum calculation
 	// avg and sum use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
@@ -68,7 +70,20 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 			data = types.NewDecimalDatum(d)
 		}
 	case types.KindMysqlDecimal:
-		data = types.CloneDatum(v)
+		dec := v.GetMysqlDecimal()
+		frac := retType.Decimal
+		if frac == types.UnspecifiedLength {
+			frac = mysql.MaxDecimalScale
+		}
+		if int(dec.GetDigitsFrac()) > frac {
+			to := new(types.MyDecimal)
+			err := dec.Round(to, frac, types.ModeHalfEven)
+			terror.Log(err)
+			data = types.Datum{}
+			data.SetMysqlDecimal(to)
+		} else {
+			data = types.CloneDatum(v)
+		}
 	default:
 		var f float64
 		f, err = v.ToFloat64(sc)
