@@ -478,7 +478,7 @@ func (it *copIterator) open(ctx context.Context) {
 				LockResolver:      it.store.lockResolver,
 				RegionCache:       it.store.regionCache,
 				Client:            it.store.client,
-				minCommitTSPushed: make(map[uint64]struct{}),
+				minCommitTSPushed: make(map[uint64]struct{}, 5),
 			},
 
 			memTracker: it.memTracker,
@@ -695,6 +695,8 @@ type clientHelper struct {
 	*RegionCache
 	Client
 
+	// The same content as minCommitTSPushed, used to reduce allocs.
+	resolvedLocks     []uint64
 	minCommitTSPushed map[uint64]struct{}
 }
 
@@ -714,11 +716,16 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, region RegionVerID, callerSt
 func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, string, error) {
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
 	if len(ch.minCommitTSPushed) > 0 {
-		resolvedLocks := make([]uint64, 0, len(ch.minCommitTSPushed))
-		for k := range ch.minCommitTSPushed {
-			resolvedLocks = append(resolvedLocks, k)
+		if len(ch.resolvedLocks) == 0 {
+			ch.resolvedLocks = make([]uint64, 0, len(ch.minCommitTSPushed))
+		} else {
+			ch.resolvedLocks = ch.resolvedLocks[:0]
 		}
-		req.Context.ResolvedLocks = resolvedLocks
+
+		for k := range ch.minCommitTSPushed {
+			ch.resolvedLocks = append(ch.resolvedLocks, k)
+		}
+		req.Context.ResolvedLocks = ch.resolvedLocks
 	}
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
 	return resp, ctx, sender.storeAddr, err
