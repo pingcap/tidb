@@ -102,6 +102,13 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	// Grant select priv to the user, with grant option.
 	tk.MustExec("GRANT select ON test.* TO 'testWithGrant'@'localhost' WITH GRANT OPTION;")
 	tk.MustQuery("SELECT grant_priv FROM mysql.DB WHERE User=\"testWithGrant\" and host=\"localhost\" and db=\"test\"").Check(testkit.Rows("Y"))
+
+	tk.MustExec("CREATE USER 'testWithGrant1'")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("N"))
+	tk.MustExec("GRANT ALL ON *.* TO 'testWithGrant1'")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("N"))
+	tk.MustExec("GRANT ALL ON *.* TO 'testWithGrant1' WITH GRANT OPTION")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
 func (s *testSuite3) TestTableScope(c *C) {
