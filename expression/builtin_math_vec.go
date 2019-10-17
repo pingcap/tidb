@@ -716,7 +716,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 	i64s := buf.Int64s()
 	d := result.Decimals()
 	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	for i := 0; i < len(i64s); i++ {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
