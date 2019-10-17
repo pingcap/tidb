@@ -1271,7 +1271,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		}
 	}
 	if logItems.MemMax > 0 {
-		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
+		writeSlowLogItem(&buf, SlowLogMemMax, fmt.Sprintf("%d bytes (%s)", logItems.MemMax, formatMemoryUsage(logItems.MemMax)))
 	}
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
@@ -1287,6 +1287,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		buf.WriteString(";")
 	}
 	return buf.String()
+}
+
+func formatMemoryUsage(bytes int64) string {
+	if bytes >= (1 << 30) {
+		return fmt.Sprintf("%.2f GB", float64(bytes)/(1<<30))
+	} else if bytes >= (1 << 20) {
+		return fmt.Sprintf("%.2f MB", float64(bytes)/(1<<20))
+	} else if bytes >= (1 << 10) {
+		return fmt.Sprintf("%.2f KB", float64(bytes)/(1<<10))
+	}
+	return fmt.Sprintf("%d bytes", bytes)
 }
 
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
