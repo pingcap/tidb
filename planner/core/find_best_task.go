@@ -1025,7 +1025,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		ts.StoreType = kv.TiFlash
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-		ts.Ranges = ranger.FullNotNullRange()
+		ts.Ranges = ranger.FullIntRange(false)
 	} else {
 		ts.StoreType = kv.TiKV
 	}
