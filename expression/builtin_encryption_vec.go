@@ -169,11 +169,11 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	result.ReserveString(n)
 	i64s := buf1.Int64s()
 	var (
-		hasher    *hash.Hash
-		hasher256 = sha256.New()
-		hasher224 = sha256.New224()
-		hasher384 = sha512.New384()
-		hasher512 = sha512.New()
+		hasher    hash.Hash
+		hasher256 hash.Hash
+		hasher224 hash.Hash
+		hasher384 hash.Hash
+		hasher512 hash.Hash
 	)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
@@ -184,13 +184,25 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		hasher = nil
 		switch int(hashLength) {
 		case SHA0, SHA256:
-			hasher = &hasher256
+			if hasher256 == nil {
+				hasher256 = sha256.New()
+			}
+			hasher = hasher256
 		case SHA224:
-			hasher = &hasher224
+			if hasher224 == nil {
+				hasher224 = sha256.New224()
+			}
+			hasher = hasher224
 		case SHA384:
-			hasher = &hasher384
+			if hasher384 == nil {
+				hasher384 = sha512.New384()
+			}
+			hasher = hasher384
 		case SHA512:
-			hasher = &hasher512
+			if hasher512 == nil {
+				hasher512 = sha512.New()
+			}
+			hasher = hasher512
 		}
 		if hasher == nil {
 			result.AppendString("")
@@ -198,12 +210,11 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		}
 
 		str := buf.GetString(i)
-		_, err = (*hasher).Write(hack.Slice(str))
+		_, err = hasher.Write(hack.Slice(str))
 		if err != nil {
 			return err
 		}
-		result.AppendString(fmt.Sprintf("%x", (*hasher).Sum(nil)))
-		(*hasher).Reset()
+		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
 	}
 	return nil
 }
