@@ -281,3 +281,10 @@ vectorized-bench:
 			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-args "$(VB_FUNC)"
+
+# Usage:
+#
+#	$ make change-parser PARSER=github.com/your-repo/parser@your-branch
+PARSER=github.com/pingcap/parser
+change-parser:
+	$(GO) mod edit -replace github.com/pingcap/parser=${PARSER}
