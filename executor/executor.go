@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
 	"runtime"
 	"strconv"
 	"sync"
@@ -479,14 +480,14 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
-	dbName  string
-	table   table.Table
-	indices []table.Index
-	srcs    []*IndexLookUpExecutor
-	done    bool
-	is      infoschema.InfoSchema
-	exitCh  chan struct{}
-	retCh   chan error
+	dbName     string
+	table      table.Table
+	indexInfos []*model.IndexInfo
+	srcs       []*IndexLookUpExecutor
+	done       bool
+	is         infoschema.InfoSchema
+	exitCh     chan struct{}
+	retCh      chan error
 }
 
 // Open implements the Executor Open interface.
@@ -514,7 +515,19 @@ func (e *CheckTableExec) Close() error {
 	return firstErr
 }
 
-func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
+func (e *CheckTableExec) checkTableIndexHandle(ctx context.Context, idxInfo *model.IndexInfo) error {
+	for _, src := range e.srcs {
+		if src.index.Name.L == idxInfo.Name.L {
+			err := e.checkIndexHandle(ctx, src)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpExecutor) error {
 	cols := src.schema.Columns
 	retFieldTypes := make([]*types.FieldType, len(cols))
 	for i := range cols {
@@ -555,14 +568,15 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	idxNames := make([]string, 0, len(e.indices))
-	for _, idx := range e.indices {
-		idxNames = append(idxNames, idx.Meta().Name.O)
+	idxNames := make([]string, 0, len(e.indexInfos))
+	for _, idx := range e.indexInfos {
+		idxNames = append(idxNames, idx.Name.O)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
+	fmt.Printf("---------\nCheckIndicesCount: %#v, src: %v\n\n", greater, len(e.srcs))
 	if err != nil {
 		if greater == admin.IdxCntGreater {
-			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
 			err = e.checkTableRecord(idxOffset)
 		}
@@ -570,6 +584,11 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 		}
 		return errors.Trace(err)
+	}
+
+	err = e.checkTableRecord(idxOffset)
+	if err != nil && admin.ErrDataInConsistent.Equal(err) {
+		return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 	}
 
 	// The number of table rows is equal to the number of index rows.
@@ -581,7 +600,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		go func(num int) {
 			defer wg.Done()
 			util.WithRecovery(func() {
-				err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
 					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
 				}
@@ -603,7 +622,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
-	idx := e.indices[idxOffset]
+	idxInfo := e.indexInfos[idxOffset]
 	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -611,6 +630,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	}
 	tbl := e.table
 	if tbl.Meta().GetPartitionInfo() == nil {
+		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
 		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
 	}
 
@@ -618,6 +638,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
 		}

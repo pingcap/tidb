@@ -477,6 +477,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	}
 
 	startKey := t.RecordKey(math.MinInt64)
+	//tableID, handle, err := tablecodec.DecodeRecordKey(startKey)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -493,6 +494,9 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			}
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
+		//key, _, _ := idx.GenIndexKey(sc, vals1, h1, nil)
+		//tableIDIdx, handleIdx, _, errIdx := tablecodec.DecodeIndexKey(key)
+
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
@@ -501,9 +505,11 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		//fmt.Printf("---------\noutsite tid %v, h: %v\n ------\n", tableIDIdx, h1)
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			fmt.Printf("---------\n%v\n%v ------\n", h1, t.RecordPrefix())
+			//fmt.Printf("---------\ntid %v, h: %v, h1: %v, %v\n%v ------\n", tableID, handle, h1, t.Meta().GetPartitionInfo())
+			//fmt.Printf("---------\ntid %v, h: %v, %v\n ------\n", tableIDIdx, handleIdx, errIdx)
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
 		}
 

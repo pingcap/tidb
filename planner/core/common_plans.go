@@ -71,7 +71,7 @@ type CheckTable struct {
 
 	DBName             string
 	Table              table.Table
-	Indices            []table.Index
+	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 

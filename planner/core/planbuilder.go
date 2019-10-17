@@ -956,10 +956,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	return rootT.p, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table) ([]Plan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
-	indices := make([]table.Index, 0, len(tblInfo.Indices))
+	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
 	for _, idx := range tbl.Indices() {
 		idxInfo := idx.Meta()
@@ -969,32 +969,31 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			continue
 		}
 
+		indexInfos = append(indexInfos, idxInfo)
+		// For partition tables.
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
-			if tbl, ok := tbl.(table.PartitionedTable); ok {
-				for _, def := range pi.Definitions {
-					t := tbl.GetPartition(def.ID)
-					reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)
-					if err != nil {
-						return nil, nil, err
-					}
-					indexLookUpReaders = append(indexLookUpReaders, reader)
-					indices = append(indices, idx)
+			for _, def := range pi.Definitions {
+				t := tbl.(table.PartitionedTable).GetPartition(def.ID)
+				reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)
+				if err != nil {
+					return nil, nil, err
 				}
-				continue
+				indexLookUpReaders = append(indexLookUpReaders, reader)
 			}
+			continue
 		}
 
+		// For non-partition tables.
 		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo)
 		if err != nil {
 			return nil, nil, err
 		}
-		indices = append(indices, idx)
 		indexLookUpReaders = append(indexLookUpReaders, reader)
 	}
 	if len(indexLookUpReaders) == 0 {
 		return nil, nil, nil
 	}
-	return indexLookUpReaders, indices, nil
+	return indexLookUpReaders, indexInfos, nil
 }
 
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
@@ -1010,7 +1009,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 		Table:  table,
 	}
 
-	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table)
+	readerPlans, indexInfos, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1018,7 +1017,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	for _, plan := range readerPlans {
 		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
 	}
-	p.Indices = indices
+	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers
 	return p, nil
 }
