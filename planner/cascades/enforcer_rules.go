@@ -14,6 +14,8 @@
 package cascades
 
 import (
+	"math"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
@@ -33,8 +35,12 @@ type Enforcer interface {
 
 // GetEnforcerRules gets all candidate enforcer rules based
 // on required physical property.
-func GetEnforcerRules(prop *property.PhysicalProperty) (enforcers []Enforcer) {
+func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers []Enforcer) {
+	if g.EngineType != memo.EngineTiDB {
+		return
+	}
 	if !prop.IsEmpty() {
+		orderEnforcer.group = g
 		enforcers = append(enforcers, orderEnforcer)
 	}
 	return
@@ -42,6 +48,8 @@ func GetEnforcerRules(prop *property.PhysicalProperty) (enforcers []Enforcer) {
 
 // OrderEnforcer enforces order property on child implementation.
 type OrderEnforcer struct {
+	group *memo.Group
+	sort  *plannercore.PhysicalSort
 }
 
 var orderEnforcer = &OrderEnforcer{}
@@ -55,9 +63,10 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 
 // OnEnforce adds sort operator to satisfy required order property.
 func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
-	sort := &plannercore.PhysicalSort{
+	lp := e.group.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode
+	sort := plannercore.PhysicalSort{
 		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Items)),
-	}
+	}.Init(lp.SCtx(), e.group.Prop.Stats, lp.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	for _, item := range reqProp.Items {
 		item := &plannercore.ByItems{
 			Expr: item.Col,
@@ -72,7 +81,10 @@ func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo
 
 // GetEnforceCost calculates cost of sort operator.
 func (e *OrderEnforcer) GetEnforceCost(inputCount float64) float64 {
-	sort := &plannercore.PhysicalSort{}
+	lp := e.group.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode
+	// To calculate the cost of PhysicalSort, we need to create a PhysicalSort with a SessionCTX
+	// which contains the SessionVars.
+	sort := plannercore.PhysicalSort{}.Init(lp.SCtx(), nil, 0, nil)
 	cost := sort.GetCost(inputCount)
 	return cost
 }

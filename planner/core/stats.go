@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
@@ -202,7 +203,17 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo) (_ *property.
 	}
 	ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
-	ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	if ts.Handle != nil {
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	} else {
+		isUnsigned := false
+		if ts.Source.tableInfo.PKIsHandle {
+			if pkColInfo := ts.Source.tableInfo.GetPkColInfo(); pkColInfo != nil {
+				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			}
+		}
+		ts.Ranges = ranger.FullIntRange(isUnsigned)
+	}
 	if err != nil {
 		return nil, err
 	}

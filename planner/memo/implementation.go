@@ -23,4 +23,7 @@ type Implementation interface {
 	SetCost(cost float64)
 	GetCost() float64
 	GetPlan() plannercore.PhysicalPlan
+
+	// AttachChildren is used to attach children implementations and returns it self.
+	AttachChildren(children ...Implementation) Implementation
 }
