@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"context"
-	"google.golang.org/grpc/connectivity"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -249,38 +248,19 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
-	c.failPendingRequests(perr) // fail all pending requests.
-	var err error
-	start := time.Now()
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-	for {
-		s := c.conn.GetState()
-		if s == connectivity.Ready {
-			cancel()
-			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
-			break
-		}
-		if !c.conn.WaitForStateChange(dialCtx, s) {
-			cancel()
-			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
-			err = dialCtx.Err()
-			break
-		}
-	}
+func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
+	c.failPendingRequests(err) // fail all pending requests.
+	// Re-establish a application layer stream. TCP layer is handled by gRPC.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
 	if err == nil {
-		// Re-establish a application layer stream. TCP layer is handled by gRPC.
-		tikvClient := tikvpb.NewTikvClient(c.conn)
-		streamClient, err := tikvClient.BatchCommands(context.TODO())
-		if err == nil {
-			logutil.BgLogger().Info(
-				"batchRecvLoop re-create streaming success",
-				zap.String("target", c.target),
-			)
-			c.client = streamClient
+		logutil.BgLogger().Info(
+			"batchRecvLoop re-create streaming success",
+			zap.String("target", c.target),
+		)
+		c.client = streamClient
 
-			return nil
-		}
+		return nil
 	}
 	logutil.BgLogger().Info(
 		"batchRecvLoop re-create streaming fail",
@@ -494,23 +474,6 @@ func (c *batchCommandsClient) initBatchClient() error {
 	if c.client != nil {
 		return nil
 	}
-
-	start := time.Now()
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-	for {
-		s := c.conn.GetState()
-		if s == connectivity.Ready {
-			cancel()
-			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
-			break
-		}
-		if !c.conn.WaitForStateChange(dialCtx, s) {
-			cancel()
-			metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
-			return dialCtx.Err()
-		}
-	}
-
 	// Initialize batch streaming clients.
 	tikvClient := tikvpb.NewTikvClient(c.conn)
 	streamClient, err := tikvClient.BatchCommands(context.TODO())
