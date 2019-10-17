@@ -1015,7 +1015,7 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *ch
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
