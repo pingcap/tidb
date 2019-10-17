@@ -56,3 +56,16 @@ func CompareString(x, y string) int {
 
 	return 1
 }
+
+// VecCompareFloat64 returns a vector results of comparing x []float64 to y []float64
+func VecCompareFloat64(x, y []float64, res []int64, n int) {
+	for i := 0; i < n; i++ {
+		if x[i] < y[i] {
+			res[i] = -1
+		} else if x[i] == y[i] {
+			res[i] = 0
+		} else {
+			res[i] = 1
+		}
+	}
+}
