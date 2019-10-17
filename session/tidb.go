@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -204,7 +205,8 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// then it could include the transaction commit time.
 		if rs == nil {
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
-			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), sessVars)
+			pps := types.CopyRow(sessVars.PreparedParams)
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
 		}
 	}()
 

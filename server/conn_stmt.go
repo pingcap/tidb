@@ -569,7 +569,7 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
 	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
-		return prepared.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+		return prepared.Stmt.Text() + sv.PreparedParams.String()
 	}
 	return fmt.Sprintf("prepared statement not found, ID: %d", stmtID)
 }
