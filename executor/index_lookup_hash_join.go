@@ -648,7 +648,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		for j, chk := 0, task.innerResult.GetChunk(i); j < chk.NumRows(); j++ {
 			row := chk.GetRow(j)
 			ptr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
-			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, joinResult, h, iw.joinKeyBuf)
+			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, h, iw.joinKeyBuf)
 			if err != nil {
 				return err
 			}
