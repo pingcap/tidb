@@ -708,8 +708,14 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			// Check lock conflict error for nowait, if nowait set and key locked by others
 			// report error immediately and do no more resolve locks
 			if c.lockWaitTime == kv.LockNoWait {
-				if keyErr.GetLocked() != nil {
-					return ErrLockFailNoWait
+				if lockInfo := keyErr.GetLocked(); lockInfo != nil {
+					// if the lock left behind whose related txn is already committed or rollbacked,
+					// (eg secondary locks not committed or rollbacked yet)
+					// we cant return "nowait conflict" directly, still need to backoff and
+					// do resolve work
+					if lockInfo.LockType == kv.TypePessmisticLock {
+						return ErrLockFailNoWait
+					}
 				}
 			}
 			// Check already exists error

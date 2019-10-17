@@ -58,6 +58,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
 				TxnSize:     locked.TxnSize,
+				LockType:    locked.LockType,
 			},
 		}
 	}
