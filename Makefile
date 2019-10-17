@@ -12,7 +12,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p 4
 OVERALLS        := GO111MODULE=on overalls
@@ -40,6 +40,11 @@ COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageSer
 CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
+
+# VB = Vector Benchmark
+VB_FILE =
+VB_FUNC =
+
 
 .PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
 
@@ -266,3 +271,13 @@ tools/bin/misspell:tools/check/go.mod
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
+
+# Usage:
+#
+# 	$ make vectorized-bench VB_FILE=Time VB_FUNC=builtinCurrentDateSig
+vectorized-bench:
+	cd ./expression && \
+		go test -v -benchmem \
+			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
+			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
+			-args "$(VB_FUNC)"

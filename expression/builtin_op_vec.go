@@ -85,7 +85,9 @@ func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		} else {
 			i64s[i] = 0
 		}
-		result.SetNull(i, isNull)
+		if isNull != isNull0 {
+			result.SetNull(i, isNull)
+		}
 	}
 	return nil
 }
@@ -170,11 +172,21 @@ func (b *builtinIntIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinUnaryMinusRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnaryMinusRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var err error
+	if err = b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	f64s := result.Float64s()
+	for i := 0; i < n; i++ {
+		f64s[i] = -f64s[i]
+	}
+	return nil
 }
 
 func (b *builtinBitNegSig) vectorized() bool {
