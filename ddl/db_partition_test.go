@@ -385,6 +385,13 @@ create table log_message_1 (
 				"partition p1 values less than (1, 'a'))",
 			ddl.ErrRangeNotIncreasing,
 		},
+		{
+			"create table t (col datetime not null default '2000-01-01')" +
+				"partition by range columns (col) (" +
+				"PARTITION p0 VALUES LESS THAN (20190905)," +
+				"PARTITION p1 VALUES LESS THAN (20190906));",
+			ddl.ErrWrongTypeColumnValue,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
@@ -544,6 +551,16 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	sql := "alter table t add partition ( partition p3 values less than ('2019-07-01'));"
 	tk.MustGetErrCode(sql, tmysql.ErrRangeNotIncreasing)
 	tk.MustExec("alter table t add partition ( partition p3 values less than ('2019-08-01'));")
+
+	// Add partition value's type should be the same with the column's type.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (
+		col date not null default '2000-01-01')
+                partition by range columns (col) (
+		PARTITION p0 VALUES LESS THAN ('20190905'),
+		PARTITION p1 VALUES LESS THAN ('20190906'));`)
+	sql = "alter table t add partition (partition p2 values less than (20190907));"
+	tk.MustGetErrCode(sql, tmysql.ErrWrongTypeColumnValue)
 }
 
 func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
@@ -1099,6 +1116,38 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	)`
 	tk.MustGetErrCode(sql9, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+
+	sql10 := `create table part8 (
+                 a int not null,
+                 b int not null,
+                 c int default null,
+                 d int default null,
+                 e int default null,
+                 primary key (a, b),
+                 unique key (c, d)
+        )
+        partition by range columns (b) (
+               partition p0 values less than (4),
+               partition p1 values less than (7),
+               partition p2 values less than (11)
+        )`
+	tk.MustGetErrCode(sql10, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+
+	sql11 := `create table part9 (
+                 a int not null,
+                 b int not null,
+                 c int default null,
+                 d int default null,
+                 e int default null,
+                 primary key (a, b),
+                 unique key (b, c, d)
+        )
+        partition by range columns (b, c) (
+               partition p0 values less than (4, 5),
+               partition p1 values less than (7, 9),
+               partition p2 values less than (11, 22)
+        )`
+	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }
 
 func (s *testIntegrationSuite3) TestPartitionDropIndex(c *C) {

@@ -24,23 +24,25 @@ type TypeContext struct {
 	// {{ .TypeNameInColumn }}s.
 	// If undefined, it's same as TypeName.
 	TypeNameInColumn string
+	// Describe the type name in golang.
+	TypeNameGo string
 	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen() .
 	Fixed bool
 }
 
 var (
 	// TypeInt represents the template context of types.ETInt .
-	TypeInt = TypeContext{ETName: "Int", TypeName: "Int", TypeNameInColumn: "Int64", Fixed: true}
+	TypeInt = TypeContext{ETName: "Int", TypeName: "Int", TypeNameInColumn: "Int64", TypeNameGo: "int64", Fixed: true}
 	// TypeReal represents the template context of types.ETReal .
-	TypeReal = TypeContext{ETName: "Real", TypeName: "Real", TypeNameInColumn: "Float64", Fixed: true}
+	TypeReal = TypeContext{ETName: "Real", TypeName: "Real", TypeNameInColumn: "Float64", TypeNameGo: "float64", Fixed: true}
 	// TypeDecimal represents the template context of types.ETDecimal .
-	TypeDecimal = TypeContext{ETName: "Decimal", TypeName: "Decimal", TypeNameInColumn: "Decimal", Fixed: true}
+	TypeDecimal = TypeContext{ETName: "Decimal", TypeName: "Decimal", TypeNameInColumn: "Decimal", TypeNameGo: "types.MyDecimal", Fixed: true}
 	// TypeString represents the template context of types.ETString .
-	TypeString = TypeContext{ETName: "String", TypeName: "String", TypeNameInColumn: "String", Fixed: false}
+	TypeString = TypeContext{ETName: "String", TypeName: "String", TypeNameInColumn: "String", TypeNameGo: "string", Fixed: false}
 	// TypeDatetime represents the template context of types.ETDatetime .
-	TypeDatetime = TypeContext{ETName: "Datetime", TypeName: "Time", TypeNameInColumn: "Time", Fixed: true}
+	TypeDatetime = TypeContext{ETName: "Datetime", TypeName: "Time", TypeNameInColumn: "Time", TypeNameGo: "types.Time", Fixed: true}
 	// TypeDuration represents the template context of types.ETDuration .
-	TypeDuration = TypeContext{ETName: "Duration", TypeName: "Duration", TypeNameInColumn: "GoDuration", Fixed: true}
+	TypeDuration = TypeContext{ETName: "Duration", TypeName: "Duration", TypeNameInColumn: "GoDuration", TypeNameGo: "time.Duration", Fixed: true}
 	// TypeJSON represents the template context of types.ETJson .
-	TypeJSON = TypeContext{ETName: "Json", TypeName: "JSON", TypeNameInColumn: "JSON", Fixed: false}
+	TypeJSON = TypeContext{ETName: "Json", TypeName: "JSON", TypeNameInColumn: "JSON", TypeNameGo: "json.BinaryJSON", Fixed: false}
 )
