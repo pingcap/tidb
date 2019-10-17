@@ -1227,6 +1227,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		s := d.GetString()
 		y, err = StrToInt(sc, s)
 		if err != nil {
+			ret.SetInt64(0)
 			return ret, errors.Trace(err)
 		}
 		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
@@ -1239,16 +1240,18 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {
-			return invalidConv(d, target.Tp)
+			_, err = invalidConv(d, target.Tp)
+			ret.SetInt64(0)
+			return ret, err
 		}
 		y = ret.GetInt64()
 	}
 	y, err = AdjustYear(y, adjust)
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		_, err = invalidConv(d, target.Tp)
 	}
 	ret.SetInt64(y)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {

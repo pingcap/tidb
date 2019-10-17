@@ -582,11 +582,11 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinCastJSONAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastJSONAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalJSON(b.ctx, input, result)
 }
 
 func (b *builtinCastJSONAsStringSig) vectorized() bool {
@@ -698,11 +698,32 @@ func (b *builtinCastTimeAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 }
 
 func (b *builtinCastDurationAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var err error
+	if err = b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	res := result.GoDurations()
+	dur := &types.Duration{
+		Fsp: types.UnspecifiedFsp,
+	}
+	var rd types.Duration
+	for i, v := range res {
+		if result.IsNull(i) {
+			continue
+		}
+		dur.Duration = v
+		rd, err = dur.RoundFrac(int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		res[i] = rd.Duration
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsStringSig) vectorized() bool {
