@@ -309,6 +309,30 @@ func (g *rangeRealGener) gen() interface{} {
 	return rand.Float64()*(g.end-g.begin) + g.begin
 }
 
+// rangeDecimalGener is used to generate decimal items in [begin, end].
+type rangeDecimalGener struct {
+	begin float64
+	end   float64
+
+	nullRation float64
+}
+
+func (g *rangeDecimalGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	if g.end < g.begin {
+		g.begin = -100000
+		g.end = 100000
+	}
+	d := new(types.MyDecimal)
+	f := rand.Float64()*(g.end-g.begin) + g.begin
+	if err := d.FromFloat64(f); err != nil {
+		panic(err)
+	}
+	return d
+}
+
 // rangeInt64Gener is used to generate int64 items in [begin, end).
 type rangeInt64Gener struct {
 	begin int
