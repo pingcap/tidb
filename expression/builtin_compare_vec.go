@@ -636,11 +636,11 @@ func vecResOfLT(res []int64) {
 func VecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	switch {
 	case isUnsigned0 && isUnsigned1:
-		types.VecComparUU(largs.Uint64s(), rargs.Uint64s(), result.Int64s())
+		types.VecCompareUU(largs.Uint64s(), rargs.Uint64s(), result.Int64s())
 	case isUnsigned0 && !isUnsigned1:
-		types.VecComparUI(largs.Uint64s(), rargs.Int64s(), result.Int64s())
+		types.VecCompareUI(largs.Uint64s(), rargs.Int64s(), result.Int64s())
 	case !isUnsigned0 && isUnsigned1:
-		types.VecComparIU(largs.Int64s(), rargs.Uint64s(), result.Int64s())
+		types.VecCompareIU(largs.Int64s(), rargs.Uint64s(), result.Int64s())
 	case !isUnsigned0 && !isUnsigned1:
 		types.VecCompareII(largs.Int64s(), rargs.Int64s(), result.Int64s())
 	}

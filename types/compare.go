@@ -37,8 +37,8 @@ func CompareUint64(x, y uint64) int {
 	return 1
 }
 
-//VecComparUU returns []int64 comparing the []uint64 x to []uint64 y
-func VecComparUU(x, y []uint64, res []int64) {
+//VecCompareUU returns []int64 comparing the []uint64 x to []uint64 y
+func VecCompareUU(x, y []uint64, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
 		if x[i] < y[i] {
@@ -65,8 +65,8 @@ func VecCompareII(x, y, res []int64) {
 	}
 }
 
-//VecComparUI returns []int64 comparing the []uint64 x to []int64y
-func VecComparUI(x []uint64, y, res []int64) {
+//VecCompareUI returns []int64 comparing the []uint64 x to []int64y
+func VecCompareUI(x []uint64, y, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
 		if y[i] < 0 || x[i] > math.MaxInt64 {
@@ -81,8 +81,8 @@ func VecComparUI(x []uint64, y, res []int64) {
 	}
 }
 
-//VecComparIU returns []int64 comparing the []int64 x to []uint64y
-func VecComparIU(x []int64, y []uint64, res []int64) {
+//VecCompareIU returns []int64 comparing the []int64 x to []uint64y
+func VecCompareIU(x []int64, y []uint64, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
 		if x[i] < 0 || uint64(y[i]) > math.MaxInt64 {
