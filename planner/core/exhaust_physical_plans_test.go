@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -102,9 +103,9 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
-	path := &accessPath{
-		idxCols:    append(make([]*expression.Column, 0, 4), dsSchema.Columns...),
-		idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength},
+	path := &util.AccessPath{
+		IdxCols:    append(make([]*expression.Column, 0, 4), dsSchema.Columns...),
+		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength},
 	}
 
 	tests := []struct {

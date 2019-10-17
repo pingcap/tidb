@@ -131,10 +131,10 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		return false, nil
 	}
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		idx := path.index
+		idx := path.Index
 		if !idx.Unique {
 			continue
 		}

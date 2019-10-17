@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -49,8 +50,8 @@ func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (p
 	return
 }
 
-// checkColCanUseIndex checks whether there is an accessPath satisfy the conditions:
-// 1. all of the selection's condition can be pushed down as accessConds of the path.
+// checkColCanUseIndex checks whether there is an AccessPath satisfy the conditions:
+// 1. all of the selection's condition can be pushed down as AccessConds of the path.
 // 2. the path can keep order for `col` after pushing down the conditions.
 func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
 	switch p := plan.(type) {
@@ -58,9 +59,9 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 		conditions = append(conditions, p.Conditions...)
 		return a.checkColCanUseIndex(p.children[0], col, conditions)
 	case *DataSource:
-		// Check whether there is an accessPath can use index for col.
+		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
-			if path.isTablePath {
+			if path.IsTablePath {
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
@@ -73,13 +74,13 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 			} else {
 				// For index paths, we have to check:
 				// 1. whether all of the conditions can be pushed down as accessConds.
-				// 2. whether the accessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, path.fullIdxCols, path.fullIdxColLens)
+				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, path.FullIdxCols, path.FullIdxColLens)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}
 				for i := 0; i <= result.EqCondCount; i++ {
-					if i < len(path.fullIdxCols) && col.Equal(nil, path.fullIdxCols[i]) {
+					if i < len(path.FullIdxCols) && col.Equal(nil, path.FullIdxCols[i]) {
 						return true
 					}
 				}
@@ -109,7 +110,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 		newDs.schema = p.schema.Clone()
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
-		newAccessPaths := make([]*accessPath, 0, len(p.possibleAccessPaths))
+		newAccessPaths := make([]*util.AccessPath, 0, len(p.possibleAccessPaths))
 		for _, path := range p.possibleAccessPaths {
 			newPath := *path
 			newAccessPaths = append(newAccessPaths, &newPath)

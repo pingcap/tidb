@@ -2417,10 +2417,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SetSchema(schema)
 	ds.setPreferredStoreType(b.TableHints())
 
-	// Init fullIdxCols, fullIdxColLens for accessPaths.
+	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.isTablePath {
-			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+		if !path.IsTablePath {
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.Index)
 		}
 	}
 
