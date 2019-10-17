@@ -149,11 +149,35 @@ func (b *builtinCastRealAsRealSig) vectorized() bool {
 }
 
 func (b *builtinCastTimeAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveJSON(n)
+	tms := buf.Times()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		tp := tms[i].Type
+		if tp == mysql.TypeDatetime || tp == mysql.TypeTimestamp {
+			tms[i].Fsp = types.MaxFsp
+		}
+		result.AppendJSON(json.CreateBinary(tms[i].String()))
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsStringSig) vectorized() bool {
