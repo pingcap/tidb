@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"syscall"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -119,6 +120,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRevokeRole(x)
 	case *ast.SetDefaultRoleStmt:
 		err = e.executeSetDefaultRole(x)
+	case *ast.ShutdownStmt:
+		err = e.executeShutdown(x)
 	}
 	e.done = true
 	return err
@@ -1010,4 +1013,11 @@ func (e *SimpleExec) autoNewTxn() bool {
 		return true
 	}
 	return false
+}
+
+func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
+	sessVars := e.ctx.GetSessionVars()
+	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
+	// sending signal to signal.SetupSignalHandler
+	return syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 }

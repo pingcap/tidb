@@ -79,3 +79,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/ekalinin/parser v0.0.0-20191017101445-dafcc4e4b5e2
