@@ -50,9 +50,6 @@ func (s *testSuite3) TestGrantGlobal(c *C) {
 	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost';")
 	// Make sure all the global privs for granted user is "Y".
 	for _, v := range mysql.AllGlobalPrivs {
-		if v == mysql.GrantPriv {
-			continue
-		}
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
@@ -88,9 +85,6 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	tk.MustExec("GRANT ALL ON * TO 'testDB1'@'localhost';")
 	// Make sure all the db privs for granted user is "Y".
 	for _, v := range mysql.AllDBPrivs {
-		if v == mysql.GrantPriv {
-			continue
-		}
 		sql := fmt.Sprintf("SELECT %s FROM mysql.DB WHERE User=\"testDB1\" and host=\"localhost\" and db=\"test\";", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}

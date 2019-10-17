@@ -44,9 +44,6 @@ var (
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	var mask mysql.PrivilegeType
 	for _, p := range privs {
-		if p == mysql.GrantPriv {
-			continue
-		}
 		mask |= p
 	}
 	return mask
@@ -1009,9 +1006,6 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 	guarantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
 
 	for _, priv := range mysql.AllGlobalPrivs {
-		if priv == mysql.GrantPriv {
-			continue
-		}
 		if user.Privileges&priv > 0 {
 			privilegeType := mysql.Priv2Str[priv]
 			// +---------------------------+---------------+-------------------------+--------------+
