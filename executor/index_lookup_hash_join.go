@@ -615,8 +615,8 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 	return true, joinResult
 }
 
-func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx context.Context, innerRow chunk.Row, innerRowPtr chunk.RowPtr, task *indexHashJoinTask,
-	joinResult *indexHashJoinResult, h hash.Hash64, buf []byte) error {
+func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx context.Context, innerRow chunk.Row, innerRowPtr chunk.RowPtr,
+	task *indexHashJoinTask, h hash.Hash64, buf []byte) error {
 	_, matchedOuterRowIdx, err := iw.getMatchedOuterRows(innerRow, task, h, buf)
 	if err != nil {
 		return err
