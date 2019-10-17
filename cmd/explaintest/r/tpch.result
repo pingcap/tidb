@@ -1222,7 +1222,7 @@ id	count	task	operator info
 Projection_25	1.00	root	Column#2, Column#104
 └─TopN_28	1.00	root	Column#104:desc, Column#2:asc, offset:0, count:100
   └─HashAgg_34	1.00	root	group by:Column#2, funcs:count(1), firstrow(Column#2)
-    └─IndexHashJoin_49	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:Column#8, inner key:Column#71, other cond:ne(Column#73, Column#1), ne(Column#73, Column#10)
+    └─IndexHashJoin_49	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:Column#8, inner key:Column#71, other cond:ne(Column#73, Column#10)
       ├─IndexHashJoin_84	9786202.08	root	semi join, inner:IndexLookUp_75, outer key:Column#8, inner key:Column#38, other cond:ne(Column#40, Column#1), ne(Column#40, Column#10)
       │ ├─IndexMergeJoin_95	12232752.60	root	inner join, inner:TableReader_93, outer key:Column#8, inner key:Column#25
       │ │ ├─HashRightJoin_101	12232752.60	root	inner join, inner:HashRightJoin_114, equal:[eq(Column#1, Column#10)]
