@@ -515,7 +515,6 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 			res, err = json.ParseBinaryFromString(buf.GetString(i))
 		} else {
 			res = json.CreateBinary(buf.GetString(i))
-			err = nil
 		}
 		if err != nil {
 			return err
