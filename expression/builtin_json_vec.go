@@ -15,6 +15,8 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -27,11 +29,35 @@ func (b *builtinJSONDepthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinJSONKeysSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONKeysSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveJSON(n)
+	var j json.BinaryJSON
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		j = buf.GetJSON(i)
+		if j.TypeCode != json.TypeCodeObject {
+			return json.ErrInvalidJSONData
+		}
+		result.AppendJSON(j.GetKeys())
+	}
+	return nil
 }
 
 func (b *builtinJSONInsertSig) vectorized() bool {
