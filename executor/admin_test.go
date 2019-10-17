@@ -399,6 +399,76 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test_p")
+	tk.MustExec("create table admin_test_p (c1 int key,c2 int,c3 int,index idx(c2)) partition by hash(c1) partitions 4")
+	tk.MustExec("insert admin_test_p (c1, c2, c3) values (0,0,0), (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+
+	// Make some corrupted index. Build the index information.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test_p")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[0].ID, tblInfo, idxInfo)
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	tk.Se.GetSessionVars().MaxChunkSize = 3
+
+	// Reduce one row of index on partition 0.
+	// Table count > index count.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), 0, nil)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	err = tk.ExecToErr("admin check table admin_test_p")
+	c.Assert(err.Error(), Equals, "[executor:8003]admin_test_p err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:0, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:0, b:[]uint8(nil), x:interface {}(nil)}}}")
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+	// TODO: fix admin recover for partition table.
+	//r := tk.MustQuery("admin recover index admin_test_p idx")
+	//r.Check(testkit.Rows("0 0"))
+	//tk.MustExec("admin check table admin_test_p")
+	// Manual recover index.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(0), 0)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	tk.MustExec("admin check table admin_test_p")
+
+	// Reduce one row of index on partition 1.
+	// Table count > index count.
+	indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[1].ID, tblInfo, idxInfo)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1, nil)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	err = tk.ExecToErr("admin check table admin_test_p")
+	c.Assert(err.Error(), Equals, "[executor:8003]admin_test_p err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:1, b:[]uint8(nil), x:interface {}(nil)}}}")
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+	// TODO: fix admin recover for partition table.
+	//r := tk.MustQuery("admin recover index admin_test_p idx")
+	//r.Check(testkit.Rows("0 0"))
+	//tk.MustExec("admin check table admin_test_p")
+	// Manual recover index.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	tk.MustExec("admin check table admin_test_p")
+}
+
 func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

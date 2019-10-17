@@ -480,7 +480,7 @@ type CheckTableExec struct {
 	baseExecutor
 
 	dbName  string
-	tblInfo *model.TableInfo
+	table   table.Table
 	indices []table.Index
 	srcs    []*IndexLookUpExecutor
 	done    bool
@@ -559,16 +559,15 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, idx := range e.indices {
 		idxNames = append(idxNames, idx.Meta().Name.O)
 	}
-	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
+	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
-		tbl := e.srcs[idxOffset].table
 		if greater == admin.IdxCntGreater {
 			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(tbl, idxOffset)
+			err = e.checkTableRecord(idxOffset)
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 		}
 		return errors.Trace(err)
 	}
@@ -603,13 +602,14 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(tbl table.Table, idxOffset int) error {
+func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	idx := e.indices[idxOffset]
 	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
+	tbl := e.table
 	if tbl.Meta().GetPartitionInfo() == nil {
 		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
 	}

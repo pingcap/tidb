@@ -699,7 +699,7 @@ func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, a
 		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
 	}
 
-	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx, 1)
+	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
 }
 
 func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, error) {
@@ -848,7 +848,7 @@ func findColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 	return nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
 	// Get generated columns.
 	var genCols []*expression.Column
 	pkOffset := -1
@@ -934,13 +934,24 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(tblSchema)
+
+	if tbl.Meta().GetPartitionInfo() != nil {
+		if tbl, ok := tbl.(table.PhysicalTable); ok {
+			pid := tbl.GetPhysicalID()
+			is.physicalTableID = pid
+			is.isPartition = true
+			ts.isPartition = true
+			ts.physicalTableID = pid
+		}
+	}
+
 	cop := &copTask{
 		indexPlan:   is,
 		tablePlan:   ts,
 		tblColHists: is.stats.HistColl,
 	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(id, idx, fullIdxCols, true)
+	is.initSchema(idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }
@@ -950,18 +961,34 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	// get index information
 	indices := make([]table.Index, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
-	for i, idx := range tbl.Indices() {
+	for _, idx := range tbl.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
 			continue
 		}
-		indices = append(indices, idx)
-		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo, i)
+
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+			if tbl, ok := tbl.(table.PartitionedTable); ok {
+				for _, def := range pi.Definitions {
+					t := tbl.GetPartition(def.ID)
+					reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)
+					if err != nil {
+						return nil, nil, err
+					}
+					indexLookUpReaders = append(indexLookUpReaders, reader)
+					indices = append(indices, idx)
+				}
+				continue
+			}
+		}
+
+		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo)
 		if err != nil {
 			return nil, nil, err
 		}
+		indices = append(indices, idx)
 		indexLookUpReaders = append(indexLookUpReaders, reader)
 	}
 	if len(indexLookUpReaders) == 0 {
@@ -972,15 +999,15 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
 	tbl := as.Tables[0]
-	p := &CheckTable{
-		DBName:  tbl.Schema.O,
-		TblInfo: tbl.TableInfo,
-	}
-
 	tableInfo := as.Tables[0].TableInfo
 	table, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
+	}
+
+	p := &CheckTable{
+		DBName: tbl.Schema.O,
+		Table:  table,
 	}
 
 	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table)

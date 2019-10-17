@@ -376,7 +376,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dbName:       v.DBName,
-		tblInfo:      v.TblInfo,
+		table:        v.Table,
 		indices:      v.Indices,
 		is:           b.is,
 		srcs:         readerExecs,
@@ -1884,10 +1884,15 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
-	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
+	if tbl.Meta().Name.L == "t1" {
+		fmt.Printf("build table reader is partition: %v, tid: %v ------\n", isPartition, physicalTableID)
+	}
+
 	e := &TableReaderExecutor{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:          dagReq,
@@ -1948,6 +1953,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		tbl = pt.GetPartition(physicalTableID)
 	} else {
 		physicalTableID = is.Table.ID
+	}
+	if tbl.Meta().Name.L == "t1" {
+		fmt.Printf("is partition: %v, tid: %v ------\n", isPartition, physicalTableID)
 	}
 	e := &IndexReaderExecutor{
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),

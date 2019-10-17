@@ -293,7 +293,14 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
+
+	// For partition table, there will be same indices from different partitions.
+	checkedIndexs := make(map[string]struct{})
 	for i, idx := range indices {
+		if _, ok := checkedIndexs[idx]; ok {
+			continue
+		}
+		checkedIndexs[idx] = struct{}{}
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
@@ -496,6 +503,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
+			fmt.Printf("---------\n%v\n%v ------\n", h1, t.RecordPrefix())
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
 		}
 
