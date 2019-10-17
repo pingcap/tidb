@@ -221,7 +221,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if len(b.args) == 0 {
+	if len(b.args) == 1 {
 		return nil
 	}
 
