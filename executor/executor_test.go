@@ -1857,12 +1857,12 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`create table testjson(j json )`)
 	tk.MustExec(`insert into testjson set j='{"test":1}'`)
 	result = tk.MustQuery(`select j from testjson where json_extract(j, '$.test')`)
-	result.Check(testkit.Rows(`{"test":1}`))
+	result.Check(testkit.Rows(`{"test": 1}`))
 
 	tk.MustExec(`delete from testjson`)
 	tk.MustExec(`insert into testjson set j='{"test":0}'`)
 	result = tk.MustQuery(`select j from testjson where json_extract(j, '$.test')`)
-	result.Check(testkit.Rows(`{"test":0}`))
+	result.Check(testkit.Rows(`{"test": 0}`))
 
 	tk.MustExec(`delete from testjson`)
 	tk.MustExec(`insert into testjson set j='{"test1":1}'`)
