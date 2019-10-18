@@ -26,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -166,7 +165,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
@@ -253,7 +252,7 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
 	startTime := time.Now()
 	defer func() {
-		ctx.GetSessionVars().StmtCtx.DurationCompile = time.Since(startTime)
+		ctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 
 	execStmt := &ast.ExecuteStmt{ExecID: ID}

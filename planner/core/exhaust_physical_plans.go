@@ -531,6 +531,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		KeepOrder:        false,
 		Ranges:           ranger.FullRange(),
 		rangeDecidedBy:   outerJoinKeys,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
 
@@ -552,7 +554,12 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	}
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts := PhysicalTableScan{
+			Columns:         ds.Columns,
+			Table:           is.Table,
+			isPartition:     ds.isPartition,
+			physicalTableID: ds.physicalTableID,
+		}.init(ds.ctx)
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
