@@ -35,6 +35,10 @@ type Plan interface {
 	Schema() *expression.Schema
 	// Get the ID.
 	ID() int
+
+	// TP get the plan type.
+	TP() string
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
 	// replaceExprColumns replace all the column reference in the plan's expression node.
@@ -270,6 +274,11 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP implements Plan interface.
+func (p *basePlan) TP() string {
+	return p.tp
 }
 
 // Schema implements Plan Schema interface.

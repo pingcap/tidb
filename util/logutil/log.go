@@ -42,6 +42,8 @@ const (
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
 	DefaultQueryLogMaxLen = 2048
+	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
+	DefaultRecordPlanInSlowLog = 1
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
