@@ -14,13 +14,13 @@
 package expensivequery
 
 import (
-	"github.com/pingcap/tidb/util/memory"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
