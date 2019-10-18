@@ -404,11 +404,51 @@ func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCoalesceStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	if len(b.args) == 1 {
+		return nil
+	}
+
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+
+	src := result
+	arg := buf1
+	dst := buf2
+	for i := 1; i < len(b.args); i++ {
+		if err := b.args[i].VecEvalString(b.ctx, input, arg); err != nil {
+			return err
+		}
+		for j := 0; j < n; j++ {
+			if src.IsNull(j) && !arg.IsNull(j) {
+				dst.AppendString(arg.GetString(j))
+				continue
+			}
+			dst.AppendNull()
+		}
+		src, dst = dst, src
+		arg.ReserveString(n)
+		dst.ReserveString(n)
+	}
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
+	}
+	return nil
 }
 
 func (b *builtinIntervalIntSig) vectorized() bool {
