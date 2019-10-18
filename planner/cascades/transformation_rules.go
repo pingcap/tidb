@@ -44,6 +44,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
 		&PushSelDownTableScan{},
 		&PushSelDownTableGather{},
+		&PushSelDownSort{},
 	},
 	memo.OperandDataSource: {
 		&EnumeratePaths{},
@@ -199,4 +200,43 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil
+}
+
+// PushSelDownSort pushes the Selection down to the child of Sort.
+type PushSelDownSort struct {
+}
+
+// GetPattern implements Transformation interface. The pattern of this rule
+// is `Selection -> Sort`.
+func (r *PushSelDownSort) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownSort) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+//
+// It will transform `sel->sort->x` to `sort->sel->x`.
+func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	newSort := plannercore.LogicalSort{ByItems: sort.ByItems}.Init(sort.SCtx(), sort.SelectBlockOffset())
+	newSel := plannercore.LogicalSelection{Conditions: sel.Conditions}.Init(sel.SCtx(), sel.SelectBlockOffset())
+
+	newSelExpr := memo.NewGroupExpr(newSel)
+	newSelExpr.Children = append(newSelExpr.Children, childGroup)
+	newSelGroup := memo.NewGroupWithSchema(newSelExpr, childGroup.Prop.Schema)
+
+	newSortExpr := memo.NewGroupExpr(newSort)
+	newSortExpr.Children = append(newSortExpr.Children, newSelGroup)
+	return []*memo.GroupExpr{newSortExpr}, true, false, nil
 }
