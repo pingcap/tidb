@@ -574,7 +574,7 @@ func (a *ExecStmt) GetTimestampWithRetry(ctx context.Context) (uint64, error) {
 	tsoMaxBackoff := 15000
 	bo := tikv.NewBackoffer(context.Background(), tsoMaxBackoff)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("ExecStmt.GetTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
