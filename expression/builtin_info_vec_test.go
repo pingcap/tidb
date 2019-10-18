@@ -14,11 +14,11 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/types"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
