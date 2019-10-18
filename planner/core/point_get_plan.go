@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -605,12 +606,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:     newBasePlan(ctx, "Point_Get", 0),
-		dbName:       dbName,
-		schema:       schema,
-		TblInfo:      tbl,
-		outputNames:  names,
-		LockWaitTime: kv.LockAlwaysWait,
+		basePlan:    newBasePlan(ctx, plancodec.TypePointGet, 0),
+		dbName:      dbName,
+		schema:      schema,
+		TblInfo:     tbl,
+		outputNames: names,
+    LockWaitTime: kv.LockAlwaysWait,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p

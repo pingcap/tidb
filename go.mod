@@ -18,6 +18,7 @@ require (
 	github.com/gogo/protobuf v1.2.0
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
 	github.com/golang/protobuf v1.3.2
+	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db
 	github.com/google/btree v1.0.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/context v1.1.1 // indirect
