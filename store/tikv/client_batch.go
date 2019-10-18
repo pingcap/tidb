@@ -495,7 +495,7 @@ func (c *batchCommandsClient) initBatchClient() error {
 		return nil
 	}
 
-	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
