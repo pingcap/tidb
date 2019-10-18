@@ -445,7 +445,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Projection",
 			joinType: "anti semi join",
 		},
 	}
