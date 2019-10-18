@@ -648,7 +648,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
-	if len(c.offsets) != 0 {
+	if !c.isFixed() {
 		panic("result column should be fixed-length type")
 	}
 	for _, col := range cols {
