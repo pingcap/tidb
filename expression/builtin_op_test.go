@@ -314,8 +314,9 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 		{[]interface{}{"a", "1"}, 1, false, false},
 		{[]interface{}{"1a", "0"}, 1, false, false},
 		{[]interface{}{"1a", "1"}, 1, false, false},
-		{[]interface{}{"0.0a", 0}, 0, false, false},
-		{[]interface{}{"0.0001a", 0}, 1, false, false},
+		// casting string to real depends on #10498, which will not be cherry-picked.
+		// {[]interface{}{"0.0a", 0}, 0, false, false},
+		// {[]interface{}{"0.0001a", 0}, 1, false, false},
 		{[]interface{}{1, nil}, 1, false, false},
 		{[]interface{}{nil, 1}, 1, false, false},
 		{[]interface{}{nil, 0}, 0, true, false},
