@@ -90,8 +90,7 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	logExpensiveQuery(time.Since(info.Time), info)
 }
 
-// logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
+func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
@@ -150,6 +149,10 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
+	return logFields
+}
 
-	logutil.BgLogger().Warn("expensive_query", logFields...)
+// logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
+func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
+	logutil.BgLogger().Warn("expensive_query", genLogFields(costTime, info)...)
 }
