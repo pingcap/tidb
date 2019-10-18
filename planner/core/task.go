@@ -881,13 +881,8 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-		result := make([]*expression.Column, 0, 8)
-		cols := expression.ExtractColumnsFromExpressions(result, aggFunc.Args, nil)
-		for _, col := range cols {
-			if col.VirtualExpr != nil {
-				return nil, p.self
-			}
+		if expression.ContainVirtualColumn(aggFunc.Args) {
+			return nil, p.self
 		}
 		if copToFlash {
 			if !aggregation.CheckAggPushFlash(aggFunc) {

@@ -724,3 +724,20 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	}
 	return 0, false, false
 }
+
+// ContainVirtualColumn checks if the expressions contain a virtual column
+func ContainVirtualColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			if v.VirtualExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
