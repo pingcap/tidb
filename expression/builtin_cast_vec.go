@@ -505,21 +505,27 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 
 	result.ReserveJSON(n)
 	hasParse := mysql.HasParseToJSONFlag(b.tp.Flag)
-	var res json.BinaryJSON
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-		if hasParse {
+	if hasParse {
+		var res json.BinaryJSON
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
 			res, err = json.ParseBinaryFromString(buf.GetString(i))
-		} else {
-			res = json.CreateBinary(buf.GetString(i))
+			if err != nil {
+				return err
+			}
+			result.AppendJSON(res)
 		}
-		if err != nil {
-			return err
+	} else {
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			result.AppendJSON(json.CreateBinary(buf.GetString(i)))
 		}
-		result.AppendJSON(res)
 	}
 	return nil
 }
