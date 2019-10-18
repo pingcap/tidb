@@ -513,11 +513,45 @@ func (b *builtinCastTimeAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastStringAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveJSON(n)
+	hasParse := mysql.HasParseToJSONFlag(b.tp.Flag)
+	if hasParse {
+		var res json.BinaryJSON
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			res, err = json.ParseBinaryFromString(buf.GetString(i))
+			if err != nil {
+				return err
+			}
+			result.AppendJSON(res)
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			result.AppendJSON(json.CreateBinary(buf.GetString(i)))
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsDecimalSig) vectorized() bool {
