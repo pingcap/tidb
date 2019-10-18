@@ -2183,16 +2183,6 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkPartitionNameUnique(partInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	tmp := *partInfo
