@@ -705,19 +705,6 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 		}
 		var locks []*Lock
 		for _, keyErr := range keyErrs {
-			// Check lock conflict error for nowait, if nowait set and key locked by others
-			// report error immediately and do no more resolve locks
-			if c.lockWaitTime == kv.LockNoWait {
-				if lockInfo := keyErr.GetLocked(); lockInfo != nil {
-					// if the lock left behind whose related txn is already committed or rollbacked,
-					// (eg secondary locks not committed or rollbacked yet)
-					// we cant return "nowait conflict" directly, still need to backoff and
-					// do resolve work
-					if lockInfo.LockType == pb.Op_PessimisticLock {
-						return ErrLockFailNoWait
-					}
-				}
-			}
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
@@ -735,6 +722,17 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
 				return errors.Trace(err1)
+			}
+			// Check lock conflict error for nowait, if nowait set and key locked by others,
+			// report error immediately and do no more resolve locks.
+			// if the lock left behind whose related txn is already committed or rollbacked,
+			// (eg secondary locks not committed or rollbacked yet)
+			// we cant return "nowait conflict" directly
+			if c.lockWaitTime == kv.LockNoWait && lock.LockType == pb.Op_PessimisticLock {
+				// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+					return ErrLockAcquireFailAndNoWaitSet
+				}
 			}
 			locks = append(locks, lock)
 		}
