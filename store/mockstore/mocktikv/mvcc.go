@@ -49,7 +49,6 @@ type mvccLock struct {
 	forUpdateTS uint64
 	txnSize     uint64
 	minCommitTS uint64
-	lockType    uint32
 }
 
 type mvccEntry struct {
@@ -72,7 +71,6 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	mh.WriteNumber(&buf, l.forUpdateTS)
 	mh.WriteNumber(&buf, l.txnSize)
 	mh.WriteNumber(&buf, l.minCommitTS)
-	mh.WriteNumber(&buf, l.lockType)
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
@@ -88,7 +86,6 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	mh.ReadNumber(buf, &l.forUpdateTS)
 	mh.ReadNumber(buf, &l.txnSize)
 	mh.ReadNumber(buf, &l.minCommitTS)
-	mh.ReadNumber(buf, &l.lockType)
 	return errors.Trace(mh.err)
 }
 
@@ -206,7 +203,7 @@ func (l *mvccLock) lockErr(key []byte) error {
 		StartTS:  l.startTS,
 		TTL:      l.ttl,
 		TxnSize:  l.txnSize,
-		LockType: l.lockType,
+		LockType: l.op,
 	}
 }
 

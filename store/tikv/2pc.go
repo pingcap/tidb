@@ -713,7 +713,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 					// (eg secondary locks not committed or rollbacked yet)
 					// we cant return "nowait conflict" directly, still need to backoff and
 					// do resolve work
-					if lockInfo.LockType == kv.TypePessmisticLock {
+					if lockInfo.LockType == pb.Op_PessimisticLock {
 						return ErrLockFailNoWait
 					}
 				}

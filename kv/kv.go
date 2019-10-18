@@ -370,9 +370,3 @@ var (
 	LockAlwaysWait = uint64(0)
 	LockNoWait     = uint64(1)
 )
-
-// Used to distinguish pessmistic Lock or common lock
-const (
-	TypeLock uint32 = iota
-	TypePessmisticLock
-)

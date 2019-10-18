@@ -82,4 +82,4 @@ go 1.13
 
 replace github.com/pingcap/parser => github.com/cfzjywxk/parser v0.0.0-20191016072124-6c2853d8b1ae
 
-replace github.com/pingcap/kvproto => github.com/cfzjywxk/kvproto v0.0.0-20191017131702-d1db15853eca
+replace github.com/pingcap/kvproto => github.com/cfzjywxk/kvproto v0.0.0-20191018030134-67d3d4d59cf1

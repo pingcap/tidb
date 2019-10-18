@@ -533,7 +533,6 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		op:          kvrpcpb.Op_PessimisticLock,
 		ttl:         ttl,
 		forUpdateTS: forUpdateTS,
-		lockType:    kv.TypePessmisticLock,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -735,13 +734,12 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		op = kvrpcpb.Op_Put
 	}
 	lock := mvccLock{
-		startTS:  startTS,
-		primary:  primary,
-		value:    mutation.Value,
-		op:       op,
-		ttl:      ttl,
-		txnSize:  txnSize,
-		lockType: kv.TypeLock,
+		startTS: startTS,
+		primary: primary,
+		value:   mutation.Value,
+		op:      op,
+		ttl:     ttl,
+		txnSize: txnSize,
 	}
 	// Write minCommitTS on the primary lock.
 	if bytes.Equal(primary, mutation.GetKey()) {
