@@ -171,6 +171,19 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	_, err = tk.Exec(`CREATE TABLE t9 (
+		a INT NOT NULL,
+		b INT NOT NULL,
+		c INT NOT NULL
+	)
+	partition by range columns(a) (
+	partition p0 values less than (10),
+	partition p2 values less than (20),
+	partition p3 values less than (20)
+	);`)
+	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
+
+	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	tk.MustExec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
 	tk.MustExec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
