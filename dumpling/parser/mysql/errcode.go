@@ -903,6 +903,7 @@ const (
 	ErrBadUser                                                      = 3162
 	ErrInvalidEncryptionOption                                      = 3184
 	ErrRoleNotGranted                                               = 3530
+	ErrLockAcquireFailAndNoWaitSet                                  = 3572
 	ErrWindowNoSuchWindow                                           = 3579
 	ErrWindowCircularityInWindowGraph                               = 3580
 	ErrWindowNoChildPartitioning                                    = 3581
