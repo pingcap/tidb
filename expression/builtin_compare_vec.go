@@ -242,10 +242,8 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
 		}
-
-		src.MergeNulls(arg)
 		for i := 0; i < n; i++ {
-			if src.IsNull(i) {
+			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
 				continue
 			}
