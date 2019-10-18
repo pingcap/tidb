@@ -117,10 +117,10 @@ type fakeImpl struct {
 	plan plannercore.PhysicalPlan
 }
 
-func (impl *fakeImpl) CalcCost(float64, []float64, ...*Group) float64 { return 0 }
-func (impl *fakeImpl) SetCost(float64)                                {}
-func (impl *fakeImpl) GetCost() float64                               { return 0 }
-func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan              { return impl.plan }
+func (impl *fakeImpl) CalcCost(float64, ...Implementation) float64 { return 0 }
+func (impl *fakeImpl) SetCost(float64)                             {}
+func (impl *fakeImpl) GetCost() float64                            { return 0 }
+func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan           { return impl.plan }
 
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), nil)
