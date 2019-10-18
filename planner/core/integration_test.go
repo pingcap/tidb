@@ -105,3 +105,42 @@ func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestApplyNotNullFlag(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(x int not null)")
+	tk.MustExec("create table t2(x int)")
+	tk.MustExec("insert into t2 values (1)")
+
+	tk.MustQuery("select IFNULL((select t1.x from t1 where t1.x = t2.x), 'xxx') as col1 from t2").Check(testkit.Rows("xxx"))
+}
+
+func (s *testIntegrationSuite) TestSimplifyOuterJoinWithCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b datetime default null)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
