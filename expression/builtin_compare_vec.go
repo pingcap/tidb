@@ -887,9 +887,8 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			return err
 		}
 
-		src.MergeNulls(arg)
 		for i := 0; i < n; i++ {
-			if src.IsNull(i) {
+			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
 				continue
 			}
