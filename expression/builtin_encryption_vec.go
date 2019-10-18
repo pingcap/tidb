@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -195,8 +194,8 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			result.AppendNull()
 			continue
 		}
-		str := buf.GetString(i)
-		_, err = hasher.Write(hack.Slice(str))
+		str := buf.GetBytes(i)
+		_, err = hasher.Write(str)
 		if err != nil {
 			return err
 		}
