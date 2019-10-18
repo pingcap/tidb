@@ -722,6 +722,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 		}
 		if isUnsigned || i64s[i] >= 0 {
 			d[i] = *types.NewDecFromUint(uint64(i64s[i]))
+			continue
 		}
 		d[i] = *types.NewDecFromInt(i64s[i])
 	}
