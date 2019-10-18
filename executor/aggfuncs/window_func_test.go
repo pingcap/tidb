@@ -14,7 +14,6 @@
 package aggfuncs_test
 
 import (
-	"math/rand"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -38,12 +37,6 @@ type windowTest struct {
 }
 
 func (s *testSuite) testWindowFunc(c *C, p windowTest) {
-	s._testWindowFunc(c, p, false)
-	s._testWindowFunc(c, p, true)
-}
-
-func (s *testSuite) _testWindowFunc(c *C, p windowTest, pollute bool) {
-
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	dataGen := getDataGenFunc(p.dataType)
 	for i := 0; i < p.numRows; i++ {
@@ -61,17 +54,6 @@ func (s *testSuite) _testWindowFunc(c *C, p windowTest, pollute bool) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(err, IsNil)
-	}
-	// Reset or pollute srcChk on purpose to make sure any AggFunc does
-	// not hold any memory referenced by srcChk after UpdatePartialResult.
-	// See issue #11614 and #11626
-	srcChk.Reset()
-	if pollute {
-		rand.Seed(time.Now().Unix())
-		for i := 0; i < p.numRows; i++ {
-			dt := dataGen(rand.Int())
-			srcChk.AppendDatum(0, &dt)
-		}
 	}
 
 	c.Assert(p.numRows, Equals, len(p.results))
