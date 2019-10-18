@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -51,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
+	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -60,6 +62,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// StoreType indicates table read from which type of store.
+	StoreType kv.StoreType
 }
 
 // GetPhysicalReader returns PhysicalTableReader for logical TableGather.
@@ -200,6 +205,8 @@ type PhysicalTableScan struct {
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
 
+	StoreType kv.StoreType
+
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
@@ -295,14 +302,16 @@ type PhysicalIndexMergeJoin struct {
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
-	// keepOuterOrder indicates whether keeping the output result order as the
+	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
-	keepOuterOrder bool
+	KeepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -332,17 +341,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
-	// IsPointGetUnion indicates all the children are PointGet and
-	// all of them reference the same table and use the same `unique key`
-	IsPointGetUnion bool
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
-	if p.IsPointGetUnion {
-		return p.children[0].OutputNames()
-	}
-	return p.physicalSchemaProducer.OutputNames()
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -512,6 +510,13 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+}
+
+// PhysicalShowDDLJobs is for showing DDL job list.
+type PhysicalShowDDLJobs struct {
+	physicalSchemaProducer
+
+	JobNumber int64
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

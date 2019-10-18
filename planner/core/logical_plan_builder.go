@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 const (
@@ -70,6 +71,12 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
+	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
+	HintReadFromStorage = "read_from_storage"
+	// HintTiFlash is a label represents the tiflash storage type.
+	HintTiFlash = "tiflash"
+	// HintTiKV is a label represents the tikv storage type.
+	HintTiKV = "tikv"
 )
 
 const (
@@ -183,6 +190,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				col.TblName = x.AsName
 			}
 		}
+		if b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
+			b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = p.Schema().Columns[0].TblName
+		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
 		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
@@ -225,8 +235,13 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 		} else {
 			leftCond = append(leftCond, expr)
 		}
-	case SemiJoin, AntiSemiJoin, InnerJoin:
+	case SemiJoin, InnerJoin:
 		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
+	case AntiSemiJoin:
+		if filterCond {
+			leftCond = append(leftCond, expr)
+		}
 		rightCond = append(rightCond, expr)
 	}
 	return leftCond, rightCond
@@ -246,41 +261,36 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				var leftCol, rightCol *expression.Column
-				if left.Schema().Contains(arg0) && right.Schema().Contains(arg1) {
-					leftCol, rightCol = arg0, arg1
+				leftCol := left.Schema().RetrieveColumn(arg0)
+				rightCol := right.Schema().RetrieveColumn(arg1)
+				if leftCol == nil || rightCol == nil {
+					leftCol = left.Schema().RetrieveColumn(arg1)
+					rightCol = right.Schema().RetrieveColumn(arg0)
+					arg0, arg1 = arg1, arg0
 				}
-				if leftCol == nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
-					leftCol, rightCol = arg1, arg0
-				}
-				if leftCol != nil {
-					// Do not derive `is not null` for anti join, since it may cause wrong results.
-					// For example:
-					// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
-					// `select * from t t1 where t1.a not in (select a from t t2 where t1.b = t2.b` does not imply `t1.b is not null`,
-					// `select * from t t1 where not exists (select * from t t2 where t2.a = t1.a)` does not imply `t1.a is not null`,
-					if deriveLeft && p.JoinType != AntiSemiJoin {
+				if leftCol != nil && rightCol != nil {
+					if deriveLeft {
 						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
-					if deriveRight && p.JoinType != AntiSemiJoin {
+					if deriveRight {
 						if isNullRejected(ctx, right.Schema(), expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-				}
-				// For quries like `select a in (select a from s where s.b = t.b) from t`,
-				// if subquery is empty caused by `s.b = t.b`, the result should always be
-				// false even if t.a is null or s.a is null. To make this join "empty aware",
-				// we should differentiate `t.a = s.a` from other column equal conditions, so
-				// we put it into OtherConditions instead of EqualConditions of join.
-				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
-					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
-					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-					continue
+					// For queries like `select a in (select a from s where s.b = t.b) from t`,
+					// if subquery is empty caused by `s.b = t.b`, the result should always be
+					// false even if t.a is null or s.a is null. To make this join "empty aware",
+					// we should differentiate `t.a = s.a` from other column equal conditions, so
+					// we put it into OtherConditions instead of EqualConditions of join.
+					if binop.FuncName.L == ast.EQ && !arg0.InOperand && !arg1.InOperand {
+						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+						continue
+					}
 				}
 			}
 		}
@@ -373,6 +383,22 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+}
+
+func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	var alias *hintTableInfo
+	if len(ds.TableAsName.L) != 0 {
+		alias = &hintTableInfo{name: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
+	} else {
+		alias = &hintTableInfo{name: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
+		ds.preferStoreType |= preferTiFlash
 	}
 }
 
@@ -1280,7 +1306,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1315,7 +1341,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 && a.curClause != windowClause {
+			if index == -1 && a.curClause != fieldList {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1420,7 +1446,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 	}
-	extractor.curClause = windowClause
+	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
 		if !ast.HasWindowFlag(field.Expr) {
 			continue
@@ -1965,11 +1991,12 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) bool {
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
+		tiflashTables                               []hintTableInfo
 		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2008,21 +2035,22 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintReadFromStorage:
+			if hint.StoreType.L == HintTiFlash {
+				tiflashTables = tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || aggHints.preferAggType != 0 || aggHints.preferAggToCop {
-		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-			sortMergeJoinTables:       sortMergeTables,
-			indexNestedLoopJoinTables: INLJTables,
-			hashJoinTables:            hashJoinTables,
-			indexHintList:             indexHintList,
-			aggHints:                  aggHints,
-		})
-		return true
-	}
-	return false
+	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
+		sortMergeJoinTables:       sortMergeTables,
+		indexNestedLoopJoinTables: INLJTables,
+		hashJoinTables:            hashJoinTables,
+		indexHintList:             indexHintList,
+		flashTables:               tiflashTables,
+		aggHints:                  aggHints,
+	})
 }
 
 func (b *PlanBuilder) popTableHints() {
@@ -2053,11 +2081,12 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
-	defer b.popSelectOffset()
-	if b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset) {
+	b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset)
+	defer func() {
+		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
-		defer b.popTableHints()
-	}
+		b.popTableHints()
+	}()
 
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
@@ -2387,6 +2416,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.handleHelper.pushMap(nil)
 	}
 	ds.SetSchema(schema)
+	ds.setPreferredStoreType(b.TableHints())
 
 	// Init fullIdxCols, fullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
@@ -2547,6 +2577,11 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+	// Note that, tp can only be LeftOuterJoin or InnerJoin, so we don't consider other outer joins.
+	if tp == LeftOuterJoin {
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
+		resetNotNullFlag(ap.schema, outerPlan.Schema().Len(), ap.schema.Len())
+	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.schema.Columns[i].IsReferenced = true
 	}
@@ -2563,7 +2598,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	}
 
 	ap := &LogicalApply{LogicalJoin: *join}
-	ap.tp = TypeApply
+	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
 }
@@ -2705,11 +2740,12 @@ func buildColumns2Handle(
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	defer b.popSelectOffset()
-	if b.pushTableHints(update.TableHints, typeUpdate, 0) {
+	b.pushTableHints(update.TableHints, typeUpdate, 0)
+	defer func() {
+		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
-		defer b.popTableHints()
-	}
+		b.popTableHints()
+	}()
 
 	// update subquery table should be forbidden
 	var asNameList []string
@@ -2742,11 +2778,20 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
+	oldSchemaLen := p.Schema().Len()
 	if update.Where != nil {
 		p, err = b.buildSelection(ctx, p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
+	}
+	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
+	if p.Schema().Len() != oldSchemaLen {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
+		proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
+		copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+		proj.SetChildren(p)
+		p = proj
 	}
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
@@ -2947,11 +2992,12 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	defer b.popSelectOffset()
-	if b.pushTableHints(delete.TableHints, typeDelete, 0) {
+	b.pushTableHints(delete.TableHints, typeDelete, 0)
+	defer func() {
+		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
-		defer b.popTableHints()
-	}
+		b.popTableHints()
+	}()
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
@@ -3527,7 +3573,10 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.FromLast {
 			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
 		}
-		spec := f.Spec
+		spec := &f.Spec
+		if f.Spec.Name.L != "" {
+			spec = b.windowSpecs[f.Spec.Name.L]
+		}
 		if spec.Frame == nil {
 			continue
 		}
@@ -3541,15 +3590,18 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if end.Type == ast.Preceding && end.UnBounded {
 			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
-		if start.Type == ast.Following && end.Type == ast.Preceding {
+		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 
-		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
+		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
 		if err != nil {
 			return err
 		}
-		err = b.checkOriginWindowFrameBound(&end, &spec, orderByItems)
+		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
 		if err != nil {
 			return err
 		}
@@ -3657,7 +3709,6 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		windowFunc.Spec = *spec
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)

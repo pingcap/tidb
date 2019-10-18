@@ -38,6 +38,9 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 
+	// TP get the plan type.
+	TP() string
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
 
@@ -90,8 +93,8 @@ type LogicalPlan interface {
 	// with the lowest cost.
 	findBestTask(prop *property.PhysicalProperty) (task, error)
 
-	// buildKeyInfo will collect the information of unique keys into schema.
-	buildKeyInfo()
+	// BuildKeyInfo will collect the information of unique keys into schema.
+	BuildKeyInfo()
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
@@ -173,6 +176,11 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 	return p.maxOneRow
 }
 
+// ExplainInfo implements Plan interface.
+func (p *baseLogicalPlan) ExplainInfo() string {
+	return ""
+}
+
 type basePhysicalPlan struct {
 	basePlan
 
@@ -181,13 +189,13 @@ type basePhysicalPlan struct {
 	children         []PhysicalPlan
 }
 
-func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
-	return p.childrenReqProps[idx]
-}
-
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
+}
+
+func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
+	return p.childrenReqProps[idx]
 }
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
@@ -200,9 +208,10 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	p.taskMap[string(key)] = task
 }
 
-func (p *baseLogicalPlan) buildKeyInfo() {
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *baseLogicalPlan) BuildKeyInfo() {
 	for _, child := range p.children {
-		child.buildKeyInfo()
+		child.BuildKeyInfo()
 	}
 	switch p.self.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
@@ -282,14 +291,20 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 	return p.stats
 }
 
+// ExplainInfo implements Plan interface.
+func (p *basePlan) ExplainInfo() string {
+	return "N/A"
+}
+
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }
 
-func (p *basePlan) ExplainInfo() string {
-	return "N/A"
+// TP implements Plan interface.
+func (p *basePlan) TP() string {
+	return p.tp
 }
 
 func (p *basePlan) SelectBlockOffset() int {

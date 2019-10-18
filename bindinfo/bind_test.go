@@ -100,8 +100,8 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
-	tk.MustExec("drop table if exists mysql.bind_info")
-	tk.MustExec(session.CreateBindInfoTable)
+	tk.MustExec("truncate table mysql.bind_info")
+	s.domain.BindHandle().Clear()
 }
 
 func (s *testSuite) TestBindParse(c *C) {
@@ -326,58 +326,22 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
-
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
-		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
-		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-
-	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
-		"├─Sort_11 9990.00 root Column#1:asc",
-		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
-		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root Column#3:asc",
-		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
-		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
 	metrics.BindUsageCounter.Reset()
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
-		"├─Sort_11 9990.00 root Column#1:asc",
-		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
-		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root Column#3:asc",
-		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
-		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 	pb := &dto.Metric{}
 	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
+	tk.MustExec("set @@tidb_use_plan_baselines = 0")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
-		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
-		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
 }
 
 func (s *testSuite) TestExplain(c *C) {
@@ -389,41 +353,12 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
-		"├─TableReader_12 9990.00 root data:Selection_11",
-		"│ └─Selection_11 9990.00 cop not(isnull(Column#1))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_15 9990.00 root data:Selection_14",
-		"  └─Selection_14 9990.00 cop not(isnull(Column#3))",
-		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-
-	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
-		"├─Sort_11 9990.00 root Column#1:asc",
-		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
-		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root Column#3:asc",
-		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
-		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
-		"MergeJoin_7 12487.50 root inner join, left key:Column#1, right key:Column#3",
-		"├─Sort_11 9990.00 root Column#1:asc",
-		"│ └─TableReader_10 9990.00 root data:Selection_9",
-		"│   └─Selection_9 9990.00 cop not(isnull(Column#1))",
-		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─Sort_15 9990.00 root Column#3:asc",
-		"  └─TableReader_14 9990.00 root data:Selection_13",
-		"    └─Selection_13 9990.00 cop not(isnull(Column#3))",
-		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 }
@@ -485,4 +420,27 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 	tk.MustExec("drop binding for select * from t")
 	tk.MustExec("execute stmt1")
 	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+}
+
+func (s *testSuite) TestCapturePlanBaseline(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("set @@tidb_enable_stmt_summary = on")
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_stmt_summary = off")
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	s.domain.BindHandle().CaptureBaselines(s.domain.InfoSchema())
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("select * from t")
+	tk.MustExec("select * from t")
+	s.domain.BindHandle().CaptureBaselines(s.domain.InfoSchema())
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][1], Equals, "select /*+ USE_INDEX(@`sel_1` `t` )*/ * from t")
 }
