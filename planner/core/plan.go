@@ -158,6 +158,9 @@ type PhysicalPlan interface {
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices() error
+
+	// Stats returns the StatsInfo of the plan.
+	Stats() *property.StatsInfo
 }
 
 type baseLogicalPlan struct {
@@ -301,6 +304,11 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 
 func (p *basePlan) SelectBlockOffset() int {
 	return p.blockOffset
+}
+
+// Stats implements Plan Stats interface.
+func (p *basePlan) Stats() *property.StatsInfo {
+	return p.stats
 }
 
 // Schema implements Plan Schema interface.
