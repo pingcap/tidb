@@ -73,6 +73,10 @@ slow-query-file = "tidb-slow.log"
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
+# record-plan-in-slow-log is used to enable record query plan in slow log.
+# 0 is disable. 1 is enable.
+record-plan-in-slow-log = 1
+
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
 
@@ -266,6 +270,10 @@ overload-threshold = 200
 max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
+
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
