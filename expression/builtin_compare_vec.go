@@ -872,7 +872,6 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-
 	buf2, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -886,7 +885,6 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
 		}
-
 		for i := 0; i < n; i++ {
 			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
@@ -901,8 +899,8 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			}
 		}
 		src, dst = dst, src
-		arg.Reset()
-		dst.Reset()
+		arg.ReserveString(n)
+		dst.ReserveString(n)
 	}
 	if len(b.args)%2 == 0 {
 		src.CopyConstruct(result)
