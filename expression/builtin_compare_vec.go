@@ -258,8 +258,8 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			}
 		}
 		src, dst = dst, src
-		arg.Reset()
-		dst.Reset()
+		arg.ReserveString(n)
+		dst.ReserveString(n)
 	}
 	if len(b.args)%2 == 0 {
 		src.CopyConstruct(result)
