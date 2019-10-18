@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -149,14 +148,19 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	result.ReserveString(n)
+	digest := md5.New()
 	for i := 0; i < n; i++ {
+		digest.Reset()
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		str := buf.GetString(i)
-		sum := md5.Sum(hack.Slice(str))
-		result.AppendString(fmt.Sprintf("%x", sum))
+		cryptByte := buf.GetBytes(i)
+		_, err := digest.Write(cryptByte)
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", digest.Sum(nil)))
 	}
 	return nil
 }
