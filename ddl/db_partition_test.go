@@ -543,7 +543,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a datetime) partition by range columns (a) (partition p1 values less than ('2019-06-01'), partition p2 values less than ('2019-07-01'));")
 	sql := "alter table t add partition ( partition p3 values less than ('2019-07-01'));"
-	tk.MustGetErrCode(sql, tmysql.ErrRangeNotIncreasing)
+	assertErrorCode(c, tk, sql, tmysql.ErrRangeNotIncreasing)
 	tk.MustExec("alter table t add partition ( partition p3 values less than ('2019-08-01'));")
 }
 
