@@ -558,7 +558,7 @@ func BenchmarkDecodeToChunkWithRequestedRows_int(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		acodec.Reset(buffer)
+		acodec.ResetAndInit(buffer)
 		for !acodec.Empty() {
 			for !chk.IsFull() && !acodec.Empty() {
 				acodec.Decode(chk)
@@ -621,7 +621,7 @@ func BenchmarkDecodeToChunkWithRequestedRows_string(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		acodec.Reset(buffer)
+		acodec.ResetAndInit(buffer)
 		for !acodec.Empty() {
 			for !chk.IsFull() && !acodec.Empty() {
 				acodec.Decode(chk)

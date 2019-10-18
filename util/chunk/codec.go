@@ -192,42 +192,55 @@ func init() {
 
 // ArrowDecoder is used to:
 // 1. decode a Chunk from a byte slice.
+// How ArrowDecoder works:
+// 1. Construct : save colTypes, init a temp Chunk for middle calculation.
+// 2. ResetAndInit: decode the byte slice to the temp Chunk, and set remainedRows = chk.NumRows()
+//    (Memory reuse, so the Chunk is Read-Only)
+// 3. Decode: calculate the rows that append to the result Chunk.
+//    1) Floor requestRows to the next multiple of 8, for more performance NullBitMap operator.
+//    2) Append offsets from temp Chunk to result Chunk if the type is unfixed-len.
+//       And adjust offsets (add a delta) to keep correct.
+//    3) Append request rows NullBitMap from temp Chunk to result Chunk.
+//       3.1) If the numRows of result Chunk is divided by 8, append the NullBitMap directly.
+//       3.2) If the numRows of result Chunk is not divided by 8, append the NullBitMap and
+//            do some bit operator to keep correct.
+//    4) Append request rows data from temp Chunk to result Chunk.
+// 4. If the ArrowDecoder is empty (remainedRows == 0), go to Step2 to ResetAndInit the ArrowDecoder.
 type ArrowDecoder struct {
-	chk      *Chunk
-	colTypes []*types.FieldType
-	cur      int
-	rows     int
+	chk          *Chunk
+	colTypes     []*types.FieldType
+	remainedRows int
 }
 
 // NewArrowDecoder creates a new ArrowDecoder object for decode a Chunk.
 func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
-	return &ArrowDecoder{chk: chk, colTypes: colTypes, cur: 0, rows: 0}
+	return &ArrowDecoder{chk: chk, colTypes: colTypes, remainedRows: 0}
 }
 
 // Decode decodes a Chunk from ArrowDecoder, save the remained unused bytes.
 func (c *ArrowDecoder) Decode(target *Chunk) {
 	requestRows := target.RequiredRows() - target.NumRows()
+	// Floor requestRows to the next multiple of 8
 	requestRows = (requestRows + 7) >> 3 << 3
-	if requestRows > c.rows-c.cur {
-		requestRows = c.rows - c.cur
+	if requestRows > c.remainedRows {
+		requestRows = c.remainedRows
 	}
 	for i := 0; i < len(c.colTypes); i++ {
 		c.decodeColumn(target, i, requestRows)
 	}
-	c.cur = c.cur + requestRows
+	c.remainedRows -= requestRows
 }
 
-// Reset resets ArrowDecoder using byte slice.
-func (c *ArrowDecoder) Reset(data []byte) {
+// ResetAndInit resets ArrowDecoder, and use data byte slice to init it.
+func (c *ArrowDecoder) ResetAndInit(data []byte) {
 	codec := NewCodec(c.colTypes)
 	codec.DecodeToChunk(data, c.chk)
-	c.cur = 0
-	c.rows = c.chk.NumRows()
+	c.remainedRows = c.chk.NumRows()
 }
 
 // Empty indicate the ArrowDecoder is empty.
 func (c *ArrowDecoder) Empty() bool {
-	return c.cur == c.rows
+	return c.remainedRows == 0
 }
 
 func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int) {

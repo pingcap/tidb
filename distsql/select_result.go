@@ -200,7 +200,7 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 		}
 
 		if r.respArrowDecoder.Empty() {
-			r.respArrowDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
+			r.respArrowDecoder.ResetAndInit(r.selectResp.Chunks[r.respChkIdx].RowsData)
 		}
 
 		r.respArrowDecoder.Decode(chk)
