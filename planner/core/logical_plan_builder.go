@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 const (
@@ -2569,7 +2570,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	}
 
 	ap := &LogicalApply{LogicalJoin: *join}
-	ap.tp = TypeApply
+	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
 }

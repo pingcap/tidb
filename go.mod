@@ -14,7 +14,7 @@ require (
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.1
 	github.com/golang/protobuf v1.3.2
-	github.com/golang/snappy v0.0.1 // indirect
+	github.com/golang/snappy v0.0.1
 	github.com/google/btree v1.0.0
 	github.com/google/pprof v0.0.0-20190930153522-6ce02741cba3
 	github.com/google/uuid v1.1.1
@@ -68,3 +68,5 @@ require (
 replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-04dfd648ce8d
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/bb7133/parser v0.0.0-20191108085541-3e1f36599565

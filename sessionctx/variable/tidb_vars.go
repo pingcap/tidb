@@ -108,6 +108,9 @@ const (
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
 
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
