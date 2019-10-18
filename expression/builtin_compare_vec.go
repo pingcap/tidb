@@ -865,24 +865,23 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if len(b.args) == 1 {
-		return nil
-	}
 
 	n := input.NumRows()
-	arg, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(arg)
+	defer b.bufAllocator.put(buf1)
 
-	dst, err := b.bufAllocator.get(types.ETString, n)
+	buf2, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(dst)
+	defer b.bufAllocator.put(buf2)
 
 	src := result
+	arg := buf1
+	dst := buf2
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
@@ -906,7 +905,9 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		arg.Reset()
 		dst.Reset()
 	}
-	src.CopyConstruct(result)
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
+	}
 	return nil
 }
 
