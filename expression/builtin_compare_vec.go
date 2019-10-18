@@ -435,7 +435,11 @@ func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			return err
 		}
 		for j := 0; j < n; j++ {
-			if src.IsNull(j) && !arg.IsNull(j) {
+			if !src.IsNull(j) {
+				dst.AppendString(src.GetString(j))
+				continue
+			}
+			if !arg.IsNull(j) {
 				dst.AppendString(arg.GetString(j))
 				continue
 			}
