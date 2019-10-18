@@ -383,6 +383,11 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
+
+	tk.MustExec("set @@tidb_record_plan_in_slow_log = 1")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
