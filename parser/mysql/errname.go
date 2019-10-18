@@ -920,6 +920,7 @@ var MySQLErrName = map[uint16]string{
 	ErrWindowFunctionIgnoresFrame:                            "Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition",
 	ErrRoleNotGranted:                                        "%s is is not granted to %s",
 	ErrMaxExecTimeExceeded:                                   "Query execution was interrupted, max_execution_time exceeded.",
+	ErrLockAcquireFailAndNoWaitSet:                           "Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.",
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         "Only one DEFAULT partition allowed",

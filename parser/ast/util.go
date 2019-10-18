@@ -17,7 +17,7 @@ package ast
 func IsReadOnly(node Node) bool {
 	switch st := node.(type) {
 	case *SelectStmt:
-		if st.LockTp == SelectLockForUpdate {
+		if st.LockTp == SelectLockForUpdate || st.LockTp == SelectLockForUpdateNoWait {
 			return false
 		}
 
