@@ -85,7 +85,9 @@ func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		} else {
 			i64s[i] = 0
 		}
-		result.SetNull(i, isNull)
+		if isNull != isNull0 {
+			result.SetNull(i, isNull)
+		}
 	}
 	return nil
 }
