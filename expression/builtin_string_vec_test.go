@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -21,9 +22,36 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+type randSpaceStrGener struct {
+	lenBegin int
+	lenEnd   int
+}
+
+func (g *randSpaceStrGener) gen() interface{} {
+	n := rand.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
+	buf := make([]byte, n)
+	for i := range buf {
+		x := rand.Intn(150)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else if x < 62 {
+			buf[i] = byte('A' + x - 10 - 26)
+		} else {
+			buf[i] = byte(' ')
+		}
+	}
+	return string(buf)
+}
+
 var vecBuiltinStringCases = map[string][]vecExprBenchCase{
-	ast.Length:         {},
-	ast.ASCII:          {},
+	ast.Length: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+	},
+	ast.ASCII: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+	},
 	ast.Concat:         {},
 	ast.ConcatWS:       {},
 	ast.Convert:        {},
@@ -56,11 +84,25 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
 	},
 	ast.Trim: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}}},
 	},
-	ast.LTrim:     {},
-	ast.RTrim:     {},
-	ast.Lpad:      {},
+	ast.LTrim: {},
+	ast.RTrim: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
+	},
+	ast.Lpad: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners:        []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{0, 20}, &randLenStrGener{0, 10}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+		},
+	},
 	ast.Rpad:      {},
 	ast.BitLength: {},
 	ast.FindInSet: {},
