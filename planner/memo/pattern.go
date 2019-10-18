@@ -120,7 +120,7 @@ func (o Operand) Match(t Operand) bool {
 
 // Pattern defines the match pattern for a rule. It's a tree-like structure
 // which is a piece of a logical expression. Each node in the Pattern tree is
-// defined by a Operand and EngineType pair.
+// defined by an Operand and EngineType pair.
 type Pattern struct {
 	Operand
 	EngineTypeSet

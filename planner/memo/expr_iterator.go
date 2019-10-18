@@ -124,7 +124,7 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 		//     Selection_0 input:[Group#2]
 		// Group#2
 		//     Projection_1 input:[Group#3]
-		//	   Projection_2 input:[Group#4]
+		//     Projection_2 input:[Group#4]
 		// Group#3
 		//     .....
 		// For the pattern above, we will match it twice: `Selection_0->Projection_1`
