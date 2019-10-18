@@ -351,6 +351,13 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	case ast.FlushTables:
 		// TODO: A dummy implement
 	case ast.FlushPrivileges:
+		// If skip-grant-table is configured, do not flush privileges.
+		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+		// Call dom.PrivilegeHandle().Update would panic.
+		if config.GetGlobalConfig().Security.SkipGrantTable {
+			return nil
+		}
+
 		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()
 		ctx, err := sysSessionPool.Get()
