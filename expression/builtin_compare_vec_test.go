@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -34,7 +35,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
 			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
 		}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}},
 	},
 	ast.GT:   {},
 	ast.EQ:   {},
