@@ -520,7 +520,7 @@ func upgrade(s Session) {
 		upgradeToVer28(s)
 	}
 
-	if ver < version29 {
+	if ver == version28 {
 		upgradeToVer29(s)
 	}
 
