@@ -18,11 +18,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
-	ast.Like:   {},
-	ast.Regexp: {},
+	ast.Like: {},
+	ast.Regexp: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {

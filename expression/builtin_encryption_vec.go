@@ -20,6 +20,7 @@ import (
 	"hash"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -235,11 +236,37 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinPasswordSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendString("")
+			continue
+		}
+		pass := buf.GetString(i)
+		if len(pass) == 0 {
+			result.AppendString("")
+			continue
+		}
+		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
+		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+
+		result.AppendString(auth.EncodePassword(pass))
+	}
+	return nil
 }
 
 func (b *builtinSHA1Sig) vectorized() bool {
