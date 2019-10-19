@@ -195,6 +195,10 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
+	var (
+		resolveCommit   []uint64
+		resolveRollback []uint64
+	)
 	startTime := time.Now()
 	txnInfos := make(map[uint64]uint64)
 	for _, l := range expiredLocks {
@@ -207,10 +211,21 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			return false, errors.Trace(err)
 		}
 		txnInfos[l.TxnID] = uint64(status)
+		if status.IsCommitted() {
+			resolveCommit = append(resolveCommit, l.TxnID)
+		} else {
+			resolveRollback = append(resolveRollback, l.TxnID)
+		}
 	}
 	logutil.Logger(context.Background()).Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),
 		zap.Int("num of txn", len(txnInfos)))
+
+	if len(resolveCommit) > 0 || len(resolveRollback) > 0 {
+		logutil.Logger(context.Background()).Info("gc resolve locks",
+			zap.Uint64s("commit", resolveCommit),
+			zap.Uint64s("rollback", resolveRollback))
+	}
 
 	listTxnInfos := make([]*kvrpcpb.TxnInfo, 0, len(txnInfos))
 	for txnID, status := range txnInfos {
@@ -268,7 +283,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnExpired int64, err error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerTs uint64, locks []*Lock) (msBeforeTxnExpired int64, err error) {
 	if len(locks) == 0 {
 		return
 	}
@@ -295,6 +310,10 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 		return
 	}
 
+	var (
+		resolveCommit   []uint64
+		resolveRollback []uint64
+	)
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
@@ -311,6 +330,12 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 		if !exists {
 			cleanRegions = make(map[RegionVerID]struct{})
 			cleanTxns[l.TxnID] = cleanRegions
+
+			if status.IsCommitted() {
+				resolveCommit = append(resolveCommit, l.TxnID)
+			} else {
+				resolveRollback = append(resolveRollback, l.TxnID)
+			}
 		}
 
 		err = lr.resolveLock(bo, l, status, cleanRegions)
@@ -319,6 +344,13 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 			err = errors.Trace(err)
 			return
 		}
+	}
+
+	if len(resolveCommit) > 0 || len(resolveRollback) > 0 {
+		logutil.Logger(context.Background()).Info("resolve other txn's lock",
+			zap.Uint64("current", callerTs),
+			zap.Uint64s("commit", resolveCommit),
+			zap.Uint64s("rollback", resolveRollback))
 	}
 	return
 }
