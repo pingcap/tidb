@@ -31,8 +31,10 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.RandomBytes:        {},
 	ast.UncompressedLength: {},
 	ast.SHA1:               {},
-	ast.PasswordFunc:       {},
-	ast.SHA2:               {},
+	ast.PasswordFunc: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
+	},
+	ast.SHA2: {},
 	ast.Encode: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
 	},
