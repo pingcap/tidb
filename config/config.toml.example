@@ -132,14 +132,16 @@ cluster-ssl-key = ""
 # If enable status report HTTP service.
 report-status = true
 
+## This is used for reporting the status of TiDB directly through the HTTP address.
+## Prometheus data through: http://host:status_port/metrics
+## Pprof data through: http://host:status_port/debug/pprof
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
-# TiDB status port.
+# TiDB status port. 
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
 # Prometheus client push interval in second, set \"0\" to disable prometheus push.
