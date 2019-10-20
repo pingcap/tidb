@@ -35,10 +35,10 @@ func (b *builtinJSONDepthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	int64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		j := buf.GetJSON(i)
