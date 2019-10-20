@@ -1119,10 +1119,6 @@ func (b *builtinCurrentTime1ArgSig) vectorized() bool {
 
 func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	nowTs, err := getStmtTimestamp(b.ctx)
-	if err != nil {
-		return err
-	}
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
@@ -1132,6 +1128,10 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 		return err
 	}
 
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
 	tz := b.ctx.GetSessionVars().Location()
 	dur := nowTs.In(tz).Format(types.TimeFSPFormat)
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
