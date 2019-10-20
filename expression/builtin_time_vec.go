@@ -956,11 +956,28 @@ func (b *builtinSubDateDurationRealSig) vecEvalDuration(input *chunk.Chunk, resu
 }
 
 func (b *builtinCurrentTime0ArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeDecimal(n, true)
+	tz := b.ctx.GetSessionVars().Location()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	dur := nowTs.In(tz).Format(types.TimeFormat)
+	res, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, dur, types.MinFsp)
+	if err != nil {
+		return err
+	}
+	result.SetNulls(0, n, false)
+	durations := result.Uint64s()
+	for i := 0; i < n; i++ {
+		durations[i] = uint64(res.Duration)
+	}
+	return nil
 }
 
 func (b *builtinTimeSig) vectorized() bool {
