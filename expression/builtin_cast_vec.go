@@ -295,13 +295,17 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	d := b.getRetTp().Decimal
+	var duration types.Duration
+	ds := buf.GoDurations()
+	fsp := int8(b.getRetTp().Decimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 
-		dur, err := buf.GetDuration(i, d).RoundFrac(types.DefaultFsp)
+		duration.Duration = ds[i]
+		duration.Fsp = fsp
+		dur, err := duration.RoundFrac(types.DefaultFsp)
 		if err != nil {
 			return err
 		}
