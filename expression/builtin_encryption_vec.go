@@ -271,7 +271,7 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinSHA1Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
