@@ -499,13 +499,14 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.ResizeGoDuration(n, true)
+	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
 	buf.MergeNulls(buf1)
 	d64s := buf.GoDurations()
 	d64s1 := buf1.GoDurations()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhs := types.Duration{Duration: d64s[i]}
@@ -515,10 +516,10 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 			return err
 		}
 		if isNull {
+			result.SetNull(i, true)
 			continue
 		}
 		r64s[i] = d.Duration
-		result.SetNull(i, false)
 	}
 	return nil
 }
