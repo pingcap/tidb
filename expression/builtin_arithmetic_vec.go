@@ -577,14 +577,14 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk,
 		if result.IsNull(i) {
 			continue
 		}
-
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
 			result.SetNull(i, true)
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
+
 		x[i] = res
 	}
+
 	return nil
 }
-
