@@ -401,6 +401,17 @@ func (b *builtinArithmeticIntDivideIntSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	rh := result
+	rhi64s := rh.Int64s()
+	for i := 0; i < len(rhi64s); i++ {
+		if rhi64s[i] == 0{
+			return handleDivisionByZeroError(b.ctx)
+		}
+	}
+	
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -412,15 +423,10 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 		return err
 	}
 
-	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
-		return err
-	}
-
 	result.MergeNulls(lh)
 
-	rh := result
+
 	lhi64s := lh.Int64s()
-	rhi64s := rh.Int64s()
 
 	resulti64s := result.Int64s()
 
@@ -441,26 +447,22 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 }
 func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		lh, rh := uint64(lhi64s[i]), uint64(rhi64s[i])
-		if rh == 0 {
-			return handleDivisionByZeroError(b.ctx)
-		}
 		if result.IsNull(i) {
 			continue
 		}
+		lh, rh := uint64(lhi64s[i]), uint64(rhi64s[i])
+
 		resulti64s[i] = int64(lh / rh)
 	}
 	return nil
 }
 func (b *builtinArithmeticIntDivideIntSig) divideUI(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		lh, rh := uint64(lhi64s[i]), rhi64s[i]
-		if rh == 0 {
-			return handleDivisionByZeroError(b.ctx)
-		}
 		if result.IsNull(i) {
 			continue
 		}
+		lh, rh := uint64(lhi64s[i]), rhi64s[i]
+
 		val, err := types.DivUintWithInt(lh, rh)
 		if err != nil {
 			return err
@@ -471,13 +473,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(result *chunk.Column, lhi64s
 }
 func (b *builtinArithmeticIntDivideIntSig) divideIU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		lh, rh := lhi64s[i], uint64(rhi64s[i])
-		if rh == 0 {
-			return handleDivisionByZeroError(b.ctx)
-		}
 		if result.IsNull(i) {
 			continue
 		}
+		lh, rh := lhi64s[i], uint64(rhi64s[i])
+
 		val, err := types.DivIntWithUint(lh, rh)
 		if err != nil {
 			return err
@@ -488,13 +488,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(result *chunk.Column, lhi64s
 }
 func (b *builtinArithmeticIntDivideIntSig) divideII(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		lh, rh := lhi64s[i], rhi64s[i]
-		if rh == 0 {
-			return handleDivisionByZeroError(b.ctx)
-		}
 		if result.IsNull(i) {
 			continue
 		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
 		val, err := types.DivInt64(lh, rh)
 		if err != nil {
 			return err
