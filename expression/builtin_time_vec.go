@@ -972,9 +972,9 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 		return err
 	}
 	result.ResizeGoDuration(n, false)
-	durations := result.Uint64s()
+	durations := result.GoDurations()
 	for i := 0; i < n; i++ {
-		durations[i] = uint64(res.Duration)
+		durations[i] = res.Duration
 	}
 	return nil
 }
@@ -1137,13 +1137,13 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	i64s := buf.Int64s()
 	result.ResizeGoDuration(n, false)
-	durations := result.Uint64s()
+	durations := result.GoDurations()
 	for i := 0; i < n; i++ {
 		res, err := types.ParseDuration(stmtCtx, dur, int8(i64s[i]))
 		if err != nil {
 			return err
 		}
-		durations[i] = uint64(res.Duration)
+		durations[i] = res.Duration
 	}
 	return nil
 }
