@@ -41,6 +41,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Day:         {},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
 	},
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},

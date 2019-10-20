@@ -1115,11 +1115,39 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinCurrentTime1ArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeDecimal(n, true)
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	tz := b.ctx.GetSessionVars().Location()
+	dur := nowTs.In(tz).Format(types.TimeFSPFormat)
+	durations := result.Uint64s()
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		res, err := types.ParseDuration(stmtCtx, dur, int8(i64s[i]))
+		if err != nil {
+			return err
+		}
+		durations[i] = uint64(res.Duration)
+		result.SetNull(i, false)
+	}
+	return nil
 }
 
 func (b *builtinUTCTimestampWithoutArgSig) vectorized() bool {
