@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
@@ -274,7 +275,31 @@ func (b *builtinSHA1Sig) vectorized() bool {
 }
 
 func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	hasher := sha1.New()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetBytes(i)
+		_, err = hasher.Write(str)
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
+		hasher.Reset()
+	}
+	return nil
 }
 
 func (b *builtinUncompressSig) vectorized() bool {
