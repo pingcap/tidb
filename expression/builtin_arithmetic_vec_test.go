@@ -50,6 +50,14 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.Mul: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxUint16},
+				&rangeInt64Gener{begin: 0, end: math.MaxUint16},
+			},
+		},
 	},
 	ast.Round: {},
 	ast.And:   {},
