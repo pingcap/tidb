@@ -310,11 +310,36 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinCastIntAsTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	times := result.Times()
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		tm, err := types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx,
+			i64s[i], b.tp.Tp, int8(b.tp.Decimal))
+		if err != nil {
+			return handleInvalidTimeError(b.ctx, err)
+		}
+		times[i] = tm
+		if b.tp.Tp == mysql.TypeDate {
+			// Truncate hh:mm:ss part if the type is Date.
+			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastRealAsJSONSig) vectorized() bool {
