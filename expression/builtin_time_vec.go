@@ -961,7 +961,6 @@ func (b *builtinCurrentTime0ArgSig) vectorized() bool {
 
 func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ResizeDecimal(n, true)
 	nowTs, err := getStmtTimestamp(b.ctx)
 	if err != nil {
 		return err
@@ -972,7 +971,7 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	if err != nil {
 		return err
 	}
-	result.SetNulls(0, n, false)
+	result.ResizeInt64(n, false)
 	durations := result.Uint64s()
 	for i := 0; i < n; i++ {
 		durations[i] = uint64(res.Duration)
@@ -1120,7 +1119,6 @@ func (b *builtinCurrentTime1ArgSig) vectorized() bool {
 
 func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ResizeDecimal(n, true)
 	nowTs, err := getStmtTimestamp(b.ctx)
 	if err != nil {
 		return err
@@ -1136,16 +1134,16 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 
 	tz := b.ctx.GetSessionVars().Location()
 	dur := nowTs.In(tz).Format(types.TimeFSPFormat)
-	durations := result.Uint64s()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	i64s := buf.Int64s()
+	result.ResizeInt64(n, false)
+	durations := result.Uint64s()
 	for i := 0; i < n; i++ {
 		res, err := types.ParseDuration(stmtCtx, dur, int8(i64s[i]))
 		if err != nil {
 			return err
 		}
 		durations[i] = uint64(res.Duration)
-		result.SetNull(i, false)
 	}
 	return nil
 }
