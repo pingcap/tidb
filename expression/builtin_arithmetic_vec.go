@@ -407,11 +407,11 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	rh := result
 	rhi64s := rh.Int64s()
 	for i := 0; i < len(rhi64s); i++ {
-		if rhi64s[i] == 0{
+		if !rh.IsNull(i) && rhi64s[i] == 0{
 			return handleDivisionByZeroError(b.ctx)
 		}
 	}
-	
+
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -424,7 +424,6 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	}
 
 	result.MergeNulls(lh)
-
 
 	lhi64s := lh.Int64s()
 
