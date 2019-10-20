@@ -942,6 +942,13 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"set names utf8", true, "SET NAMES 'utf8'"},
 		{"set names utf8 collate utf8_unicode_ci", true, "SET NAMES 'utf8' COLLATE 'utf8_unicode_ci'"},
 		{"set names binary", true, "SET NAMES 'binary'"},
+
+		// for set character set | name default
+		{"set names default", true, "SET NAMES DEFAULT"},
+		{"set character set default", true, "SET NAMES DEFAULT"},
+		{"set charset default", true, "SET NAMES DEFAULT"},
+		{"set char set default", true, "SET NAMES DEFAULT"},
+
 		{"set role `role1`", true, "SET ROLE `role1`@`%`"},
 		{"SET ROLE DEFAULT", true, "SET ROLE DEFAULT"},
 		{"SET ROLE ALL", true, "SET ROLE ALL"},
