@@ -327,9 +327,13 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	result.ResizeTime(n, false)
 	times := result.Times()
 	i64s := buf.Int64s()
+	stmt := b.ctx.GetSessionVars().StmtCtx
+	dec := int8(b.tp.Decimal)
 	for i := 0; i < n; i++ {
-		tm, err := types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx,
-			i64s[i], b.tp.Tp, int8(b.tp.Decimal))
+		if buf.IsNull(i) {
+			continue
+		}
+		tm, err := types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, dec)
 		if err != nil {
 			return handleInvalidTimeError(b.ctx, err)
 		}
