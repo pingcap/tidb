@@ -689,6 +689,7 @@ import (
 	SignedLiteral			"Literal or NumLiteral with sign"
 	DefaultValueExpr		"DefaultValueExpr(Now or Signed Literal)"
 	NowSymOptionFraction		"NowSym with optional fraction part"
+	CharsetNameOrDefault		"Character set name or default"
 
 %type	<statement>
 	AdminStmt			"Check table statement or show ddl statement"
@@ -7396,12 +7397,24 @@ VariableAssignment:
 			ExtendValue: ast.NewValueExpr($4.(string)),
 		}
 	}
-|	CharsetKw CharsetName
+|	"NAMES" "DEFAULT"
 	{
-		$$ = &ast.VariableAssignment{
-			Name: ast.SetNames,
-			Value: ast.NewValueExpr($2.(string)),
-		}
+		v := &ast.DefaultExpr{}
+		$$ = &ast.VariableAssignment{Name: ast.SetNames, Value: v}
+	}
+|	CharsetKw CharsetNameOrDefault
+	{
+		$$ = &ast.VariableAssignment{Name: ast.SetNames, Value: $2}
+	}
+
+CharsetNameOrDefault:
+	CharsetName
+	{
+		$$ = ast.NewValueExpr($1.(string))
+	}
+|	"DEFAULT"
+	{
+		$$ = &ast.DefaultExpr{}
 	}
 
 CharsetName:
