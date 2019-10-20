@@ -478,11 +478,49 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 }
 
 func (b *builtinDurationDurationTimeDiffSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeGoDuration(n, true)
+	r64s := result.GoDurations()
+	buf.MergeNulls(buf1)
+	d64s := buf.GoDurations()
+	d64s1 := buf1.GoDurations()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			continue
+		}
+		lhs := types.Duration{Duration: d64s[i]}
+		rhs := types.Duration{Duration: d64s1[i]}
+		d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		r64s[i] = d.Duration
+		result.SetNull(i, false)
+	}
+	return nil
 }
 
 func (b *builtinSubDateStringStringSig) vectorized() bool {
