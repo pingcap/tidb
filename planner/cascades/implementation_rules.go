@@ -160,7 +160,7 @@ func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 
 	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
 	// struct. So that we don't need to create a new PhysicalShow object, which
-	// can help us to reduce the gc pressure of golang runtime and improve the
+	// can help us to reduce the gc presure of golang runtime and improve the
 	// overall performance.
 	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
 	showPhys.SetSchema(logicProp.Schema)
