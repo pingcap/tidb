@@ -249,7 +249,7 @@ func (b *builtinInet6AtonSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinInet6AtonSig.
+// vecEvalString evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
