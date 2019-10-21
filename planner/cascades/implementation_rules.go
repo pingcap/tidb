@@ -45,6 +45,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandShow: {
 		&ImplShow{},
 	},
+	memo.OperandSelection: {
+		&ImplSelection{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -151,9 +154,35 @@ func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 
 	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
 	// struct. So that we don't need to create a new PhysicalShow object, which
-	// can help us to reduce the gc presure of golang runtime and improve the
+	// can help us to reduce the gc pressure of golang runtime and improve the
 	// overall performance.
 	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
 	showPhys.SetSchema(logicProp.Schema)
 	return impl.NewShowImpl(showPhys), nil
+}
+
+// ImplSelection is the implementation rule which implements LogicalSelection
+// to PhysicalSelection.
+type ImplSelection struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplSelection) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalSel := expr.ExprNode.(*plannercore.LogicalSelection)
+	physicalSel := plannercore.PhysicalSelection{
+		Conditions: logicalSel.Conditions,
+	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.Clone())
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBSelectionImpl(physicalSel), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVSelectionImpl(physicalSel), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
+	}
 }
