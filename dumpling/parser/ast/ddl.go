@@ -34,6 +34,7 @@ var (
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
+	_ DDLNode = &RepairTableStmt{}
 
 	_ Node = &AlterTableSpec{}
 	_ Node = &ColumnDef{}
@@ -1555,6 +1556,46 @@ func (n *CleanupTableLockStmt) Restore(ctx *RestoreCtx) error {
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore CleanupTableLockStmt.Tables[%d]", i)
 		}
+	}
+	return nil
+}
+
+// RepairTableStmt is a statement to repair tableInfo.
+type RepairTableStmt struct {
+	ddlNode
+	Table      *TableName
+	CreateStmt *CreateTableStmt
+}
+
+// Accept implements Node Accept interface.
+func (n *RepairTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RepairTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	node, ok = n.CreateStmt.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.CreateStmt = node.(*CreateTableStmt)
+	return v.Leave(n)
+}
+
+// Restore implements Node interface.
+func (n *RepairTableStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("ADMIN REPAIR TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while restore RepairTableStmt.table : [%v]", n.Table)
+	}
+	ctx.WritePlain(" ")
+	if err := n.CreateStmt.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while restore RepairTableStmt.createStmt : [%v]", n.CreateStmt)
 	}
 	return nil
 }
