@@ -1572,26 +1572,30 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	_, isArg0Con := args[0].(*Constant)
 	isArg0Str := args[0].GetType().EvalType() == types.ETString
 	bf := newBaseBuiltinFuncWithTp(ctx, args, retTp, argTps...)
-	if len(args) == 1 {
-		if isArg0Str {
-			bf.tp.Decimal = types.MaxFsp
-		} else if isArg0Con {
-			arg0, _, err1 := args[0].EvalDecimal(ctx, chunk.Row{})
-			if err1 != nil {
-				return sig, err1
-			}
-			fsp := int(arg0.GetDigitsFrac())
-			if fsp > types.MaxFsp {
-				fsp = types.MaxFsp
-			}
-			bf.tp.Decimal = fsp
-		}
-		sig = &builtinFromUnixTime1ArgSig{bf}
-	} else {
+
+	if len(args) > 1 {
 		bf.tp.Flen = args[1].GetType().Flen
-		sig = &builtinFromUnixTime2ArgSig{bf}
+		return &builtinFromUnixTime2ArgSig{bf}, nil
 	}
-	return sig, nil
+
+	// Calculate the time fsp.
+	switch {
+	case isArg0Str:
+		bf.tp.Decimal = int(types.MaxFsp)
+	case isArg0Con:
+		arg0, arg0IsNull, err0 := args[0].EvalDecimal(ctx, chunk.Row{})
+		if err0 != nil {
+			return nil, err0
+		}
+
+		bf.tp.Decimal = int(types.MaxFsp)
+		if !arg0IsNull {
+			fsp := int(arg0.GetDigitsFrac())
+			bf.tp.Decimal = mathutil.Min(fsp, int(types.MaxFsp))
+		}
+	}
+
+	return &builtinFromUnixTime1ArgSig{bf}, nil
 }
 
 func evalFromUnixTime(ctx sessionctx.Context, fsp int, row chunk.Row, arg Expression) (res types.Time, isNull bool, err error) {
@@ -1785,6 +1789,7 @@ func (c *strToDateFunctionClass) getRetTp(ctx sessionctx.Context, arg Expression
 	if err != nil || isNull {
 		return
 	}
+
 	isDuration, isDate := types.GetFormatType(format)
 	if isDuration && !isDate {
 		tp = mysql.TypeDuration

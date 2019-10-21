@@ -1824,6 +1824,59 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
 }
 
+func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
+	s.tk = testkit.NewTestKitWithInit(c, s.store)
+	s.tk.MustExec("create table t_set (a int, b set('e') default '');")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` set('e') DEFAULT ''\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,C,c');")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('a','b','c','d') DEFAULT 'a,c'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// It's for failure cases.
+	// The type of default value is string.
+	s.tk.MustExec("drop table t_set")
+	failedSQL := "create table t_set (a set('1', '4', '10') default '3');"
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
+	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
+	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
+	// The type of default value is int.
+	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
+	failedSQL = "create table t_set (a set('1', '4', '10') default 8);"
+	assertErrorCode(c, s.tk, failedSQL, tmysql.ErrInvalidDefault)
+
+	// The type of default value is int.
+	// It's for successful cases
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 2);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '4'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 3);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '1,4'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 15);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '1,4,10,21'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("insert into t_set value()")
+	s.tk.MustQuery("select * from t_set").Check(testkit.Rows("1,4,10,21"))
+}
+
 func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")

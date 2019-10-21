@@ -85,6 +85,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.flag |= inCreateOrDropTable
@@ -614,7 +615,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
-		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
+		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
 		for _, str := range colDef.Tp.Elems {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
@@ -734,6 +735,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.User.Hostname = currentUser.Hostname
 			node.User.AuthUsername = currentUser.AuthUsername
 			node.User.AuthHostname = currentUser.AuthHostname
+		}
+	}
+}
+
+func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
+	for _, val := range node.Constraints {
+		if val.Refer != nil && val.Refer.Table.Schema.String() == "" {
+			val.Refer.Table.Schema = node.Table.Schema
 		}
 	}
 }

@@ -507,13 +507,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.PriKeyFlag
+				// Check PriKeyFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.PriKeyFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.PriKeyFlag
+				}
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
+				// Check UniqueFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.UniqueFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.UniqueKeyFlag
+				}
 			case ast.ColumnOptionDefaultValue:
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
@@ -600,8 +606,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
-	tp, fsp := t.Tp, t.Decimal
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, error) {
+	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
@@ -613,14 +619,14 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 					}
 				}
 				if defaultFsp != fsp {
-					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
 		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
-			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 		}
 
 		// Value is nil means `default null`.
@@ -661,19 +667,71 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 		return strconv.FormatUint(value, 10), nil
 	}
 
-	if tp == mysql.TypeDuration {
-		var err error
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
+	switch tp {
+	case mysql.TypeSet:
+		return setSetDefaultValue(v, col)
+	case mysql.TypeDuration:
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", errors.Trace(err)
 		}
-	}
-
-	if tp == mysql.TypeBit {
+	case mysql.TypeBit:
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
 			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
 		}
 	}
+
+	return v.ToString()
+}
+
+// setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
+func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
+	if v.Kind() == types.KindInt64 {
+		setCnt := len(col.Elems)
+		maxLimit := int64(1<<uint(setCnt) - 1)
+		val := v.GetInt64()
+		if val < 1 || val > maxLimit {
+			return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		}
+		setVal, err := types.ParseSetValue(col.Elems, uint64(val))
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v.SetMysqlSet(setVal)
+		return v.ToString()
+	}
+
+	str, err := v.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if str == "" {
+		return str, nil
+	}
+
+	valMap := make(map[string]struct{}, len(col.Elems))
+	dVals := strings.Split(strings.ToLower(str), ",")
+	for _, dv := range dVals {
+		valMap[dv] = struct{}{}
+	}
+	var existCnt int
+	for dv := range valMap {
+		for i := range col.Elems {
+			e := strings.ToLower(col.Elems[i])
+			if e == dv {
+				existCnt++
+				break
+			}
+		}
+	}
+	if existCnt != len(valMap) {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	setVal, err := types.ParseSetName(col.Elems, str)
+	if err != nil {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	v.SetMysqlSet(setVal)
 
 	return v.ToString()
 }
@@ -1266,11 +1324,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if pi != nil {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-			if len(pi.Columns) == 0 {
-				err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
-			} else {
-				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
-			}
+			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
 		case model.PartitionTypeHash:
 			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
@@ -1514,12 +1568,8 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
-	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column, s *ast.CreateTableStmt) error {
+	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
 	}
 
@@ -1531,31 +1581,37 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return err
 	}
 
-	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return err
+	if len(pi.Columns) == 0 {
+		if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+			return err
+		}
+
+		// s maybe nil when add partition.
+		if s == nil {
+			return nil
+		}
+
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, cols, tbInfo)
 	}
 
-	return checkPartitionFuncType(ctx, s, cols, tbInfo)
-}
-
-func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
+	// Check for range columns partition.
 	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
 		return err
 	}
 
-	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
-		return err
+	if s != nil {
+		for _, def := range s.Partition.Definitions {
+			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, pi.Columns, exprs); err != nil {
+				return err
+			}
+		}
 	}
 
-	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return errors.Trace(err)
-	}
-
-	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
+	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
 }
 
 func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
@@ -1591,8 +1647,9 @@ func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.Table
 	if len(curr.LessThan) != len(pi.Columns) {
 		return errors.Trace(ast.ErrPartitionColumnList)
 	}
+	var prev *model.PartitionDefinition
 	for i := 1; i < len(defs); i++ {
-		prev, curr := curr, &defs[i]
+		prev, curr = curr, &defs[i]
 		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
 		if err != nil {
 			return err
@@ -2130,17 +2187,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := buildPartitionInfo(meta, d, spec)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkPartitionNameUnique(meta, partInfo)
+	partInfo, err := buildPartitionInfo(ctx, meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2149,7 +2196,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// old partitions to check all partitions is strictly increasing.
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
+	err = checkPartitionByRange(ctx, meta, &tmp, t.Cols(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2410,7 +2457,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, err := getDefaultValue(ctx, col.Name.L, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, col, option)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
@@ -3290,7 +3337,7 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 	return comment, nil
 }
 
-func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	if meta.Partition.Type == model.PartitionTypeRange {
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -3317,6 +3364,11 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+		if len(part.Columns) > 0 {
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, part.Columns, clause.Exprs); err != nil {
+				return nil, err
+			}
+		}
 
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
@@ -3334,6 +3386,41 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, colNames []model.CIStr, exprs []ast.ExprNode) error {
+	// Validate() has already checked len(colNames) = len(exprs)
+	// create table ... partition by range columns (cols)
+	// partition p0 values less than (expr)
+	// check the type of cols[i] and expr is consistent.
+	for i, colExpr := range exprs {
+		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			continue
+		}
+
+		colName := colNames[i]
+		colInfo := getColumnInfoByName(meta, colName.L)
+		if colInfo == nil {
+			return errors.Trace(ErrFieldNotFoundPart)
+		}
+		colType := &colInfo.FieldType
+
+		val, err := expression.EvalAstExpr(ctx, colExpr)
+		if err != nil {
+			return err
+		}
+
+		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		switch colType.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			switch val.Kind() {
+			case types.KindString, types.KindBytes:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
 }
 
 // extractCollateFromOption take collates(may multiple) in option into consideration
