@@ -3013,7 +3013,7 @@ func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident,
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionSetFlashReplica,
+		Type:       model.ActionSetTiFlashReplica,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{*replicaInfo},
 	}
@@ -3043,7 +3043,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, availabl
 		SchemaID:   db.ID,
 		TableID:    tb.Meta().ID,
 		SchemaName: db.Name.L,
-		Type:       model.ActionUpdateFlashReplicaStatus,
+		Type:       model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{available},
 	}

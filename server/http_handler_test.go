@@ -413,7 +413,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	dbt := &DBTest{c, db}
 
 	dbt.mustExec("use tidb")
-	dbt.mustExec("alter table test set flash replica 2 location labels 'a','b';")
+	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/flash/replica"))
 	c.Assert(err, IsNil)
