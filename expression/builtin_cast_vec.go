@@ -329,7 +329,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	times := result.Times()
 	i64s := buf.Int64s()
 	stmt := b.ctx.GetSessionVars().StmtCtx
-	dec := int8(b.tp.Decimal)
+	fsp := int8(b.tp.Decimal)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			continue
