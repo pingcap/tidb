@@ -428,25 +428,27 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		err = b.divideUU(lh,rh,lhi64s ,rhi64s,resulti64s)
+		err = b.divideUU(result,lh,rh,lhi64s ,rhi64s,resulti64s)
 	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideUI(lh,rh,lhi64s ,rhi64s,resulti64s)
+		err = b.divideUI(result,lh,rh,lhi64s ,rhi64s,resulti64s)
 	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.divideIU(lh,rh,lhi64s ,rhi64s,resulti64s)
+		err = b.divideIU(result,lh,rh,lhi64s ,rhi64s,resulti64s)
 	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideII(lh,rh,lhi64s ,rhi64s,resulti64s)
+		err = b.divideII(result,lh,rh,lhi64s ,rhi64s,resulti64s)
 	}
 	return err
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUU(lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUU(result,lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if rhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		if rhi64s[i] == 0 {
 			return handleDivisionByZeroError(b.ctx)
 		}
 		if lhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lh, rh := uint64(lhi64s[i]), uint64(rhi64s[i])
@@ -454,15 +456,17 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(lhs,rhs *chunk.Column, lhi64
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUI(lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUI(result,lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if rhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		if rhi64s[i] == 0 {
 			return handleDivisionByZeroError(b.ctx)
 		}
 		if lhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lh, rh := uint64(lhi64s[i]), rhi64s[i]
@@ -474,15 +478,17 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(lhs,rhs *chunk.Column, lhi64
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideIU(lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideIU(result,lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if rhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		if rhi64s[i] == 0 {
 			return handleDivisionByZeroError(b.ctx)
 		}
 		if lhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lh, rh := lhi64s[i], uint64(rhi64s[i])
@@ -494,15 +500,17 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(lhs,rhs *chunk.Column, lhi64
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideII(lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideII(result,lhs,rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if rhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		if rhi64s[i] == 0 {
 			return handleDivisionByZeroError(b.ctx)
 		}
 		if lhs.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
