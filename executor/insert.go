@@ -37,6 +37,9 @@ type InsertExec struct {
 	*InsertValues
 	OnDuplicate    []*expression.Assignment
 	evalBuffer4Dup chunk.MutRow
+	curInsertVals  chunk.MutRow
+	row4Update     []types.Datum
+
 	Priority       mysql.PriorityEnum
 }
 
@@ -286,6 +289,8 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
 	}
 	e.evalBuffer4Dup = chunk.MutRowFromTypes(evalBufferTypes)
+	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[numWritableCols:])
+	e.row4Update = make([]types.Datum, 0, len(evalBufferTypes))
 }
 
 // doDupRowUpdate updates the duplicate row.
@@ -293,31 +298,32 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle int64, oldRow []
 	cols []*expression.Assignment) ([]types.Datum, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	e.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(newRow).ToRow()
+	e.curInsertVals.SetDatums(newRow...)
+	e.ctx.GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
 
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
 	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
-	row4Update := make([]types.Datum, 0, len(oldRow)+len(newRow))
-	row4Update = append(row4Update, oldRow...)
-	row4Update = append(row4Update, newRow...)
+	e.row4Update = e.row4Update[:0]
+	e.row4Update = append(e.row4Update, oldRow...)
+	e.row4Update = append(e.row4Update, newRow...)
 
 	// Update old row when the key is duplicated.
-	e.evalBuffer4Dup.SetDatums(row4Update...)
+	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return nil, false, 0, err1
 		}
-		row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo())
+		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo())
 		if err1 != nil {
 			return nil, false, 0, err1
 		}
-		e.evalBuffer4Dup.SetDatum(col.Col.Index, row4Update[col.Col.Index])
+		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])
 		assignFlag[col.Col.Index] = true
 	}
 
-	newData := row4Update[:len(oldRow)]
+	newData := e.row4Update[:len(oldRow)]
 	_, handleChanged, newHandle, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, err
