@@ -25,6 +25,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
