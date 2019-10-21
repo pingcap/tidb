@@ -216,6 +216,7 @@ type ExecStmt struct {
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
+	PsStmt      *plannercore.CachedPrepareStmt
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -232,17 +233,30 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		return nil, err
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
-	b := newExecutorBuilder(a.Ctx, is)
-	exec := b.build(a.Plan)
-	if b.err != nil {
-		return nil, b.err
+
+	//
+	var pointExecutor *PointGetExecutor
+
+	if a.PsStmt.Executor == nil {
+		b := newExecutorBuilder(a.Ctx, is)
+		a.PsStmt.Executor = b.build(a.Plan)
+		if b.err != nil {
+			return nil, b.err
+		}
+	} else {
+		exec := a.PsStmt.Executor.(*PointGetExecutor)
+		exec.idxVals = a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan).IndexValues
+		exec.handle = a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan).Handle
+		exec.done = false
+		a.PsStmt.Executor = exec
 	}
-	if err = exec.Open(ctx); err != nil {
-		terror.Call(exec.Close)
+	pointExecutor = a.PsStmt.Executor.(*PointGetExecutor)
+	if err = pointExecutor.Open(ctx); err != nil {
+		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
 	return &recordSet{
-		executor:   exec,
+		executor:   pointExecutor,
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
