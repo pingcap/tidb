@@ -1222,11 +1222,71 @@ func (b *builtinTrim1ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinRpadSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals RPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
 func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := buf1.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		targetLength := int(i64s[i])
+		if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		if buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetString(i)
+		padStr := buf2.GetString(i)
+		runeLength := len([]rune(str))
+		padLength := len([]rune(padStr))
+
+		if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+			result.AppendNull()
+			continue
+		}
+		if tailLen := targetLength - runeLength; tailLen > 0 {
+			repeatCount := tailLen/padLength + 1
+			str = str + strings.Repeat(padStr, repeatCount)
+		}
+		result.AppendString(string([]rune(str)[:targetLength]))
+	}
+	return nil
 }
 
 func (b *builtinCharLengthBinarySig) vectorized() bool {
