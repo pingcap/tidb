@@ -39,7 +39,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONReplace:      {},
 	ast.JSONDepth:        {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
 	ast.JSONUnquote: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
 	},
 	ast.JSONRemove: {},
 	ast.JSONMerge:  {},
