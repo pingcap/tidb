@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -100,17 +101,88 @@ type Config struct {
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
+// nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
+// conflict options at the same time.
+type nullableBool struct {
+	Valid bool `toml:"valid" json:"valid"`
+	Value bool `toml:"value" json:"value"`
+}
+
+var (
+	nbUnset = nullableBool{false, false}
+	nbFalse = nullableBool{true, false}
+	nbTrue = nullableBool{true, true}
+)
+
+func (b *nullableBool) toBool() bool {
+	switch *b {
+	case nbTrue:
+		return true
+	case nbFalse:
+		return false
+	default:
+		return false
+	}
+}
+
+func (b *nullableBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = nbUnset
+		return nil
+	case "true":
+		*b = nbTrue
+	case "false":
+		*b = nbFalse
+	default:
+		*b = nbUnset
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
+func (b *nullableBool) UnmarshalJSON(data []byte) error {
+	var err error
+	var v interface{}
+	if err = json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	switch v.(type) {
+	case bool:
+		*b = nullableBool{true, v.(bool)}
+	case map[string]interface{}:
+		vv := v.(map[string]interface{})
+		*b = nullableBool{vv["valid"].(bool), vv["value"].(bool)}
+	case nil:
+		b.Valid = false
+		b.Value = false
+		return nil
+	default:
+		err = fmt.Errorf("json: cannot unmarshal %v into Go value of type nullableBool", reflect.TypeOf(v).Name())
+	}
+	if err != nil {
+		b.Valid = false
+	}
+	return err
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
 	// Log format. one of json, text, or console.
 	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
-	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// Disable automatic timestamps in output. Deprecated.
+	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// EnableTimestamp enables automatic timestamps in log output.
+	EnableTimestamp nullableBool `toml:"enable-timestamp" json:"enable-timestamp"`
 	// DisableErrorStack stops annotating logs with the full stack error
+	// message. Deprecated.
+	DisableErrorStack nullableBool `toml:"disable-error-stack" json:"disable-error-stack"`
+	// EnableErrorStack enables annotating logs with the full stack error
 	// message.
-	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
+	EnableErrorStack nullableBool `toml:"enable-error-stack" json:"enable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
@@ -119,6 +191,24 @@ type Log struct {
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+}
+
+func (l *Log) getDisableTimestamp() bool {
+	if l.EnableTimestamp == nbUnset {
+		// if DisableTimestamp is also nbUnset, toBool is default to false
+		return l.DisableTimestamp.toBool()
+	} else {
+		return !l.EnableTimestamp.toBool()
+	}
+}
+
+func (l *Log) getDisableErrorStack() bool {
+	if l.DisableErrorStack == nbUnset {
+		// if EnableErrorStack is also nbUnset, toBool is default to false
+		return !l.EnableErrorStack.toBool()
+	} else {
+		return l.DisableErrorStack.toBool()
+	}
 }
 
 // Security is the security section of the config.
@@ -361,7 +451,10 @@ var defaultConf = Config{
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
 		ExpensiveThreshold:  10000,
-		DisableErrorStack:   true,
+		DisableErrorStack:   nbUnset,
+		EnableErrorStack:    nbUnset, // If both options are unset, getDisableErrorStack() returns true
+		EnableTimestamp:     nbUnset,
+		DisableTimestamp:    nbUnset, // if both options are unset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
@@ -561,6 +654,12 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
+		return fmt.Errorf("configuration confliction of enable-error-stack and disable-error-stack")
+	}
+	if c.Log.EnableTimestamp == c.Log.DisableTimestamp && c.Log.EnableTimestamp != nbUnset {
+		return fmt.Errorf("configuration confliction of enable-timestamp and disable-timestamp")
+	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
@@ -626,7 +725,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
