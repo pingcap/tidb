@@ -420,6 +420,15 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 		return
 	}
 
+	key, field, err := tablecodec.DecodeMetaKey(key)
+	if err == nil {
+		_, err3 := fmt.Fprintf(buf, "{metaKey=true, tableID=%s, handle=%s}", string(key), string(field))
+		if err3 != nil {
+			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
+		}
+		return
+	}
+
 	_, err4 := fmt.Fprintf(buf, "%#v", key)
 	if err4 != nil {
 		logutil.BgLogger().Error("error", zap.Error(err4))

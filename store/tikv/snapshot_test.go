@@ -161,4 +161,18 @@ func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
 		kv.TxnRetryableMark
 	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
+
+	conflict = &pb.WriteConflict{
+		StartTs:          399402937522847774,
+		ConflictTs:       399402937719455772,
+		ConflictCommitTs: 399402937719455773,
+		Key:              []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
+		Primary:          []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
+	}
+	expectedStr = "[kv:9007]Write conflict, " +
+		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
+		"key={metaKey=true, tableID=DB:56, handle=TID:108} " +
+		"primary={metaKey=true, tableID=DB:56, handle=TID:108} " +
+		kv.TxnRetryableMark
+	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
 }
