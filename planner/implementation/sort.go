@@ -48,7 +48,7 @@ func (impl *NominalSortImpl) AttachChildren(children ...memo.Implementation) mem
 	return children[0]
 }
 
-// NewNominalSort creates a new NominalSort Implementation.
+// NewNominalSortImpl creates a new NominalSort Implementation.
 func NewNominalSortImpl(sort *plannercore.NominalSort) *NominalSortImpl {
 	return &NominalSortImpl{baseImpl{plan: sort}}
 }
