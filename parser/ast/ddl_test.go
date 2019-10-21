@@ -486,3 +486,15 @@ func (ts *testDDLSuite) TestAlterTableSpecRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "ALTER TABLE t %s", extractNodeFunc)
 }
+
+func (ts *testDDLSuite) TestAdminRepairTableRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"ADMIN REPAIR TABLE t CREATE TABLE t (a int)", "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` INT)"},
+		{"ADMIN REPAIR TABLE t CREATE TABLE t (a char(1), b int)", "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` CHAR(1),`b` INT)"},
+		{"ADMIN REPAIR TABLE t CREATE TABLE t (a TINYINT UNSIGNED)", "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` TINYINT UNSIGNED)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+}
