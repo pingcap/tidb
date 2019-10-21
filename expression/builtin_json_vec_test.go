@@ -18,10 +18,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
-	ast.JSONKeys:         {},
+	ast.JSONKeys: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
+	},
 	ast.JSONArrayAppend:  {},
 	ast.JSONContainsPath: {},
 	ast.JSONExtract:      {},
@@ -39,7 +42,9 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONRemove:       {},
 	ast.JSONMerge:        {},
 	ast.JSONInsert:       {},
-	ast.JSONQuote:        {},
+	ast.JSONQuote: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {

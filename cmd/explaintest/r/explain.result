@@ -28,14 +28,14 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select group_concat(a) from t group by id;
 id	count	task	operator info
-StreamAgg_8	8000.00	root	group by:Column#6, funcs:group_concat(Column#0, ",")
+StreamAgg_8	8000.00	root	group by:Column#7, funcs:group_concat(Column#6, ",")
 └─Projection_18	10000.00	root	cast(Column#2), Column#1
   └─TableReader_15	10000.00	root	data:TableScan_14
-    └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
+    └─TableScan_14	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select group_concat(a, b) from t group by id;
 id	count	task	operator info
-StreamAgg_8	8000.00	root	group by:Column#6, funcs:group_concat(Column#0, Column#0, ",")
+StreamAgg_8	8000.00	root	group by:Column#8, funcs:group_concat(Column#6, Column#7, ",")
 └─Projection_18	10000.00	root	cast(Column#2), cast(Column#3), Column#1
   └─TableReader_15	10000.00	root	data:TableScan_14
-    └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
+    └─TableScan_14	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
 drop table t;

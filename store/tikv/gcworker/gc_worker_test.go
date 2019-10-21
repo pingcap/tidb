@@ -32,6 +32,7 @@ import (
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -191,28 +192,28 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 
 func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	spkv := s.store.GetSafePointKV()
-	err := spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
+	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
 	now := time.Now()
 	sp := s.gcWorker.calSafePointByMinStartTS(now)
 	c.Assert(sp.Second(), Equals, now.Second())
-	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"), "0")
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now)
 	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
 	c.Assert(sp, Equals, zeroTime)
 
-	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"), "0")
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
-	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "b"), "1")
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now)
 	c.Assert(sp, Equals, zeroTime)
 
-	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "a"),
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
 		strconv.FormatUint(variable.GoTimeToTS(now), 10))
 	c.Assert(err, IsNil)
-	err = spkv.Put(fmt.Sprintf("%s/%s", domain.ServerMinStartTSPath, "b"),
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
 		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))

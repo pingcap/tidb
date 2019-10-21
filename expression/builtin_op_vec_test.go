@@ -22,16 +22,29 @@ import (
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
+	ast.IsTruth: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.IsFalsity: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
 	ast.LogicXor: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
-	ast.Xor: {},
+	ast.Xor: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
 	ast.LogicAnd: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
+	ast.Or: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
 	ast.UnaryNot: {
@@ -39,8 +52,25 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
-	ast.UnaryMinus: {},
-	ast.IsNull:     {},
+	ast.And: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
+	ast.RightShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.LeftShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.UnaryMinus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+	},
+	ast.IsNull: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 }
 
 // givenValsGener returns the items sequentially from the slice given at
@@ -69,6 +99,7 @@ func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *give
 }
 
 func makeBinaryLogicOpDataGeners() []dataGenerator {
+	// TODO: rename this to makeBinaryOpDataGenerator, since the BIT ops are also using it?
 	pairs := [][]interface{}{
 		{nil, nil},
 		{0, nil},

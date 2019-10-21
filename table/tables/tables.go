@@ -388,6 +388,10 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			untouched = false
 			break
 		}
+		// If txn is auto commit and index is untouched, no need to write index value.
+		if untouched && !ctx.GetSessionVars().InTxn() {
+			continue
+		}
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
@@ -943,7 +947,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
+	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
 	if err != nil {
 		return 0, err
 	}

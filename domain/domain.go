@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
@@ -62,7 +63,7 @@ type Domain struct {
 	statsHandle          unsafe.Pointer
 	statsLease           time.Duration
 	ddl                  ddl.DDL
-	info                 *InfoSyncer
+	info                 *infosync.InfoSyncer
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
@@ -290,7 +291,7 @@ func (do *Domain) DDL() ddl.DDL {
 }
 
 // InfoSyncer gets infoSyncer from domain.
-func (do *Domain) InfoSyncer() *InfoSyncer {
+func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
@@ -420,7 +421,7 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
-	ticker := time.NewTicker(time.Second * time.Duration(InfoSessionTTL) / 2)
+	ticker := time.NewTicker(time.Second * time.Duration(infosync.InfoSessionTTL) / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -660,8 +661,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
-	err = do.info.Init(ctx)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
 	if err != nil {
 		return err
 	}
@@ -826,25 +826,31 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 		return err
 	}
 
-	do.loadBindInfoLoop()
+	do.globalBindHandleWorkerLoop()
 	do.handleInvalidBindTaskLoop()
 	return nil
 }
 
-func (do *Domain) loadBindInfoLoop() {
+func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
-		defer recoverInDomain("loadBindInfoLoop", false)
+		defer recoverInDomain("globalBindHandleWorkerLoop", false)
+		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
+		defer bindWorkerTicker.Stop()
 		for {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(bindinfo.Lease):
-			}
-			err := do.bindHandle.Update(false)
-			if err != nil {
-				logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+			case <-bindWorkerTicker.C:
+				err := do.bindHandle.Update(false)
+				if err != nil {
+					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+				}
+				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					continue
+				}
+				do.bindHandle.CaptureBaselines(do.InfoSchema())
 			}
 		}
 	}()

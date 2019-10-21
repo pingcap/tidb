@@ -126,6 +126,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildExplain(v)
 	case *plannercore.PointGetPlan:
 		return b.buildPointGet(v)
+	case *plannercore.BatchPointGetPlan:
+		return b.buildBatchPointGet(v)
 	case *plannercore.Insert:
 		return b.buildInsert(v)
 	case *plannercore.LoadData:
@@ -144,7 +146,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
 		return b.buildShowDDL(v)
-	case *plannercore.ShowDDLJobs:
+	case *plannercore.PhysicalShowDDLJobs:
 		return b.buildShowDDLJobs(v)
 	case *plannercore.ShowDDLJobQueries:
 		return b.buildShowDDLJobQueries(v)
@@ -282,7 +284,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildShowDDLJobs(v *plannercore.ShowDDLJobs) Executor {
+func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		jobNumber:    v.JobNumber,
 		is:           b.is,
@@ -1308,46 +1310,6 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 }
 
 func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executor {
-	if v.IsPointGetUnion {
-		startTS, err := b.getStartTS()
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		children := v.Children()
-		// It's OK to type assert here because `v.IsPointGetUnion == true` only if all children are PointGet
-		pointGet := children[0].(*plannercore.PointGetPlan)
-		e := &BatchPointGetExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			tblInfo:      pointGet.TblInfo,
-			idxInfo:      pointGet.IndexInfo,
-			startTS:      startTS,
-		}
-		if pointGet.IndexInfo != nil {
-			idxVals := make([][]types.Datum, len(children))
-			for i, child := range children {
-				idxVals[i] = child.(*plannercore.PointGetPlan).IndexValues
-			}
-			e.idxVals = idxVals
-		} else {
-			// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
-			handles := make([]int64, 0, len(children))
-			dedup := make(map[int64]struct{}, len(children))
-			for _, child := range children {
-				handle := child.(*plannercore.PointGetPlan).Handle
-				if _, found := dedup[handle]; found {
-					continue
-				}
-				dedup[handle] = struct{}{}
-				handles = append(handles, handle)
-			}
-			e.handles = handles
-		}
-		e.base().initCap = len(children)
-		e.base().maxChunkSize = len(children)
-		return e
-	}
-
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
@@ -1367,28 +1329,31 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	base.maxChunkSize = 1
 	if v.IndexInfo != nil {
 		return &SplitIndexRegionExec{
-			baseExecutor: base,
-			tableInfo:    v.TableInfo,
-			indexInfo:    v.IndexInfo,
-			lower:        v.Lower,
-			upper:        v.Upper,
-			num:          v.Num,
-			valueLists:   v.ValueLists,
+			baseExecutor:   base,
+			tableInfo:      v.TableInfo,
+			partitionNames: v.PartitionNames,
+			indexInfo:      v.IndexInfo,
+			lower:          v.Lower,
+			upper:          v.Upper,
+			num:            v.Num,
+			valueLists:     v.ValueLists,
 		}
 	}
 	if len(v.ValueLists) > 0 {
 		return &SplitTableRegionExec{
-			baseExecutor: base,
-			tableInfo:    v.TableInfo,
-			valueLists:   v.ValueLists,
+			baseExecutor:   base,
+			tableInfo:      v.TableInfo,
+			partitionNames: v.PartitionNames,
+			valueLists:     v.ValueLists,
 		}
 	}
 	return &SplitTableRegionExec{
-		baseExecutor: base,
-		tableInfo:    v.TableInfo,
-		lower:        v.Lower[0],
-		upper:        v.Upper[0],
-		num:          v.Num,
+		baseExecutor:   base,
+		tableInfo:      v.TableInfo,
+		partitionNames: v.PartitionNames,
+		lower:          v.Lower[0],
+		upper:          v.Upper[0],
+		num:            v.Num,
 	}
 }
 
@@ -1814,14 +1779,88 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 }
 
 func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
-	// Now IndexLookUpMergeJoin returns IndexLookUpJoin.
-	// We will maintain it in future.
-	return b.buildIndexLookUpJoin(&v.PhysicalIndexJoin)
+	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
+	if b.err != nil {
+		return nil
+	}
+	outerTypes := retTypes(outerExec)
+	innerPlan := v.Children()[v.InnerChildIdx]
+	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	for i, col := range innerPlan.Schema().Columns {
+		innerTypes[i] = col.RetType
+	}
+	var (
+		outerFilter           []expression.Expression
+		leftTypes, rightTypes []*types.FieldType
+	)
+	if v.InnerChildIdx == 0 {
+		leftTypes, rightTypes = innerTypes, outerTypes
+		outerFilter = v.RightConditions
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		leftTypes, rightTypes = outerTypes, innerTypes
+		outerFilter = v.LeftConditions
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, len(innerTypes))
+	}
+	outerKeyCols := make([]int, len(v.OuterJoinKeys))
+	for i := 0; i < len(v.OuterJoinKeys); i++ {
+		outerKeyCols[i] = v.OuterJoinKeys[i].Index
+	}
+	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	for i := 0; i < len(v.InnerJoinKeys); i++ {
+		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+	}
+	executorCounterIndexLookUpJoin.Inc()
+
+	e := &IndexLookUpMergeJoin{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
+		outerMergeCtx: outerMergeCtx{
+			rowTypes:      outerTypes,
+			filter:        outerFilter,
+			joinKeys:      v.OuterJoinKeys,
+			keyCols:       outerKeyCols,
+			needOuterSort: v.NeedOuterSort,
+			compareFuncs:  v.OuterCompareFuncs,
+		},
+		innerMergeCtx: innerMergeCtx{
+			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
+			rowTypes:      innerTypes,
+			joinKeys:      v.InnerJoinKeys,
+			keyCols:       innerKeyCols,
+			compareFuncs:  v.CompareFuncs,
+			colLens:       v.IdxColLens,
+			desc:          v.Desc,
+		},
+		workerWg:      new(sync.WaitGroup),
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
+		indexRanges:   v.Ranges,
+		keyOff2IdxOff: v.KeyOff2IdxOff,
+		lastColHelper: v.CompareFilters,
+	}
+	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)
+	}
+	e.joiners = joiners
+	return e
 }
 
 func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) Executor {
 	e := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin)).(*IndexLookUpJoin)
-	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	idxHash := &IndexNestedLoopHashJoin{
+		IndexLookUpJoin: *e,
+		keepOuterOrder:  v.KeepOuterOrder,
+	}
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
@@ -2055,6 +2094,12 @@ type dataReaderBuilder struct {
 	selectResultHook // for testing
 }
 
+type mockPhysicalIndexReader struct {
+	plannercore.PhysicalPlan
+
+	e Executor
+}
+
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
 	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	switch v := builder.Plan.(type) {
@@ -2066,6 +2111,16 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
+	// 	1. The inner child fetch data using indexLookupReader
+	// 	2. PK is not handle
+	// 	3. The inner child needs to keep order
+	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
+	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
+	case *plannercore.PhysicalProjection:
+		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+	case *mockPhysicalIndexReader:
+		return v.e, nil
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
@@ -2148,6 +2203,35 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return nil, err
 	}
 	err = e.open(ctx)
+	return e, err
+}
+
+func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+	if !isDoubleRead {
+		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
+	}
+	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	if err != nil {
+		return nil, err
+	}
+
+	e := &ProjectionExec{
+		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ExplainID(), childExec),
+		numWorkers:       builder.ctx.GetSessionVars().ProjectionConcurrency,
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay: v.CalculateNoDelay,
+	}
+
+	// If the calculation row count for this Projection operator is smaller
+	// than a Chunk size, we turn back to the un-parallel Projection
+	// implementation to reduce the goroutine overhead.
+	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+	err = e.Open(ctx)
+
 	return e, err
 }
 
@@ -2274,6 +2358,41 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 	}
+	return e
+}
+
+func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
+	startTS, err := b.getStartTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	e := &BatchPointGetExec{
+		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ExplainID()),
+		tblInfo:      plan.TblInfo,
+		idxInfo:      plan.IndexInfo,
+		startTS:      startTS,
+	}
+	var capacity int
+	if plan.IndexInfo != nil {
+		e.idxVals = plan.IndexValues
+		capacity = len(e.idxVals)
+	} else {
+		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
+		handles := make([]int64, 0, len(plan.Handles))
+		dedup := make(map[int64]struct{}, len(plan.Handles))
+		for _, handle := range plan.Handles {
+			if _, found := dedup[handle]; found {
+				continue
+			}
+			dedup[handle] = struct{}{}
+			handles = append(handles, handle)
+		}
+		e.handles = handles
+		capacity = len(e.handles)
+	}
+	e.base().initCap = capacity
+	e.base().maxChunkSize = capacity
 	return e
 }
 

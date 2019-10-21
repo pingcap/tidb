@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -35,7 +36,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
-	session.SetSchemaLease(0)
+	session.SetSchemaLease(100 * time.Millisecond)
 	session.DisableStats4Test()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
