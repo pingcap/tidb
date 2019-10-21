@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -34,8 +35,9 @@ import (
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-	OnDuplicate []*expression.Assignment
-	Priority    mysql.PriorityEnum
+	OnDuplicate    []*expression.Assignment
+	evalBuffer4Dup chunk.MutRow
+	Priority       mysql.PriorityEnum
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -261,6 +263,9 @@ func (e *InsertExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
+	if e.OnDuplicate != nil {
+		e.initEvalBuffer4Dup()
+	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
@@ -268,6 +273,19 @@ func (e *InsertExec) Open(ctx context.Context) error {
 		e.initEvalBuffer()
 	}
 	return nil
+}
+
+func (e *InsertExec) initEvalBuffer4Dup() {
+	numWritableCols := len(e.Table.WritableCols())
+	evalBufferTypes := make([]*types.FieldType, 2*numWritableCols)
+	for i, col := range e.Table.WritableCols() {
+		evalBufferTypes[i] = &col.FieldType
+		evalBufferTypes[i+numWritableCols] = &col.FieldType
+	}
+	if e.hasExtraHandle {
+		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+	}
+	e.evalBuffer4Dup = chunk.MutRowFromTypes(evalBufferTypes)
 }
 
 // doDupRowUpdate updates the duplicate row.
@@ -285,12 +303,17 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle int64, oldRow []
 	row4Update = append(row4Update, newRow...)
 
 	// Update old row when the key is duplicated.
+	e.evalBuffer4Dup.SetDatums(row4Update...)
 	for _, col := range cols {
-		val, err1 := col.Expr.Eval(chunk.MutRowFromDatums(row4Update).ToRow())
+		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return nil, false, 0, err1
 		}
-		row4Update[col.Col.Index] = val
+		row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo())
+		if err1 != nil {
+			return nil, false, 0, err1
+		}
+		e.evalBuffer4Dup.SetDatum(col.Col.Index, row4Update[col.Col.Index])
 		assignFlag[col.Col.Index] = true
 	}
 

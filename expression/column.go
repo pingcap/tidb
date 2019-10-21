@@ -465,6 +465,16 @@ func (col *Column) Vectorized() bool {
 	return true
 }
 
+// ToInfo converts the expression.Column to model.ColumnInfo for casting values,
+// beware it doesn't fill all the fields of the model.ColumnInfo.
+func (col *Column) ToInfo() *model.ColumnInfo {
+	return &model.ColumnInfo{
+		ID:        col.ID,
+		Name:      col.ColName,
+		FieldType: *col.RetType,
+	}
+}
+
 // Column2Exprs will transfer column slice to expression slice.
 func Column2Exprs(cols []*Column) []Expression {
 	result := make([]Expression, 0, len(cols))
