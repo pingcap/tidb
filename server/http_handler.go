@@ -676,7 +676,7 @@ type tableFlashReplicaInfo struct {
 	ID             int64    `json:"id"`
 	ReplicaCount   uint64   `json:"replica_count"`
 	LocationLabels []string `json:"location_labels"`
-	Status         bool     `json:"status"`
+	Available      bool     `json:"available"`
 }
 
 func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -695,14 +695,14 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		tables := schema.SchemaTables(db.Name)
 		for _, tbl := range tables {
 			tblInfo := tbl.Meta()
-			if tblInfo.FlashReplica == nil || tblInfo.FlashReplica.Count == 0 {
+			if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
 				continue
 			}
 			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
 				ID:             tblInfo.ID,
-				ReplicaCount:   tblInfo.FlashReplica.Count,
-				LocationLabels: tblInfo.FlashReplica.LocationLabels,
-				Status:         tblInfo.FlashReplica.Available,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.Available,
 			})
 		}
 	}

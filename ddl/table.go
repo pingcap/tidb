@@ -678,7 +678,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 }
 
 func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var replicaInfo ast.FlashReplicaSpec
+	var replicaInfo ast.TiFlashReplicaSpec
 	if err := job.DecodeArgs(&replicaInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -690,12 +690,12 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	if replicaInfo.Count > 0 {
-		tblInfo.FlashReplica = &model.FlashReplicaInfo{
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,
 		}
 	} else {
-		tblInfo.FlashReplica = nil
+		tblInfo.TiFlashReplica = nil
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -718,8 +718,8 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	if tblInfo.FlashReplica != nil {
-		tblInfo.FlashReplica.Available = available
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.Available = available
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

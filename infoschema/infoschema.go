@@ -421,4 +421,3 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	}
 	return false, ""
 }
-

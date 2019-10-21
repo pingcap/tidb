@@ -2004,8 +2004,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					return errors.Trace(err)
 				}
 			}
-		case ast.AlterTableSetFlashReplica:
-			err = d.AlterTableSetFlashReplica(ctx, ident, spec.FlashReplica)
+		case ast.AlterTableSetTiFlashReplica:
+			err = d.AlterTableSetFlashReplica(ctx, ident, spec.TiFlashReplica)
 		default:
 			// Nothing to do now.
 		}
@@ -2997,7 +2997,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 }
 
 // AlterTableSetFlashReplica changes the table charset and collate.
-func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.FlashReplicaSpec) error {
+func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -3030,7 +3030,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, availabl
 		return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
 	}
 
-	if tb.Meta().FlashReplica == nil || (tb.Meta().FlashReplica.Available == available) {
+	if tb.Meta().TiFlashReplica == nil || (tb.Meta().TiFlashReplica.Available == available) {
 		return nil
 	}
 

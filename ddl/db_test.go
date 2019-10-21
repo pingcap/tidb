@@ -3128,17 +3128,17 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	defer s.mustExec(c, "drop table t_flash;")
 
 	t := s.testGetTable(c, "t_flash")
-	c.Assert(t.Meta().FlashReplica, IsNil)
+	c.Assert(t.Meta().TiFlashReplica, IsNil)
 
 	s.tk.MustExec("alter table t_flash set flash replica 2 location labels 'a','b';")
 	t = s.testGetTable(c, "t_flash")
-	c.Assert(t.Meta().FlashReplica, NotNil)
-	c.Assert(t.Meta().FlashReplica.Count, Equals, uint64(2))
-	c.Assert(strings.Join(t.Meta().FlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
+	c.Assert(t.Meta().TiFlashReplica, NotNil)
+	c.Assert(t.Meta().TiFlashReplica.Count, Equals, uint64(2))
+	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
 
 	s.tk.MustExec("alter table t_flash set flash replica 0")
 	t = s.testGetTable(c, "t_flash")
-	c.Assert(t.Meta().FlashReplica, IsNil)
+	c.Assert(t.Meta().TiFlashReplica, IsNil)
 }
 
 func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {

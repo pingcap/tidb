@@ -423,7 +423,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
-	c.Assert(data[0].Status, Equals, false)
+	c.Assert(data[0].Available, Equals, false)
 
 	resp, err = http.Post("http://127.0.0.1:10090/flash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
 	c.Assert(err, IsNil)
@@ -450,7 +450,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
-	c.Assert(data[0].Status, Equals, true) // The status should be true now.
+	c.Assert(data[0].Available, Equals, true) // The status should be true now.
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
