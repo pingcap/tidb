@@ -101,7 +101,7 @@
         "SQL": "explain select b from t order by b",
         "Result": [
           "Projection_8 10000.00 root Column#2",
-          "└─Sort_13 10000.00 root Column#2:asc",
+          "└─Sort_10 10000.00 root Column#2:asc",
           "  └─TableReader_11 10000.00 root data:TableScan_12",
           "    └─TableScan_12 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
