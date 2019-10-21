@@ -187,7 +187,7 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams []types.Datum
+	PreparedParams PreparedParams
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -339,6 +339,28 @@ type SessionVars struct {
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
+
+	// StartTime is the start time of the last query.
+	StartTime time.Time
+
+	// DurationParse is the duration of parsing SQL string to AST of the last query.
+	DurationParse time.Duration
+
+	// DurationCompile is the duration of compiling AST to execution plan of the last query.
+	DurationCompile time.Duration
+
+	// PrevStmt is used to store the previous executed statement in the current session.
+	PrevStmt fmt.Stringer
+}
+
+// PreparedParams contains the parameters of the current prepared statement when executing it.
+type PreparedParams []types.Datum
+
+func (pps PreparedParams) String() string {
+	if len(pps) == 0 {
+		return ""
+	}
+	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
 // ConnectionInfo present connection used by audit.
@@ -508,26 +530,6 @@ func (s *SessionVars) Location() *time.Location {
 	return loc
 }
 
-// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
-func (s *SessionVars) GetExecuteArgumentsInfo() string {
-	if len(s.PreparedParams) == 0 {
-		return ""
-	}
-	args := make([]string, 0, len(s.PreparedParams))
-	for _, v := range s.PreparedParams {
-		if v.IsNull() {
-			args = append(args, "<nil>")
-		} else {
-			str, err := v.ToString()
-			if err != nil {
-				terror.Log(err)
-			}
-			args = append(args, str)
-		}
-	}
-	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
-}
-
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	val, ok := s.systems[name]
@@ -681,6 +683,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 	case TiDBAllowRemoveAutoInc:
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
+	// It's a global variable, but it also wants to be cached in server.
+	case TiDBMaxDeltaSchemaCount:
+		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	}
 	s.systems[name] = val
 	return nil
@@ -841,7 +846,29 @@ const (
 	SlowLogMemMax = "Mem_max"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
+	// SlowLogPrevStmt is used to show the previous executed statement.
+	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
+	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
+
+// SlowQueryLogItems is a collection of items that should be included in the
+// slow query log.
+type SlowQueryLogItems struct {
+	TxnTS       uint64
+	SQL         string
+	Digest      string
+	TimeTotal   time.Duration
+	TimeParse   time.Duration
+	TimeCompile time.Duration
+	IndexNames  string
+	StatsInfos  map[string]uint64
+	CopTasks    *stmtctx.CopTasksDetails
+	ExecDetail  execdetails.ExecDetails
+	MemMax      int64
+	Succ        bool
+	PrevStmt    string
+}
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
@@ -861,37 +888,40 @@ const (
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
 // # Succ: true
+// # Prev_stmt: begin;
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexNames string, digest string,
-	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, succ bool, sql string) string {
+func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
-	execDetailStr := execDetail.String()
-	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+
+	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
 	if s.User != nil {
-		buf.WriteString(SlowLogPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+		writeSlowLogItem(&buf, SlowLogUserStr, s.User.String())
 	}
 	if s.ConnectionID != 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
-	if len(execDetailStr) > 0 {
+	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+
+	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogPrefixStr + execDetailStr + "\n")
 	}
+
 	if len(s.CurrentDB) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
 	}
-	if len(indexNames) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogIndexNamesStr + SlowLogSpaceMarkStr + indexNames + "\n")
+	if len(logItems.IndexNames) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogIndexNamesStr + SlowLogSpaceMarkStr + logItems.IndexNames + "\n")
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
-	if len(digest) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+
+	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
+	if len(logItems.Digest) > 0 {
+		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(statsInfos) > 0 {
+	if len(logItems.StatsInfos) > 0 {
 		buf.WriteString(SlowLogPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
 		vStr := ""
-		for k, v := range statsInfos {
+		for k, v := range logItems.StatsInfos {
 			if v == 0 {
 				vStr = "pseudo"
 			} else {
@@ -907,27 +937,35 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		}
 		buf.WriteString("\n")
 	}
-	if copTasks != nil {
-		buf.WriteString(SlowLogPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+	if logItems.CopTasks != nil {
+		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		buf.WriteString(SlowLogPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v",
-			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
-			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
-			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds()) + "\n")
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds()) + "\n")
 		buf.WriteString(SlowLogPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v",
-			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
-			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
-			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds()) + "\n")
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds()) + "\n")
 	}
-	if memMax > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
+	if logItems.MemMax > 0 {
+		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogSucc + SlowLogSpaceMarkStr + strconv.FormatBool(succ) + "\n")
-	if len(sql) == 0 {
-		sql = ";"
+
+	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+
+	if logItems.PrevStmt != "" {
+		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
-	buf.WriteString(sql)
-	if sql[len(sql)-1] != ';' {
+
+	buf.WriteString(logItems.SQL)
+	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
 		buf.WriteString(";")
 	}
 	return buf.String()
+}
+
+// writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
+func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
+	buf.WriteString(SlowLogPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
 }

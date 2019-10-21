@@ -519,6 +519,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StartTime = time.Now()
+			s.sessionVars.DurationCompile = time.Duration(0)
+			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan()
@@ -533,7 +536,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
+					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -866,6 +869,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	s.GetSessionVars().StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -874,8 +878,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, errors.Trace(err)
 	}
+	durParse := time.Since(startTS)
+	s.GetSessionVars().DurationParse = durParse
 	label := s.getSQLLabel()
-	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(durParse.Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
@@ -895,7 +901,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("sql", sql))
 			return nil, errors.Trace(err)
 		}
-		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+
+		durCompile := time.Since(startTS)
+		s.GetSessionVars().DurationCompile = durCompile
+		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(durCompile.Seconds())
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
@@ -1009,6 +1018,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args .
 	}
 
 	s.PrepareTxnCtx(ctx)
+	s.sessionVars.StartTime = time.Now()
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1591,6 +1601,6 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
-			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
+			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
