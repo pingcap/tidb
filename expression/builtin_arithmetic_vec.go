@@ -420,7 +420,6 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-
 	resulti64s := result.Int64s()
 
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
