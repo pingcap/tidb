@@ -445,7 +445,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result,lhs,rhs *chunk.Column
 			continue
 		}
 		if rhi64s[i] == 0 {
-			return handleDivisionByZeroError(b.ctx)
+			if err := handleDivisionByZeroError(b.ctx); err == nil{
+				result.SetNull(i, true)
+				continue
+			}else{
+				return err
+			}
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
@@ -463,7 +468,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(result,lhs,rhs *chunk.Column
 			continue
 		}
 		if rhi64s[i] == 0 {
-			return handleDivisionByZeroError(b.ctx)
+			if err := handleDivisionByZeroError(b.ctx); err == nil{
+				result.SetNull(i, true)
+				continue
+			}else{
+				return err
+			}
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
@@ -485,7 +495,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(result,lhs,rhs *chunk.Column
 			continue
 		}
 		if rhi64s[i] == 0 {
-			return handleDivisionByZeroError(b.ctx)
+			if err := handleDivisionByZeroError(b.ctx); err == nil{
+				result.SetNull(i, true)
+				continue
+			}else{
+				return err
+			}
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
@@ -507,7 +522,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideII(result,lhs,rhs *chunk.Column
 			continue
 		}
 		if rhi64s[i] == 0 {
-			return handleDivisionByZeroError(b.ctx)
+			if err := handleDivisionByZeroError(b.ctx); err == nil{
+				result.SetNull(i, true)
+				continue
+			}else{
+				return err
+			}
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
