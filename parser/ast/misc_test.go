@@ -76,6 +76,7 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 		&VariableAssignment{Value: valueExpr},
 		&KillStmt{},
 		&DropStatsStmt{Table: &TableName{}},
+		&ShutdownStmt{},
 	}
 
 	for _, v := range stmts {
@@ -131,7 +132,8 @@ load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by
 // test Change Pump or drainer status sql parser
 func (ts *testMiscSuite) TestChangeStmt(c *C) {
 	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
-change drainer to node_state='paused' for node_id '127.0.0.1:8249';`
+change drainer to node_state='paused' for node_id '127.0.0.1:8249';
+shutdown;`
 
 	p := parser.New()
 	stmts, _, err := p.Parse(sql, "", "")
