@@ -718,20 +718,15 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return errors.Trace(err)
 		}
 
+		if err1 := bo.BackoffWithMaxSleep(boTxnLockFast, int(expire), errors.New(locks[0].String())); err1 != nil {
+			return err1
+		}
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
-		for {
+		if action.killed != nil {
 			if atomic.CompareAndSwapUint32(action.killed, 1, 0) {
 				return ErrQueryInterrupted
-			}
-			const checkKillInterval = 10 // millisecond
-			if expire > checkKillInterval {
-				time.Sleep(checkKillInterval * time.Millisecond)
-				expire -= checkKillInterval
-			} else {
-				time.Sleep(time.Duration(expire) * time.Millisecond)
-				break
 			}
 		}
 	}

@@ -38,8 +38,7 @@ func (s testMockSuite) TestInterface(c *C) {
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
-	var ignore uint32
-	err = transaction.LockKeys(context.Background(), &ignore, 0, Key("lock"))
+	err = transaction.LockKeys(context.Background(), nil, 0, Key("lock"))
 	c.Check(err, IsNil)
 	transaction.SetOption(Option(23), struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
