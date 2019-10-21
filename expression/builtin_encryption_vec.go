@@ -149,6 +149,8 @@ func (b *builtinSHA2Sig) vectorized() bool {
 	return true
 }
 
+// vecEvalString evals SHA2(str, hash_length).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
 func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
