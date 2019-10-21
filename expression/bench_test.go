@@ -252,6 +252,16 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+type jsonStringGener struct{}
+
+func (g *jsonStringGener) gen() interface{} {
+	j := new(json.BinaryJSON)
+	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int()))); err != nil {
+		panic(err)
+	}
+	return j.String()
+}
+
 type rangeDurationGener struct {
 	nullRation float64
 }
