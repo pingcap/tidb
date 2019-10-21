@@ -893,7 +893,7 @@ func (s *testIntegrationSuite) TestChangingDBCharset(c *C) {
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
 }
 
-func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
+func (s *testIntegrationSuite) TestDropAutoIncrement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -914,4 +914,50 @@ func (s *testIntegrationSuite) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
 	assertErrMsg(dropIndexSQL)
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment key)")
+	_, err := tk.Exec("alter table t modify column a int")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = on")
+	tk.MustExec("alter table t1 modify column a int")
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = off")
+}
+
+func (s *testIntegrationSuite) TestBitDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_bit (a int)")
+	tk.MustExec("insert into t_bit value (1)")
+	tk.MustExec("alter table t_bit add column c bit(16) null default b'1100110111001'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x19\xb9"))
+	tk.MustExec("update t_bit set c = b'11100000000111'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
+}
+
+func (s *testIntegrationSuite) TestMultipleUnique(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists multi_unique")
+	tk.MustExec("create table multi_unique (a int unique unique)")
+	tk.MustExec("drop table multi_unique")
+	tk.MustExec("create table multi_unique (a int key primary key unique unique)")
+	tk.MustExec("drop table multi_unique")
+	tk.MustExec("create table multi_unique (a int key unique unique key unique)")
+	tk.MustExec("drop table multi_unique")
+}
+
+func (s *testIntegrationSuite) TestParserIssue284(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
+	_, err := tk.Exec("create table test.t_parser_issue_284_2(id int not null primary key, c1 int not null, constraint foreign key (c1) references t_parser_issue_284(c1))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table test.t_parser_issue_284")
+	tk.MustExec("drop table test.t_parser_issue_284_2")
 }

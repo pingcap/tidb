@@ -112,11 +112,11 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		if isIndex {
 			var err error
 			// As we do not know the origin length, just use a custom value here.
-			lowVal, err = codec.DecodeRange(low.GetBytes(), 4)
+			lowVal, _, err = codec.DecodeRange(low.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			highVal, err = codec.DecodeRange(high.GetBytes(), 4)
+			highVal, _, err = codec.DecodeRange(high.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -309,15 +309,21 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		if skip {
 			continue
 		}
-		idx, _ := h.Bounds.LowerBound(0, fb.lower)
+		idx := h.Bounds.UpperBound(0, fb.lower)
 		bktIdx := 0
 		// The last bucket also stores the feedback that falls outside the upper bound.
-		if idx >= h.Bounds.NumRows()-2 {
+		if idx >= h.Bounds.NumRows()-1 {
 			bktIdx = h.Len() - 1
+		} else if h.Len() == 1 {
+			bktIdx = 0
 		} else {
-			bktIdx = idx / 2
+			if idx == 0 {
+				bktIdx = 0
+			} else {
+				bktIdx = (idx - 1) / 2
+			}
 			// Make sure that this feedback lies within the bucket.
-			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, fb.upper) < 0 {
+			if chunk.Compare(h.Bounds.GetRow(2*(bktIdx+1)), 0, fb.upper) < 0 {
 				continue
 			}
 		}
@@ -819,7 +825,7 @@ func convertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 }
 
 func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
-	vals, err := codec.DecodeRange(data, 1)
+	vals, _, err := codec.DecodeRange(data, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -954,11 +960,11 @@ func formatBuckets(hg *Histogram, lowBkt, highBkt, idxCols int) string {
 		return hg.bucketToString(lowBkt, idxCols)
 	}
 	if lowBkt+1 == highBkt {
-		return fmt.Sprintf("%s, %s", hg.bucketToString(lowBkt, 0), hg.bucketToString(highBkt, 0))
+		return fmt.Sprintf("%s, %s", hg.bucketToString(lowBkt, idxCols), hg.bucketToString(highBkt, idxCols))
 	}
 	// do not care the middle buckets
-	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.bucketToString(lowBkt, 0),
-		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.bucketToString(highBkt, 0))
+	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.bucketToString(lowBkt, idxCols),
+		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.bucketToString(highBkt, idxCols))
 }
 
 func colRangeToStr(c *Column, ran *ranger.Range, actual int64, factor float64) string {

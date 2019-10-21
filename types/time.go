@@ -195,10 +195,12 @@ const (
 
 // FromGoTime translates time.Time to mysql time internal representation.
 func FromGoTime(t gotime.Time) MysqlTime {
+	// Plus 500 nanosecond for rounding of the millisecond part.
+	t = t.Add(500 * gotime.Nanosecond)
+
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
-	// Nanosecond plus 500 then divided 1000 means rounding to microseconds.
-	microsecond := (t.Nanosecond() + 500) / 1000
+	microsecond := t.Nanosecond() / 1000
 	return FromDate(year, int(month), day, hour, minute, second, microsecond)
 }
 
@@ -2173,6 +2175,11 @@ func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) boo
 		return true
 	}
 
+	if len(date) == 0 {
+		ctx[token] = 0
+		return true
+	}
+
 	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
 		return false
@@ -2287,6 +2294,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		"%S": {},
 		"%k": {},
 		"%l": {},
+		"%f": {},
 	}
 	dateTokens := map[string]struct{}{
 		"%y": {},

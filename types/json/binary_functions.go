@@ -58,19 +58,18 @@ func (bj BinaryJSON) Type() string {
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		s, err := unquoteString(hack.String(bj.GetString()))
-		if err != nil {
-			return "", errors.Trace(err)
+		tmp := string(hack.String(bj.GetString()))
+		tlen := len(tmp)
+		if tlen < 2 {
+			return tmp, nil
 		}
-		// Remove prefix and suffix '"'.
-		slen := len(s)
-		if slen > 1 {
-			head, tail := s[0], s[slen-1]
-			if head == '"' && tail == '"' {
-				return s[1 : slen-1], nil
-			}
+		head, tail := tmp[0], tmp[tlen-1]
+		if head == '"' && tail == '"' {
+			// Remove prefix and suffix '"' before unquoting
+			return unquoteString(tmp[1 : tlen-1])
 		}
-		return s, nil
+		// if value is not double quoted, do nothing
+		return tmp, nil
 	default:
 		return bj.String(), nil
 	}

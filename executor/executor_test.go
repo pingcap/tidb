@@ -85,6 +85,7 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
+var _ = Suite(&testFlushSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -3712,6 +3713,16 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	c.Assert(err, NotNil)
+
+	// Test insert from select oom panic.
+	tk.MustExec("drop table if exists t,t1")
+	tk.MustExec("create table t (a bigint);")
+	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }
 
 type oomCapturer struct {
@@ -3746,29 +3757,28 @@ func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.
 func (s *testSuite) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_regions1, t_regions")
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-	tk.MustExec("create table t_regions1 (a int key, b int, index idx(b))")
-	tk.MustExec("create table t_regions (a int key, b int, index idx(b))")
+	tk.MustExec("drop table if exists t_regions")
+	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 
 	// Test show table regions.
-	tk.MustExec(`split table t_regions1 by (0)`)
-	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("3 1"))
+	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
 	rows := re.Rows()
-	// Table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
+	// Table t_regions should have 5 regions now.
+	// 4 regions to store record data.
+	// 1 region to store index data.
+	c.Assert(len(rows), Equals, 5)
 	c.Assert(len(rows[0]), Equals, 7)
-	tbl1 := testGetTableByName(c, tk.Se, "test", "t_regions1")
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", tbl1.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
+	c.Assert(rows[4][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
+	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("5 1"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
@@ -3781,15 +3791,21 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
-	c.Assert(len(rows), Equals, 7)
+	// The index `idx` of table t_regions should have 9 regions now.
+	// 4 regions to store record data.
+	// 4 region to store index idx data.
+	// 1 region to store index idx2 data.
+	c.Assert(len(rows), Equals, 9)
 	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
 	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[7][2], Equals, fmt.Sprintf("t_%d_i_2_", tbl.Meta().ID))
+	c.Assert(rows[8][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test unsigned primary key and wait scatter finish.
 	tk.MustExec("drop table if exists t_regions")

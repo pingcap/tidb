@@ -132,6 +132,16 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	startIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
 	idxKeys = append(idxKeys, startIdxKey)
 
+	// Split in the end for the other index key.
+	for _, idx := range e.tableInfo.Indices {
+		if idx.ID <= e.indexInfo.ID {
+			continue
+		}
+		endIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, idx.ID)
+		idxKeys = append(idxKeys, endIdxKey)
+		break
+	}
+
 	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
 	// Split index regions by user specified value lists.
 	if len(e.valueLists) > 0 {
@@ -415,6 +425,10 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
 
+	// Split a separate region for index.
+	if len(e.tableInfo.Indices) > 0 {
+		keys = append(keys, recordPrefix)
+	}
 	recordID := lowerValue
 	for i := 1; i < e.num; i++ {
 		recordID += int64(step)
@@ -539,6 +553,9 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	if len(d.indexPrefix) > 0 && bytes.HasPrefix(key, d.indexPrefix) {
 		return fmt.Sprintf("t_%d_i_%d_%x", d.physicalTableID, d.indexID, key[len(d.indexPrefix):])
 	} else if len(d.recordPrefix) > 0 && bytes.HasPrefix(key, d.recordPrefix) {
+		if len(d.recordPrefix) == len(key) {
+			return fmt.Sprintf("t_%d_r", d.physicalTableID)
+		}
 		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
 		if err == nil {
 			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)

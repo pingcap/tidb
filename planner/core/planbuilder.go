@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -966,7 +967,7 @@ func buildTableRegionsSchema() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
 	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_KEY", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "LEADER_STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
@@ -1596,8 +1597,6 @@ func (b *planBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-const maxSplitRegionNum = 1000
-
 func (b *planBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)
@@ -1658,6 +1657,7 @@ func (b *planBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Lower = lowerValues
 	p.Upper = upperValues
 
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
@@ -1768,6 +1768,7 @@ func (b *planBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Lower = []types.Datum{lowerValues}
 	p.Upper = []types.Datum{upperValue}
 
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split table region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {

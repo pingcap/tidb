@@ -496,13 +496,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.PriKeyFlag
+				// Check PriKeyFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.PriKeyFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.PriKeyFlag
+				}
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
+				// Check UniqueFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.UniqueFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.UniqueKeyFlag
+				}
 			case ast.ColumnOptionDefaultValue:
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
@@ -2090,6 +2096,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
 		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
+	}
+	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
+	if !ctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("to remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
 	}
 
 	// We don't support modifying the type definitions from 'null' to 'not null' now.

@@ -1715,6 +1715,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
+	result = tk.MustQuery("select str_to_date('20190101','%Y%m%d%!'), str_to_date('20190101','%Y%m%d%f'), str_to_date('20190101','%Y%m%d%H%i%s')")
+	result.Check(testkit.Rows("2019-01-01 2019-01-01 00:00:00.000000 2019-01-01 00:00:00"))
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
@@ -1943,6 +1945,12 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for unaryPlus
 	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
+	// for unaryMinus
+	tk.MustExec("drop table if exists f")
+	tk.MustExec("create table f(a decimal(65,0))")
+	tk.MustExec("insert into f value (-17000000000000000000)")
+	result = tk.MustQuery("select a from f")
+	result.Check(testkit.Rows("-17000000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {

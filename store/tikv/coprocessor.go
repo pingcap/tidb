@@ -470,9 +470,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
 		worker.handleTask(bo, task, respCh)
-		if bo.totalSleep > 0 {
-			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
-		}
 		close(task.respChan)
 		select {
 		case <-worker.finishCh:

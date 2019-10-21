@@ -37,6 +37,7 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
+	dbName      string
 	schema      *expression.Schema
 	TblInfo     *model.TableInfo
 	IndexInfo   *model.IndexInfo
@@ -152,8 +153,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
 	} else if selStmt.Limit != nil {
-		sc := ctx.GetSessionVars().StmtCtx
-		count, offset, err := extractLimitCountOffset(sc, selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}
@@ -197,7 +197,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl)
+		dbName := tblName.Schema.L
+		if dbName == "" {
+			dbName = ctx.GetSessionVars().CurrentDB
+		}
+		p := newPointGetPlan(ctx, dbName, schema, tbl)
 		var err error
 		p.Handle, err = handleDatum.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
@@ -220,7 +224,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointGetPlan(ctx, schema, tbl)
+		dbName := tblName.Schema.L
+		if dbName == "" {
+			dbName = ctx.GetSessionVars().CurrentDB
+		}
+		p := newPointGetPlan(ctx, dbName, schema, tbl)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		return p
@@ -228,9 +236,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
 	p := &PointGetPlan{
 		basePlan: newBasePlan(ctx, "Point_Get"),
+		dbName:   dbName,
 		schema:   schema,
 		TblInfo:  tbl,
 	}
@@ -243,9 +252,8 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	if pm == nil {
 		return nil
 	}
-	dbName := ctx.GetSessionVars().CurrentDB
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(dbName, fastPlan.TblInfo.Name.L, "", checkType) {
+		if !pm.RequestVerification(fastPlan.dbName, fastPlan.TblInfo.Name.L, "", checkType) {
 			return errors.New("privilege check fail")
 		}
 	}

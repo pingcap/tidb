@@ -546,7 +546,7 @@ func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
 		return
 	}
 	for id, r := range c.mu.regions {
-		if r.region.peer.GetStoreId() == failedStoreID {
+		if !r.isValid() || r.region.peer.GetStoreId() == failedStoreID {
 			c.dropRegionFromCache(id)
 		}
 	}

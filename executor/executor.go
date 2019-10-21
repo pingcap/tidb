@@ -682,7 +682,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		chk.AppendString(7, slow.User)
 		chk.AppendString(8, slow.DB)
 		chk.AppendString(9, slow.TableIDs)
-		chk.AppendString(10, slow.IndexIDs)
+		chk.AppendString(10, slow.IndexNames)
 		if slow.Internal {
 			chk.AppendInt64(11, 0)
 		} else {
@@ -1346,12 +1346,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	default:
 		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
 	}
-
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
+	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
+	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		sc.CastStrToIntStrict = true
+		s = explainStmt.Stmt
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (

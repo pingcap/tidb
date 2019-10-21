@@ -131,4 +131,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
+	prometheus.MustRegister(HandleSchemaValidate)
+	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 }

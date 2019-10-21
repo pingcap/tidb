@@ -165,6 +165,7 @@ type Execute struct {
 	UsingVars []expression.Expression
 	ExecID    uint32
 	Stmt      ast.StmtNode
+	StmtType  string
 	Plan      Plan
 }
 
@@ -177,6 +178,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
+	vars.StmtCtx.StmtType = prepared.StmtType
 
 	if len(prepared.Params) != len(e.UsingVars) {
 		return errors.Trace(ErrWrongParamCount)

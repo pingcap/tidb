@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -25,8 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
@@ -157,6 +157,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
@@ -164,7 +165,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
@@ -249,6 +250,11 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
+	startTime := time.Now()
+	defer func() {
+		ctx.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
+
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(ctx, execStmt); err != nil {
 		return nil, err
