@@ -111,7 +111,7 @@ type nullableBool struct {
 var (
 	nbUnset = nullableBool{false, false}
 	nbFalse = nullableBool{true, false}
-	nbTrue = nullableBool{true, true}
+	nbTrue  = nullableBool{true, true}
 )
 
 func (b *nullableBool) toBool() bool {
@@ -197,18 +197,16 @@ func (l *Log) getDisableTimestamp() bool {
 	if l.EnableTimestamp == nbUnset {
 		// if DisableTimestamp is also nbUnset, toBool is default to false
 		return l.DisableTimestamp.toBool()
-	} else {
-		return !l.EnableTimestamp.toBool()
 	}
+	return !l.EnableTimestamp.toBool()
 }
 
 func (l *Log) getDisableErrorStack() bool {
 	if l.DisableErrorStack == nbUnset {
 		// if EnableErrorStack is also nbUnset, toBool is default to false
 		return !l.EnableErrorStack.toBool()
-	} else {
-		return l.DisableErrorStack.toBool()
 	}
+	return l.DisableErrorStack.toBool()
 }
 
 // Security is the security section of the config.
