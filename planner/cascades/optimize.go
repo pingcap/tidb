@@ -285,7 +285,7 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	}
 	// Handle implementation rules for each equivalent GroupExpr.
 	var cumCost float64
-	var childCosts []float64
+	var childImpls []memo.Implementation
 	var childPlans []plannercore.PhysicalPlan
 	err := opt.fillGroupStats(g)
 	if err != nil {
@@ -300,8 +300,8 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		}
 		for _, impl := range impls {
 			cumCost = 0.0
-			childCosts = childCosts[:0]
 			childPlans = childPlans[:0]
+			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
 				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
 				if err != nil {
@@ -311,15 +311,14 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 					impl.SetCost(math.MaxFloat64)
 					break
 				}
-				childCost := childImpl.GetCost()
-				childCosts = append(childCosts, childCost)
-				cumCost += childCost
+				cumCost += childImpl.GetCost()
+				childImpls = append(childImpls, childImpl)
 				childPlans = append(childPlans, childImpl.GetPlan())
 			}
 			if impl.GetCost() == math.MaxFloat64 {
 				continue
 			}
-			cumCost = impl.CalcCost(outCount, childCosts, curExpr.Children...)
+			cumCost = impl.CalcCost(outCount, childImpls...)
 			if cumCost > costLimit {
 				continue
 			}
