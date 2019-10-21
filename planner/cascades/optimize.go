@@ -67,10 +67,17 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
-// optimization is composed of 2 phases: exploration and implementation.
+// optimization is composed of 3 phases: preprocessing, exploration and implementation.
 //
 //------------------------------------------------------------------------------
-// Phase 1: Exploration
+// Phase 1: Preprocessing
+//------------------------------------------------------------------------------
+//
+// The target of this phase is to preprocess the plan tree by some heuristic
+// rules which should always be beneficial, for example Column Pruning.
+//
+//------------------------------------------------------------------------------
+// Phase 2: Exploration
 //------------------------------------------------------------------------------
 //
 // The target of this phase is to explore all the logically equivalent
@@ -84,7 +91,7 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // rules.
 //
 //------------------------------------------------------------------------------
-// Phase 2: Implementation
+// Phase 3: Implementation
 //------------------------------------------------------------------------------
 //
 // The target of this phase is to search the best physical plan for a Group
@@ -95,6 +102,10 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
 func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
+	logical, err = opt.onPhasePreprocessing(sctx, logical)
+	if err != nil {
+		return nil, err
+	}
 	rootGroup := convert2Group(logical)
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
@@ -125,6 +136,16 @@ func convert2Group(node plannercore.LogicalPlan) *memo.Group {
 	g := memo.NewGroupWithSchema(e, node.Schema())
 	// Stats property for `Group` would be computed after exploration phase.
 	return g
+}
+
+func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+	err := plan.PruneColumns(plan.Schema().Columns)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: Build key info when convert LogicalPlan to GroupExpr.
+	plan.BuildKeyInfo()
+	return plan, nil
 }
 
 func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
@@ -264,7 +285,7 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	}
 	// Handle implementation rules for each equivalent GroupExpr.
 	var cumCost float64
-	var childCosts []float64
+	var childImpls []memo.Implementation
 	var childPlans []plannercore.PhysicalPlan
 	err := opt.fillGroupStats(g)
 	if err != nil {
@@ -279,8 +300,8 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		}
 		for _, impl := range impls {
 			cumCost = 0.0
-			childCosts = childCosts[:0]
 			childPlans = childPlans[:0]
+			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
 				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
 				if err != nil {
@@ -290,15 +311,14 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 					impl.SetCost(math.MaxFloat64)
 					break
 				}
-				childCost := childImpl.GetCost()
-				childCosts = append(childCosts, childCost)
-				cumCost += childCost
+				cumCost += childImpl.GetCost()
+				childImpls = append(childImpls, childImpl)
 				childPlans = append(childPlans, childImpl.GetPlan())
 			}
 			if impl.GetCost() == math.MaxFloat64 {
 				continue
 			}
-			cumCost = impl.CalcCost(outCount, childCosts, curExpr.Children...)
+			cumCost = impl.CalcCost(outCount, childImpls...)
 			if cumCost > costLimit {
 				continue
 			}

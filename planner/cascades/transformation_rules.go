@@ -52,25 +52,18 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 
 var patternMap = make(map[Transformation]*memo.Pattern)
 
-// GetPattern returns the Pattern of the given Transformation rule.
-// It returns the cached Pattern if possible. Otherwise, generate a new Pattern.
-func GetPattern(r Transformation) *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
-	p := r.GetPattern()
-	patternMap[r] = p
-	return p
-}
-
 // PushSelDownTableScan pushes the selection down to TableScan.
 type PushSelDownTableScan struct {
 }
 
 // GetPattern implements Transformation interface. The pattern of this rule is `Selection -> TableScan`.
 func (r *PushSelDownTableScan) GetPattern() *memo.Pattern {
-	ts := memo.NewPattern(memo.OperandTableScan)
-	p := memo.BuildPattern(memo.OperandSelection, ts)
+	if p, ok := patternMap[r]; ok {
+		return p
+	}
+	ts := memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOrTiFlash)
+	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash, ts)
+	patternMap[r] = p
 	return p
 }
 
@@ -124,9 +117,13 @@ type PushSelDownTableGather struct {
 // GetPattern implements Transformation interface. The pattern of this rule
 // is `Selection -> TableGather -> Any`
 func (r *PushSelDownTableGather) GetPattern() *memo.Pattern {
-	any := memo.NewPattern(memo.OperandAny)
-	tg := memo.BuildPattern(memo.OperandTableGather, any)
-	p := memo.BuildPattern(memo.OperandSelection, tg)
+	if p, ok := patternMap[r]; ok {
+		return p
+	}
+	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
+	tg := memo.BuildPattern(memo.OperandTableGather, memo.EngineTiDBOnly, any)
+	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
+	patternMap[r] = p
 	return p
 }
 
@@ -153,7 +150,7 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 	pushedSel := plannercore.LogicalSelection{Conditions: pushed}.Init(sctx, sel.SelectBlockOffset())
 	pushedSelExpr := memo.NewGroupExpr(pushedSel)
 	pushedSelExpr.Children = append(pushedSelExpr.Children, childGroup)
-	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema)
+	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema).SetEngineType(childGroup.EngineType)
 	// The field content of TableGather would not be modified currently, so we
 	// just reference the same tg instead of making a copy of it.
 	//
@@ -179,7 +176,11 @@ type EnumeratePaths struct {
 
 // GetPattern implements Transformation interface. The pattern of this rule is `DataSource`.
 func (r *EnumeratePaths) GetPattern() *memo.Pattern {
-	p := memo.NewPattern(memo.OperandDataSource)
+	if p, ok := patternMap[r]; ok {
+		return p
+	}
+	p := memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
+	patternMap[r] = p
 	return p
 }
 
@@ -194,6 +195,7 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
 		expr := convert2GroupExpr(gather)
+		expr.Children[0].SetEngineType(memo.EngineTiKV)
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil

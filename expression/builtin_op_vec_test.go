@@ -38,7 +38,9 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.LogicXor: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
-	ast.Xor: {},
+	ast.Xor: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
 	ast.LogicAnd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
@@ -59,7 +61,9 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.LeftShift: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 	},
-	ast.UnaryMinus: {},
+	ast.UnaryMinus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+	},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
@@ -95,6 +99,7 @@ func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *give
 }
 
 func makeBinaryLogicOpDataGeners() []dataGenerator {
+	// TODO: rename this to makeBinaryOpDataGenerator, since the BIT ops are also using it?
 	pairs := [][]interface{}{
 		{nil, nil},
 		{0, nil},
