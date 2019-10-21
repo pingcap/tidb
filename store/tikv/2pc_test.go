@@ -506,7 +506,8 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	c.Assert(txn.Set(key, key), IsNil)
 	txn.DelOption(kv.PresumeKeyNotExistsError)
 	txn.DelOption(kv.PresumeKeyNotExists)
-	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	var ignore uint32
+	err := txn.LockKeys(context.Background(), &ignore, txn.startTS, key)
 	c.Assert(err, NotNil)
 	c.Assert(txn.Delete(key), IsNil)
 	key2 := kv.Key("key2")
@@ -518,9 +519,10 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
-	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	var ignore uint32
+	err := txn.LockKeys(context.Background(), &ignore, 100, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	err = txn.LockKeys(context.Background(), &ignore, 100, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
 	c.Assert(txn.lockKeys, HasLen, 2)
 }
@@ -530,11 +532,12 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	time.Sleep(time.Millisecond * 100)
-	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	var ignore uint32
+	err := txn.LockKeys(context.Background(), &ignore, txn.startTS, key)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 100)
 	key2 := kv.Key("key2")
-	err = txn.LockKeys(context.Background(), txn.startTS, key2)
+	err = txn.LockKeys(context.Background(), &ignore, txn.startTS, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
 	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL

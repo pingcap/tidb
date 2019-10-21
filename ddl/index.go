@@ -869,7 +869,8 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 			// Lock the row key to notify us that someone delete or update the row,
 			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(context.Background(), 0, idxRecord.key)
+			var ignore uint32
+			err := txn.LockKeys(context.Background(), &ignore, 0, idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -46,7 +46,7 @@ type twoPhaseCommitAction interface {
 type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
-type actionPessimisticLock struct{}
+type actionPessimisticLock struct{ killed *uint32 }
 type actionPessimisticRollback struct{}
 
 var (
@@ -643,7 +643,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	}
 }
 
-func (actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchKeys) error {
+func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
 		mut := &pb.Mutation{
@@ -679,7 +679,7 @@ func (actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.killed, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -712,11 +712,28 @@ func (actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			}
 			locks = append(locks, lock)
 		}
-		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		var expire int64
+		expire, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// Because we already waited on tikv, no need to Backoff here.
+
+		// Handle the killed flag when waiting for the pessimistic lock.
+		// When a txn runs into LockKeys() and backoff here, it has no chance to call
+		// executor.Next() and check the killed flag.
+		for {
+			if atomic.CompareAndSwapUint32(action.killed, 1, 0) {
+				return ErrQueryInterrupted
+			}
+			const checkKillInterval = 10 // millisecond
+			if expire > checkKillInterval {
+				time.Sleep(checkKillInterval * time.Millisecond)
+				expire -= checkKillInterval
+			} else {
+				time.Sleep(time.Duration(expire) * time.Millisecond)
+				break
+			}
+		}
 	}
 }
 
@@ -918,8 +935,8 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{killed}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
