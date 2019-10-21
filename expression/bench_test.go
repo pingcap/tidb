@@ -1185,8 +1185,8 @@ func generateRandomSel() []int {
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 10; numCols++ {
-		for round := 0; round < 64; round++ {
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
 			c.Assert(err, IsNil)
@@ -1209,7 +1209,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for numCols := 1; numCols <= 3; numCols++ {
+	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
 		combFunc = func(nCols int) {
@@ -1259,8 +1259,8 @@ func BenchmarkVecEvalBool(b *testing.B) {
 func (s *testEvaluatorSuite) TestRowBasedFilterAndVectorizedFilter(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 10; numCols++ {
-		for round := 0; round < 64; round++ {
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
@@ -1357,8 +1357,8 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	ctx := mock.NewContext()
 	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 10; numCols++ {
-		for round := 0; round < 64; round++ {
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
