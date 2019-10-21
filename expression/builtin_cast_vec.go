@@ -336,12 +336,10 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		}
 		tm, err := types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)
 		if err != nil {
-if err = handleInvalidTimeError(b.ctx, err); err != nil {
-    return errr
-} else {
-    result.SetNull(i, true)
-    continue
-}
+			return err
+		}
+		if err = handleInvalidTimeError(b.ctx, err); err != nil {
+			return err
 		}
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
