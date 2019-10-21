@@ -40,7 +40,7 @@ type InsertExec struct {
 	curInsertVals  chunk.MutRow
 	row4Update     []types.Datum
 
-	Priority       mysql.PriorityEnum
+	Priority mysql.PriorityEnum
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
