@@ -16,8 +16,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
-	"syscall"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -1018,6 +1018,9 @@ func (e *SimpleExec) autoNewTxn() bool {
 func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
-	// sending signal to signal.SetupSignalHandler
-	return syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return err
+	}
+	return p.Kill()
 }
