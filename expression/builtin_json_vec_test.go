@@ -37,14 +37,16 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONSet:          {},
 	ast.JSONSearch:       {},
 	ast.JSONReplace:      {},
-	ast.JSONDepth:        {},
+	ast.JSONDepth:        {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
 	ast.JSONUnquote: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
 	},
 	ast.JSONRemove: {},
 	ast.JSONMerge:  {},
 	ast.JSONInsert: {},
-	ast.JSONQuote:  {},
+	ast.JSONQuote: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {
