@@ -638,11 +638,34 @@ func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinRTrimSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinRTrimSig
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
 func (b *builtinRTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		result.AppendString(strings.TrimRight(str, spaceChars))
+	}
+
+	return nil
 }
 
 func (b *builtinStrcmpSig) vectorized() bool {
@@ -766,11 +789,50 @@ func (b *builtinFieldRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinOctStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		negative, overflow := false, false
+		str := buf.GetString(i)
+		str = getValidPrefix(strings.TrimSpace(str), 10)
+		if len(str) == 0 {
+			result.AppendString("0")
+			continue
+		}
+		if str[0] == '-' {
+			negative, str = true, str[1:]
+		}
+		numVal, err := strconv.ParseUint(str, 10, 64)
+		if err != nil {
+			numError, ok := err.(*strconv.NumError)
+			if !ok || numError.Err != strconv.ErrRange {
+				return err
+			}
+			overflow = true
+		}
+		if negative && !overflow {
+			numVal = -numVal
+		}
+		result.AppendString(strconv.FormatUint(numVal, 8))
+	}
+	return nil
 }
 
 func (b *builtinEltSig) vectorized() bool {

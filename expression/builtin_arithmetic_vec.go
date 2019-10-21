@@ -58,11 +58,52 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, resul
 }
 
 func (b *builtinArithmeticDivideDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf)
+	x := result.Decimals()
+	y := buf.Decimals()
+	var to types.MyDecimal
+	var frac int
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		err = types.DecimalDiv(&x[i], &y[i], &to, types.DivFracIncr)
+		if err == types.ErrDivByZero {
+			if err = handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		} else if err == nil {
+			_, frac = to.PrecisionAndFrac()
+			if frac < b.baseBuiltinFunc.tp.Decimal {
+				if err = to.Round(&to, b.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven); err != nil {
+					return err
+				}
+			}
+		} else {
+			return err
+		}
+		x[i] = to
+	}
+	return nil
 }
 
 func (b *builtinArithmeticModIntSig) vectorized() bool {
@@ -189,11 +230,45 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinArithmeticModDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf)
+	x := result.Decimals()
+	y := buf.Decimals()
+	var to types.MyDecimal
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		err = types.DecimalMod(&x[i], &y[i], &to)
+		if err == types.ErrDivByZero {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		} else if err != nil {
+			return err
+		}
+
+		x[i] = to
+	}
+	return nil
 }
 
 func (b *builtinArithmeticPlusRealSig) vectorized() bool {
@@ -273,11 +348,43 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 }
 
 func (b *builtinArithmeticMultiplyIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	x := result.Int64s()
+	y := buf.Int64s()
+	result.MergeNulls(buf)
+	var tmp int64
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		tmp = x[i] * y[i]
+		if x[i] != 0 && tmp/x[i] != y[i] {
+			result.SetNull(i, true)
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		x[i] = tmp
+	}
+
+	return nil
 }
 
 func (b *builtinArithmeticDivideRealSig) vectorized() bool {
