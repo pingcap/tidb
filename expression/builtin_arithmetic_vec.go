@@ -444,12 +444,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result, lhs, rhs *chunk.Colu
 			continue
 		}
 		if rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err == nil {
-				result.SetNull(i, true)
-				continue
-			} else {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
@@ -467,12 +466,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(result, lhs, rhs *chunk.Colu
 			continue
 		}
 		if rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err == nil {
-				result.SetNull(i, true)
-				continue
-			} else {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
@@ -494,12 +492,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(result, lhs, rhs *chunk.Colu
 			continue
 		}
 		if rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err == nil {
-				result.SetNull(i, true)
-				continue
-			} else {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
@@ -521,12 +518,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideII(result, lhs, rhs *chunk.Colu
 			continue
 		}
 		if rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err == nil {
-				result.SetNull(i, true)
-				continue
-			} else {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
 		}
 		if lhs.IsNull(i) {
 			result.SetNull(i, true)
