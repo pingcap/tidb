@@ -166,9 +166,13 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 			return 0, overflow(val, tp)
 		}
 		return uint64(int64(val)), overflow(val, tp)
-	}
-
-	if val > float64(upperBound) {
+	} else if val == float64(upperBound) {
+		// Because u64::MAX can not be represented precisely in iee754(64bit),
+		// so u64::MAX as f64 will make a num bigger than u64::MAX,
+		// which can not be represented by 64bit integer.
+		// So (u64::MAX as f64) as u64 is undefined behavior.
+		return upperBound, nil
+	} else if val > float64(upperBound) {
 		return upperBound, overflow(val, tp)
 	}
 	return uint64(val), nil
@@ -561,18 +565,20 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
 			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
-			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			u, e := ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			return u, sc.HandleOverflow(e, e)
 		}
 		bound := IntergerUnsignedUpperBound(mysql.TypeLonglong)
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
-		return int64(u), errors.Trace(err)
+		return int64(u), sc.HandleOverflow(err, err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
 		if !unsigned {
-			return StrToInt(sc, str)
+			r, e := StrToInt(sc, str)
+			return r, sc.HandleOverflow(e, e)
 		}
 		u, err := StrToUint(sc, str)
-		return int64(u), errors.Trace(err)
+		return int64(u), sc.HandleOverflow(err, err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }

@@ -2224,6 +2224,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 
 	tk.MustExec(`create table tb5(a float(64));`)
 	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
+	fmt.Println(tk)
 	err := tk.QueryToErr(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	msg := strings.Split(err.Error(), " ")
 	last := msg[len(msg)-1]
@@ -2244,6 +2245,15 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
 	result = tk.MustQuery(`select * from tb5;`)
 	result.Check(testkit.Rows("13835058000000000000 13835058000000000000", "13835058000000000000 13835058000000000000"))
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastRealAsIntSig
+	tk.MustExec(`create table tb5(a double, b float);`)
+	tk.MustExec(`insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=0;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows(" Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=0;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows(" Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
 	tk.MustExec(`drop table tb5;`)
 
 	// test builtinCastIntAsStringSig
