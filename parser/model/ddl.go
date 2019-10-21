@@ -59,6 +59,8 @@ const (
 	ActionLockTable                     ActionType = 27
 	ActionUnlockTable                   ActionType = 28
 	ActionRepairTable                   ActionType = 29
+	ActionSetTiFlashReplica             ActionType = 30
+	ActionUpdateTiFlashReplicaStatus    ActionType = 31
 )
 
 // AddIndexStr is a string related to the operation of "add index".
@@ -94,6 +96,8 @@ var actionMap = map[ActionType]string{
 	ActionLockTable:                     "lock table",
 	ActionUnlockTable:                   "unlock table",
 	ActionRepairTable:                   "repair table",
+	ActionSetTiFlashReplica:             "set tiflash replica",
+	ActionUpdateTiFlashReplicaStatus:    "update tiflash replica status",
 }
 
 // String return current ddl action in string
