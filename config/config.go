@@ -528,7 +528,6 @@ var defaultConf = Config{
 		MaxStmtCount: 100,
 		MaxSQLLength: 4096,
 	},
-	// For Repair Mode.
 	RepairMode:      false,
 	RepairTableList: []string{},
 }
