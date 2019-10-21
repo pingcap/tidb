@@ -214,11 +214,55 @@ func (b *builtinLeastRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinLeastStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+
+	src := result
+	arg := buf1
+	dst := buf2
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if src.IsNull(i) || arg.IsNull(i) {
+				dst.AppendNull()
+				continue
+			}
+			srcStr := src.GetString(i)
+			argStr := arg.GetString(i)
+			if types.CompareString(srcStr, argStr) < 0 {
+				dst.AppendString(srcStr)
+			} else {
+				dst.AppendString(argStr)
+			}
+		}
+		src, dst = dst, src
+		arg.ReserveString(n)
+		dst.ReserveString(n)
+	}
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
+	}
+	return nil
 }
 
 func (b *builtinEQJSONSig) vectorized() bool {
@@ -438,11 +482,36 @@ func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinIntervalRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	f64s := buf.Float64s()
+	result.ResizeInt64(n, false)
+	res := result.Int64s()
+	var idx int
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			res[i] = -1
+			continue
+		}
+		idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		res[i] = int64(idx)
+	}
+	return nil
 }
 
 func (b *builtinLTRealSig) vectorized() bool {
