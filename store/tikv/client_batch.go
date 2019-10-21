@@ -260,10 +260,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
-	c.failPendingRequests(perr) // fail all pending requests.
-
-	var err error
+func (c *batchCommandsClient) waitConnReady() (err error) {
 	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	for {
 		s := c.conn.GetState()
@@ -276,7 +273,13 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
 			err = dialCtx.Err()
 		}
 	}
+	return
+}
 
+func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
+	c.failPendingRequests(perr) // fail all pending requests.
+
+	err := c.waitConnReady()
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
 	if err == nil {
 		tikvClient := tikvpb.NewTikvClient(c.conn)
@@ -495,17 +498,8 @@ func (c *batchCommandsClient) initBatchClient() error {
 		return nil
 	}
 
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-	for {
-		s := c.conn.GetState()
-		if s == connectivity.Ready {
-			cancel()
-			break
-		}
-		if !c.conn.WaitForStateChange(dialCtx, s) {
-			cancel()
-			return dialCtx.Err()
-		}
+	if err := c.waitConnReady(); err != nil {
+		return err
 	}
 
 	// Initialize batch streaming clients.
