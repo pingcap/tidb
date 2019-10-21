@@ -194,6 +194,7 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
+		c.Assert(len(lSketch.TopN()), LessEqual, 40)
 		avg, err := averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)

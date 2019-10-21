@@ -17,6 +17,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
@@ -36,12 +37,19 @@ import (
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
+		if !isPointGetWithoutDoubleRead(sctx, fp) {
+			sctx.PrepareTxnFuture(ctx)
+		}
 		return fp, nil
 	}
 
+	sctx.PrepareTxnFuture(ctx)
+
 	var oriHint *bindinfo.HintsSet
-	if stmtNode, ok := node.(ast.StmtNode); ok {
-		oriHint = addHint(sctx, stmtNode)
+	if sctx.GetSessionVars().UsePlanBaselines {
+		if stmtNode, ok := node.(ast.StmtNode); ok {
+			oriHint = addHint(sctx, stmtNode)
+		}
 	}
 	plan, err := optimize(ctx, sctx, node, is)
 	// Restore the original hint in case of prepare stmt.
@@ -62,7 +70,9 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder := plannercore.NewPlanBuilder(sctx, is)
+	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
+	node.Accept(hintProcessor)
+	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
@@ -97,7 +107,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sctx.GetSessionVars().EnableCascadesPlanner {
-		return cascades.FindBestPlan(sctx, logic)
+		return cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 	}
 	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
 }
@@ -201,6 +211,51 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 	}
 }
 
+// isPointGetWithoutDoubleRead returns true when meets following conditions:
+//  1. ctx is auto commit tagged.
+//  2. plan is point get by pk.
+func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	v, ok := p.(*plannercore.PointGetPlan)
+	return ok && v.IndexInfo == nil
+}
+
+// OptimizeExecStmt to optimize prepare statement protocol "execute" statement
+// this is a short path ONLY does things filling prepare related params
+// for point select like plan which does not need extra things
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	var err error
+	builder := plannercore.NewPlanBuilder(sctx, is, nil)
+	p, err := builder.Build(ctx, execAst)
+	if err != nil {
+		return nil, err
+	}
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
+		return execPlan.Plan, err
+	}
+	err = errors.Errorf("invalid result plan type, should be Execute")
+	return nil, err
+}
+
+// GenHintsFromSQL is used to generate hints from SQL and inject the hints into original SQL.
+func GenHintsFromSQL(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (string, error) {
+	err := plannercore.Preprocess(sctx, node, is)
+	if err != nil {
+		return "", err
+	}
+	p, err := Optimize(ctx, sctx, node, is)
+	if err != nil {
+		return "", err
+	}
+	return plannercore.GenHintsFromPhysicalPlan(p), nil
+}
+
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	bindinfo.GenHintsFromSQL = GenHintsFromSQL
 }

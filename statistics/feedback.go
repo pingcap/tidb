@@ -120,11 +120,11 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		if isIndex {
 			var err error
 			// As we do not know the origin length, just use a custom value here.
-			lowVal, err = codec.DecodeRange(low.GetBytes(), 4)
+			lowVal, _, err = codec.DecodeRange(low.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			highVal, err = codec.DecodeRange(high.GetBytes(), 4)
+			highVal, _, err = codec.DecodeRange(high.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -313,15 +313,21 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		if skip {
 			continue
 		}
-		idx, _ := h.Bounds.LowerBound(0, fb.Lower)
+		idx := h.Bounds.UpperBound(0, fb.Lower)
 		bktIdx := 0
 		// The last bucket also stores the feedback that falls outside the upper bound.
-		if idx >= h.Bounds.NumRows()-2 {
+		if idx >= h.Bounds.NumRows()-1 {
 			bktIdx = h.Len() - 1
+		} else if h.Len() == 1 {
+			bktIdx = 0
 		} else {
-			bktIdx = idx / 2
+			if idx == 0 {
+				bktIdx = 0
+			} else {
+				bktIdx = (idx - 1) / 2
+			}
 			// Make sure that this feedback lies within the bucket.
-			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, fb.Upper) < 0 {
+			if chunk.Compare(h.Bounds.GetRow(2*(bktIdx+1)), 0, fb.Upper) < 0 {
 				continue
 			}
 		}
@@ -831,7 +837,7 @@ func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 }
 
 func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
-	vals, err := codec.DecodeRange(data, 1)
+	vals, _, err := codec.DecodeRange(data, 1)
 	if err != nil {
 		return nil, err
 	}

@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -119,6 +120,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRevokeRole(x)
 	case *ast.SetDefaultRoleStmt:
 		err = e.executeSetDefaultRole(x)
+	case *ast.ShutdownStmt:
+		err = e.executeShutdown(x)
 	}
 	e.done = true
 	return err
@@ -518,9 +521,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		txnMode := s.Mode
 		if txnMode == "" {
 			txnMode = e.ctx.GetSessionVars().TxnMode
-			if txnMode == "" && pTxnConf.Default {
-				txnMode = ast.Pessimistic
-			}
 		}
 		if txnMode == ast.Pessimistic {
 			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
@@ -656,7 +656,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if s.IsCreateRole {
 		sql = fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password, Account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	}
-	_, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return err
 	}
@@ -700,7 +700,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET Password = '%s' WHERE Host = '%s' and User = '%s';`,
 			mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
-		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User.String())
 		}
@@ -909,7 +909,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 func userExists(ctx sessionctx.Context, name string, host string) (bool, error) {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, name, host)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return false, err
 	}
@@ -943,7 +943,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 
 	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password='%s' WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return err
 }
@@ -1013,4 +1013,14 @@ func (e *SimpleExec) autoNewTxn() bool {
 		return true
 	}
 	return false
+}
+
+func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
+	sessVars := e.ctx.GetSessionVars()
+	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return err
+	}
+	return p.Kill()
 }

@@ -29,27 +29,24 @@ type ImplementationRule interface {
 	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error)
 }
 
-// GetImplementationRules gets the all the candidate implementation rules based
-// on the logical plan node.
-func GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
-	operand := memo.GetOperand(node)
-	return implementationMap[operand]
-}
-
-var implementationMap = map[memo.Operand][]ImplementationRule{
-	/**
-	OperandSelection: []ImplementationRule{
-		nil,
-	},
-	OperandProjection: []ImplementationRule{
-		nil,
-	},
-	*/
+var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTableDual: {
 		&ImplTableDual{},
 	},
 	memo.OperandProjection: {
 		&ImplProjection{},
+	},
+	memo.OperandTableScan: {
+		&ImplTableScan{},
+	},
+	memo.OperandTableGather: {
+		&ImplTableGather{},
+	},
+	memo.OperandShow: {
+		&ImplShow{},
+	},
+	memo.OperandSelection: {
+		&ImplSelection{},
 	},
 }
 
@@ -69,7 +66,7 @@ func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
-	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats)
+	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.SelectBlockOffset())
 	dual.SetSchema(logicProp.Schema)
 	return impl.NewTableDualImpl(dual), nil
 }
@@ -95,7 +92,97 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 		Exprs:                logicProj.Exprs,
 		CalculateNoDelay:     logicProj.CalculateNoDelay,
 		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
-	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), childProp)
+	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.SelectBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return impl.NewProjectionImpl(proj), nil
+}
+
+// ImplTableGather implements TableGather as PhysicalTableReader.
+type ImplTableGather struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTableGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	tg := expr.ExprNode.(*plannercore.TableGather)
+	reader := tg.GetPhysicalReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
+}
+
+// ImplTableScan implements TableScan as PhysicalTableScan.
+type ImplTableScan struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	ts := expr.ExprNode.(*plannercore.TableScan)
+	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	logicalScan := expr.ExprNode.(*plannercore.TableScan)
+	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	if !reqProp.IsEmpty() {
+		ts.KeepOrder = true
+		ts.Desc = reqProp.Items[0].Desc
+	}
+	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
+	return impl.NewTableScanImpl(ts, tblCols, tblColHists), nil
+}
+
+// ImplShow is the implementation rule which implements LogicalShow to
+// PhysicalShow.
+type ImplShow struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplShow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	show := expr.ExprNode.(*plannercore.LogicalShow)
+
+	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
+	// struct. So that we don't need to create a new PhysicalShow object, which
+	// can help us to reduce the gc pressure of golang runtime and improve the
+	// overall performance.
+	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
+	showPhys.SetSchema(logicProp.Schema)
+	return impl.NewShowImpl(showPhys), nil
+}
+
+// ImplSelection is the implementation rule which implements LogicalSelection
+// to PhysicalSelection.
+type ImplSelection struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplSelection) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalSel := expr.ExprNode.(*plannercore.LogicalSelection)
+	physicalSel := plannercore.PhysicalSelection{
+		Conditions: logicalSel.Conditions,
+	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.Clone())
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBSelectionImpl(physicalSel), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVSelectionImpl(physicalSel), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
+	}
 }

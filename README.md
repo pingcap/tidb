@@ -11,8 +11,7 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
-- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
-- Community [**Slack Channel**](https://pingcap.com/tidbslack/)
+- [**Slack Channel**](https://pingcap.com/tidbslack/)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
@@ -63,6 +62,11 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
 
+## Getting Help
+
+- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
+- [**User Group (Chinese)**](https://asktug.com)
+
 ## Documentation
 
 + [English](https://pingcap.com/docs)
@@ -73,7 +77,8 @@ Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which include
 ![architecture](./docs/architecture.png)
 
 ## Contributing
-Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](CONTRIBUTING.md)
+Contributions are welcomed and greatly appreciated. See
+[CONTRIBUTING.md](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md)
 for details on submitting patches and the contribution workflow.
 
 ## License

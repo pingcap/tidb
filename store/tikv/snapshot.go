@@ -58,6 +58,11 @@ type tikvSnapshot struct {
 	vars            *kv.Variables
 	replicaRead     kv.ReplicaReadType
 	replicaReadSeed uint32
+
+	// Cache the result of BatchGet.
+	// The invariance is that calling BatchGet multiple times using the same start ts,
+	// the result should not change.
+	cached map[string][]byte
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -71,6 +76,12 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *
 	}
 }
 
+func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
+	// Invalidate cache if the snapshotTS change!
+	s.version.Ver = ts
+	s.cached = nil
+}
+
 func (s *tikvSnapshot) SetPriority(priority int) {
 	s.priority = pb.CommandPri(priority)
 }
@@ -78,7 +89,20 @@ func (s *tikvSnapshot) SetPriority(priority int) {
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	// Check the cached value first.
 	m := make(map[string][]byte)
+	if s.cached != nil {
+		tmp := keys[:0]
+		for _, key := range keys {
+			if val, ok := s.cached[string(key)]; ok {
+				m[string(key)] = val
+			} else {
+				tmp = append(tmp, key)
+			}
+		}
+		keys = tmp
+	}
+
 	if len(keys) == 0 {
 		return m, nil
 	}
@@ -110,11 +134,19 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		return nil, errors.Trace(err)
 	}
 
+	// Update the cache.
+	if s.cached == nil {
+		s.cached = make(map[string][]byte, len(m))
+	}
+	for key, value := range m {
+		s.cached[key] = value
+	}
+
 	return m, nil
 }
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
-	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -202,7 +234,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
-			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, locks)
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, locks)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -233,6 +265,13 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
+	// Check the cached values first.
+	if s.cached != nil {
+		if value, ok := s.cached[string(k)]; ok {
+			return value, nil
+		}
+	}
+
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
@@ -273,7 +312,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -341,7 +380,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
-		logutil.BgLogger().Warn("error", zap.Error(err))
+		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())

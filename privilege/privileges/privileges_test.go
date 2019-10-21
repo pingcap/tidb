@@ -131,6 +131,24 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'tester'@'localhost';`)
+	mustExec(c, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	mustExec(c, rootSe, `create database test2`)
+	mustExec(c, rootSe, `create table test2.t(id int, v int, primary key(id))`)
+	mustExec(c, rootSe, `insert into test2.t(id, v) values(1, 1)`)
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `use test;`)
+	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
@@ -240,18 +258,19 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
 
 	// All privileges
+	AllPrivs := "Select,Insert,Update,Delete,Create,Drop,Process,References,Alter,Show Databases,Super,Execute,Index,Create User,Trigger,Create View,Show View,Create Role,Drop Role,CREATE TEMPORARY TABLES,LOCK TABLES,CREATE ROUTINE,ALTER ROUTINE,EVENT,SHUTDOWN"
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT `+AllPrivs+` ON *.* TO 'show'@'localhost'`)
 
 	// Add db scope privileges
 	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
-	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+	expected := []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
@@ -259,7 +278,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+	expected = []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`,
 		`GRANT Index ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
@@ -268,7 +287,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+	expected = []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
@@ -278,7 +297,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
-	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+	expected = []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
 		`GRANT Update ON test.test TO 'show'@'localhost'`}
@@ -657,7 +676,8 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustExec("create user superadmin")
 	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
 
 	var buf bytes.Buffer
 	var res bytes.Buffer

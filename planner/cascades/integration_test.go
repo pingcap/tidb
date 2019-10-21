@@ -19,13 +19,14 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
-	store kv.Storage
-	tk    *testkit.TestKit
+	store    kv.Storage
+	testData testutil.TestData
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
@@ -41,20 +42,56 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	s.tk = testkit.NewTestKitWithInit(c, s.store)
-	s.tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 	s.store.Close()
 }
 
 func (s *testIntegrationSuite) TestSimpleProjDual(c *C) {
-	s.tk.MustQuery("explain select 1").Check(testkit.Rows(
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustQuery("explain select 1").Check(testkit.Rows(
 		"Projection_3 1.00 root 1",
 		"└─TableDual_4 1.00 root rows:1",
 	))
-	s.tk.MustQuery("select 1").Check(testkit.Rows(
+	tk.MustQuery("select 1").Check(testkit.Rows(
 		"1",
+	))
+}
+
+func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(1,2),(3,4),(5,6)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testIntegrationSuite) TestBasicShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustQuery("desc t").Check(testkit.Rows(
+		"a int(11) NO PRI <nil> ",
+		"b int(11) YES  <nil> ",
 	))
 }

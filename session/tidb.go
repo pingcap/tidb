@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -160,20 +161,27 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
-func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
+	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit error.")
+			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}
 
 	if !sessVars.InTxn() {
-		return se.CommitTxn(ctx)
+		if err := se.CommitTxn(ctx); err != nil {
+			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
+			}
+			return err
+		}
+		return nil
 	}
 
 	return checkStmtLimit(ctx, sctx, se)
@@ -210,11 +218,17 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	se := sctx.(*session)
+	sessVars := se.GetSessionVars()
+	// Save origTxnCtx here to avoid it reset in the transaction retry.
+	origTxnCtx := sessVars.TxnCtx
 	defer func() {
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
-			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
+			s.(*executor.ExecStmt).SummaryStmt()
+			pps := types.CloneRow(sessVars.PreparedParams)
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
 		}
 	}()
 
@@ -223,7 +237,6 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		return nil, err
 	}
 	rs, err = s.Exec(ctx)
-	sessVars := se.GetSessionVars()
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
 		// All the history should be added here.
@@ -241,10 +254,10 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			logutil.BgLogger().Error("get txn error", zap.Error(err1))
+			logutil.BgLogger().Error("get txn failed", zap.Error(err1))
 		}
 	}
-	err = finishStmt(ctx, sctx, se, sessVars, err)
+	err = finishStmt(ctx, sctx, se, sessVars, err, s)
 
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the

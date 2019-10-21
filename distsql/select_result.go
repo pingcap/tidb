@@ -73,10 +73,12 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
 	copPlanIDs []fmt.Stringer
+	rootPlanID fmt.Stringer
 
 	memTracker *memory.Tracker
 }
@@ -144,8 +146,26 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	// Check the returned data is default/arrow format.
+	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return err
+		}
+	}
+	// TODO(Shenghui Wu): add metrics
+	switch r.selectResp.EncodeType {
+	case tipb.EncodeType_TypeDefault:
+		return r.readFromDefault(ctx, chk)
+	case tipb.EncodeType_TypeArrow:
+		return r.readFromArrow(ctx, chk)
+	}
+	return errors.Errorf("unsupported encode type:%v", r.encodeType)
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
-		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return err
@@ -159,6 +179,14 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			r.respChkIdx++
 		}
 	}
+	return nil
+}
+
+func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+	rowBatchData := r.selectResp.Chunks[r.respChkIdx].RowsData
+	codec := chunk.NewCodec(r.fieldTypes)
+	_ = codec.DecodeToChunk(rowBatchData, chk)
+	r.respChkIdx++
 	return nil
 }
 
@@ -191,7 +219,7 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
+		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress, re.result.RespTime())
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
@@ -202,7 +230,7 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
-func (r *selectResult) updateCopRuntimeStats(callee string) {
+func (r *selectResult) updateCopRuntimeStats(callee string, respTime time.Duration) {
 	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
@@ -214,6 +242,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 		return
 	}
 
+	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {

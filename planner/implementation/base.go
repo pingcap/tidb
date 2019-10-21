@@ -23,8 +23,11 @@ type baseImpl struct {
 	plan plannercore.PhysicalPlan
 }
 
-func (impl *baseImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
-	impl.cost = childCosts[0]
+func (impl *baseImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	impl.cost = 0
+	for _, child := range children {
+		impl.cost += child.GetCost()
+	}
 	return impl.cost
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -185,17 +186,26 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
-// MustIndexLookup checks whether the plan for the sql is Point_Get.
-func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+// HasPlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
-	hasIndexLookup := false
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
-			hasIndexLookup = true
-			break
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
 		}
 	}
-	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	return false
+}
+
+// MustIndexLookup checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	tk.c.Assert(tk.HasPlan(sql, "IndexLookUp", args...), check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// MustTableDual checks whether the plan for the sql is TableDual.
+func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
+	tk.c.Assert(tk.HasPlan(sql, "TableDual", args...), check.IsTrue)
 	return tk.MustQuery(sql, args...)
 }
 
@@ -235,6 +245,17 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
 	return err
+}
+
+// MustGetErrCode executes a sql statement and assert it's error code.
+func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	tk.c.Assert(err, check.NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
+	sqlErr := tErr.ToSQLError()
+	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.

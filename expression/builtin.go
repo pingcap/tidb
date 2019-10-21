@@ -15,9 +15,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:generate go run generator/control_vec.go
+//go:generate go run generator/time_vec.go
+
 package expression
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -32,11 +37,14 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	columnBufferAllocator
-	args   []Expression
-	ctx    sessionctx.Context
-	tp     *types.FieldType
-	pbCode tipb.ScalarFuncSig
+	bufAllocator columnBufferAllocator
+	args         []Expression
+	ctx          sessionctx.Context
+	tp           *types.FieldType
+	pbCode       tipb.ScalarFuncSig
+
+	childrenVectorizedOnce *sync.Once
+	childrenVectorized     bool
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -61,7 +69,8 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		panic("ctx should not be nil")
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -165,7 +174,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
-		columnBufferAllocator: newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -237,6 +247,19 @@ func (b *baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
+func (b *baseBuiltinFunc) isChildrenVectorized() bool {
+	b.childrenVectorizedOnce.Do(func() {
+		b.childrenVectorized = true
+		for _, arg := range b.args {
+			if !arg.Vectorized() {
+				b.childrenVectorized = false
+				break
+			}
+		}
+	})
+	return b.childrenVectorized
+}
+
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	switch b.tp.EvalType() {
 	case types.ETString:
@@ -277,6 +300,8 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
+	b.bufAllocator = newLocalSliceBuffer(len(b.args))
+	b.childrenVectorizedOnce = new(sync.Once)
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
@@ -316,10 +341,11 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
 type vecBuiltinFunc interface {
-	columnBufferAllocator
-
-	// vectorized returns if this builtin function supports vectorized evaluation.
+	// vectorized returns if this builtin function itself supports vectorized evaluation.
 	vectorized() bool
+
+	// isChildrenVectorized returns if its all children support vectorized evaluation.
+	isChildrenVectorized() bool
 
 	// vecEvalInt evaluates this builtin function in a vectorized manner.
 	vecEvalInt(input *chunk.Chunk, result *chunk.Column) error
@@ -400,12 +426,6 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
-}
-
-func init() {
-	for k, v := range funcs {
-		funcs[k] = &vecRowConvertFuncClass{v}
-	}
 }
 
 // funcs holds all registered builtin functions. When new function is added,
@@ -514,7 +534,6 @@ var funcs = map[string]functionClass{
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
-	ast.TiDBParseTso:     &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
@@ -586,9 +605,6 @@ var funcs = map[string]functionClass{
 	ast.RowCount:     &rowCountFunctionClass{baseFunctionClass{ast.RowCount, 0, 0}},
 	ast.SessionUser:  &userFunctionClass{baseFunctionClass{ast.SessionUser, 0, 0}},
 	ast.SystemUser:   &userFunctionClass{baseFunctionClass{ast.SystemUser, 0, 0}},
-	// This function is used to show tidb-server version info.
-	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
-	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
@@ -644,8 +660,8 @@ var funcs = map[string]functionClass{
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 2, -1}},
-	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
-	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
+	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, false},
+	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity, false},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
 	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
@@ -700,4 +716,18 @@ var funcs = map[string]functionClass{
 	ast.JSONDepth:         &jsonDepthFunctionClass{baseFunctionClass{ast.JSONDepth, 1, 1}},
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
+
+	// TiDB internal function.
+	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	// This function is used to show tidb-server version info.
+	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
+	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
+	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
+	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+}
+
+// IsFunctionSupported check if given function name is a builtin sql function.
+func IsFunctionSupported(name string) bool {
+	_, ok := funcs[name]
+	return ok
 }

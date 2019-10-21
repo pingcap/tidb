@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -93,7 +94,7 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testSuite4{})
-var _ = SerialSuites(&testShowStatsSuite{testSuite{&baseTestSuite{}}})
+var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
@@ -144,15 +145,7 @@ func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func enablePessimisticTxn(enable bool) {
-	newConf := config.NewConfig()
-	newConf.PessimisticTxn.Enable = enable
-	config.StoreGlobalConfig(newConf)
-}
-
 func (s *testSuiteP1) TestPessimisticSelectForUpdate(c *C) {
-	defer func() { enablePessimisticTxn(false) }()
-	enablePessimisticTxn(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -307,8 +300,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	do := domain.GetDomain(tk.Se.(sessionctx.Context))
-	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, row.GetString(1))
+	serverInfo, err := infosync.GetServerInfoByID(ctx, row.GetString(1))
 	c.Assert(err, IsNil)
 	c.Assert(row.GetString(2), Equals, serverInfo.IP+":"+
 		strconv.FormatUint(uint64(serverInfo.Port), 10))
@@ -467,6 +459,10 @@ func (s *testSuite) TestAdminShowDDLJobs(c *C) {
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+
+	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
+	row = re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
 }
 
 func (s *testSuite) TestAdminChecksumOfPartitionedTable(c *C) {
@@ -512,8 +508,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
-		err1 = ld.CheckAndInsertOneBatch(context.Background())
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		c.Assert(err1, IsNil)
+		ld.SetMaxRowsInBatch(20000)
 		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
@@ -2076,7 +2073,7 @@ func (s *testSuiteP1) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
@@ -2153,7 +2150,7 @@ func (s *testSuiteP1) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSuite4) TestSplitRegionTimeout(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2162,7 +2159,12 @@ func (s *testSuite4) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
+
+	// Test scatter regions timeout.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP1) TestRow(c *C) {
@@ -3733,10 +3735,13 @@ func (s *testSuite3) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
+		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
+	})
 	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
 }
 
 func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
@@ -3992,6 +3997,9 @@ func (s *testSuite4) TearDownTest(c *C) {
 
 func (s *testSuiteP1) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
+	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%f') from dual`).Check(testkit.Rows("2019-01-01 00:00:00.000000"))
+	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%H%i%s') from dual`).Check(testkit.Rows("2019-01-01 00:00:00"))
 	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('a18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select str_to_date('69/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2069-10-22"))
@@ -4050,7 +4058,7 @@ func (s *testSuiteP1) TestReadPartitionedTable(c *C) {
 func (s *testSuiteP1) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
 	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
 	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
@@ -4092,7 +4100,7 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
-	// Check the ower value is more than the upper value.
+	// Check the lower value is more than the upper value.
 	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
@@ -4127,8 +4135,25 @@ func (s *testSuiteP1) TestSplitRegion(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
 
-	// Test split region by syntax
+	// Test split region by syntax.
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
+
+	// Test split region twice to test for multiple batch split region requests.
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustQuery("split table t1 between(0) and (10000) regions 10;").Check(testkit.Rows("9 1"))
+	tk.MustQuery("split table t1 between(10) and (10010) regions 5;").Check(testkit.Rows("4 1"))
+
+	// Test split region for partition table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
+	tk.MustQuery("split table t between (0) and (1000000) regions 5;").Check(testkit.Rows("20 1"))
+	// Test for `split for region` syntax.
+	tk.MustQuery("split region for partition table t between (1000000) and (100000000) regions 10;").Check(testkit.Rows("45 1"))
+
+	// Test split region for partition table with specified partition.
+	tk.MustQuery("split table t partition (p1,p2) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
+	// Test for `split for region` syntax.
+	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
 func (s *testSuite) TestShowTableRegion(c *C) {
@@ -4145,7 +4170,7 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	// 4 regions to store record data.
 	// 1 region to store index data.
 	c.Assert(len(rows), Equals, 5)
-	c.Assert(len(rows[0]), Equals, 7)
+	c.Assert(len(rows[0]), Equals, 11)
 	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
 	// Check the region start key.
 	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
@@ -4249,7 +4274,107 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+
+	// Test split partition table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
+	tk.MustQuery("split table t between (0) and (4000000) regions 4;").Check(testkit.Rows("15 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 20)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
+	for i, p := range tbl.Meta().GetPartitionInfo().Definitions {
+		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	}
+
+	// Test split region for partition table with specified partition.
+	tk.MustQuery("split table t partition (p4) between (1000000) and (2000000) regions 5;").Check(testkit.Rows("4 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 24)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
+	for i := 0; i < 4; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	}
+	for i := 4; i < 5; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+
+		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
+		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
+		c.Assert(rows[i*4+4][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
+		c.Assert(rows[i*4+5][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
+
+		c.Assert(rows[i*4+6][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*4+7][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	}
+
+	// Test split partition table index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int,index idx(a)) partition by hash(a) partitions 5;")
+	tk.MustQuery("split table t between (0) and (4000000) regions 4;").Check(testkit.Rows("20 1"))
+	tk.MustQuery("split table t index idx between (0) and (4000000) regions 4;").Check(testkit.Rows("20 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 40)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
+	for i := 0; i < 5; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
+		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
+
+	// Test split index region for partition table with specified partition.
+	tk.MustQuery("split table t partition (p4) index idx between (0) and (1000000) regions 5;").Check(testkit.Rows("4 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 44)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
+	for i := 0; i < 4; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
+		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
+	for i := 4; i < 5; i++ {
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
+		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+8][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+9][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
@@ -4374,6 +4499,16 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}()
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	// Test insert from select oom panic.
+	tk.MustExec("drop table if exists t,t1")
+	tk.MustExec("create table t (a bigint);")
+	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
@@ -4531,4 +4666,400 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testSuiteP1) TestPointGetPreparedPlan(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists ps_text")
+	defer tk1.MustExec("drop database if exists ps_text")
+	tk1.MustExec("create database ps_text")
+	tk1.MustExec("use ps_text")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
+	c.Assert(err, IsNil)
+	pspk2Id, _, _, err := tk1.Se.PrepareStmt("select * from t where ? = a ")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	// first time plan generated
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	// using the generated plan but with different params
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3"))
+
+	// unique index
+	psuk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where b = ? ")
+	c.Assert(err, IsNil)
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	// test schema changed, cached plan should be invalidated
+	tk1.MustExec("alter table t add column col4 int default 10 after c")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
+
+	tk1.MustExec("alter table t drop index k_b")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	tk1.MustExec(`insert into t values(4, 3, 3, 11)`)
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3 10", "4 3 3 11"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	tk1.MustExec("delete from t where a = 4")
+	tk1.MustExec("alter table t add index k_b(b)")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	// use pk again
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk2Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(3)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
+}
+
+func (s *testSuiteP1) TestPointGetPreparedPlanWithCommitMode(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists ps_text")
+	defer tk1.MustExec("drop database if exists ps_text")
+	tk1.MustExec("create database ps_text")
+	tk1.MustExec("use ps_text")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	// first time plan generated
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(nil)
+
+	// using the generated plan but with different params
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1"))
+
+	// next start a non autocommit txn
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("begin")
+	// try to exec using point get plan(this plan should not go short path)
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1"))
+
+	// update rows
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use ps_text")
+	tk2.MustExec("update t set c = c + 10 where c = 1")
+
+	// try to point get again
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 1"))
+
+	// try to update in session 1
+	tk1.MustExec("update t set c = c + 10 where c = 1")
+	_, err = tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+
+	// verify
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1 11"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(2)})
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("2 2 2"))
+
+	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 11"))
+}
+
+func (s *testSuiteP1) TestPointUpdatePreparedPlan(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists pu_test")
+	defer tk1.MustExec("drop database if exists pu_test")
+	tk1.MustExec("create database pu_test")
+	tk1.MustExec("use pu_test")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	updateID1, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
+	c.Assert(err, IsNil)
+	c.Assert(pc, Equals, 1)
+	updateID2, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 2 where ? = a`)
+	c.Assert(err, IsNil)
+	c.Assert(pc, Equals, 1)
+
+	ctx := context.Background()
+	// first time plan generated
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
+
+	// using the generated plan but with different params
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
+
+	// updateID2
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID2, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID2, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
+
+	// unique index
+	updUkID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 10 where b = ?`)
+	c.Assert(err, IsNil)
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 20"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 30"))
+
+	// test schema changed, cached plan should be invalidated
+	tk1.MustExec("alter table t add column col4 int default 10 after c")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 31 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 32 10"))
+
+	tk1.MustExec("alter table t drop index k_b")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 42 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 52 10"))
+
+	tk1.MustExec("alter table t add unique index k_b(b)")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 62 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 72 10"))
+
+	tk1.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1 10"))
+	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2 10"))
+}
+
+func (s *testSuiteP1) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists pu_test2")
+	defer tk1.MustExec("drop database if exists pu_test2")
+	tk1.MustExec("create database pu_test2")
+	tk1.MustExec("use pu_test2")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	ctx := context.Background()
+	updateID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
+	c.Assert(err, IsNil)
+
+	// first time plan generated
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
+
+	// next start a non autocommit txn
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("begin")
+	// try to exec using point get plan(this plan should not go short path)
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
+
+	// update rows
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use pu_test2")
+	tk2.MustExec(`prepare pu2 from "update t set c = c + 2 where ? = a "`)
+	tk2.MustExec("set @p3 = 3")
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
+	tk2.MustExec("execute pu2 using @p3")
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 7"))
+	tk2.MustExec("execute pu2 using @p3")
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 9"))
+
+	// try to update in session 1
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
+	_, err = tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+
+	// verify
+	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2"))
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 9"))
+	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2"))
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 9"))
+
+	// again next start a non autocommit txn
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustExec("begin")
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
+
+	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updateID1, []types.Datum{types.NewDatum(3)})
+	c.Assert(rs, IsNil)
+	c.Assert(err, IsNil)
+	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
+	tk1.MustExec("commit")
+
+	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
 }

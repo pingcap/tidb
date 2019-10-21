@@ -81,6 +81,11 @@ func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
 }
 
+// Vectorized returns if this expression supports vectorized evaluation.
+func (sf *ScalarFunction) Vectorized() bool {
+	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
+}
+
 // GetCtx gets the context of function.
 func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 	return sf.Function.getCtx()
@@ -115,7 +120,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
+		db := ctx.GetSessionVars().CurrentDB
+		if db == "" {
+			return nil, terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+		}
+
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
 	if !ctx.GetSessionVars().EnableNoopFuncs {
 		if _, ok := noopFuncs[funcName]; ok {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -53,10 +54,15 @@ import (
 
 var (
 	_ Executor = &baseExecutor{}
+	_ Executor = &CheckIndexExec{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &HashAggExec{}
+	_ Executor = &HashJoinExec{}
+	_ Executor = &IndexLookUpExecutor{}
+	_ Executor = &IndexReaderExecutor{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
+	_ Executor = &MergeJoinExec{}
 	_ Executor = &ProjectionExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
@@ -67,13 +73,10 @@ var (
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
+	_ Executor = &TableReaderExecutor{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
-	_ Executor = &HashJoinExec{}
-	_ Executor = &IndexLookUpExecutor{}
-	_ Executor = &MergeJoinExec{}
 )
 
 type baseExecutor struct {
@@ -294,8 +297,7 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	do := domain.GetDomain(e.ctx)
-	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, e.ddlOwnerID)
+	serverInfo, err := infosync.GetServerInfoByID(ctx, e.ddlOwnerID)
 	if err != nil {
 		return err
 	}
@@ -522,7 +524,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 
 	var err error
 	for {
-		err = src.Next(ctx, chk)
+		err = Next(ctx, src, chk)
 		if err != nil {
 			break
 		}
@@ -1366,13 +1368,105 @@ func (e *UnionExec) Close() error {
 	return e.baseExecutor.Close()
 }
 
+func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) []*ast.TableOptimizerHint {
+	switch x := stmtNode.(type) {
+	case *ast.SelectStmt:
+		return x.TableHints
+	case *ast.UpdateStmt:
+		return x.TableHints
+	case *ast.DeleteStmt:
+		return x.TableHints
+	// TODO: support hint for InsertStmt
+	case *ast.ExplainStmt:
+		return extractStmtHintsFromStmtNode(x.Stmt)
+	default:
+		return nil
+	}
+}
+
+func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
+	if len(hints) == 0 {
+		return
+	}
+	var memoryQuotaHint, useToJAHint *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt int
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case "memory_quota":
+			memoryQuotaHint = hint
+			memoryQuotaHintCnt++
+		case "use_toja":
+			useToJAHint = hint
+			useToJAHintCnt++
+		case "no_index_merge":
+			noIndexMergeHintCnt++
+		case "read_consistent_replica":
+			readReplicaHintCnt++
+		}
+	}
+	// Handle MEMORY_QUOTA
+	if memoryQuotaHintCnt != 0 {
+		if memoryQuotaHintCnt > 1 {
+			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
+		if memoryQuotaHint.MemoryQuota < 0 {
+			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
+			warns = append(warns, warn)
+		} else {
+			stmtHints.HasMemQuotaHint = true
+			stmtHints.MemQuotaQuery = memoryQuotaHint.MemoryQuota
+			if memoryQuotaHint.MemoryQuota == 0 {
+				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
+				warns = append(warns, warn)
+			}
+		}
+	}
+	// Handle USE_TOJA
+	if useToJAHintCnt != 0 {
+		if useToJAHintCnt > 1 {
+			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasAllowInSubqToJoinAndAggHint = true
+		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintFlag
+	}
+	// Handle NO_INDEX_MERGE
+	if noIndexMergeHintCnt != 0 {
+		if noIndexMergeHintCnt > 1 {
+			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasEnableIndexMergeHint = true
+		stmtHints.EnableIndexMerge = false
+	}
+	// Handle READ_CONSISTENT_REPLICA
+	if readReplicaHintCnt != 0 {
+		if readReplicaHintCnt > 1 {
+			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasReplicaReadHint = true
+		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
+	}
+	return
+}
+
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	hints := extractStmtHintsFromStmtNode(s)
+	stmtHints, hintWarns := handleStmtHints(hints)
 	vars := ctx.GetSessionVars()
+	memQuota := vars.MemQuotaQuery
+	if stmtHints.HasMemQuotaHint {
+		memQuota = stmtHints.MemQuotaQuery
+	}
 	sc := &stmtctx.StatementContext{
+		StmtHints:  stmtHints,
 		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
+		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1386,12 +1480,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	}
-
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
+	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
+	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		sc.InExplainStmt = true
+		sc.CastStrToIntStrict = true
+		s = explainStmt.Stmt
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1454,9 +1554,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
 		sc.CastStrToIntStrict = true
-	case *ast.ExplainStmt:
-		sc.InExplainStmt = true
-		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1500,8 +1597,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return err
 	}
-	// execute missed stmtID uses empty sql
-	sc.OriginalSQL = s.Text()
 	vars.StmtCtx = sc
+	for _, warn := range hintWarns {
+		vars.StmtCtx.AppendWarning(warn)
+	}
 	return
 }

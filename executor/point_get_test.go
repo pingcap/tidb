@@ -272,7 +272,7 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 	// Test truncate with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
 	tk.MustIndexLookup(`select * from t where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustIndexLookup(`select * from t where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -285,9 +285,9 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	// Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
-	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)

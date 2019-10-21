@@ -27,6 +27,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -66,6 +67,7 @@ type Config struct {
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
@@ -92,9 +94,10 @@ type Config struct {
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
-	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
-	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
-	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
+	EnableTableLock     bool        `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
 // Log is the log section of config.
@@ -105,13 +108,17 @@ type Log struct {
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// DisableErrorStack stops annotating logs with the full stack error
+	// message.
+	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 // Security is the security section of the config.
@@ -270,9 +277,6 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 
-	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
-	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
-
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -281,6 +285,11 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+	// EnableArrow indicate the data encode in arrow format.
+	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
+	// If a Region has not been accessed for more than the given duration (in seconds), it
+	// will be reloaded from the PD.
+	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
 }
 
 // Binlog is the config for binlog.
@@ -306,12 +315,18 @@ type Plugin struct {
 type PessimisticTxn struct {
 	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
 	Enable bool `toml:"enable" json:"enable"`
-	// Starts a pessimistic transaction by default when Enable is true.
-	Default bool `toml:"default" json:"default"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 	// The pessimistic lock ttl.
 	TTL string `toml:"ttl" json:"ttl"`
+}
+
+// StmtSummary is the config for statement summary.
+type StmtSummary struct {
+	// The maximum number of statements kept in memory.
+	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	// The maximum length of displayed normalized SQL and sample SQL.
+	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
 }
 
 var defaultConf = Config{
@@ -325,6 +340,7 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        "45s",
 	TokenLimit:                   1000,
+	OOMUseTmpStorage:             true,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
@@ -334,18 +350,20 @@ var defaultConf = Config{
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  true,
+		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+		Level:               "info",
+		Format:              "text",
+		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
+		SlowQueryFile:       "tidb-slow.log",
+		SlowThreshold:       logutil.DefaultSlowThreshold,
+		ExpensiveThreshold:  10000,
+		DisableErrorStack:   true,
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -391,22 +409,27 @@ var defaultConf = Config{
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
 
-		MaxTxnTimeUse: 590,
-
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
+
+		EnableArrow: true,
+
+		RegionCacheTTL: 600,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        false,
-		Default:       false,
+		Enable:        true,
 		MaxRetryCount: 256,
 		TTL:           "40s",
+	},
+	StmtSummary: StmtSummary{
+		MaxStmtCount: 100,
+		MaxSQLLength: 4096,
 	},
 }
 
@@ -574,9 +597,6 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
-	if c.TiKVClient.MaxTxnTimeUse == 0 {
-		return fmt.Errorf("max-txn-time-use should be greater than 0")
-	}
 	if c.PessimisticTxn.TTL != "" {
 		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
 		if err != nil {
@@ -606,7 +626,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

@@ -474,7 +474,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, oldCol, newCol model.CIStr) error {
 	sql := fmt.Sprintf("select 1 from `%s`.`%s` where `%s` is null limit 1;", schema.L, table.L, oldCol.L)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -595,9 +595,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c *model.ColumnInfo, cols []*ast.IndexColName) bool {
+func findColumnInIndexCols(c string, cols []*ast.IndexColName) bool {
 	for _, c1 := range cols {
-		if c.Name.L == c1.Column.Name.L {
+		if c == c1.Column.Name.L {
 			return true
 		}
 	}

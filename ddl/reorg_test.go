@@ -36,7 +36,11 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -159,14 +163,22 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d1.Stop()
 
 	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d2 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
