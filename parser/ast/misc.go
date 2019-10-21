@@ -49,6 +49,7 @@ var (
 	_ StmtNode = &KillStmt{}
 	_ StmtNode = &CreateBindingStmt{}
 	_ StmtNode = &DropBindingStmt{}
+	_ StmtNode = &ShutdownStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -1999,6 +2000,28 @@ func (n *GrantRoleStmt) SecureText() string {
 		text = text[:idx]
 	}
 	return text
+}
+
+// ShutdownStmt is a statement to stop the TiDB server.
+// See https://dev.mysql.com/doc/refman/5.7/en/shutdown.html
+type ShutdownStmt struct {
+	stmtNode
+}
+
+// Restore implements Node interface.
+func (n *ShutdownStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("SHUTDOWN")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ShutdownStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ShutdownStmt)
+	return v.Leave(n)
 }
 
 // Ident is the table identifier composed of schema name and table name.

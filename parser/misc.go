@@ -514,6 +514,7 @@ var tokenMap = map[string]int{
 	"SHARE":                    share,
 	"SHARED":                   shared,
 	"SHOW":                     show,
+	"SHUTDOWN":                 shutdown,
 	"SIGNED":                   signed,
 	"SIMPLE":                   simple,
 	"SLAVE":                    slave,
