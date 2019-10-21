@@ -152,7 +152,6 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 	result.ReserveString(n)
 	digest := md5.New()
 	for i := 0; i < n; i++ {
-		digest.Reset()
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -163,6 +162,7 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 			return err
 		}
 		result.AppendString(fmt.Sprintf("%x", digest.Sum(nil)))
+		digest.Reset()
 	}
 	return nil
 }
