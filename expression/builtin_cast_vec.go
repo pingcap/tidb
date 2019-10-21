@@ -324,7 +324,8 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		return err
 	}
 
-	result.ResizeTime(n, false)
+    result.ResizeTime(n, false)
+    result.MergeNulls(buf)
 	times := result.Times()
 	i64s := buf.Int64s()
 	stmt := b.ctx.GetSessionVars().StmtCtx
