@@ -271,6 +271,7 @@ func (c *batchCommandsClient) waitConnReady() (err error) {
 		if !c.conn.WaitForStateChange(dialCtx, s) {
 			cancel()
 			err = dialCtx.Err()
+			return
 		}
 	}
 	return
