@@ -214,11 +214,55 @@ func (b *builtinLeastRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinLeastStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+
+	src := result
+	arg := buf1
+	dst := buf2
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if src.IsNull(i) || arg.IsNull(i) {
+				dst.AppendNull()
+				continue
+			}
+			srcStr := src.GetString(i)
+			argStr := arg.GetString(i)
+			if types.CompareString(srcStr, argStr) < 0 {
+				dst.AppendString(srcStr)
+			} else {
+				dst.AppendString(argStr)
+			}
+		}
+		src, dst = dst, src
+		arg.ReserveString(n)
+		dst.ReserveString(n)
+	}
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
+	}
+	return nil
 }
 
 func (b *builtinEQJSONSig) vectorized() bool {
