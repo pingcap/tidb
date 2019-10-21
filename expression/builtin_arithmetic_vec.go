@@ -407,7 +407,7 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	rh := result
 	rhi64s := rh.Int64s()
 	for i := 0; i < len(rhi64s); i++ {
-		if !rh.IsNull(i) && rhi64s[i] == 0{
+		if rh.IsNull(i) || rhi64s[i] == 0{
 			return handleDivisionByZeroError(b.ctx)
 		}
 	}
