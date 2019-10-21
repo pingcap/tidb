@@ -1225,7 +1225,7 @@ id	count	task	operator info
 Projection_25	100.00	root	tpch.supplier.s_name, 17_col_0
 └─TopN_28	100.00	root	17_col_0:desc, tpch.supplier.s_name:asc, offset:0, count:100
   └─HashAgg_31	320000.00	root	group by:tpch.supplier.s_name, funcs:count(1), firstrow(tpch.supplier.s_name)
-    └─IndexJoin_37	3786715.90	root	anti semi join, inner:IndexLookUp_36, outer key:tpch.l1.l_orderkey, inner key:tpch.l3.l_orderkey, other cond:ne(tpch.l3.l_suppkey, tpch.l1.l_suppkey), ne(tpch.l3.l_suppkey, tpch.supplier.s_suppkey)
+    └─IndexJoin_37	3786715.90	root	anti semi join, inner:IndexLookUp_36, outer key:tpch.l1.l_orderkey, inner key:tpch.l3.l_orderkey, other cond:ne(tpch.l3.l_suppkey, tpch.l1.l_suppkey)
       ├─IndexJoin_84	4733394.87	root	semi join, inner:IndexLookUp_83, outer key:tpch.l1.l_orderkey, inner key:tpch.l2.l_orderkey, other cond:ne(tpch.l2.l_suppkey, tpch.l1.l_suppkey), ne(tpch.l2.l_suppkey, tpch.supplier.s_suppkey)
       │ ├─HashLeftJoin_90	5916743.59	root	inner join, inner:TableReader_119, equal:[eq(tpch.supplier.s_nationkey, tpch.nation.n_nationkey)]
       │ │ ├─HashLeftJoin_95	147918589.81	root	inner join, inner:TableReader_116, equal:[eq(tpch.l1.l_suppkey, tpch.supplier.s_suppkey)]
