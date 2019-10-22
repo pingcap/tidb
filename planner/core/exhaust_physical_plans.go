@@ -437,17 +437,15 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *accessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	// TODO(xuhuaiyu): support keep outer order for indexHashJoin.
-	if !prop.IsEmpty() {
-		return nil
-	}
 	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
 		indexHashJoin := PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
-			keepOuterOrder:    false,
+			// Prop is empty means that the parent operator does not need the
+			// join operator to provide any promise of the output order.
+			KeepOuterOrder: !prop.IsEmpty(),
 		}.Init(p.ctx)
 		indexHashJoins = append(indexHashJoins, indexHashJoin)
 	}
