@@ -120,9 +120,12 @@ func (tc *testDMLSuite) TestTableNameIndexHintsRestore(c *C) {
 		{"t use index for group by (`foo``bar`) ignore key for order by (`baz``1`, `xyz`)", "`t` USE INDEX FOR GROUP BY (`foo``bar`) IGNORE INDEX FOR ORDER BY (`baz``1`, `xyz`)"},
 		{"t use index for group by (`foo``bar`) ignore key for group by (`baz``1`, `xyz`)", "`t` USE INDEX FOR GROUP BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
 		{"t use index for order by (`foo``bar`) ignore key for group by (`baz``1`, `xyz`)", "`t` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
+
+		{"t tt use index for order by (`foo``bar`) ignore key for group by (`baz``1`, `xyz`)", "`t` AS `tt` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
+		{"t as tt use index for order by (`foo``bar`) ignore key for group by (`baz``1`, `xyz`)", "`t` AS `tt` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
 	}
 	extractNodeFunc := func(node Node) Node {
-		return node.(*SelectStmt).From.TableRefs.Left.(*TableSource).Source.(*TableName)
+		return node.(*SelectStmt).From.TableRefs.Left
 	}
 	RunNodeRestoreTest(c, testCases, "SELECT * FROM %s", extractNodeFunc)
 }
@@ -247,6 +250,20 @@ func (tc *testDMLSuite) TestDeleteTableListRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "DELETE %s FROM t1, t2;", extractNodeFunc)
 	RunNodeRestoreTest(c, testCases, "DELETE FROM %s USING t1, t2;", extractNodeFunc)
+}
+
+func (tc *testDMLSuite) TestDeleteTableIndexHintRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"DELETE FROM t1 USE key (`fld1`) WHERE fld=1",
+			"DELETE FROM `t1` USE INDEX (`fld1`) WHERE `fld`=1"},
+		{"DELETE FROM t1 as tbl USE key (`fld1`) WHERE tbl.fld=2",
+			"DELETE FROM `t1` AS `tbl` USE INDEX (`fld1`) WHERE `tbl`.`fld`=2"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node.(*DeleteStmt)
+	}
+	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
 }
 
 func (tc *testExpressionsSuite) TestByItemRestore(c *C) {
