@@ -22,10 +22,7 @@ import (
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.NE:       {},
 	ast.IsNull:   {},
-	ast.LE:       {},
-	ast.LT:       {},
 	ast.Coalesce: {},
 	ast.NullEQ: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
@@ -35,9 +32,6 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
 		}},
 	},
-	ast.GT:   {},
-	ast.EQ:   {},
-	ast.GE:   {},
 	ast.Date: {},
 	ast.Greatest: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}},
