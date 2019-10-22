@@ -238,7 +238,14 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	var InnerChildIdx = p.InnerChildIdx
+	if p.OuterHashJoin && ((p.JoinType == LeftOuterJoin && InnerChildIdx == 1) || (p.JoinType == RightOuterJoin && InnerChildIdx == 0)) {
+		InnerChildIdx = 1 - InnerChildIdx
+	}
+	fmt.Fprintf(buffer, ", inner:%s", p.Children()[InnerChildIdx].ExplainID())
+	if p.OuterHashJoin {
+		buffer.WriteString(" (REVERSED)")
+	}
 	if len(p.EqualConditions) > 0 {
 		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
 	}

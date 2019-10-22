@@ -28,24 +28,24 @@
       {
         "SQL": "explain select * from t1 left join t2 on t1.a = t2.a and t1.a > 1",
         "Result": [
-          "HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_11, equal:[eq(Column#2, Column#5)], left cond:[gt(Column#2, 1)]",
-          "├─TableReader_8 10000.00 root data:TableScan_7",
-          "│ └─TableScan_7 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_11 3333.33 root data:Selection_10",
-          "  └─Selection_10 3333.33 cop[tikv] gt(Column#5, 1), not(isnull(Column#5))",
-          "    └─TableScan_9 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_12, equal:[eq(Column#2, Column#5)], left cond:[gt(Column#2, 1)]",
+          "├─TableReader_9 10000.00 root data:TableScan_8",
+          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_12 3333.33 root data:Selection_11",
+          "  └─Selection_11 3333.33 cop[tikv] gt(Column#5, 1), not(isnull(Column#5))",
+          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.a = t2.a where t1.a > 1",
         "Result": [
-          "HashLeftJoin_7 4166.67 root left outer join, inner:TableReader_13, equal:[eq(Column#2, Column#5)]",
-          "├─TableReader_10 3333.33 root data:Selection_9",
-          "│ └─Selection_9 3333.33 cop[tikv] gt(Column#2, 1)",
-          "│   └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_13 3333.33 root data:Selection_12",
-          "  └─Selection_12 3333.33 cop[tikv] gt(Column#5, 1), not(isnull(Column#5))",
-          "    └─TableScan_11 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashLeftJoin_7 4166.67 root left outer join, inner:TableReader_14, equal:[eq(Column#2, Column#5)]",
+          "├─TableReader_11 3333.33 root data:Selection_10",
+          "│ └─Selection_10 3333.33 cop[tikv] gt(Column#2, 1)",
+          "│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_14 3333.33 root data:Selection_13",
+          "  └─Selection_13 3333.33 cop[tikv] gt(Column#5, 1), not(isnull(Column#5))",
+          "    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -63,24 +63,24 @@
       {
         "SQL": "explain select * from t1 right join t2 on t1.a = t2.a where t2.a > 1",
         "Result": [
-          "HashRightJoin_7 4166.67 root right outer join, inner:TableReader_10, equal:[eq(Column#2, Column#5)]",
-          "├─TableReader_10 3333.33 root data:Selection_9",
-          "│ └─Selection_9 3333.33 cop[tikv] gt(Column#2, 1), not(isnull(Column#2))",
-          "│   └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_13 3333.33 root data:Selection_12",
-          "  └─Selection_12 3333.33 cop[tikv] gt(Column#5, 1)",
-          "    └─TableScan_11 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashRightJoin_7 4166.67 root right outer join, inner:TableReader_11, equal:[eq(Column#2, Column#5)]",
+          "├─TableReader_11 3333.33 root data:Selection_10",
+          "│ └─Selection_10 3333.33 cop[tikv] gt(Column#2, 1), not(isnull(Column#2))",
+          "│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_14 3333.33 root data:Selection_13",
+          "  └─Selection_13 3333.33 cop[tikv] gt(Column#5, 1)",
+          "    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 right join t2 on t1.a = t2.a and t2.a > 1",
         "Result": [
-          "HashRightJoin_6 10000.00 root right outer join, inner:TableReader_9, equal:[eq(Column#2, Column#5)], right cond:gt(Column#5, 1)",
-          "├─TableReader_9 3333.33 root data:Selection_8",
-          "│ └─Selection_8 3333.33 cop[tikv] gt(Column#2, 1), not(isnull(Column#2))",
-          "│   └─TableScan_7 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_11 10000.00 root data:TableScan_10",
-          "  └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashRightJoin_6 10000.00 root right outer join, inner:TableReader_10, equal:[eq(Column#2, Column#5)], right cond:gt(Column#5, 1)",
+          "├─TableReader_10 3333.33 root data:Selection_9",
+          "│ └─Selection_9 3333.33 cop[tikv] gt(Column#2, 1), not(isnull(Column#2))",
+          "│   └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_12 10000.00 root data:TableScan_11",
+          "  └─TableScan_11 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -97,12 +97,12 @@
       {
         "SQL": "explain select * from t1 left join t2 on t1.a = t2.a and t2.a > 1",
         "Result": [
-          "HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_11, equal:[eq(Column#2, Column#5)]",
-          "├─TableReader_8 10000.00 root data:TableScan_7",
-          "│ └─TableScan_7 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_11 3333.33 root data:Selection_10",
-          "  └─Selection_10 3333.33 cop[tikv] gt(Column#5, 1), not(isnull(Column#5))",
-          "    └─TableScan_9 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_12, equal:[eq(Column#2, Column#5)]",
+          "├─TableReader_9 10000.00 root data:TableScan_8",
+          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_12 3333.33 root data:Selection_11",
+          "  └─Selection_11 3333.33 cop[tikv] gt(Column#5, 1), not(isnull(Column#5))",
+          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -130,12 +130,12 @@
       {
         "SQL": "explain select * from t1 right join t2 on t1.a = t2.a and t1.a > 1",
         "Result": [
-          "HashRightJoin_6 10000.00 root right outer join, inner:TableReader_9, equal:[eq(Column#2, Column#5)]",
-          "├─TableReader_9 3333.33 root data:Selection_8",
-          "│ └─Selection_8 3333.33 cop[tikv] gt(Column#2, 1), not(isnull(Column#2))",
-          "│   └─TableScan_7 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_11 10000.00 root data:TableScan_10",
-          "  └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashRightJoin_6 10000.00 root right outer join, inner:TableReader_10, equal:[eq(Column#2, Column#5)]",
+          "├─TableReader_10 3333.33 root data:Selection_9",
+          "│ └─Selection_9 3333.33 cop[tikv] gt(Column#2, 1), not(isnull(Column#2))",
+          "│   └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_12 10000.00 root data:TableScan_11",
+          "  └─TableScan_11 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
