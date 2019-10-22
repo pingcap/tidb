@@ -17,7 +17,17 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
+// preparePossibleProperties traverses the plan tree by a post-order method,
+// recursively calls LogicalPlan PreparePossibleProperties interface.
+func preparePossibleProperties(lp LogicalPlan) [][]*expression.Column {
+	childrenProperties := make([][][]*expression.Column, 0, len(lp.Children()))
+	for _, child := range lp.Children() {
+		childrenProperties = append(childrenProperties, preparePossibleProperties(child))
+	}
+	return lp.PreparePossibleProperties(childrenProperties...)
+}
+
+func (ds *DataSource) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
@@ -42,12 +52,7 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 	return result
 }
 
-func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {
-	return p.children[0].preparePossibleProperties()
-}
-
-func (p *LogicalSort) preparePossibleProperties() [][]*expression.Column {
-	p.children[0].preparePossibleProperties()
+func (p *LogicalSort) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
 		return nil
@@ -55,8 +60,7 @@ func (p *LogicalSort) preparePossibleProperties() [][]*expression.Column {
 	return [][]*expression.Column{propCols}
 }
 
-func (p *LogicalTopN) preparePossibleProperties() [][]*expression.Column {
-	p.children[0].preparePossibleProperties()
+func (p *LogicalTopN) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
 		return nil
@@ -76,15 +80,12 @@ func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
 	return cols
 }
 
-func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
-	for _, ch := range p.children {
-		ch.preparePossibleProperties()
-	}
+func (p *baseLogicalPlan) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
-func (p *LogicalProjection) preparePossibleProperties() [][]*expression.Column {
-	childProperties := p.children[0].preparePossibleProperties()
+func (p *LogicalProjection) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.schema.Len())
 	newCols := make([]*expression.Column, 0, p.schema.Len())
 	for i, expr := range p.Exprs {
@@ -111,9 +112,9 @@ func (p *LogicalProjection) preparePossibleProperties() [][]*expression.Column {
 	return childProperties
 }
 
-func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
-	leftProperties := p.children[0].preparePossibleProperties()
-	rightProperties := p.children[1].preparePossibleProperties()
+func (p *LogicalJoin) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	leftProperties := childrenProperties[0]
+	rightProperties := childrenProperties[1]
 	// TODO: We should consider properties propagation.
 	p.leftProperties = leftProperties
 	p.rightProperties = rightProperties
@@ -135,8 +136,8 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 	return resultProperties
 }
 
-func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
-	childProps := la.children[0].preparePossibleProperties()
+func (la *LogicalAggregation) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	childProps := childrenProperties[0]
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
