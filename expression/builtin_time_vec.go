@@ -668,11 +668,47 @@ func (b *builtinWeekOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinUTCTimestampWithArgSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalTime evals UTC_TIMESTAMP(fsp).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	utc := nowTs.UTC()
+	result.ResizeTime(n, false)
+	t64s := result.Times()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		fsp := buf.GetInt64(i)
+		if fsp > int64(types.MaxFsp) {
+			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v.", fsp, types.MaxFsp)
+		}
+		if fsp < int64(types.MinFsp) {
+			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+		}
+		res, err := convertTimeToMysqlTime(utc, int8(fsp), types.ModeHalfEven)
+		if err != nil {
+			return err
+		}
+		t64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinAddDateIntRealSig) vectorized() bool {
