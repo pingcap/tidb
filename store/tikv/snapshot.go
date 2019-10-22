@@ -16,7 +16,9 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -376,7 +378,8 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		return newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {
-		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable())
+		notFoundDetail := prettyLockNotFoundKey(keyErr.GetRetryable())
+		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable() + " " + notFoundDetail)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
@@ -384,6 +387,30 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		return errors.Trace(err)
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
+}
+
+func prettyLockNotFoundKey(rawRetry string) string {
+	if !strings.Contains(rawRetry, "TxnLockNotFound") {
+		return ""
+	}
+	start := strings.Index(rawRetry, "[")
+	if start == -1 {
+		return ""
+	}
+	rawRetry = rawRetry[start:]
+	end := strings.Index(rawRetry, "]")
+	if end == -1 {
+		return ""
+	}
+	rawRetry = rawRetry[:end+1]
+	var key []byte
+	err := json.Unmarshal([]byte(rawRetry), &key)
+	if err != nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	prettyWriteKey(&buf, key)
+	return buf.String()
 }
 
 func newWriteConflictError(conflict *pb.WriteConflict) error {
@@ -420,9 +447,9 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 		return
 	}
 
-	key, field, err := tablecodec.DecodeMetaKey(key)
+	mKey, mField, err := tablecodec.DecodeMetaKey(key)
 	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{metaKey=true, tableID=%s, handle=%s}", string(key), string(field))
+		_, err3 := fmt.Fprintf(buf, "{metaKey=true, tableID=%s, handle=%s}", string(mKey), string(mField))
 		if err3 != nil {
 			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
 		}
