@@ -88,7 +88,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "i/o timeout") {
-			return nil, errors.Annotate(err, txnRetryableMark)
+			return nil, errors.Annotate(err, kv.TxnRetryableMark)
 		}
 		return nil, errors.Trace(err)
 	}
