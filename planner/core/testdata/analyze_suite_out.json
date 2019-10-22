@@ -10,8 +10,8 @@
         "Plan": [
           "TopN_8 1.00 root Column#1:asc, offset:0, count:1",
           "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-          "    └─IndexScan_14 10.00 cop table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo"
+          "  └─TopN_15 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "    └─IndexScan_14 10.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -23,8 +23,8 @@
         "Plan": [
           "TopN_8 1.00 root Column#1:asc, offset:0, count:1",
           "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[2,2], keep order:false"
+          "  └─TopN_15 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
         ]
       },
       {
@@ -37,8 +37,8 @@
         "Plan": [
           "TopN_8 1.00 root Column#1:asc, offset:0, count:1",
           "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[-inf,6], keep order:false"
+          "  └─TopN_15 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -50,10 +50,10 @@
           "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:Column#1, inner key:Column#8",
           "  ├─TopN_29 1.00 root Column#1:asc, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root index:TopN_36",
-          "  │   └─TopN_36 1.00 cop Column#1:asc, offset:0, count:1",
-          "  │     └─IndexScan_35 6.00 cop table:t1, index:b, c, range:[-inf,6], keep order:false",
+          "  │   └─TopN_36 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "  │     └─IndexScan_35 6.00 cop[tikv] table:t1, index:b, c, range:[-inf,6], keep order:false",
           "  └─IndexReader_68 1.04 root index:IndexScan_67",
-          "    └─IndexScan_67 1.04 cop table:t2, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true"
+          "    └─IndexScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true"
         ]
       },
       {
@@ -66,8 +66,8 @@
         "Plan": [
           "TopN_8 1.00 root Column#1:desc, offset:0, count:1",
           "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop Column#1:desc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[1,1], keep order:false"
+          "  └─TopN_15 1.00 cop[tikv] Column#1:desc, offset:0, count:1",
+          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[1,1], keep order:false"
         ]
       },
       {
@@ -80,9 +80,9 @@
         "Plan": [
           "Limit_11 1.00 root offset:0, count:1",
           "└─TableReader_22 1.00 root data:Limit_21",
-          "  └─Limit_21 1.00 cop offset:0, count:1",
-          "    └─Selection_20 1.00 cop eq(Column#2, 2)",
-          "      └─TableScan_19 4.17 cop table:t, range:[-inf,+inf], keep order:true"
+          "  └─Limit_21 1.00 cop[tikv] offset:0, count:1",
+          "    └─Selection_20 1.00 cop[tikv] eq(Column#2, 2)",
+          "      └─TableScan_19 4.17 cop[tikv] table:t, range:[-inf,+inf], keep order:true"
         ]
       },
       {
@@ -93,8 +93,8 @@
         "Plan": [
           "TopN_8 1.00 root Column#1:asc, offset:0, count:1",
           "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop Column#1:asc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop table:t, index:b, c, range:[2,2], keep order:false"
+          "  └─TopN_15 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
         ]
       },
       {
@@ -108,9 +108,9 @@
         "Plan": [
           "TopN_8 1.00 root Column#1:asc, offset:0, count:1",
           "└─IndexReader_19 1.00 root index:TopN_18",
-          "  └─TopN_18 1.00 cop Column#1:asc, offset:0, count:1",
-          "    └─Selection_17 6.00 cop gt(Column#1, 0)",
-          "      └─IndexScan_16 6.00 cop table:t, index:b, c, range:[2,2], keep order:false"
+          "  └─TopN_18 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "    └─Selection_17 6.00 cop[tikv] gt(Column#1, 0)",
+          "      └─IndexScan_16 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
         ]
       },
       {
@@ -125,9 +125,9 @@
           "Projection_7 1.00 root Column#1",
           "└─TopN_8 1.00 root Column#1:asc, offset:0, count:1",
           "  └─IndexReader_17 1.00 root index:TopN_16",
-          "    └─TopN_16 1.00 cop Column#1:asc, offset:0, count:1",
-          "      └─Selection_15 6.00 cop gt(Column#3, 0)",
-          "        └─IndexScan_14 6.00 cop table:t, index:b, d, a, c, range:[2,2], keep order:false"
+          "    └─TopN_16 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
+          "      └─Selection_15 6.00 cop[tikv] gt(Column#3, 0)",
+          "        └─IndexScan_14 6.00 cop[tikv] table:t, index:b, d, a, c, range:[2,2], keep order:false"
         ]
       }
     ]
@@ -144,11 +144,11 @@
         "Plan": [
           "IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
           "├─TableReader_19 9980.01 root data:Selection_18",
-          "│ └─Selection_18 9980.01 cop not(isnull(Column#1)), not(isnull(Column#3))",
-          "│   └─TableScan_17 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│ └─Selection_18 9980.01 cop[tikv] not(isnull(Column#1)), not(isnull(Column#3))",
+          "│   └─TableScan_17 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─IndexReader_12 1.25 root index:Selection_11",
-          "  └─Selection_11 1.25 cop not(isnull(Column#5)), not(isnull(Column#7))",
-          "    └─IndexScan_10 1.25 cop table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo"
+          "  └─Selection_11 1.25 cop[tikv] not(isnull(Column#5)), not(isnull(Column#7))",
+          "    └─IndexScan_10 1.25 cop[tikv] table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo"
         ]
       },
       {
@@ -160,11 +160,11 @@
           "Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
           "└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
           "  ├─IndexReader_15 0.00 root index:Selection_14",
-          "  │ └─Selection_14 0.00 cop isnull(Column#5), not(isnull(Column#5))",
-          "  │   └─IndexScan_13 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
+          "  │ └─Selection_14 0.00 cop[tikv] isnull(Column#5), not(isnull(Column#5))",
+          "  │   └─IndexScan_13 10000.00 cop[tikv] table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
           "  └─IndexReader_21 9990.00 root index:Selection_20",
-          "    └─Selection_20 9990.00 cop not(isnull(Column#2))",
-          "      └─IndexScan_19 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo"
+          "    └─Selection_20 9990.00 cop[tikv] not(isnull(Column#2))",
+          "      └─IndexScan_19 10000.00 cop[tikv] table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]

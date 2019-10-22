@@ -241,7 +241,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	_, err = tk.Exec("select * from v")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
 	tk.MustExec("alter table t1 add column a int")
-	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "3 1", "<nil> 1", "<nil> 2"))
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
 	tk.MustExec("alter table t1 drop column a")
 	tk.MustExec("alter table t2 drop column b")
 	_, err = tk.Exec("select * from v")

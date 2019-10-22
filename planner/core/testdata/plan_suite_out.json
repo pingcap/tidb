@@ -1153,6 +1153,11 @@
         "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(Column#14,Column#2)->HashAgg",
         "Warning": "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e",
+        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg->Projection",
+        "Warning": ""
       }
     ]
   },
@@ -1216,15 +1221,15 @@
     "Cases": [
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-        "Best": "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#1,Column#13)"
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#1,Column#13)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-        "Best": "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#15,Column#1)"
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#15,Column#1)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-        "Best": "IndexMergeJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#1,Column#15)->Projection"
+        "Best": "IndexJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#1,Column#15)->Projection"
       }
     ]
   },

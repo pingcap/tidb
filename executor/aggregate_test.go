@@ -632,7 +632,7 @@ func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
 		"└─Sort_4 10000.00 root Column#4:asc",
 		"  └─Projection_9 10000.00 root Column#3, plus(Column#3, 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("select * from t order by i + 1 ")
 	rs.Check(testkit.Rows(
 		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
@@ -641,8 +641,8 @@ func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
 		"└─TopN_7 2.00 root Column#4:asc, offset:0, count:2",
 		"  └─Projection_16 2.00 root Column#3, plus(Column#1, 1)",
 		"    └─TableReader_12 2.00 root data:TopN_11",
-		"      └─TopN_11 2.00 cop plus(Column#1, 1):asc, offset:0, count:2",
-		"        └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TopN_11 2.00 cop[tikv] plus(Column#1, 1):asc, offset:0, count:2",
+		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
 	rs.Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))
@@ -731,6 +731,50 @@ func (s *testSuite1) TestIssue10608(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(100292, 508931), (120002, 508932)")
 	tk.MustExec("insert into t values(508931), (508932)")
-	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 
+}
+
+func (s *testSuite1) TestIssue12759HashAggCalledByApply(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
+		tk.MustExec(`admin reload opt_rule_blacklist;`)
+	}()
+	tk.MustExec(`drop table if exists test;`)
+	tk.MustExec("create table test (a int);")
+	tk.MustExec("insert into test value(1);")
+	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
+
+	// make sure the plan is Apply -> Apply -> Apply -> HashAgg, and the count of Apply is equal to HashAggFinalConcurrency-1.
+	tk.MustQuery("explain select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("" +
+		"Projection_28 1.00 root Column#3, Column#7, Column#11, Column#15]\n" +
+		"[└─Apply_30 1.00 root CARTESIAN left outer join, inner:Projection_65]\n" +
+		"[  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:Projection_54]\n" +
+		"[  │ ├─Apply_34 1.00 root CARTESIAN left outer join, inner:Projection_43]\n" +
+		"[  │ │ ├─HashAgg_39 1.00 root funcs:sum(Column#26), firstrow(Column#27)]\n" +
+		"[  │ │ │ └─TableReader_40 1.00 root data:HashAgg_35]\n" +
+		"[  │ │ │   └─HashAgg_35 1.00 cop[tikv] funcs:sum(Column#1), firstrow(Column#1)]\n" +
+		"[  │ │ │     └─TableScan_38 10000.00 cop[tikv] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
+		"[  │ │ └─Projection_43 1.00 root NULL]\n" +
+		"[  │ │   └─Limit_44 1.00 root offset:0, count:1]\n" +
+		"[  │ │     └─TableReader_50 1.00 root data:Limit_49]\n" +
+		"[  │ │       └─Limit_49 1.00 cop[tikv] offset:0, count:1]\n" +
+		"[  │ │         └─Selection_48 1.00 cop[tikv] eq(Column#1, Column#5)]\n" +
+		"[  │ │           └─TableScan_47 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
+		"[  │ └─Projection_54 1.00 root NULL]\n" +
+		"[  │   └─Limit_55 1.00 root offset:0, count:1]\n" +
+		"[  │     └─TableReader_61 1.00 root data:Limit_60]\n" +
+		"[  │       └─Limit_60 1.00 cop[tikv] offset:0, count:1]\n" +
+		"[  │         └─Selection_59 1.00 cop[tikv] eq(Column#1, Column#9)]\n" +
+		"[  │           └─TableScan_58 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
+		"[  └─Projection_65 1.00 root NULL]\n" +
+		"[    └─Limit_66 1.00 root offset:0, count:1]\n" +
+		"[      └─TableReader_72 1.00 root data:Limit_71]\n" +
+		"[        └─Limit_71 1.00 cop[tikv] offset:0, count:1]\n" +
+		"[          └─Selection_70 1.00 cop[tikv] eq(Column#1, Column#13)]\n" +
+		"[            └─TableScan_69 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo"))
 }
