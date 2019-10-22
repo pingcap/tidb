@@ -132,7 +132,7 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.tblCols, t.indexPlan.(*PhysicalIndexScan).Index.Unique)
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 

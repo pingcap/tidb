@@ -277,6 +277,13 @@ func compareBool(l, r bool) int {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
+	// Do NOT prune any other access path if the path is table scan the tiflash.
+	if rhs.path.storeType == kv.TiFlash {
+		return 1
+	}
+	if lhs.path.storeType == kv.TiFlash {
+		return 0
+	}
 	setsResult, comparable := compareColumnSet(lhs.columnSet, rhs.columnSet)
 	if !comparable {
 		return 0
@@ -514,7 +521,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	isCovered bool) {
 	idx := path.index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
-	rowSize := is.indexScanRowSize(idx, ds)
+	rowSize := is.indexScanRowSize(idx, ds, false)
 	isCovered = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
 	indexConds := path.indexFilters
 	sessVars := ds.ctx.GetSessionVars()
@@ -584,7 +591,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			}
 		}
 	}
-	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, ds.tableInfo.PKIsHandle)
 	partialCost += totalRowCount * rowSize * sessVars.ScanFactor
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
@@ -696,7 +703,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource) float64 {
+func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
@@ -707,6 +714,9 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 		}
 	} else {
 		scanCols = is.schema.Columns
+	}
+	if isForScan {
+		return ds.TblColHists.GetIndexAvgRowSize(scanCols, is.Index.Unique)
 	}
 	return ds.TblColHists.GetAvgRowSize(scanCols, true)
 }
@@ -1061,7 +1071,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, ds.tableInfo.PKIsHandle)
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
@@ -1070,6 +1080,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
+	}
+	switch ts.StoreType {
+	case kv.TiKV:
+		cost += float64(len(ts.Ranges)) * sessVars.SeekFactor
+	case kv.TiFlash:
+		cost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.SeekFactor
 	}
 	return ts, cost, rowCount
 }
@@ -1104,7 +1120,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize(idx, ds)
+	rowSize := is.indexScanRowSize(idx, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
@@ -1114,5 +1130,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 		is.KeepOrder = true
 	}
+	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
 	return is, cost, rowCount
 }

@@ -300,10 +300,12 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV.
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
 	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
 	DescScanFactor float64
+	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
@@ -503,6 +505,7 @@ func NewSessionVars() *SessionVars {
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
@@ -823,6 +826,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
 	case TiDBOptDescScanFactor:
 		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+	case TiDBOptSeekFactor:
+		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
 	case TiDBOptConcurrencyFactor:
