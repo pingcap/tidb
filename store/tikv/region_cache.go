@@ -313,6 +313,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	if err != nil {
 		return nil, err
 	}
+	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/store/tikv/injectWrongStoreAddr`
 	failpoint.Inject("injectWrongStoreAddr", func(val failpoint.Value) {
 		if a, ok := val.(string); ok && len(a) > 0 {
 			addr = a
