@@ -3932,57 +3932,65 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 }
 
 func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
-	// we have check the repair table in preprocess, so get the result directly here.
+	// tableInfo and oldDBInfo's existence have been checked in preprocessor.
 	oldTableInfo, ok := (ctx.Value(admin.RepairedTable)).(*model.TableInfo)
 	if !ok || oldTableInfo == nil {
-		return errors.New("can't get tableInfo in ctx")
+		return ErrRepairTableFail.GenWithStackByArgs("get the repaired table failed")
 	}
 	oldDBInfo, ok := (ctx.Value(admin.RepairedDatabase)).(*model.DBInfo)
 	if !ok || oldDBInfo == nil {
-		return errors.New("can't get dbInfo in ctx")
+		return ErrRepairTableFail.GenWithStackByArgs("get the repaired DB failed")
 	}
-	// now only support same db repair
+	// now only support same db repair.
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
-		return errors.New("repaired table should in same db with the old one")
+		return ErrRepairTableFail.GenWithStackByArgs("repaired table should in same database with the old one")
 	}
-	// create new tableInfo with ast.CreateStmt, that means we can't support partitioned table by now.
-	newTableInfo, err := BuildTableInfoFromAST(createStmt)
+	// cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
+	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// override newTableInfo with oldTableInfo's necessary element
-	// todo: maybe more
+	// todo: maybe more element assignment here, and new TableInfo should compare with the real data;
 	newTableInfo.ID = oldTableInfo.ID
-	//newTableInfo.Name = oldTableInfo.Name
-	//newTableInfo.State = oldTableInfo.State   //状态是不能复用
-	//newTableInfo.AutoIncID = oldTableInfo.AutoIncID   // updateTS应该也不能复用
-	ctx.SetValue(admin.RepairedTable, newTableInfo)
-
-	for _, i := range newTableInfo.Indices { //表的顺坏，一般都是在建立在缺失的因素上引起的,所以旧的id基本上都复用
-		for _, j := range oldTableInfo.Indices {
-			if i.Name.L == j.Name.L {
+	// if any old partitionInfo has lost, that means the partition id lost too, so did the data, so repair failed.
+	for _, i := range newTableInfo.Partition.Definitions {
+		found := false
+		for _, j := range oldTableInfo.Partition.Definitions {
+			if i.Name.L == j.Name.L && stringSliceEqual(i.LessThan, j.LessThan) {
 				i.ID = j.ID
+				found = true
 				break
 			}
 		}
+		if !found {
+			return ErrRepairTableFail.GenWithStackByArgs("some old partition id has lost")
+		}
+	}
+	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
+	// if any old indexInfo has lost, that means the index id lost too, so did the data, so repair failed.
+	for _, i := range newTableInfo.Indices {
+		found := false
+		for _, j := range oldTableInfo.Indices {
+			if i.Name.L == j.Name.L {
+				i.ID = j.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrRepairTableFail.GenWithStackByArgs("some old index id has lost")
+		}
 	}
 
-	// before update the tableInfo into TiKV, exec the select stmt check the data
-	//sql := "select * from " + oldDBInfo.Name.L + "." + oldTableInfo.Name.L
-	//se, err := d.sessPool.get()
-	//if err != nil {
-	//	return errors.Trace(err)
-	//}
+	newTableInfo.State = model.StatePublic
+	err = checkTableInfoValid(newTableInfo)
+	if err != nil {
+		return err
+	}
+	newTableInfo.State = model.StateNone
 
-	// 目前先放弃数据自检
-	//a, b, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	//if err != nil {
-	//	return errors.New("pull data through the new TableInfo error, please check the create table statement")
-	//}
-	//fmt.Println(a, b)
-
-	// data parsed the new TableInfo, update the new one.
 	job := &model.Job{
 		SchemaID:   oldDBInfo.ID,
 		TableID:    newTableInfo.ID,
@@ -3992,14 +4000,30 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		Args:       []interface{}{newTableInfo},
 	}
 
-	// todo kv store is write without overriding, need a new action here!
 	err = d.doDDLJob(ctx, job)
-
-	// table exists, but if_not_exists flags is true, so we ignore this error.
-	if infoschema.ErrTableExists.Equal(err) && createStmt.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(err)
+	if err == nil {
+		// remove the table from repair list
+		callback, ok := (ctx.Value(admin.RepairedCallBack)).(func(a, b string))
+		if ok {
+			callback(oldDBInfo.Name.L, oldTableInfo.Name.L)
+		}
+	}
 	return errors.Trace(err)
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	b = b[:len(a)]
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }

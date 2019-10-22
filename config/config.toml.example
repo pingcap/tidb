@@ -74,6 +74,12 @@ split-region-max-num = 1000
 # In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
 alter-primary-key = false
 
+# repair mode is used to repair the broken table meta in tikv in extreme case.
+repair-mode = false
+
+# repair table list is used to list repaired table by `DBName.TableName` in repair mode.
+repair-table-list = []
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

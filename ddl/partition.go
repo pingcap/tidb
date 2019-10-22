@@ -116,9 +116,17 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	genIDs, err := d.genGlobalIDs(int(pi.Num))
-	if err != nil {
-		return errors.Trace(err)
+	// When this function is called by MockTableInfo, we should set particular partition ids, all default 0 here.
+	// So the `ddl` structure may be nil.
+	var genIDs []int64
+	var err error
+	if d != nil {
+		genIDs, err = d.genGlobalIDs(int(pi.Num))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		genIDs = make([]int64, len(s.Partition.Definitions), len(s.Partition.Definitions))
 	}
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
@@ -136,10 +144,19 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 }
 
 func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	genIDs, err := d.genGlobalIDs(len(s.Partition.Definitions))
-	if err != nil {
-		return err
+	// When this function is called by MockTableInfo, we should set particular partition ids, all default 0 here.
+	// So the `ddl` structure may be nil.
+	var genIDs []int64
+	var err error
+	if d != nil {
+		genIDs, err = d.genGlobalIDs(len(s.Partition.Definitions))
+		if err != nil {
+			return err
+		}
+	} else {
+		genIDs = make([]int64, len(s.Partition.Definitions), len(s.Partition.Definitions))
 	}
+
 	for ith, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{

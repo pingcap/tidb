@@ -78,7 +78,8 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 }
 
-// Repair variable will ignore repaired table meta
+// Repair variable will ignore repaired table meta.
+// Since only admin can do repair job, this variable is not thread safe for concurrency.
 var (
 	RepairMode      bool
 	RepairTableList []string
@@ -233,7 +234,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 					} else {
 						// shallow copy the DB.
 						repairedDB := di.Copy()
-						// clean the table and set repaired table.
+						// clean the tables and set repaired table.
 						repairedDB.Tables = []*model.TableInfo{}
 						repairedDB.Tables = append(repairedDB.Tables, tbl)
 						RepairDBInfoMap[di.ID] = repairedDB
@@ -1185,4 +1186,35 @@ func (do *Domain) InRepairMode() bool {
 // GetTablesInRepair get the repaired table in repair.
 func (do *Domain) GetTablesInRepair() map[int64]*model.DBInfo {
 	return RepairDBInfoMap
+}
+
+// GetRepairCleanFunc return a func for call back when repair action done.
+func (do *Domain) GetRepairCleanFunc() func(a, b string) {
+	return do.removeFromRepairList
+}
+
+// remove the table from repair list when a repair action done.
+func (do *Domain) removeFromRepairList(schemaLowerName, tableLowerName string) {
+	repairedLowerName := schemaLowerName + "." + tableLowerName
+	// remove from the repair list
+	for i, rt := range RepairTableList {
+		if strings.ToLower(rt) == repairedLowerName {
+			RepairTableList = append(RepairTableList[:i], RepairTableList[i+1:]...)
+			break
+		}
+	}
+	for _, db := range RepairDBInfoMap {
+		if db.Name.L == schemaLowerName {
+			for j, t := range db.Tables {
+				if t.Name.L == tableLowerName {
+					db.Tables = append(db.Tables[:j], db.Tables[j+1:]...)
+					break
+				}
+			}
+			if len(db.Tables) == 0 {
+				delete(RepairDBInfoMap, db.ID)
+			}
+			break
+		}
+	}
 }

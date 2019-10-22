@@ -783,6 +783,8 @@ const (
 	RepairedTable repairKeyType = iota
 	// RepairedDatabase is the key type, caching the target repaired database in sessionCtx.
 	RepairedDatabase
+	// RepairedCallBack is the key type, caching the callback func of repair list in sessionCtx in case of import circle.
+	RepairedCallBack
 )
 
 func (t repairKeyType) String() string {

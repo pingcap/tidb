@@ -523,17 +523,17 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 }
 
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
-	// check create table stmt whether it's is in REPAIR MODE
+	// check create table stmt whether it's is in REPAIR MODE.
 	if !domain.GetDomain(p.ctx).InRepairMode() {
-		p.err = errors.New("TiDB is not in repair mode")
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("tidb is not in repair mode")
 		return
 	}
 	if len(domain.GetDomain(p.ctx).GetTablesInRepair()) == 0 {
-		p.err = errors.New("Repair list is empty")
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
 		return
 	}
 
-	// check rename action like rename stmt does
+	// check rename action like rename statement does.
 	oldTable := stmt.Table.Name.String()
 	newTable := stmt.CreateStmt.Table.Name.String()
 	p.checkRenameTable(oldTable, newTable)
@@ -750,7 +750,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 	// repairStmt: admin repair table A create table B ...
-	// repairStmt's tableName is whether inCreateOrDropTable(B) or inRepairTable(A) flag.
+	// repairStmt's tableName is whether `inCreateOrDropTable` or `inRepairTable` flag.
 	if p.flag&inRepairTable > 0 {
 		p.handleRepairName(tn)
 		return
@@ -768,15 +768,16 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
-	// tn only has the DBName here.
+	// tn only has the Schema here.
 	var dbInfo *model.DBInfo
 	for _, v := range dbMap {
 		if v.Name.L == tn.Schema.L {
 			dbInfo = v
+			break
 		}
 	}
 	if dbInfo == nil {
-		p.err = errors.New("unknown database to repair")
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs()
 		return
 	}
 	var repairTable *model.TableInfo
@@ -787,11 +788,12 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		}
 	}
 	if repairTable == nil {
-		p.err = errors.New("unknown table to repair")
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs()
 		return
 	}
 	p.ctx.SetValue(admin.RepairedTable, repairTable)
 	p.ctx.SetValue(admin.RepairedDatabase, dbInfo)
+	p.ctx.SetValue(admin.RepairedCallBack, domain.GetDomain(p.ctx).GetRepairCleanFunc())
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {

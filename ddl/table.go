@@ -907,48 +907,53 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 }
 
 func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	// todo add failpoint here
-
 	schemaID := job.SchemaID
-	tbInfo := &model.TableInfo{}
+	tblInfo := &model.TableInfo{}
 
-	// 从job的参数中直接把这个表的信息拿出来
-	if err := job.DecodeArgs(tbInfo); err != nil {
+	if err := job.DecodeArgs(tblInfo); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	// 仍然用这种从无到有的模式变更
-	tbInfo.State = model.StateNone
+	tblInfo.State = model.StateNone
 
-	// repair require the db and table exists
-	_, err := getTableInfo(t, job.TableID, schemaID)
+	// Check the new table doesn't exist.
+	err := checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
+	// Check the old db and old table exist.
+	_, err = getTableInfo(t, job.TableID, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	// Repair table will still update the schema version, although ddl job done in whatever server started, it must be in the REPAIR MODE.
-	// So the repaired table is blind to user, won't causing the "schema has changed" error when in concurrency circumstance.
-	// The table after repairing will remove from repair list.
+	// When in repair mode, the repaired table of a server in repair mode is not access to user,
+	// the table after repairing will be removed from repair list. Other server left behind alive
+	// may need to restart to get the latest schema version.
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	switch tbInfo.State {
+	switch tblInfo.State {
 	case model.StateNone:
 		// none -> public
-		tbInfo.State = model.StatePublic
-		tbInfo.UpdateTS = t.StartTS
-		err = repairTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
+		err = repairTableOrViewWithCheck(t, job, schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tbInfo})
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 }
