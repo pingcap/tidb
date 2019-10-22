@@ -2005,7 +2005,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				}
 			}
 		case ast.AlterTableSetTiFlashReplica:
-			err = d.AlterTableSetFlashReplica(ctx, ident, spec.TiFlashReplica)
+			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		default:
 			// Nothing to do now.
 		}
@@ -2996,8 +2996,8 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
-// AlterTableSetFlashReplica changes the table charset and collate.
-func (d *ddl) AlterTableSetFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
+// AlterTableSetTiFlashReplica sets the TiFlash replicas info.
+func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
