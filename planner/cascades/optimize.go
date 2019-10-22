@@ -31,21 +31,25 @@ var DefaultOptimizer = NewOptimizer()
 type Optimizer struct {
 	transformationRuleMap map[memo.Operand][]Transformation
 	implementationRuleMap map[memo.Operand][]ImplementationRule
+	patternMap            map[Transformation]*memo.Pattern
 }
 
 // NewOptimizer returns a cascades optimizer with default transformation
 // rules and implementation rules.
 func NewOptimizer() *Optimizer {
-	return &Optimizer{
+	opt := &Optimizer{
 		transformationRuleMap: defaultTransformationMap,
 		implementationRuleMap: defaultImplementationMap,
+		patternMap:            make(map[Transformation]*memo.Pattern),
 	}
+	return opt.init()
 }
 
 // ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
 func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
 	opt.transformationRuleMap = rules
-	return opt
+	opt.patternMap = make(map[Transformation]*memo.Pattern)
+	return opt.init()
 }
 
 // ResetImplementationRules resets the implementationRuleMap of the optimizer, and returns the optimizer.
@@ -64,6 +68,26 @@ func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Tra
 // for the logical plan node.
 func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
 	return opt.implementationRuleMap[memo.GetOperand(node)]
+}
+
+// GetPattern returns the Pattern of the given Transformation rule.
+// It returns the cached Pattern if possible. Otherwise, generate a new Pattern.
+func (opt *Optimizer) GetPattern(rule Transformation) *memo.Pattern {
+	if p, ok := opt.patternMap[rule]; ok {
+		return p
+	}
+	return rule.GetPattern()
+}
+
+// init pre-caches all of the Patterns generated from the optimizer's
+// transformation rules.
+func (opt *Optimizer) init() *Optimizer {
+	for _, rules := range opt.transformationRuleMap {
+		for _, rule := range rules {
+			opt.patternMap[rule] = rule.GetPattern()
+		}
+	}
+	return opt
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
@@ -196,7 +220,7 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
 	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
-		pattern := GetPattern(rule)
+		pattern := opt.GetPattern(rule)
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}

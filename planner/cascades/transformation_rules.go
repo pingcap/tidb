@@ -50,19 +50,6 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 }
 
-var patternMap = make(map[Transformation]*memo.Pattern)
-
-// GetPattern returns the Pattern of the given Transformation rule.
-// It returns the cached Pattern if possible. Otherwise, generate a new Pattern.
-func GetPattern(r Transformation) *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
-	p := r.GetPattern()
-	patternMap[r] = p
-	return p
-}
-
 // PushSelDownTableScan pushes the selection down to TableScan.
 type PushSelDownTableScan struct {
 }
