@@ -248,6 +248,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		exec.idxVals = a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan).IndexValues
 		exec.handle = a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan).Handle
 		exec.done = false
+		exec.startTS = startTs
 		a.PsStmt.Executor = exec
 	}
 	pointExecutor = a.PsStmt.Executor.(*PointGetExecutor)
