@@ -481,11 +481,5 @@
     "cases": [
       "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"
     ]
-  },
-  {
-    "name": "TestSimplifyOuterJoinWithCast",
-    "cases": [
-      "select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.c_str as float) = '2.3'"
-    ]
   }
 ]
