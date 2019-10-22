@@ -19,7 +19,7 @@ import (
 
 // Implementation defines the interface for cost of physical plan.
 type Implementation interface {
-	CalcCost(outCount float64, childCosts []float64, children ...*Group) float64
+	CalcCost(outCount float64, children ...Implementation) float64
 	SetCost(cost float64)
 	GetCost() float64
 	GetPlan() plannercore.PhysicalPlan

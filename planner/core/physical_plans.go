@@ -309,9 +309,9 @@ type PhysicalIndexMergeJoin struct {
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
-	// keepOuterOrder indicates whether keeping the output result order as the
+	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
-	keepOuterOrder bool
+	KeepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.

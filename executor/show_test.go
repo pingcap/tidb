@@ -285,11 +285,12 @@ func (s *testSuite2) TestShow2(c *C) {
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
+	AllPrivs := "Select,Insert,Update,Delete,Create,Drop,Process,References,Alter,Show Databases,Super,Execute,Index,Create User,Trigger,Create View,Show View,Create Role,Drop Role,CREATE TEMPORARY TABLES,LOCK TABLES,CREATE ROUTINE,ALTER ROUTINE,EVENT,SHUTDOWN"
 	tk.MustExec(`grant all on *.* to 'root'@'%'`)
-	tk.MustQuery("show grants").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
+	tk.MustQuery("show grants").Check(testkit.Rows(`GRANT ` + AllPrivs + ` ON *.* TO 'root'@'%'`))
 
-	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
-	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
+	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ` + AllPrivs + ` ON *.* TO 'root'@'%'`))
+	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ` + AllPrivs + ` ON *.* TO 'root'@'%'`))
 }
 
 func (s *testSuite2) TestShowCreateUser(c *C) {
