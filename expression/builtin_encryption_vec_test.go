@@ -28,7 +28,8 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.Compress:   {},
 	ast.MD5:        {},
 	ast.SHA: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.RandomBytes:        {},
 	ast.UncompressedLength: {},
 	ast.SHA1: {
@@ -37,7 +38,13 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.PasswordFunc: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
 	},
-	ast.SHA2: {},
+	ast.SHA2: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{SHA0, SHA0 + 1}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{SHA224, SHA224 + 1}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{SHA256, SHA256 + 1}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{SHA384, SHA384 + 1}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{SHA512, SHA512 + 1}}},
+	},
 	ast.Encode: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
 	},
