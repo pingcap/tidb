@@ -416,6 +416,8 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 		return err
 	}
 
+	result.MergeNulls(lh)
+
 	rh := result
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
@@ -427,31 +429,25 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		err = b.divideUU(result, lh, rh, lhi64s, rhi64s, resulti64s)
+		err = b.divideUU(rh, result, lhi64s, rhi64s, resulti64s)
 	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideUI(result, lh, rh, lhi64s, rhi64s, resulti64s)
+		err = b.divideUI(rh, result, lhi64s, rhi64s, resulti64s)
 	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.divideIU(result, lh, rh, lhi64s, rhi64s, resulti64s)
+		err = b.divideIU(rh, result, lhi64s, rhi64s, resulti64s)
 	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideII(result, lh, rh, lhi64s, rhi64s, resulti64s)
+		err = b.divideII(rh, result, lhi64s, rhi64s, resulti64s)
 	}
 	return err
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUU(result, lhs, rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUU(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if rhs.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-		if rhi64s[i] == 0 {
+		if !rhs.IsNull(i) && rhi64s[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
-		if lhs.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		lh, rh := uint64(lhi64s[i]), uint64(rhi64s[i])
@@ -459,21 +455,15 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result, lhs, rhs *chunk.Colu
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUI(result, lhs, rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if rhs.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-		if rhi64s[i] == 0 {
+		if !rhs.IsNull(i) && rhi64s[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
-		if lhs.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		lh, rh := uint64(lhi64s[i]), rhi64s[i]
@@ -485,21 +475,15 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(result, lhs, rhs *chunk.Colu
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideIU(result, lhs, rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if rhs.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-		if rhi64s[i] == 0 {
+		if !rhs.IsNull(i) && rhi64s[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
-		if lhs.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		lh, rh := lhi64s[i], uint64(rhi64s[i])
@@ -511,21 +495,15 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(result, lhs, rhs *chunk.Colu
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideII(result, lhs, rhs *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideII(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if rhs.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-		if rhi64s[i] == 0 {
+		if !rhs.IsNull(i) && rhi64s[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
-		if lhs.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
