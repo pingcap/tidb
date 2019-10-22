@@ -190,15 +190,14 @@ func init() {
 	}
 }
 
-// Decoder is used to:
-// 1. decode a Chunk from a byte slice.
+// Decoder decodes the data returned from the coprocessor and stores the result in Chunk.
 // How Decoder works:
 // 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk using Codec.Decode. intermChk is
 //    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU andF
 //    memory cost.
 // 2. Decode phase:
 //    2.1 Set the number of rows that should be decoded to a multiple of 8 greater than
-//        targetChk.RequiredRows()-targetChk.NumRows(), this can reduce the cost when copying the srcCol.nullBitMap into destCol.nullBitMap.
+//        chk.RequiredRows() - chk.NumRows(), this can reduce the cost when copying the srcCol.nullBitMap into destCol.nullBitMap.
 //    2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
 //        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
 //    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
@@ -214,49 +213,48 @@ func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
 	return &Decoder{intermChk: chk, colTypes: colTypes, remainedRows: 0}
 }
 
-// Decode decodes a Chunk from Decoder, save the remained unused bytes.
-func (c *Decoder) Decode(target *Chunk) {
-	requiredRows := target.RequiredRows() - target.NumRows()
-	// Floor requiredRows to the next multiple of 8
+// Decode decodes multiple rows of Decoder.intermChk and stores the result in chk.
+func (c *Decoder) Decode(chk *Chunk) {
+	requiredRows := chk.RequiredRows() - chk.NumRows()
+	// Set the requiredRows to a multiple of 8.
 	requiredRows = (requiredRows + 7) >> 3 << 3
 	if requiredRows > c.remainedRows {
 		requiredRows = c.remainedRows
 	}
 	for i := 0; i < len(c.colTypes); i++ {
-		c.decodeColumn(target, i, requiredRows)
+		c.decodeColumn(chk, i, requiredRows)
 	}
 	c.remainedRows -= requiredRows
 }
 
-// ResetAndInit resets Decoder, and use data byte slice to init it.
-func (c *Decoder) ResetAndInit(data []byte) {
+// Reset decodes data and store the result in Decoder.intermChk. This decode phase uses pointer operations with less
+// CPU and memory costs.
+func (c *Decoder) Reset(data []byte) {
 	codec := NewCodec(c.colTypes)
 	codec.DecodeToChunk(data, c.intermChk)
 	c.remainedRows = c.intermChk.NumRows()
 }
 
-// IsFinished indicate the data byte slice is consumed.
+// IsFinished indicates whether Decoder.intermChk has been dried up.
 func (c *Decoder) IsFinished() bool {
 	return c.remainedRows == 0
 }
 
-func (c *Decoder) decodeColumn(target *Chunk, ordinal int, requiredRows int) {
+func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 	elemLen := getFixedLen(c.colTypes[ordinal])
 	numDataBytes := int64(elemLen * requiredRows)
 	srcCol := c.intermChk.columns[ordinal]
-	destCol := target.columns[ordinal]
+	destCol := chk.columns[ordinal]
 
 	if elemLen == varElemLen {
+		// For var-length types, we need to adjust the offsets after appending to descCol.
 		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
 		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
 		destCol.offsets = append(destCol.offsets, srcCol.offsets[1:requiredRows+1]...)
-
 		for i := destCol.length + 1; i <= destCol.length+requiredRows; i++ {
 			destCol.offsets[i] = destCol.offsets[i] + deltaOffset
 		}
 		srcCol.offsets = srcCol.offsets[requiredRows:]
-	} else if cap(destCol.elemBuf) < elemLen {
-		destCol.elemBuf = make([]byte, elemLen)
 	}
 
 	numNullBitmapBytes := (requiredRows + 7) >> 3
@@ -265,7 +263,7 @@ func (c *Decoder) decodeColumn(target *Chunk, ordinal int, requiredRows int) {
 	} else {
 		destCol.appendMultiSameNullBitmap(false, requiredRows)
 		bitMapLen := len(destCol.nullBitmap)
-		// bitOffset indicates the number of elements in destCol.nullBitmap's last byte.
+		// bitOffset indicates the number of valid bits in destCol.nullBitmap's last byte.
 		bitOffset := destCol.length % 8
 		startIdx := (destCol.length - 1) >> 3
 		for i := 0; i < numNullBitmapBytes; i++ {
