@@ -29,7 +29,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONContainsPath: {},
 	ast.JSONExtract:      {},
 	ast.JSONLength:       {},
-	ast.JSONType:         {},
+	ast.JSONType:         {{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}}},
 	ast.JSONArray:        {},
 	ast.JSONArrayInsert:  {},
 	ast.JSONContains:     {},
