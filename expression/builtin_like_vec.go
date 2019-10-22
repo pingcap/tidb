@@ -33,29 +33,21 @@ func (b *builtinRegexpBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRegexpBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return b.builtinRegexpSharedSig.vecEvalInt(input, result, b)
-}
-
 func (b *builtinRegexpSig) vectorized() bool {
 	return true
-}
-
-func (b *builtinRegexpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return b.builtinRegexpSharedSig.vecEvalInt(input, result, b)
 }
 
 func (b *builtinRegexpSharedSig) isMemoizedRegexpInitialized() bool {
 	return !(b.memoizedRegexp == nil && b.memoizedErr == nil)
 }
 
-func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int, rc regexpCompiler) {
+func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int) {
 	// Precondition: patterns is generated from a constant expression
 	for i := 0; i < n; i++ {
 		if patterns.IsNull(i) {
 			continue
 		}
-		re, err := rc.compile(patterns.GetString(i))
+		re, err := b.compile(patterns.GetString(i))
 		b.memoizedRegexp = re
 		b.memoizedErr = err
 		break
@@ -68,7 +60,7 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 	}
 }
 
-func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column, rc regexpCompiler) error {
+func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bufExpr, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -89,13 +81,13 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	}
 
 	if b.args[1].ConstItem() && !b.isMemoizedRegexpInitialized() {
-		b.initMemoizedRegexp(bufPat, n, rc)
+		b.initMemoizedRegexp(bufPat, n)
 	}
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
 		if b.isMemoizedRegexpInitialized() {
 			return b.memoizedRegexp, b.memoizedErr
 		}
-		return rc.compile(pat)
+		return b.compile(pat)
 	}
 
 	result.ResizeInt64(n, false)
