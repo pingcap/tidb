@@ -199,13 +199,13 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 			}
 		}
 
-		if r.respArrowDecoder.Empty() {
+		if r.respArrowDecoder.IsFinished() {
 			r.respArrowDecoder.ResetAndInit(r.selectResp.Chunks[r.respChkIdx].RowsData)
 		}
 
 		r.respArrowDecoder.Decode(chk)
 
-		if r.respArrowDecoder.Empty() {
+		if r.respArrowDecoder.IsFinished() {
 			r.respChkIdx++
 		}
 	}

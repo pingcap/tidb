@@ -193,94 +193,94 @@ func init() {
 // ArrowDecoder is used to:
 // 1. decode a Chunk from a byte slice.
 // How ArrowDecoder works:
-// 1. Construct : save colTypes, init a temp Chunk for middle calculation.
-// 2. ResetAndInit: decode the byte slice to the temp Chunk, and set remainedRows = chk.NumRows()
-//    (Memory reuse, so the Chunk is Read-Only)
-// 3. Decode: calculate the rows that append to the result Chunk.
-//    1) Floor requestRows to the next multiple of 8, for more performance NullBitMap operator.
-//    2) Append offsets from temp Chunk to result Chunk if the type is unfixed-len.
-//       And adjust offsets (add a delta) to keep correct.
-//    3) Append request rows NullBitMap from temp Chunk to result Chunk.
-//       3.1) If the numRows of result Chunk is divided by 8, append the NullBitMap directly.
-//       3.2) If the numRows of result Chunk is not divided by 8, append the NullBitMap and
-//            do some bit operator to keep correct.
-//    4) Append request rows data from temp Chunk to result Chunk.
-// 4. If the ArrowDecoder is empty (remainedRows == 0), go to Step2 to ResetAndInit the ArrowDecoder.
+// 1. Initialization phase: Decode a whole input byte slice to ArrowDecoder.intermChk using Codec.Decode. intermChk is
+//    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU and
+//    memory cost.
+// 2. Decode phase:
+//    2.1 Set the number of rows that should be decoded to a multiple of 8 greater than
+//        targetChk.RequiredRows()-targetChk.NumRows(), this can reduce the cost when copying the srcCol.nullBitMap into destCol.nullBitMap.
+//    2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
+//        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
+//    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
+// 3. Go to step 1 when the input byte slice is consumed.
 type ArrowDecoder struct {
-	chk          *Chunk
+	intermChk    *Chunk
 	colTypes     []*types.FieldType
 	remainedRows int
 }
 
 // NewArrowDecoder creates a new ArrowDecoder object for decode a Chunk.
 func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
-	return &ArrowDecoder{chk: chk, colTypes: colTypes, remainedRows: 0}
+	return &ArrowDecoder{intermChk: chk, colTypes: colTypes, remainedRows: 0}
 }
 
 // Decode decodes a Chunk from ArrowDecoder, save the remained unused bytes.
 func (c *ArrowDecoder) Decode(target *Chunk) {
-	requestRows := target.RequiredRows() - target.NumRows()
-	// Floor requestRows to the next multiple of 8
-	requestRows = (requestRows + 7) >> 3 << 3
-	if requestRows > c.remainedRows {
-		requestRows = c.remainedRows
+	requiredRows := target.RequiredRows() - target.NumRows()
+	// Floor requiredRows to the next multiple of 8
+	requiredRows = (requiredRows + 7) >> 3 << 3
+	if requiredRows > c.remainedRows {
+		requiredRows = c.remainedRows
 	}
 	for i := 0; i < len(c.colTypes); i++ {
-		c.decodeColumn(target, i, requestRows)
+		c.decodeColumn(target, i, requiredRows)
 	}
-	c.remainedRows -= requestRows
+	c.remainedRows -= requiredRows
 }
 
 // ResetAndInit resets ArrowDecoder, and use data byte slice to init it.
 func (c *ArrowDecoder) ResetAndInit(data []byte) {
 	codec := NewCodec(c.colTypes)
-	codec.DecodeToChunk(data, c.chk)
-	c.remainedRows = c.chk.NumRows()
+	codec.DecodeToChunk(data, c.intermChk)
+	c.remainedRows = c.intermChk.NumRows()
 }
 
-// Empty indicate the ArrowDecoder is empty.
-func (c *ArrowDecoder) Empty() bool {
+// IsFinished indicate the ArrowDecoder is consumed.
+func (c *ArrowDecoder) IsFinished() bool {
 	return c.remainedRows == 0
 }
 
-func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requestRows int) {
-	numFixedBytes := getFixedLen(c.colTypes[ordinal])
-	numDataBytes := int64(numFixedBytes * requestRows)
-	colSource := c.chk.columns[ordinal]
-	colTarget := target.columns[ordinal]
+func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requiredRows int) {
+	elemLen := getFixedLen(c.colTypes[ordinal])
+	numDataBytes := int64(elemLen * requiredRows)
+	srcCol := c.intermChk.columns[ordinal]
+	destCol := target.columns[ordinal]
 
-	if numFixedBytes == -1 {
-		numDataBytes = colSource.offsets[requestRows] - colSource.offsets[0]
-		colTarget.offsets = append(colTarget.offsets, colSource.offsets[1:requestRows+1]...)
-		deltaOffset := -colSource.offsets[0] + colTarget.offsets[colTarget.length]
-		for i := colTarget.length + 1; i <= colTarget.length+requestRows; i++ {
-			colTarget.offsets[i] = colTarget.offsets[i] + deltaOffset
+	if elemLen == varElemLen {
+		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
+		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
+		destCol.offsets = append(destCol.offsets, srcCol.offsets[1:requiredRows+1]...)
+
+		for i := destCol.length + 1; i <= destCol.length+requiredRows; i++ {
+			destCol.offsets[i] = destCol.offsets[i] + deltaOffset
 		}
-		colSource.offsets = colSource.offsets[requestRows:]
-	} else if cap(colTarget.elemBuf) < numFixedBytes {
-		colTarget.elemBuf = make([]byte, numFixedBytes)
+		srcCol.offsets = srcCol.offsets[requiredRows:]
+	} else if cap(destCol.elemBuf) < elemLen {
+		destCol.elemBuf = make([]byte, elemLen)
 	}
 
-	numNullBitmapBytes := (requestRows + 7) >> 3
-	if colTarget.length%8 == 0 {
-		colTarget.nullBitmap = append(colTarget.nullBitmap, colSource.nullBitmap[:numNullBitmapBytes]...)
+	numNullBitmapBytes := (requiredRows + 7) >> 3
+	if destCol.length%8 == 0 {
+		destCol.nullBitmap = append(destCol.nullBitmap, srcCol.nullBitmap[:numNullBitmapBytes]...)
 	} else {
-		colTarget.appendMultiSameNullBitmap(false, requestRows)
-		bitMapLen := len(colTarget.nullBitmap)
-		bitOffset := colTarget.length % 8
-		bitMapStartIndex := (colTarget.length - 1) >> 3
+		destCol.appendMultiSameNullBitmap(false, requiredRows)
+		bitMapLen := len(destCol.nullBitmap)
+		// bitOffset indicates the number of elements in destCol.nullBitmap's last byte.
+		bitOffset := destCol.length % 8
+		startIdx := (destCol.length - 1) >> 3
 		for i := 0; i < numNullBitmapBytes; i++ {
-			colTarget.nullBitmap[bitMapStartIndex+i] |= colSource.nullBitmap[i] << bitOffset
-			if bitMapLen > bitMapStartIndex+i+1 {
-				colTarget.nullBitmap[bitMapStartIndex+i+1] |= colSource.nullBitmap[i] >> (8 - bitOffset)
+			destCol.nullBitmap[startIdx+i] |= srcCol.nullBitmap[i] << bitOffset
+			// the total number of elements maybe is small than bitMapLen * 8, and last some bits in srcCol.nullBitmap are useless.
+			if bitMapLen > startIdx+i+1 {
+				destCol.nullBitmap[startIdx+i+1] |= srcCol.nullBitmap[i] >> (8 - bitOffset)
 			}
 		}
 	}
-	colSource.nullBitmap = colSource.nullBitmap[numNullBitmapBytes:]
-	colTarget.length += requestRows
+	srcCol.nullBitmap = srcCol.nullBitmap[numNullBitmapBytes:]
+	destCol.length += requiredRows
 
-	colTarget.data = append(colTarget.data, colSource.data[:numDataBytes]...)
-	colSource.data = colSource.data[numDataBytes:]
+	destCol.data = append(destCol.data, srcCol.data[:numDataBytes]...)
+	srcCol.data = srcCol.data[numDataBytes:]
 }
 
 // DecodeToChunkTest decodes a Chunk from a byte slice, return the remained unused bytes. (Only test, will remove before I merge this pr)
