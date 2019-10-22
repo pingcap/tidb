@@ -40,7 +40,6 @@ func NewOptimizer() *Optimizer {
 	opt := &Optimizer{
 		transformationRuleMap: defaultTransformationMap,
 		implementationRuleMap: defaultImplementationMap,
-		patternMap:            make(map[Transformation]*memo.Pattern),
 	}
 	return opt.init()
 }
@@ -48,7 +47,6 @@ func NewOptimizer() *Optimizer {
 // ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
 func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
 	opt.transformationRuleMap = rules
-	opt.patternMap = make(map[Transformation]*memo.Pattern)
 	return opt.init()
 }
 
@@ -82,6 +80,7 @@ func (opt *Optimizer) GetPattern(rule Transformation) *memo.Pattern {
 // init pre-caches all of the Patterns generated from the optimizer's
 // transformation rules.
 func (opt *Optimizer) init() *Optimizer {
+	opt.patternMap = make(map[Transformation]*memo.Pattern)
 	for _, rules := range opt.transformationRuleMap {
 		for _, rule := range rules {
 			opt.patternMap[rule] = rule.GetPattern()
