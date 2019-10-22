@@ -32,7 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = SerialSuites(&testEvaluatorSuite{})
+var _ = SerialSuites(&testEvaluatorSerialSuites{})
+var _ = Suite(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -40,6 +41,11 @@ func TestT(t *testing.T) {
 }
 
 type testEvaluatorSuite struct {
+	*parser.Parser
+	ctx sessionctx.Context
+}
+
+type testEvaluatorSerialSuites struct {
 	*parser.Parser
 	ctx sessionctx.Context
 }
