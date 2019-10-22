@@ -173,7 +173,6 @@ unrecognized-option-test = true
 	f.Seek(0, 0)
 
 	_, err = f.WriteString(`
-repair-table-list=[]
 token-limit = 0
 enable-table-lock = true
 alter-primary-key = true
