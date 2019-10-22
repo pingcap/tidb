@@ -171,8 +171,8 @@ func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 	}
 	expectedStr = "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={metaKey=true, tableID=DB:56, handle=TID:108} " +
-		"primary={metaKey=true, tableID=DB:56, handle=TID:108} " +
+		"key={metaKey=true, key=DB:56, field=TID:108} " +
+		"primary={metaKey=true, key=DB:56, field=TID:108} " +
 		kv.TxnRetryableMark
 	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
 }
