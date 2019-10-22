@@ -549,7 +549,7 @@ func BenchmarkDecodeToChunkWithRequestedRows_int(b *testing.B) {
 	codec := chunk.NewCodec(colTypes)
 	buffer := codec.Encode(chk)
 
-	acodec := chunk.NewArrowDecoder(
+	acodec := chunk.NewDecoder(
 		chunk.NewChunkWithCapacity(colTypes, 0),
 		colTypes)
 
@@ -612,7 +612,7 @@ func BenchmarkDecodeToChunkWithRequestedRows_string(b *testing.B) {
 	codec := chunk.NewCodec(colTypes)
 	buffer := codec.Encode(chk)
 
-	acodec := chunk.NewArrowDecoder(
+	acodec := chunk.NewDecoder(
 		chunk.NewChunkWithCapacity(colTypes, 0),
 		colTypes)
 

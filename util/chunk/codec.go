@@ -190,10 +190,10 @@ func init() {
 	}
 }
 
-// ArrowDecoder is used to:
+// Decoder is used to:
 // 1. decode a Chunk from a byte slice.
-// How ArrowDecoder works:
-// 1. Initialization phase: Decode a whole input byte slice to ArrowDecoder.intermChk using Codec.Decode. intermChk is
+// How Decoder works:
+// 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk using Codec.Decode. intermChk is
 //    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU andF
 //    memory cost.
 // 2. Decode phase:
@@ -203,19 +203,19 @@ func init() {
 //        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
 //    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
 // 3. Go to step 1 when the input byte slice is consumed.
-type ArrowDecoder struct {
+type Decoder struct {
 	intermChk    *Chunk
 	colTypes     []*types.FieldType
 	remainedRows int
 }
 
-// NewArrowDecoder creates a new ArrowDecoder object for decode a Chunk.
-func NewArrowDecoder(chk *Chunk, colTypes []*types.FieldType) *ArrowDecoder {
-	return &ArrowDecoder{intermChk: chk, colTypes: colTypes, remainedRows: 0}
+// NewDecoder creates a new Decoder object for decode a Chunk.
+func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
+	return &Decoder{intermChk: chk, colTypes: colTypes, remainedRows: 0}
 }
 
-// Decode decodes a Chunk from ArrowDecoder, save the remained unused bytes.
-func (c *ArrowDecoder) Decode(target *Chunk) {
+// Decode decodes a Chunk from Decoder, save the remained unused bytes.
+func (c *Decoder) Decode(target *Chunk) {
 	requiredRows := target.RequiredRows() - target.NumRows()
 	// Floor requiredRows to the next multiple of 8
 	requiredRows = (requiredRows + 7) >> 3 << 3
@@ -228,19 +228,19 @@ func (c *ArrowDecoder) Decode(target *Chunk) {
 	c.remainedRows -= requiredRows
 }
 
-// ResetAndInit resets ArrowDecoder, and use data byte slice to init it.
-func (c *ArrowDecoder) ResetAndInit(data []byte) {
+// ResetAndInit resets Decoder, and use data byte slice to init it.
+func (c *Decoder) ResetAndInit(data []byte) {
 	codec := NewCodec(c.colTypes)
 	codec.DecodeToChunk(data, c.intermChk)
 	c.remainedRows = c.intermChk.NumRows()
 }
 
 // IsFinished indicate the data byte slice is consumed.
-func (c *ArrowDecoder) IsFinished() bool {
+func (c *Decoder) IsFinished() bool {
 	return c.remainedRows == 0
 }
 
-func (c *ArrowDecoder) decodeColumn(target *Chunk, ordinal int, requiredRows int) {
+func (c *Decoder) decodeColumn(target *Chunk, ordinal int, requiredRows int) {
 	elemLen := getFixedLen(c.colTypes[ordinal])
 	numDataBytes := int64(elemLen * requiredRows)
 	srcCol := c.intermChk.columns[ordinal]
