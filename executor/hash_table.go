@@ -133,7 +133,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
+func (c *hashRowContainer) GetMatchedRowsAndIds(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedIds []chunk.RowPtr, err error) {
 	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
 	if err != nil || hasNull {
 		return
@@ -144,6 +144,7 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
+	matchedIds = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		if c.alreadySpilled() {
 			matchedRow, err = c.recordsInDisk.GetRow(ptr)
@@ -162,6 +163,7 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 			continue
 		}
 		matched = append(matched, matchedRow)
+		matchedIds = append(matchedIds, ptr)
 	}
 	return
 }
@@ -228,6 +230,33 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 		}
 	}
 	for i := 0; i < numRows; i++ {
+		if c.hCtx.hasNull[i] {
+			continue
+		}
+		key := c.hCtx.hashVals[i].Sum64()
+		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
+		c.hashTable.Put(key, rowPtr)
+	}
+	return nil
+}
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
+	chkIdx := uint32(c.records.NumChunks())
+	numRows := chk.NumRows()
+
+	c.records.Add(chk)
+	c.hCtx.initHash(numRows)
+
+	hCtx := c.hCtx
+	for _, colIdx := range c.hCtx.keyColIdx {
+		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for i := 0; i < numRows; i++ {
+		if selected[i] == false {
+			continue
+		}
 		if c.hCtx.hasNull[i] {
 			continue
 		}

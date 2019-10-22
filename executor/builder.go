@@ -1002,6 +1002,14 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		joinType:      v.JoinType,
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		innerEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
+		outerHashJoin: v.OuterHashJoin,
+	}
+	// reverse the inner and the outer
+	if e.outerHashJoin {
+		v.InnerChildIdx = 1 - v.InnerChildIdx
+		var conds = v.LeftConditions
+		v.LeftConditions = v.RightConditions
+		v.RightConditions = conds
 	}
 
 	defaultValues := v.DefaultValues
@@ -1016,9 +1024,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.outerFilter = v.RightConditions
 		e.innerKeys = v.LeftJoinKeys
 		e.outerKeys = v.RightJoinKeys
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
-		}
 	} else {
 		if len(v.RightConditions) > 0 {
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
@@ -1029,13 +1034,17 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.outerFilter = v.LeftConditions
 		e.innerKeys = v.RightJoinKeys
 		e.outerKeys = v.LeftJoinKeys
-		if defaultValues == nil {
+	}
+	if defaultValues == nil {
+		if e.outerHashJoin {
+			defaultValues = make([]types.Datum, e.outerExec.Schema().Len())
+		} else {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
 	}
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
+		e.joiners[i] = newJoiner(b.ctx, v.JoinType, (v.InnerChildIdx == 0 && e.outerHashJoin == false) || (v.InnerChildIdx == 1 && e.outerHashJoin), defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	executorCountHashJoinExec.Inc()
