@@ -61,7 +61,6 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.dom.GetGlobalVarsCache().Disable()
 	c.Assert(err, IsNil)
 	tikv.PrewriteMaxBackoff = 500
-
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
