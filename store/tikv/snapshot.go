@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -62,6 +63,10 @@ type tikvSnapshot struct {
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
 	// the result should not change.
+	// NOTE: This representation here is different from the BatchGet API.
+	// cached use len(value)=0 to represent a key-value entry doesn't exist (a reliable truth from TiKV).
+	// In the BatchGet API, it use no key-value entry to represent non-exist.
+	// It's OK as long as there are no zero-byte values in the protocol.
 	cached map[string][]byte
 }
 
@@ -95,7 +100,9 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		tmp := keys[:0]
 		for _, key := range keys {
 			if val, ok := s.cached[string(key)]; ok {
-				m[string(key)] = val
+				if len(val) > 0 {
+					m[string(key)] = val
+				}
 			} else {
 				tmp = append(tmp, key)
 			}
@@ -121,6 +128,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		if len(v) == 0 {
 			return
 		}
+
 		mu.Lock()
 		m[string(k)] = v
 		mu.Unlock()
@@ -138,8 +146,13 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	if s.cached == nil {
 		s.cached = make(map[string][]byte, len(m))
 	}
-	for key, value := range m {
-		s.cached[key] = value
+	for _, key := range keys {
+		// Updating cache using the reliable truth from TiKV, we set cache[key] = nil to mean non-exist.
+		if value, ok := m[string(key)]; ok {
+			s.cached[string(key)] = value
+		} else {
+			s.cached[string(key)] = nil
+		}
 	}
 
 	return m, nil
@@ -253,6 +266,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvSnapshot.get", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
 	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
