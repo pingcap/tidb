@@ -15,7 +15,6 @@ package expression_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/testutil"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testSuite{})
