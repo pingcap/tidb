@@ -942,15 +942,9 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 				g += ", "
 			}
 		}
-		var s string
-		if hasGrantOptionPriv {
-			s = fmt.Sprintf(`GRANT %s TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
-		} else {
-			s = fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
-		}
+		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
 		gs = append(gs, s)
 	}
-
 	return gs
 }
 
