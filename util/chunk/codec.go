@@ -194,7 +194,7 @@ func init() {
 // 1. decode a Chunk from a byte slice.
 // How ArrowDecoder works:
 // 1. Initialization phase: Decode a whole input byte slice to ArrowDecoder.intermChk using Codec.Decode. intermChk is
-//    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU and
+//    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU andF
 //    memory cost.
 // 2. Decode phase:
 //    2.1 Set the number of rows that should be decoded to a multiple of 8 greater than
@@ -235,7 +235,7 @@ func (c *ArrowDecoder) ResetAndInit(data []byte) {
 	c.remainedRows = c.intermChk.NumRows()
 }
 
-// IsFinished indicate the ArrowDecoder is consumed.
+// IsFinished indicate the data byte slice is consumed.
 func (c *ArrowDecoder) IsFinished() bool {
 	return c.remainedRows == 0
 }
