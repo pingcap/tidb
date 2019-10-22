@@ -267,7 +267,7 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
-	// PointGetGrpcConnectionCount is the max gRPC connections that will be established
+	// PointGetGrpcConnectionCount is the max gRPC connections that will be established for point get
 	// with each tikv-server used for point get.
 	PointGetGrpcConnectionCount uint `toml:"point-get-grpc-connection-count" json:"point-get-grpc-connection-count"`
 	// After a duration of this time in seconds if the client doesn't see any activity it pings
