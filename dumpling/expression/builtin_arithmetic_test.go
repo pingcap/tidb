@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
@@ -376,6 +377,12 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		sig, err := funcs[ast.Div].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
+		switch sig.(type) {
+		case *builtinArithmeticIntDivideIntSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideInt)
+		case *builtinArithmeticIntDivideDecimalSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideDecimal)
+		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
@@ -601,6 +608,14 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
+		switch sig.(type) {
+		case *builtinArithmeticModRealSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModReal)
+		case *builtinArithmeticModIntSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModInt)
+		case *builtinArithmeticModDecimalSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModDecimal)
+		}
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
