@@ -260,6 +260,9 @@ const (
 	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
 	TiDBBackOffWeight = "tidb_backoff_weight"
 
+	// tidb_optimizer_dynamic_sampling defines the level of dynamic sampling.
+	TiDBOptimizerDynamicSampling = "tidb_optimizer_dynamic_sampling"
+
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
@@ -390,6 +393,7 @@ const (
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
+	DefTiDBOptimizerDynamicSampling    = 0
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false

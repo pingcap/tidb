@@ -458,6 +458,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
 	case TiDBExpensiveQueryTimeThreshold:
 		return checkUInt64SystemVar(name, value, MinExpensiveQueryTimeThreshold, math.MaxInt64, vars)
+	case TiDBOptimizerDynamicSampling:
+		return checkUInt64SystemVar(name, value, 0, 11, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,

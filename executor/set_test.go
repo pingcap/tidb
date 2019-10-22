@@ -520,6 +520,19 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	_, err = tk.Exec("set @@global.thread_pool_size='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
+	tk.MustExec("set @@global.tidb_optimizer_dynamic_sampling=12")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_optimizer_dynamic_sampling value: '12'"))
+	result = tk.MustQuery("select @@global.tidb_optimizer_dynamic_sampling;")
+	result.Check(testkit.Rows("11"))
+
+	tk.MustExec("set @@global.tidb_optimizer_dynamic_sampling=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_optimizer_dynamic_sampling value: '-1'"))
+	result = tk.MustQuery("select @@global.tidb_optimizer_dynamic_sampling;")
+	result.Check(testkit.Rows("0"))
+
+	_, err = tk.Exec("set @@global.tidb_optimizer_dynamic_sampling='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
 	tk.MustExec("set @@global.max_allowed_packet=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
