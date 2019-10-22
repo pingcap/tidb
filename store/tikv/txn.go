@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -425,6 +426,12 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
 		err := txn.committer.pessimisticLockKeys(bo, killed, keys)
+		if killed != nil {
+			// If the kill signal is received during waiting for pessimisticLock,
+			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
+			// We need to reset the killed flag here.
+			atomic.CompareAndSwapUint32(killed, 1, 0)
+		}
 		if err != nil {
 			for _, key := range keys {
 				txn.us.DeleteKeyExistErrInfo(key)

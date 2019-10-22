@@ -725,7 +725,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
 		if action.killed != nil {
-			if atomic.CompareAndSwapUint32(action.killed, 1, 0) {
+			// Do not reset the killed flag here!
+			// actionPessimisticLock runs on each region parallelly, we have to consider that
+			// the error may be dropped.
+			if atomic.LoadUint32(action.killed) == 1 {
 				return ErrQueryInterrupted
 			}
 		}
