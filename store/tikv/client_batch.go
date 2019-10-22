@@ -73,11 +73,11 @@ func newBatchConn(connCount, maxBatchSize uint, maxWaitTime time.Duration, maxWa
 		tikvTransportLayerLoad: 0,
 		closed:                 make(chan struct{}),
 
-		idleNotify: idleNotify,
-		idleDetect: time.NewTimer(idleTimeout),
-		maxWaitTime: maxWaitTime,
-		maxWaitBatchSize: maxWaitBatchSize,
-		maxBatchSize: maxBatchSize,
+		idleNotify:        idleNotify,
+		idleDetect:        time.NewTimer(idleTimeout),
+		maxWaitTime:       maxWaitTime,
+		maxWaitBatchSize:  maxWaitBatchSize,
+		maxBatchSize:      maxBatchSize,
 		overloadThreshold: overloadThreshold,
 	}
 }

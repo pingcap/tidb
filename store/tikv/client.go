@@ -117,9 +117,9 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
 	if allowBatch {
 		var (
-			maxWaitTime time.Duration
-			maxWaitBatchSize uint
-			maxBatchSize uint
+			maxWaitTime       time.Duration
+			maxWaitBatchSize  uint
+			maxBatchSize      uint
 			overloadThreshold uint
 		)
 		switch ctype {
