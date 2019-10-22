@@ -445,7 +445,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -2484,6 +2484,18 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
 			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN CURRENT ROW AND 1 PRECEDING )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
 		},
 		// Test issue 11943
 		{

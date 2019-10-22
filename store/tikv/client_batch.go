@@ -35,7 +35,10 @@ import (
 )
 
 type batchConn struct {
-	index uint32
+	// An atomic flag indicates whether the batch is idle or not.
+	// 0 for busy, others for idle.
+	idle uint32
+
 	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
@@ -44,10 +47,11 @@ type batchConn struct {
 
 	// Notify rpcClient to check the idle flag
 	idleNotify *uint32
-	idle       bool
 	idleDetect *time.Timer
 
 	pendingRequests prometheus.Gauge
+
+	index uint32
 }
 
 func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
@@ -60,6 +64,10 @@ func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
 		idleNotify: idleNotify,
 		idleDetect: time.NewTimer(idleTimeout),
 	}
+}
+
+func (a *batchConn) isIdle() bool {
+	return atomic.LoadUint32(&a.idle) != 0
 }
 
 // fetchAllPendingRequests fetches all pending requests from the channel.
@@ -78,7 +86,7 @@ func (a *batchConn) fetchAllPendingRequests(
 		a.idleDetect.Reset(idleTimeout)
 	case <-a.idleDetect.C:
 		a.idleDetect.Reset(idleTimeout)
-		a.idle = true
+		atomic.AddUint32(&a.idle, 1)
 		atomic.CompareAndSwapUint32(a.idleNotify, 0, 1)
 		// This batchConn to be recycled
 		return
@@ -192,6 +200,9 @@ type batchCommandsClient struct {
 	batched sync.Map
 	idAlloc uint64
 
+	tikvClientCfg config.TiKVClient
+	tikvLoad      *uint64
+
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
 	// tryLock protects client when re-create the streaming.
@@ -239,7 +250,6 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 
 func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
 	c.failPendingRequests(err) // fail all pending requests.
-
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
 	tikvClient := tikvpb.NewTikvClient(c.conn)
 	streamClient, err := tikvClient.BatchCommands(context.TODO())
@@ -443,8 +453,32 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 		RequestIds: requestIDs,
 	}
 
+	if err := cli.initBatchClient(); err != nil {
+		logutil.Logger(context.Background()).Warn(
+			"init create streaming fail",
+			zap.String("target", cli.target),
+			zap.Error(err),
+		)
+		return
+	}
+
 	cli.send(req, entries)
 	return
+}
+
+func (c *batchCommandsClient) initBatchClient() error {
+	if c.client != nil {
+		return nil
+	}
+	// Initialize batch streaming clients.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.client = streamClient
+	go c.batchRecvLoop(c.tikvClientCfg, c.tikvLoad)
+	return nil
 }
 
 func (a *batchConn) Close() {
@@ -514,7 +548,7 @@ func (c *rpcClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
-		if conn.idle {
+		if conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
 	}
