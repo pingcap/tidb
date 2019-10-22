@@ -528,12 +528,11 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 	}
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
-	buf.MergeNulls(buf1)
 	d64s := buf.GoDurations()
 	d64s1 := buf1.GoDurations()
+	result.MergeNulls(buf, buf1)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		lhs := types.Duration{Duration: d64s[i]}
