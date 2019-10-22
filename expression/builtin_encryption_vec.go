@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -138,11 +139,35 @@ func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinMD5Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	digest := md5.New()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		cryptByte := buf.GetBytes(i)
+		_, err := digest.Write(cryptByte)
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", digest.Sum(nil)))
+		digest.Reset()
+	}
+	return nil
 }
 
 func (b *builtinSHA2Sig) vectorized() bool {
