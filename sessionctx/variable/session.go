@@ -294,6 +294,21 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
+	// CPUFactor is the CPU cost of processing one expression for one row.
+	CPUFactor float64
+	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	CopCPUFactor float64
+	// NetworkFactor is the network cost of transferring 1 byte data.
+	NetworkFactor float64
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV.
+	ScanFactor float64
+	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	DescScanFactor float64
+	// MemoryFactor is the memory cost of storing one tuple.
+	MemoryFactor float64
+	// ConcurrencyFactor is the CPU cost of additional one goroutine.
+	ConcurrencyFactor float64
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
@@ -305,9 +320,6 @@ type SessionVars struct {
 	SQLMode mysql.SQLMode
 
 	/* TiDB system variables */
-
-	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
-	LightningMode bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -416,6 +428,9 @@ type SessionVars struct {
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
+	// UsePlanBaselines indicates whether we will use plan baselines to adjust plan.
+	UsePlanBaselines bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -483,6 +498,13 @@ func NewSessionVars() *SessionVars {
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		CPUFactor:                   DefOptCPUFactor,
+		CopCPUFactor:                DefOptCopCPUFactor,
+		NetworkFactor:               DefOptNetworkFactor,
+		ScanFactor:                  DefOptScanFactor,
+		DescScanFactor:              DefOptDescScanFactor,
+		MemoryFactor:                DefOptMemoryFactor,
+		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
@@ -495,6 +517,7 @@ func NewSessionVars() *SessionVars {
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -593,9 +616,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.LightningMode {
-		s.GetWriteStmtBufs().clean()
-	}
+	s.GetWriteStmtBufs().clean()
 }
 
 // AllocPlanColumnID allocates column id for plan.
@@ -792,6 +813,20 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
 		s.CorrelationExpFactor = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
+	case TiDBOptCPUFactor:
+		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
+	case TiDBOptCopCPUFactor:
+		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
+	case TiDBOptNetworkFactor:
+		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
+	case TiDBOptScanFactor:
+		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
+	case TiDBOptDescScanFactor:
+		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+	case TiDBOptMemoryFactor:
+		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
+	case TiDBOptConcurrencyFactor:
+		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -852,6 +887,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBRecordPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -913,6 +950,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	// It's a global variable, but it also wants to be cached in server.
 	case TiDBMaxDeltaSchemaCount:
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
+	case TiDBUsePlanBaselines:
+		s.UsePlanBaselines = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1115,6 +1154,12 @@ const (
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPlan is used to record the query plan.
+	SlowLogPlan = "Plan"
+	// SlowLogPlanPrefix is the prefix of the plan value.
+	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogPlanSuffix is the suffix of the plan value.
+	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
@@ -1137,6 +1182,7 @@ type SlowQueryLogItems struct {
 	Prepared       bool
 	HasMoreResults bool
 	PrevStmt       string
+	Plan           string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1240,6 +1286,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	if len(logItems.Plan) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)

@@ -457,7 +457,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -969,6 +969,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// If this schema is not set correctly, table.RemoveRecord would fail when adding
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(Column#1,Column#14)->IndexReader(Index(t.c_d_e)[[42,42]])}(Column#2,Column#27)->Sel([or(Column#26, Column#40)])->Projection->Delete",
+		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(Column#2,Column#25)->Projection->Update",
 		},
 	}
 
