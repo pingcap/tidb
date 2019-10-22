@@ -22,15 +22,13 @@ import (
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
-	ast.AesEncrypt: {},
-	ast.Uncompress: {},
-	ast.AesDecrypt: {},
-	ast.Compress:   {},
-	ast.MD5:        {},
-	ast.SHA:        {},
-	ast.RandomBytes: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{1, 1024}}},
-	},
+	ast.AesEncrypt:         {},
+	ast.Uncompress:         {},
+	ast.AesDecrypt:         {},
+	ast.Compress:           {},
+	ast.MD5:                {},
+	ast.SHA:                {},
+	ast.RandomBytes:        {},
 	ast.UncompressedLength: {},
 	ast.SHA1:               {},
 	ast.PasswordFunc:       {},
