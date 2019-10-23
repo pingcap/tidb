@@ -439,68 +439,55 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 		return err
 	}
 	defer b.bufAllocator.put(lh)
-
 	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
 		return err
 	}
-
 	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	result.MergeNulls(lh)
-
 	rh := result
-	lhi64s := lh.Int64s()
-	rhi64s := rh.Int64s()
-
-	resulti64s := result.Int64s()
-
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-	fmt.Println(rhi64s)
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
-		err = b.divideUU(rh, result, lhi64s, rhi64s, resulti64s)
-	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideUI(rh, result, lhi64s, rhi64s, resulti64s)
-	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.divideIU(rh, result, lhi64s, rhi64s, resulti64s)
-	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideII(rh, result, lhi64s, rhi64s, resulti64s)
-	}
-	return err
-}
-func (b *builtinArithmeticIntDivideIntSig) divideUU(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if !rhs.IsNull(i) && rhi64s[i] == 0 {
+	dividend := lh.Int64s()
+	divisor := rh.Int64s()
+	for i := 0; i < len(divisor); i++ {
+		if !rh.IsNull(i) && divisor[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
+		}
+	}
+	resulti64s := result.Int64s()
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		err = b.divideUU(rh, result, dividend, divisor, resulti64s)
+	case isLHSUnsigned && !isRHSUnsigned:
+		err = b.divideUI(rh, result, dividend, divisor, resulti64s)
+	case !isLHSUnsigned && isRHSUnsigned:
+		err = b.divideIU(rh, result, dividend, divisor, resulti64s)
+	case !isLHSUnsigned && !isRHSUnsigned:
+		err = b.divideII(rh, result, dividend, divisor, resulti64s)
+	}
+	return err
+}
+func (b *builtinArithmeticIntDivideIntSig) divideUU(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+	for i := 0; i < len(dividend); i++ {
+		if divisor[i] == 0 {
 			continue
 		}
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := uint64(lhi64s[i]), uint64(rhi64s[i])
+		lh, rh := uint64(dividend[i]), uint64(divisor[i])
 		resulti64s[i] = int64(lh / rh)
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if !rhs.IsNull(i) && rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
+func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+	for i := 0; i < len(dividend); i++ {
+		if divisor[i] == 0 {
 			continue
 		}
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := uint64(lhi64s[i]), rhi64s[i]
+		lh, rh := uint64(dividend[i]), divisor[i]
 		val, err := types.DivUintWithInt(lh, rh)
 		if err != nil {
 			return err
@@ -509,19 +496,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, l
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if !rhs.IsNull(i) && rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
+func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+	for i := 0; i < len(dividend); i++ {
+		if divisor[i] == 0 {
 			continue
 		}
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], uint64(rhi64s[i])
+		lh, rh := dividend[i], uint64(divisor[i])
 		val, err := types.DivIntWithUint(lh, rh)
 		if err != nil {
 			return err
@@ -530,19 +510,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, l
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideII(rhs, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if !rhs.IsNull(i) && rhi64s[i] == 0 {
-			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
+func (b *builtinArithmeticIntDivideIntSig) divideII(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+	for i := 0; i < len(dividend); i++ {
+		if divisor[i] == 0 {
 			continue
 		}
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
+		lh, rh := dividend[i], divisor[i]
 		val, err := types.DivInt64(lh, rh)
 		if err != nil {
 			return err
