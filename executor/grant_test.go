@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -49,6 +50,12 @@ func (s *testSuite3) TestGrantGlobal(c *C) {
 	tk.MustExec(createUserSQL)
 	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost';")
 	// Make sure all the global privs for granted user is "Y".
+	for _, v := range mysql.AllGlobalPrivs {
+		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
+		tk.MustQuery(sql).Check(testkit.Rows("Y"))
+	}
+	//with grant option
+	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost' WITH GRANT OPTION;")
 	for _, v := range mysql.AllGlobalPrivs {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
@@ -96,6 +103,13 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	// Grant select priv to the user, with grant option.
 	tk.MustExec("GRANT select ON test.* TO 'testWithGrant'@'localhost' WITH GRANT OPTION;")
 	tk.MustQuery("SELECT grant_priv FROM mysql.DB WHERE User=\"testWithGrant\" and host=\"localhost\" and db=\"test\"").Check(testkit.Rows("Y"))
+
+	tk.MustExec("CREATE USER 'testWithGrant1'")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("N"))
+	tk.MustExec("GRANT ALL ON *.* TO 'testWithGrant1'")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("N"))
+	tk.MustExec("GRANT ALL ON *.* TO 'testWithGrant1' WITH GRANT OPTION")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
 func (s *testSuite3) TestTableScope(c *C) {
@@ -124,7 +138,7 @@ func (s *testSuite3) TestTableScope(c *C) {
 	tk.MustExec("USE test;")
 	tk.MustExec(`CREATE TABLE test2(c1 int);`)
 	// Grant all table scope privs.
-	tk.MustExec("GRANT ALL ON test2 TO 'testTbl1'@'localhost';")
+	tk.MustExec("GRANT ALL ON test2 TO 'testTbl1'@'localhost' WITH GRANT OPTION;")
 	// Make sure all the table privs for granted user are in the Table_priv set.
 	for _, v := range mysql.AllTablePrivs {
 		rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTbl1" and host="localhost" and db="test" and Table_name="test2";`).Rows()
@@ -223,4 +237,29 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
 	tk.MustExec(`REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';`)
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
+}
+
+func (s *testSuite3) TestUserTableConsistency(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user superadmin")
+	tk.MustExec("grant all privileges on *.* to 'superadmin'")
+
+	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
+
+	var buf bytes.Buffer
+	var res bytes.Buffer
+	buf.WriteString("select ")
+	i := 0
+	for _, priv := range mysql.AllGlobalPrivs {
+		if i != 0 {
+			buf.WriteString(", ")
+			res.WriteString(" ")
+		}
+		buf.WriteString(mysql.Priv2UserCol[priv])
+		res.WriteString("Y")
+		i++
+	}
+	buf.WriteString(" from mysql.user where user = 'superadmin'")
+	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
