@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
