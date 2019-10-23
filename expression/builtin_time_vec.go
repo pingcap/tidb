@@ -257,11 +257,48 @@ func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinUTCTimeWithArgSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalDuration evals a builtinUTCTimeWithArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	utc := nowTs.UTC().Format(types.TimeFSPFormat)
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeGoDuration(n, false)
+	d64s := result.GoDurations()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		fsp := buf.GetInt64(i)
+		if fsp > int64(types.MaxFsp) {
+			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v.", fsp, types.MaxFsp)
+		}
+		if fsp < int64(types.MinFsp) {
+			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+		}
+		res, err := types.ParseDuration(stmtCtx, utc, int8(fsp))
+		if err != nil {
+			return err
+		}
+		d64s[i] = res.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubDateIntIntSig) vectorized() bool {
@@ -868,13 +905,29 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 }
 
 func (b *builtinUTCTimeWithoutArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 // vecEvalDuration evals a builtinUTCTimeWithoutArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	utc := nowTs.UTC().Format(types.TimeFormat)
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeGoDuration(n, false)
+	d64s := result.GoDurations()
+	for i := 0; i < n; i++ {
+		res, err := types.ParseDuration(stmtCtx, utc, types.DefaultFsp)
+		if err != nil {
+			return err
+		}
+		d64s[i] = res.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubDateIntDecimalSig) vectorized() bool {
