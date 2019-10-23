@@ -455,7 +455,7 @@ func (*testSuite) TestNextStep(c *C) {
 	nextStep = autoid.NextStep(678910, 10*time.Second)
 	c.Assert(nextStep, Equals, int64(678910))
 	nextStep = autoid.NextStep(50000, 10*time.Minute)
-	c.Assert(nextStep, Equals, int64(1000))
+	c.Assert(nextStep, Equals, int64(30000))
 }
 
 func BenchmarkAllocator_Alloc(b *testing.B) {
