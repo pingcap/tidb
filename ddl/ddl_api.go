@@ -3955,11 +3955,11 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	// todo: maybe more element assignment here, and new TableInfo should compare with the real data;
 	newTableInfo.ID = oldTableInfo.ID
 	// if any old partitionInfo has lost, that means the partition id lost too, so did the data, so repair failed.
-	for _, i := range newTableInfo.Partition.Definitions {
+	for i, new := range newTableInfo.Partition.Definitions {
 		found := false
-		for _, j := range oldTableInfo.Partition.Definitions {
-			if i.Name.L == j.Name.L && stringSliceEqual(i.LessThan, j.LessThan) {
-				i.ID = j.ID
+		for _, old := range oldTableInfo.Partition.Definitions {
+			if new.Name.L == old.Name.L && stringSliceEqual(new.LessThan, old.LessThan) {
+				newTableInfo.Partition.Definitions[i].ID = old.ID
 				found = true
 				break
 			}
@@ -3970,11 +3970,11 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// if any old indexInfo has lost, that means the index id lost too, so did the data, so repair failed.
-	for _, i := range newTableInfo.Indices {
+	for i, new := range newTableInfo.Indices {
 		found := false
-		for _, j := range oldTableInfo.Indices {
-			if i.Name.L == j.Name.L {
-				i.ID = j.ID
+		for _, old := range oldTableInfo.Indices {
+			if new.Name.L == old.Name.L {
+				newTableInfo.Indices[i].ID = old.ID
 				found = true
 				break
 			}
