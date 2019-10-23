@@ -323,6 +323,7 @@ type Prepared struct {
 	SchemaVersion int64
 	UseCache      bool
 	CachedPlan    interface{}
+	CachedNames   interface{}
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
