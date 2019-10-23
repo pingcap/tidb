@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -364,30 +365,17 @@ func (g *numStrGener) gen() interface{} {
 
 // ipv6StrGener is used to generate ipv6 strings.
 type ipv6StrGener struct {
+	rangeInt64Gener
 }
 
 func (g *ipv6StrGener) gen() interface{} {
-	buf := make([]byte, 39)
-	j := 0
-	for i := range buf {
-		if j == 4 {
-			buf[i] = byte(':')
-			j = 0
-			continue
-		}
-		j++
-		x := rand.Intn(16)
-		if x < 10 {
-			buf[i] = byte('0' + x)
-		} else {
-			if x%2 == 0 {
-				buf[i] = byte('a' + x - 10)
-			} else {
-				buf[i] = byte('A' + x - 10)
-			}
-		}
+	g.begin = 0
+	g.end = 256
+	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(g.rangeInt64Gener.gen().(int64))
 	}
-	return string(buf)
+	return ip.String()
 }
 
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
