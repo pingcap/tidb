@@ -20,7 +20,6 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestUnfoldableFuncs(c *C) {
-	defer testleak.AfterTest(c)()
 	_, ok := unFoldableFunctions[ast.Sysdate]
 	c.Assert(ok, IsTrue)
 }

@@ -517,7 +517,6 @@ func vecEvalType(f builtinFunc, eType types.EvalType, input *chunk.Chunk, result
 }
 
 func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, false)
@@ -542,7 +541,6 @@ func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, true)

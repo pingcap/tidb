@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/testleak"
 	"reflect"
 	"testing"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = check.Suite(&testUtilSuite{})
@@ -36,7 +36,7 @@ type testUtilSuite struct {
 }
 
 func (s *testUtilSuite) TearDownSuite(c *check.C) {
-	defer testleak.AfterTest(c)
+	testleak.AfterTest(c)
 }
 
 func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
@@ -258,7 +258,6 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &One.Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
@@ -284,7 +283,6 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)

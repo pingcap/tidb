@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/testleak"
 	"sort"
 	"strings"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testExpressionSuite{})
@@ -35,7 +35,7 @@ var _ = Suite(&testExpressionSuite{})
 type testExpressionSuite struct{}
 
 func (s *testExpressionSuite) TearDownSuite(c *C) {
-	defer testleak.AfterTest(c)
+	testleak.AfterTest(c)
 }
 
 func newColumn(id int) *Column {
@@ -85,7 +85,6 @@ func newFunction(funcName string, args ...Expression) Expression {
 }
 
 func (*testExpressionSuite) TestConstantPropagation(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		solver     []PropagateConstantSolver
 		conditions []Expression
@@ -212,7 +211,6 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 }
 
 func (*testExpressionSuite) TestConstraintPropagation(c *C) {
-	defer testleak.AfterTest(c)()
 	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
 	col2 := newColumnWithType(2, types.NewFieldType(mysql.TypeTimestamp))
 	tests := []struct {
@@ -307,7 +305,6 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 }
 
 func (*testExpressionSuite) TestConstantFolding(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		condition Expression
 		result    string
@@ -344,7 +341,6 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 }
 
 func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
-	defer testleak.AfterTest(c)()
 	nullConst := &Constant{
 		Value:        types.NewDatum(nil),
 		RetType:      types.NewFieldType(mysql.TypeTiny),
@@ -372,7 +368,6 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 }
 
 func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	testTime := time.Now()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -439,7 +434,6 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 }
 
 func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
-	defer testleak.AfterTest(c)()
 	m := &MockExpr{}
 	ctx := mock.NewContext()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}

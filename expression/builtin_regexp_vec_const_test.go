@@ -60,8 +60,6 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinRegexpForConstants(c *C) {
-	defer testleak.AfterTest(c)()
-
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants()
 	err := bf.vecEvalInt(input, output)
 	c.Assert(err, IsNil)
