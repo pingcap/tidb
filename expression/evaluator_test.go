@@ -33,7 +33,7 @@ import (
 )
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
-var _ = Suite(&testEvaluatorSuite{})
+var _ = SerialSuites(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
