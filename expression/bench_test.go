@@ -365,15 +365,12 @@ func (g *numStrGener) gen() interface{} {
 
 // ipv6StrGener is used to generate ipv6 strings.
 type ipv6StrGener struct {
-	rangeInt64Gener
 }
 
 func (g *ipv6StrGener) gen() interface{} {
-	g.begin = 0
-	g.end = 256
 	var ip net.IP = make([]byte, net.IPv6len)
 	for i := range ip {
-		ip[i] = uint8(g.rangeInt64Gener.gen().(int64))
+		ip[i] = uint8(rand.Intn(256))
 	}
 	return ip.String()
 }
