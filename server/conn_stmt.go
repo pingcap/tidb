@@ -581,6 +581,9 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
+	if sv == nil {
+		return ""
+	}
 	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
 		return prepared.Stmt.Text() + sv.PreparedParams.String()
 	}
