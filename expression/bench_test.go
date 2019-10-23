@@ -459,16 +459,13 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
-type randJSONDurationWithLen struct {
-	len int32
-}
+type randJSONDurationWithLen struct{}
 
 func (g *randJSONDurationWithLen) gen() interface{} {
-	j := new(json.BinaryJSON)
-	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int31n(g.len)))); err != nil {
-		panic(err)
-	}
-	return *j
+	d := types.Duration{
+		Duration: time.Duration(time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond),
+		Fsp:      3}
+	return json.CreateBinary(d.String())
 }
 
 type vecExprBenchCase struct {
