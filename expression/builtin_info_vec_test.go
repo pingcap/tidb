@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
@@ -31,6 +32,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.CurrentRole:    {},
 	ast.TiDBIsDDLOwner: {},
 	ast.ConnectionID:   {},
+	ast.LastInsertId: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
