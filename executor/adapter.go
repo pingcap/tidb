@@ -244,9 +244,8 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 			a.PsStmt.Executor = nil
 		} else {
 			// CachedPlan type is already checked in last step
-			newIdxVals := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan).IndexValues
-			newHandle := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan).Handle
-			err = exec.ReBuildRange(newIdxVals, newHandle, startTs)
+			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
+			err = exec.Init(pointGetPlan, startTs)
 			if err != nil {
 				return nil, err
 			}

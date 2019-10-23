@@ -48,6 +48,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
+	err = e.Init(p, startTS)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	return e
 }
 
@@ -65,11 +70,11 @@ type PointGetExecutor struct {
 	lock     bool
 }
 
-// ReBuildRange used for cached execution for prepared point get plan
-func (e *PointGetExecutor) ReBuildRange(newIdxVals []types.Datum, newHandle int64, newStartTs uint64) error {
-	e.idxVals = newIdxVals
-	e.handle = newHandle
-	e.startTS = newStartTs
+// Init set fields needed for PointGetExecutor reuse
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) error {
+	e.idxVals = p.IndexValues
+	e.handle = p.Handle
+	e.startTS = startTs
 	e.done = false
 	return nil
 }
