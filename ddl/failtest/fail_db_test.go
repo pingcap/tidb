@@ -336,10 +336,14 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	start := -10
 	num := 4096
 	// first add some rows
+	dml := "insert into t1 test_add_index"
 	for i := start; i < num; i++ {
-		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
-		tk.MustExec(sql)
+		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+		if i != num-1 {
+			dml += ","
+		}
 	}
+	tk.MustExec(dml)
 
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
