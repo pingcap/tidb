@@ -462,17 +462,17 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		err = b.divideUU(rh, result, dividend, divisor, resulti64s)
+		err = b.divideUU(dividend, divisor, resulti64s)
 	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideUI(rh, result, dividend, divisor, resulti64s)
+		err = b.divideUI(dividend, divisor, resulti64s)
 	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.divideIU(rh, result, dividend, divisor, resulti64s)
+		err = b.divideIU(dividend, divisor, resulti64s)
 	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideII(rh, result, dividend, divisor, resulti64s)
+		err = b.divideII(dividend, divisor, resulti64s)
 	}
 	return err
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUU(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUU(dividend, divisor, resulti64s []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
@@ -482,7 +482,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(rhs, result *chunk.Column, d
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUI(dividend, divisor, resulti64s []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
@@ -496,7 +496,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, d
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideIU(dividend, divisor, resulti64s []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
@@ -510,7 +510,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, d
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideII(rhs, result *chunk.Column, dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideII(dividend, divisor, resulti64s []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
