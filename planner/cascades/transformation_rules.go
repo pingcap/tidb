@@ -220,7 +220,6 @@ func (r *PushSelDownSort) Match(expr *memo.ExprIter) bool {
 }
 
 // OnTransform implements Transformation interface.
-//
 // It will transform `sel->sort->x` to `sort->sel->x`.
 func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)

@@ -51,7 +51,6 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 		&ImplSelection{},
 	},
 	memo.OperandSort: {
-		&ImplNominalSort{},
 		&ImplSort{},
 	},
 }
@@ -194,7 +193,7 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 }
 
 // ImplSort is the implementation rule which implements LogicalSort
-// to PhysicalSort.
+// to PhysicalSort or NominalSort.
 type ImplSort struct {
 }
 
@@ -205,8 +204,15 @@ func (r *ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) 
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
+// If all of the sort items are columns, generate a NominalSort, otherwise
+// generate a PhysicalSort.
 func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	ls := expr.ExprNode.(*plannercore.LogicalSort)
+	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
+		newProp.ExpectedCnt = reqProp.ExpectedCnt
+		ns := plannercore.NominalSort{}.Init(ls.SCtx(), ls.SelectBlockOffset(), newProp)
+		return impl.NewNominalSortImpl(ns), nil
+	}
 	ps := plannercore.PhysicalSort{ByItems: ls.ByItems}.Init(
 		ls.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
@@ -214,29 +220,4 @@ func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	return impl.NewSortImpl(ps), nil
-}
-
-// ImplNominalSort is the implementation rule which implements LogicalSort
-// to NominalSort.
-type ImplNominalSort struct {
-	newProp *property.PhysicalProperty
-}
-
-// Match implements ImplementationRule match interface.
-func (r *ImplNominalSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	ls := expr.ExprNode.(*plannercore.LogicalSort)
-	if !plannercore.MatchItems(prop, ls.ByItems) {
-		return false
-	}
-	newProp, canPass := plannercore.GetPropByOrderByItems(ls.ByItems)
-	newProp.ExpectedCnt = prop.ExpectedCnt
-	r.newProp = newProp
-	return canPass
-}
-
-// OnImplement implements ImplementationRule OnImplement interface.
-func (r *ImplNominalSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
-	ls := expr.ExprNode.(*plannercore.LogicalSort)
-	ns := plannercore.NominalSort{}.Init(ls.SCtx(), ls.SelectBlockOffset(), r.newProp)
-	return impl.NewNominalSortImpl(ns), nil
 }

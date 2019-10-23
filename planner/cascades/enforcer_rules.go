@@ -30,7 +30,7 @@ type Enforcer interface {
 	// required physical property.
 	OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation)
 	// GetEnforceCost calculates cost of enforcing required physical property.
-	GetEnforceCost(inputCount float64) float64
+	GetEnforceCost(g *memo.Group, inputCount float64) float64
 }
 
 // GetEnforcerRules gets all candidate enforcer rules based
@@ -40,8 +40,6 @@ func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers
 		return
 	}
 	if !prop.IsEmpty() {
-		orderEnforcer.group = g
-		orderEnforcer.prop = prop
 		enforcers = append(enforcers, orderEnforcer)
 	}
 	return
@@ -49,9 +47,6 @@ func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers
 
 // OrderEnforcer enforces order property on child implementation.
 type OrderEnforcer struct {
-	group *memo.Group
-	sort  *plannercore.PhysicalSort
-	prop  *property.PhysicalProperty
 }
 
 var orderEnforcer = &OrderEnforcer{}
@@ -65,25 +60,26 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 
 // OnEnforce adds sort operator to satisfy required order property.
 func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
-	e.sort.SetChildren(child.GetPlan())
-	impl = implementation.NewSortImpl(e.sort)
-	return
-}
-
-// GetEnforceCost calculates cost of sort operator.
-func (e *OrderEnforcer) GetEnforceCost(inputCount float64) float64 {
-	lp := e.group.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode
+	childPlan := child.GetPlan()
 	sort := plannercore.PhysicalSort{
-		ByItems: make([]*plannercore.ByItems, 0, len(e.prop.Items)),
-	}.Init(lp.SCtx(), e.group.Prop.Stats, lp.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
-	for _, item := range e.prop.Items {
+		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Items)),
+	}.Init(childPlan.SCtx(), childPlan.Stats(), childPlan.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	for _, item := range reqProp.Items {
 		item := &plannercore.ByItems{
 			Expr: item.Col,
 			Desc: item.Desc,
 		}
 		sort.ByItems = append(sort.ByItems, item)
 	}
+	impl = implementation.NewSortImpl(sort).AttachChildren(child)
+	return
+}
+
+// GetEnforceCost calculates cost of sort operator.
+func (e *OrderEnforcer) GetEnforceCost(g *memo.Group, inputCount float64) float64 {
+	// We need a SessionCtx to calculate the cost of a sort.
+	sctx := g.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode.SCtx()
+	sort := plannercore.PhysicalSort{}.Init(sctx, nil, 0, nil)
 	cost := sort.GetCost(inputCount)
-	e.sort = sort
 	return cost
 }
