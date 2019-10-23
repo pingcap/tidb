@@ -25,12 +25,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -56,8 +54,6 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCeil(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -122,8 +118,6 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -170,8 +164,6 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -244,8 +236,6 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   []interface{}
 		expect float64
@@ -286,8 +276,6 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -324,8 +312,6 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -362,7 +348,6 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
@@ -383,7 +368,6 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret float64
@@ -424,7 +408,6 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRound(c *C) {
-	defer testleak.AfterTest(c)()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []interface{}
@@ -460,7 +443,6 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTruncate(c *C) {
-	defer testleak.AfterTest(c)()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []interface{}
@@ -504,7 +486,6 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCRC32(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -531,7 +512,6 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConv(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     []interface{}
 		expected interface{}
@@ -595,8 +575,6 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSign(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -631,7 +609,6 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDegrees(c *C) {
-	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate = false
 	cases := []struct {
@@ -672,7 +649,6 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -696,7 +672,6 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPi(c *C) {
-	defer testleak.AfterTest(c)()
 	f, err := funcs[ast.PI].getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
 
@@ -706,7 +681,6 @@ func (s *testEvaluatorSuite) TestPi(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRadians(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -738,7 +712,6 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSin(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -780,7 +753,6 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -819,8 +791,6 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -857,8 +827,6 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -895,8 +863,6 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   []interface{}
 		expect float64
@@ -933,7 +899,6 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -971,8 +936,6 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
