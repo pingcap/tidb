@@ -15,6 +15,7 @@ package cascades
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/expression"
 	"math"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -257,6 +258,7 @@ func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Gro
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
+	preparePossibleProperties(g)
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
@@ -369,4 +371,45 @@ func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.P
 		}
 	}
 	return impls, nil
+}
+
+// preparePossibleProperties recursively calls LogicalPlan PreparePossibleProperties
+// interface. It will fulfill the the possible properties fields of LogicalAggregation
+// of LogicalJoin.
+// TODO: When we have implemented IndexPaths, add tests for this function.
+func preparePossibleProperties(g *memo.Group) [][]*expression.Column {
+	groupProperties := make([][]*expression.Column, 0)
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*memo.GroupExpr)
+		childrenProperties := make([][][]*expression.Column, 0, len(expr.Children))
+		for _, child := range expr.Children {
+			childrenProperties = append(childrenProperties, preparePossibleProperties(child))
+		}
+		exprProperties := expr.ExprNode.PreparePossibleProperties(childrenProperties...)
+		for _, newProp := range exprProperties {
+			// Check if the prop has already been in `groupProperties`.
+			// Maybe use a `map[]` to do so.
+			duplicated := true
+			for _, existedProp := range groupProperties {
+				if len(newProp) != len(existedProp) {
+					continue
+				}
+				isSameProp := true
+				for i := range newProp {
+					if !newProp[i].Equal(nil, existedProp[i]) {
+						isSameProp = false
+						break
+					}
+				}
+				if !isSameProp {
+					duplicated = false
+					break
+				}
+			}
+			if !duplicated {
+				groupProperties = append(groupProperties, newProp)
+			}
+		}
+	}
+	return groupProperties
 }
