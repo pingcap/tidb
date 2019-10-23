@@ -1357,7 +1357,7 @@ func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Tim
 func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0.0 should not be converted to null, see #11203
 	if str == "0.0" {
-		return Time{}, nil
+		return Time{Time: ZeroTime, Type: tp}, nil
 	}
 	return parseTime(sc, str, tp, fsp, true)
 }
@@ -1399,7 +1399,7 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
-	// MySQL compatibility: 0.0 should not be converted to null, see #11203
+	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		return Time{Time: ZeroTime, Type: tp}, nil
 	}

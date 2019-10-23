@@ -5557,8 +5557,8 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if date.IsZero() {
 		// MySQL compatibility, #11203
 		// 0 | 0.0 should be converted to 0 value (not null)
-		n, isNull, err := b.args[0].EvalInt(b.ctx, row)
-		isOriginalIntOrDecimalZero := n == 0 && !isNull && err == nil
+		n, err := date.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
 		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
 		isOriginalStringZero := date.Fsp > 0
 		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
