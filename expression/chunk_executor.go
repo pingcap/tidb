@@ -346,6 +346,59 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 // filters, `isNull` indicates whether the result of the filter is null.
 // Filters is executed vectorized.
 func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+	// canVectorized used to check whether all of the filters can be vectorized evaluated
+	canVectorized := true
+	for _, filter := range filters {
+		if !filter.Vectorized() {
+			canVectorized = false
+			break
+		}
+	}
+
+	input := iterator.GetChunk()
+	sel := input.Sel()
+	var err error
+	if canVectorized && ctx.GetSessionVars().EnableVectorizedExpression {
+		selected, isNull, err = vectorizedFilter(ctx, filters, iterator, selected, isNull)
+	} else {
+		selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)
+	}
+	if err != nil || sel == nil {
+		return selected, isNull, err
+	}
+
+	// When the input.Sel() != nil, we need to handle the selected slice and input.Sel()
+	// Get the index which is not appeared in input.Sel() and set the selected[index] = false
+	selectedLength := len(selected)
+	unselected := allocZeroSlice(selectedLength)
+	defer deallocateZeroSlice(unselected)
+	// unselected[i] == 1 means that the i-th row is not selected
+	for i := 0; i < selectedLength; i++ {
+		unselected[i] = 1
+	}
+	for _, ind := range sel {
+		unselected[ind] = 0
+	}
+	for i := 0; i < selectedLength; i++ {
+		if selected[i] && unselected[i] == 1 {
+			selected[i] = false
+		}
+	}
+	return selected, isNull, err
+}
+
+// rowBasedFilter filters by row.
+func rowBasedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the sel in input chunk.
+	// Then the caller will handle the input.sel and selected slices.
+	input := iterator.GetChunk()
+	if input.Sel() != nil {
+		defer input.SetSel(input.Sel())
+		input.SetSel(nil)
+		iterator = chunk.NewIterator4Chunk(input)
+	}
+
 	selected = selected[:0]
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
@@ -389,5 +442,15 @@ func VectorizedFilterConsiderNull(ctx sessionctx.Context, filters []Expression, 
 			}
 		}
 	}
+	return selected, isNull, nil
+}
+
+// vectorizedFilter filters by vector.
+func vectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+	selected, isNull, err := VecEvalBool(ctx, filters, iterator.GetChunk(), selected, isNull)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	return selected, isNull, nil
 }

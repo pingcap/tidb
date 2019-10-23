@@ -1221,15 +1221,15 @@
     "Cases": [
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-        "Best": "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#1,Column#13)"
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#1,Column#13)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-        "Best": "IndexMergeJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#15,Column#1)"
+        "Best": "IndexJoin{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}(Column#15,Column#1)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c",
-        "Best": "IndexMergeJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#1,Column#15)->Projection"
+        "Best": "IndexJoin{IndexReader(Index(t.f)[[NULL,+inf]])->UnionScan([])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->UnionScan([])}(Column#1,Column#15)->Projection"
       }
     ]
   },

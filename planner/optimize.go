@@ -46,8 +46,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.PrepareTxnFuture(ctx)
 
 	var oriHint *bindinfo.HintsSet
-	if stmtNode, ok := node.(ast.StmtNode); ok {
-		oriHint = addHint(sctx, stmtNode)
+	if sctx.GetSessionVars().UsePlanBaselines {
+		if stmtNode, ok := node.(ast.StmtNode); ok {
+			oriHint = addHint(sctx, stmtNode)
+		}
 	}
 	plan, err := optimize(ctx, sctx, node, is)
 	// Restore the original hint in case of prepare stmt.
@@ -240,6 +242,20 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	return nil, err
 }
 
+// GenHintsFromSQL is used to generate hints from SQL and inject the hints into original SQL.
+func GenHintsFromSQL(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (string, error) {
+	err := plannercore.Preprocess(sctx, node, is)
+	if err != nil {
+		return "", err
+	}
+	p, err := Optimize(ctx, sctx, node, is)
+	if err != nil {
+		return "", err
+	}
+	return plannercore.GenHintsFromPhysicalPlan(p), nil
+}
+
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	bindinfo.GenHintsFromSQL = GenHintsFromSQL
 }
