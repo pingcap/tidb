@@ -115,14 +115,7 @@ var (
 )
 
 func (b *nullableBool) toBool() bool {
-	switch *b {
-	case nbTrue:
-		return true
-	case nbFalse:
-		return false
-	default:
-		return false
-	}
+	return b.Valid && b.Value
 }
 
 func (b *nullableBool) UnmarshalText(text []byte) error {

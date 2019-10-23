@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
@@ -56,6 +57,32 @@ func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
 	err = json.Unmarshal(data, &nb)
 	c.Assert(err, IsNil)
 	c.Assert(nb, Equals, nbTrue)
+
+	// Test for UnmarshalText
+	var log Log
+	_, err = toml.Decode("enable-error-stack = true", &log)
+	c.Assert(err, IsNil)
+	c.Assert(log.EnableErrorStack, Equals, nbTrue)
+
+	_, err = toml.Decode("enable-error-stack = \"\"", &log)
+	c.Assert(err, IsNil)
+	c.Assert(log.EnableErrorStack, Equals, nbUnset)
+
+	_, err = toml.Decode("enable-error-stack = 1", &log)
+	c.Assert(err, ErrorMatches, "Invalid value for bool type: 1")
+	c.Assert(log.EnableErrorStack, Equals, nbUnset)
+
+	// Test for UnmarshalJSON
+	err = json.Unmarshal([]byte("{\"enable-timestamp\":false}"), &log)
+	c.Assert(err, IsNil)
+	c.Assert(log.EnableTimestamp, Equals, nbFalse)
+
+	err = json.Unmarshal([]byte("{\"enable-timestamp\":1}"), &log)
+	c.Assert(err, ErrorMatches, "json: cannot unmarshal float64 into Go value of type nullableBool")
+
+	err = json.Unmarshal([]byte("{\"disable-timestamp\":{\"value\":true,\"valid\":true}}"), &log)
+	c.Assert(err, IsNil)
+	c.Assert(log.DisableTimestamp, Equals, nbTrue)
 }
 
 func (s *testConfigSuite) TestLogConfig(c *C) {
