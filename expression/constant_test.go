@@ -34,6 +34,10 @@ var _ = Suite(&testExpressionSuite{})
 
 type testExpressionSuite struct{}
 
+func (s *testExpressionSuite) TearDownSuite(c *C) {
+	defer testleak.AfterTest(c)
+}
+
 func newColumn(id int) *Column {
 	return newColumnWithType(id, types.NewFieldType(mysql.TypeLonglong))
 }

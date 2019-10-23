@@ -59,6 +59,7 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+	defer testleak.AfterTest(c)
 }
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {

@@ -35,6 +35,10 @@ var _ = check.Suite(&testUtilSuite{})
 type testUtilSuite struct {
 }
 
+func (s *testUtilSuite) TearDownSuite(c *check.C) {
+	defer testleak.AfterTest(c)
+}
+
 func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 	defer func() {
 		if r := recover(); r != nil {
