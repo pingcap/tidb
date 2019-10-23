@@ -871,6 +871,8 @@ func (b *builtinUTCTimeWithoutArgSig) vectorized() bool {
 	return false
 }
 
+// vecEvalDuration evals a builtinUTCTimeWithoutArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
@@ -1231,11 +1233,28 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 }
 
 func (b *builtinUTCTimestampWithoutArgSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalTime evals UTC_TIMESTAMP().
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	utc := nowTs.UTC()
+	result.ResizeTime(n, false)
+	t64s := result.Times()
+	for i := 0; i < n; i++ {
+		res, err := convertTimeToMysqlTime(utc, types.DefaultFsp, types.ModeHalfEven)
+		if err != nil {
+			return err
+		}
+		t64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinConvertTzSig) vectorized() bool {

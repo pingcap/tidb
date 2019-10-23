@@ -112,6 +112,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	//	{retEvalType: types.ETDatetime},
 	//},
 	ast.UTCTimestamp: {
+		{retEvalType: types.ETTimestamp},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 	//ast.Weekday: {
