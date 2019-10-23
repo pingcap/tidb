@@ -386,6 +386,28 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
 }
 
+func (s *testLockSuite) TestBatchResolveLocks(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l := s.mustGetLock(c, []byte("key"))
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
+	c.Assert(msBeforeLockExpired, Greater, int64(0))
+
+	lr := newLockResolver(s.store)
+	bo := NewBackoffer(context.Background(), GcResolveLockMaxBackoff)
+	loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Primary)
+	c.Assert(err, IsNil)
+	// Check BatchResolveLocks resolve the lock even the ttl is not expired.
+	succ, err := lr.BatchResolveLocks(bo, []*Lock{l}, loc.Region)
+	c.Assert(succ, IsTrue)
+	c.Assert(err, IsNil)
+
+	err = txn.Commit(context.Background())
+	c.Assert(err, NotNil)
+}
+
 func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
 	l := NewLock(&kvrpcpb.LockInfo{})
 	c.Assert(l.TTL, Equals, uint64(0))
