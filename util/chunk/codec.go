@@ -204,13 +204,13 @@ func init() {
 // 3. Go to step 1 when the input byte slice is consumed.
 type Decoder struct {
 	intermChk    *Chunk
-	colTypes     []*types.FieldType
+	codec        *Codec
 	remainedRows int
 }
 
 // NewDecoder creates a new Decoder object for decode a Chunk.
 func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
-	return &Decoder{intermChk: chk, colTypes: colTypes, remainedRows: 0}
+	return &Decoder{intermChk: chk, codec: NewCodec(colTypes), remainedRows: 0}
 }
 
 // Decode decodes multiple rows of Decoder.intermChk and stores the result in chk.
@@ -221,7 +221,7 @@ func (c *Decoder) Decode(chk *Chunk) {
 	if requiredRows > c.remainedRows {
 		requiredRows = c.remainedRows
 	}
-	for i := 0; i < len(c.colTypes); i++ {
+	for i := 0; i < chk.NumCols(); i++ {
 		c.decodeColumn(chk, i, requiredRows)
 	}
 	c.remainedRows -= requiredRows
@@ -230,8 +230,7 @@ func (c *Decoder) Decode(chk *Chunk) {
 // Reset decodes data and store the result in Decoder.intermChk. This decode phase uses pointer operations with less
 // CPU and memory costs.
 func (c *Decoder) Reset(data []byte) {
-	codec := NewCodec(c.colTypes)
-	codec.DecodeToChunk(data, c.intermChk)
+	c.codec.DecodeToChunk(data, c.intermChk)
 	c.remainedRows = c.intermChk.NumRows()
 }
 
@@ -241,7 +240,7 @@ func (c *Decoder) IsFinished() bool {
 }
 
 func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
-	elemLen := getFixedLen(c.colTypes[ordinal])
+	elemLen := getFixedLen(c.codec.colTypes[ordinal])
 	numDataBytes := int64(elemLen * requiredRows)
 	srcCol := c.intermChk.columns[ordinal]
 	destCol := chk.columns[ordinal]
