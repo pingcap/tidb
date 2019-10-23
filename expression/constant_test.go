@@ -15,7 +15,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/testleak"
 	"sort"
 	"strings"
 	"time"
@@ -33,10 +32,6 @@ import (
 var _ = Suite(&testExpressionSuite{})
 
 type testExpressionSuite struct{}
-
-func (s *testExpressionSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)
-}
 
 func newColumn(id int) *Column {
 	return newColumnWithType(id, types.NewFieldType(mysql.TypeLonglong))
