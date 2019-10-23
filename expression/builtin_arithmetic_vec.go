@@ -458,7 +458,7 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
+	fmt.Println(rhi64s)
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
 		err = b.divideUU(rh, result, lhi64s, rhi64s, resulti64s)
@@ -477,6 +477,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(rhs, result *chunk.Column, l
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
 			continue
 		}
 		if result.IsNull(i) {
@@ -493,6 +494,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(rhs, result *chunk.Column, l
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
 			continue
 		}
 		if result.IsNull(i) {
@@ -513,6 +515,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(rhs, result *chunk.Column, l
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
 			continue
 		}
 		if result.IsNull(i) {
@@ -533,6 +536,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideII(rhs, result *chunk.Column, l
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
 			continue
 		}
 		if result.IsNull(i) {
