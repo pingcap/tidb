@@ -81,8 +81,15 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
+	logLevel = "warn"
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
+
+	old := config.GetGlobalConfig()
+	new := *old
+	new.Log.SlowThreshold = 30000 // 30s
+	config.StoreGlobalConfig(&new)
+
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
@@ -96,8 +103,13 @@ var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
 var _ = Suite(&testSuite5{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
+var _ = Suite(&testSuiteAgg{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
+var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -1407,7 +1419,7 @@ func (s *testSuiteP1) TestTablePKisHandleScan(c *C) {
 	}
 }
 
-func (s *testSuiteP1) TestIndexScan(c *C) {
+func (s *testSuite8) TestIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2388,7 +2400,7 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
-func (s *testSuiteP2) TestLowResolutionTSORead(c *C) {
+func (s *testSuite2) TestLowResolutionTSORead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@autocommit=1")
 	tk.MustExec("use test")
@@ -2828,7 +2840,7 @@ func (s *testSuite1) TearDownTest(c *C) {
 	}
 }
 
-func (s *testSuite1) TestAddIndexPriority(c *C) {
+func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -3955,6 +3967,24 @@ func (s *testSuite7) TearDownTest(c *C) {
 	}
 }
 
+type testSuite8 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite8) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
 func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
@@ -4436,9 +4466,10 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 }
 
 func setOOMAction(action string) {
-	newConf := config.NewConfig()
+	old := config.GetGlobalConfig()
+	newConf := *old
 	newConf.OOMAction = action
-	config.StoreGlobalConfig(newConf)
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
