@@ -784,14 +784,6 @@ func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression
 			filterConds = append(filterConds, conds[i])
 			conds = append(conds[:i], conds[i+1:]...)
 		}
-		//baseCol := expression.ExtractColumns(conds[i])
-		//for _, col := range baseCol {
-		//	if col.VirtualExpr != nil {
-		//		filterConds = append(filterConds, conds[i])
-		//		conds = append(conds[:i], conds[i+1:]...)
-		//		break
-		//	}
-		//}
 	}
 	return conds, filterConds
 }
