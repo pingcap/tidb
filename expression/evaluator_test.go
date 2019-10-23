@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -63,12 +62,10 @@ func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().PlanColumnID = 0
-	testleak.BeforeTest()
 }
 
 func (s *testEvaluatorSuite) TearDownTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
-	testleak.AfterTest(c)()
 }
 
 func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
