@@ -122,11 +122,11 @@ func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *ch
 		return err
 	}
 	i64s := result.Int64s()
-	for i := 0; i < len(i64s); i++ {
-		if result.IsNull(i) {
-			continue
+	for i := len(i64s) - 1; i >= 0; i-- {
+		if !result.IsNull(i) {
+			b.ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
+			break
 		}
-		b.ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
 	}
 	return nil
 }
