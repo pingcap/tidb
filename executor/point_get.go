@@ -38,16 +38,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
-		tblInfo:      p.TblInfo,
-		idxInfo:      p.IndexInfo,
-		idxVals:      p.IndexValues,
-		handle:       p.Handle,
-		startTS:      startTS,
-		lock:         p.Lock,
 	}
-	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
+	b.isSelectForUpdate = p.IsForUpdate
 	err = e.Init(p, startTS)
 	if err != nil {
 		b.err = err
@@ -70,12 +64,15 @@ type PointGetExecutor struct {
 	lock     bool
 }
 
-// Init set fields needed for PointGetExecutor reuse
+// Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) error {
-	e.idxVals = p.IndexValues
+	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
+	e.idxInfo = p.IndexInfo
+	e.idxVals = p.IndexValues
 	e.startTS = startTs
 	e.done = false
+	e.lock = p.Lock
 	return nil
 }
 
@@ -101,9 +98,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
-	if err != nil {
-		return err
+	// cached point get execution, PointGetExecutor will be reused using "Init" function
+	// and snapshotTS is always max value
+	if e.snapshot == nil {
+		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+		if err != nil {
+			return err
+		}
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
