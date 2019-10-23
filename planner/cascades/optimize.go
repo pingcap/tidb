@@ -29,25 +29,23 @@ var DefaultOptimizer = NewOptimizer()
 
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
-	transformationRuleMap map[memo.Operand][]Transformation
+	transformationRuleMap map[memo.Operand][]TransformationID
 	implementationRuleMap map[memo.Operand][]ImplementationRule
-	patternMap            map[Transformation]*memo.Pattern
 }
 
 // NewOptimizer returns a cascades optimizer with default transformation
 // rules and implementation rules.
 func NewOptimizer() *Optimizer {
-	opt := &Optimizer{
+	return &Optimizer{
 		transformationRuleMap: defaultTransformationMap,
 		implementationRuleMap: defaultImplementationMap,
 	}
-	return opt.init()
 }
 
 // ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
-func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
+func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]TransformationID) *Optimizer {
 	opt.transformationRuleMap = rules
-	return opt.init()
+	return opt
 }
 
 // ResetImplementationRules resets the implementationRuleMap of the optimizer, and returns the optimizer.
@@ -56,9 +54,9 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 	return opt
 }
 
-// GetTransformationRules gets the all the candidate transformation rules of the optimizer
+// GetTransformationIDs gets the all the candidate TransformationIDs of the optimizer
 // based on the logical plan node.
-func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
+func (opt *Optimizer) GetTransformationIDs(node plannercore.LogicalPlan) []TransformationID {
 	return opt.transformationRuleMap[memo.GetOperand(node)]
 }
 
@@ -66,27 +64,6 @@ func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Tra
 // for the logical plan node.
 func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
 	return opt.implementationRuleMap[memo.GetOperand(node)]
-}
-
-// GetPattern returns the Pattern of the given Transformation rule.
-// It returns the cached Pattern if possible. Otherwise, generate a new Pattern.
-func (opt *Optimizer) GetPattern(rule Transformation) *memo.Pattern {
-	if p, ok := opt.patternMap[rule]; ok {
-		return p
-	}
-	return rule.GetPattern()
-}
-
-// init pre-caches all of the Patterns generated from the optimizer's
-// transformation rules.
-func (opt *Optimizer) init() *Optimizer {
-	opt.patternMap = make(map[Transformation]*memo.Pattern)
-	for _, rules := range opt.transformationRuleMap {
-		for _, rule := range rules {
-			opt.patternMap[rule] = rule.GetPattern()
-		}
-	}
-	return opt
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
@@ -218,8 +195,9 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 // findMoreEquiv finds and applies the matched transformation rules.
 func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
-		pattern := opt.GetPattern(rule)
+	for _, ruleID := range opt.GetTransformationIDs(expr.ExprNode) {
+		rule := GetTransformationRule(ruleID)
+		pattern := GetPattern(ruleID)
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}

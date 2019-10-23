@@ -40,14 +40,51 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-var defaultTransformationMap = map[memo.Operand][]Transformation{
+// TransformationID is the handle of a Transformation. When we want to add
+// a new Transformation rule, we should first add its ID here, and create
+// the rule in the transformationRuleList below with the same order.
+type TransformationID int
+
+const (
+	rulePushSelDownTableScan TransformationID = iota
+	rulePushSelDownTableGather
+	ruleEnumeratePaths
+)
+
+var transformationRuleList = []Transformation{
+	&PushSelDownTableScan{},
+	&PushSelDownTableGather{},
+	&EnumeratePaths{},
+}
+
+var defaultTransformationMap = map[memo.Operand][]TransformationID{
 	memo.OperandSelection: {
-		&PushSelDownTableScan{},
-		&PushSelDownTableGather{},
+		rulePushSelDownTableScan,
+		rulePushSelDownTableGather,
 	},
 	memo.OperandDataSource: {
-		&EnumeratePaths{},
+		ruleEnumeratePaths,
 	},
+}
+
+var patternMap []*memo.Pattern
+
+// init initializes the patternMap when initializing the cascade package.
+func init() {
+	patternMap = make([]*memo.Pattern, len(transformationRuleList))
+	for id, rule := range transformationRuleList {
+		patternMap[id] = rule.GetPattern()
+	}
+}
+
+// GetTransformationRule returns the Transformation rule by its ID.
+func GetTransformationRule(id TransformationID) Transformation {
+	return transformationRuleList[id]
+}
+
+// GetPattern returns the Pattern of the given TransformationID.
+func GetPattern(id TransformationID) *memo.Pattern {
+	return patternMap[id]
 }
 
 // PushSelDownTableScan pushes the selection down to TableScan.
