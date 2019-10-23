@@ -60,24 +60,24 @@ func (s *testMemoSuite) TestOperandMatch(c *C) {
 }
 
 func (s *testMemoSuite) TestNewPattern(c *C) {
-	p := NewPattern(OperandAny)
+	p := NewPattern(OperandAny, EngineAll)
 	c.Assert(p.Operand, Equals, OperandAny)
 	c.Assert(p.Children, IsNil)
 
-	p = NewPattern(OperandJoin)
+	p = NewPattern(OperandJoin, EngineAll)
 	c.Assert(p.Operand, Equals, OperandJoin)
 	c.Assert(p.Children, IsNil)
 }
 
 func (s *testMemoSuite) TestPatternSetChildren(c *C) {
-	p := NewPattern(OperandAny)
-	p.SetChildren(NewPattern(OperandLimit))
+	p := NewPattern(OperandAny, EngineAll)
+	p.SetChildren(NewPattern(OperandLimit, EngineAll))
 	c.Assert(len(p.Children), Equals, 1)
 	c.Assert(p.Children[0].Operand, Equals, OperandLimit)
 	c.Assert(p.Children[0].Children, IsNil)
 
-	p = NewPattern(OperandJoin)
-	p.SetChildren(NewPattern(OperandProjection), NewPattern(OperandSelection))
+	p = NewPattern(OperandJoin, EngineAll)
+	p.SetChildren(NewPattern(OperandProjection, EngineAll), NewPattern(OperandSelection, EngineAll))
 	c.Assert(len(p.Children), Equals, 2)
 	c.Assert(p.Children[0].Operand, Equals, OperandProjection)
 	c.Assert(p.Children[0].Children, IsNil)

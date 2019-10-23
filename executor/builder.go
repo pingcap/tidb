@@ -1858,7 +1858,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 
 func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) Executor {
 	e := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin)).(*IndexLookUpJoin)
-	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	idxHash := &IndexNestedLoopHashJoin{
+		IndexLookUpJoin: *e,
+		keepOuterOrder:  v.KeepOuterOrder,
+	}
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
