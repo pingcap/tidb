@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
@@ -47,12 +46,10 @@ type testInferTypeSuite struct {
 }
 
 func (s *testInferTypeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 }
 
 func (s *testInferTypeSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
 }
 
 func (s *testInferTypeSuite) TestInferType(c *C) {

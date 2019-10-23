@@ -36,6 +36,9 @@ var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = SerialSuites(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
+	testleak.BeforeTest()
+	defer testleak.AfterTestT(t)
+
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	TestingT(t)
@@ -59,12 +62,10 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)
 }
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().PlanColumnID = 0
-	testleak.BeforeTest()
 }
 
 func (s *testEvaluatorSuite) TearDownTest(c *C) {
