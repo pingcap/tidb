@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
@@ -99,8 +98,6 @@ func makeDatums(i interface{}) []types.Datum {
 }
 
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
@@ -116,8 +113,6 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLock(c *C) {
-	defer testleak.AfterTest(c)()
-
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)

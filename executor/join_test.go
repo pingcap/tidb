@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite2) TestJoinPanic(c *C) {
+func (s *testSuite5) TestJoinPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -38,7 +38,7 @@ func (s *testSuite2) TestJoinPanic(c *C) {
 	c.Check(err, NotNil)
 }
 
-func (s *testSuite2) TestJoinInDisk(c *C) {
+func (s *testSuite5) TestJoinInDisk(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newConf := config.NewConfig()
 	newConf.OOMUseTmpStorage = true
@@ -66,7 +66,7 @@ func (s *testSuite2) TestJoinInDisk(c *C) {
 	result.Check(testkit.Rows("2 2 2 3"))
 }
 
-func (s *testSuite2) TestJoin(c *C) {
+func (s *testSuite5) TestJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 200")
@@ -303,7 +303,7 @@ func (s *testSuite2) TestJoin(c *C) {
 	tk.MustQuery("select min(t2.b) from t1 right join t2 on t2.a=t1.a right join t3 on t2.a=t3.a left join t4 on t3.a=t4.a").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite2) TestJoinCast(c *C) {
+func (s *testSuite5) TestJoinCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var result *testkit.Result
 
