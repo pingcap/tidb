@@ -68,7 +68,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CampaignOwnerCounter)
 	prometheus.MustRegister(ConnGauge)
 	prometheus.MustRegister(PreparedStmtGauge)
-	prometheus.MustRegister(CriticalErrorCounter)
+	prometheus.MustRegister(BinlogErrorCounter)
 	prometheus.MustRegister(DDLCounter)
 	prometheus.MustRegister(AddIndexTotalCounter)
 	prometheus.MustRegister(DDLWorkerHistogram)

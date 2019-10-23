@@ -101,7 +101,7 @@ func SetIgnoreError(on bool) {
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	skip := atomic.LoadUint32(&skipBinlog)
 	if skip > 0 {
-		metrics.CriticalErrorCounter.Add(1)
+		metrics.BinlogErrorCounter.Add(1)
 		return nil
 	}
 
@@ -115,7 +115,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		logutil.BgLogger().Error("write binlog failed", zap.Error(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
 			logutil.BgLogger().Error("write binlog fail but error ignored")
-			metrics.CriticalErrorCounter.Add(1)
+			metrics.BinlogErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
 			return nil

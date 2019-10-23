@@ -68,12 +68,12 @@ var (
 			Help:      "Counter of execute errors.",
 		}, []string{LblType})
 
-	CriticalErrorCounter = prometheus.NewCounter(
+	BinlogErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "critical_error_total",
-			Help:      "Counter of critical errors.",
+			Name:      "binlog_error_total",
+			Help:      "Counter of binlog errors.",
 		})
 
 	EventStart        = "start"
