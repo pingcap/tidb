@@ -226,14 +226,11 @@ func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
-	newSort := plannercore.LogicalSort{ByItems: sort.ByItems}.Init(sort.SCtx(), sort.SelectBlockOffset())
-	newSel := plannercore.LogicalSelection{Conditions: sel.Conditions}.Init(sel.SCtx(), sel.SelectBlockOffset())
-
-	newSelExpr := memo.NewGroupExpr(newSel)
+	newSelExpr := memo.NewGroupExpr(sel)
 	newSelExpr.Children = append(newSelExpr.Children, childGroup)
 	newSelGroup := memo.NewGroupWithSchema(newSelExpr, childGroup.Prop.Schema)
 
-	newSortExpr := memo.NewGroupExpr(newSort)
+	newSortExpr := memo.NewGroupExpr(sort)
 	newSortExpr.Children = append(newSortExpr.Children, newSelGroup)
 	return []*memo.GroupExpr{newSortExpr}, true, false, nil
 }

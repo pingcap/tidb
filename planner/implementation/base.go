@@ -44,9 +44,9 @@ func (impl *baseImpl) GetPlan() plannercore.PhysicalPlan {
 }
 
 func (impl *baseImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
-	childrenPlan := make([]plannercore.PhysicalPlan, 0, len(children))
-	for _, child := range children {
-		childrenPlan = append(childrenPlan, child.GetPlan())
+	childrenPlan := make([]plannercore.PhysicalPlan, len(children))
+	for i, child := range children {
+		childrenPlan[i] = child.GetPlan()
 	}
 	impl.plan.SetChildren(childrenPlan...)
 	return impl

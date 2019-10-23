@@ -203,6 +203,7 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo) (_ *property.
 	}
 	ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
+	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	if ts.Handle != nil {
 		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
 	} else {
