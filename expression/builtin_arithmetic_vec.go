@@ -447,8 +447,7 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	}
 	result.MergeNulls(lh)
 	rh := result
-	dividend := lh.Int64s()
-	divisor := rh.Int64s()
+	dividend, divisor := lh.Int64s(), rh.Int64s()
 	for i := 0; i < len(divisor); i++ {
 		if !rh.IsNull(i) && divisor[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
@@ -516,11 +515,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideII(dividend, divisor, resulti64
 			continue
 		}
 		lh, rh := dividend[i], divisor[i]
-		val, err := types.DivInt64(lh, rh)
-		if err != nil {
-			return err
-		}
-		resulti64s[i] = val
+		resulti64s[i] = lh / rh
 	}
 	return nil
 }
