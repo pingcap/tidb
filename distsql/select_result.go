@@ -69,7 +69,7 @@ type selectResult struct {
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int // record the selectResp.Size() when it is initialized.
 	respChkIdx       int
-	respArrowDecoder *chunk.Decoder
+	respChunkDecoder *chunk.Decoder
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
@@ -184,8 +184,8 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
-	if r.respArrowDecoder == nil {
-		r.respArrowDecoder = chunk.NewDecoder(
+	if r.respChunkDecoder == nil {
+		r.respChunkDecoder = chunk.NewDecoder(
 			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
 			r.fieldTypes,
 		)
@@ -199,13 +199,13 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 			}
 		}
 
-		if r.respArrowDecoder.IsFinished() {
-			r.respArrowDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
+		if r.respChunkDecoder.IsFinished() {
+			r.respChunkDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
 		}
 
-		r.respArrowDecoder.Decode(chk)
+		r.respChunkDecoder.Decode(chk)
 
-		if r.respArrowDecoder.IsFinished() {
+		if r.respChunkDecoder.IsFinished() {
 			r.respChkIdx++
 		}
 	}

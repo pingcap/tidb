@@ -247,7 +247,7 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 	destCol := chk.columns[ordinal]
 
 	if elemLen == varElemLen {
-		// For var-length types, we need to adjust the offsets after appending to descCol.
+		// For var-length types, we need to adjust the offsets after appending to destCol.
 		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
 		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
 		destCol.offsets = append(destCol.offsets, srcCol.offsets[1:requiredRows+1]...)
@@ -268,8 +268,8 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 		startIdx := (destCol.length - 1) >> 3
 		for i := 0; i < numNullBitmapBytes; i++ {
 			destCol.nullBitmap[startIdx+i] |= srcCol.nullBitmap[i] << bitOffset
-			// the total number of elements maybe is small than bitMapLen * 8, and last some bits in srcCol.nullBitmap are useless.
-			if bitMapLen > startIdx+i+1 {
+			// The high order 8-bitOffset bits in `srcCol.nullBitmap[i]` should be appended to the low order of the next slot.
+			if startIdx+i+1 < bitMapLen {
 				destCol.nullBitmap[startIdx+i+1] |= srcCol.nullBitmap[i] >> (8 - bitOffset)
 			}
 		}
