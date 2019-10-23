@@ -212,6 +212,21 @@ type expressionRewriter struct {
 	disableFoldCounter int
 }
 
+func (er *expressionRewriter) ctxStackLen() int {
+	return len(er.ctxStack)
+}
+
+func (er *expressionRewriter) ctxStackPop(num int) {
+	l := er.ctxStackLen()
+	er.ctxStack = er.ctxStack[:l-num]
+	er.ctxNameStk = er.ctxNameStk[:l-num]
+}
+
+func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *types.FieldName) {
+	er.ctxStack = append(er.ctxStack, col)
+	er.ctxNameStk = append(er.ctxNameStk, name)
+}
+
 // constructBinaryOpFunction converts binary operator functions
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
@@ -299,13 +314,11 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = ErrInvalidGroupFuncUse
 			return inNode, true
 		}
-		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
-		er.ctxNameStk = append(er.ctxNameStk, er.names[index])
+		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
-			er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
-			er.ctxNameStk = append(er.ctxNameStk, er.names[index])
+			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 			return inNode, true
 		}
 	case *ast.CompareSubqueryExpr:
@@ -684,8 +697,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
-		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
-		er.ctxNameStk = append(er.ctxNameStk, er.p.OutputNames()[er.p.Schema().Len()-1])
+		er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
 		physicalPlan, err := DoOptimize(ctx, er.b.optFlag, np)
 		if err != nil {
@@ -698,11 +710,9 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			return v, true
 		}
 		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
-			er.ctxStack = append(er.ctxStack, expression.One.Clone())
-			er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+			er.ctxStackAppend(expression.One.Clone(), types.EmptyName)
 		} else {
-			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
-			er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+			er.ctxStackAppend(expression.Zero.Clone(), types.EmptyName)
 		}
 	}
 	return v, true
@@ -819,13 +829,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		}
 	}
 
+	er.ctxStackPop(1)
 	if asScalar {
 		col := er.p.Schema().Columns[er.p.Schema().Len()-1]
-		er.ctxStack[len(er.ctxStack)-1] = col
-		er.ctxNameStk[len(er.ctxNameStk)-1] = er.p.OutputNames()[er.p.Schema().Len()-1]
-	} else {
-		er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
-		er.ctxNameStk = er.ctxNameStk[:len(er.ctxNameStk)-1]
+		er.ctxStackAppend(col, er.p.OutputNames()[er.p.Schema().Len()-1])
 	}
 	return v, true
 }
@@ -849,11 +856,9 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 				er.err = err1
 				return v, true
 			}
-			er.ctxStack = append(er.ctxStack, expr)
-			er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+			er.ctxStackAppend(expr, types.EmptyName)
 		} else {
-			er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
-			er.ctxNameStk = append(er.ctxNameStk, er.p.OutputNames()[er.p.Schema().Len()-1])
+			er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 		}
 		return v, true
 	}
@@ -879,14 +884,12 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			er.err = err1
 			return v, true
 		}
-		er.ctxStack = append(er.ctxStack, expr)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
+		er.ctxStackAppend(&expression.Constant{
 			Value:   rows[0][0],
 			RetType: np.Schema().Columns[0].GetType(),
-		})
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		}, types.EmptyName)
 	}
 	return v, true
 }
@@ -905,16 +908,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr:
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
-		er.ctxStack = append(er.ctxStack, value)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
 		value, er.err = expression.ParamMarkerExpression(er.sctx, v)
 		if er.err != nil {
 			return retNode, false
 		}
-		er.ctxStack = append(er.ctxStack, value)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(value, types.EmptyName)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
@@ -967,23 +968,20 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.evalDefaultExpr(v)
 	// TODO: Perhaps we don't need to transcode these back to generic integers/strings
 	case *ast.TrimDirectionExpr:
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
+		er.ctxStackAppend(&expression.Constant{
 			Value:   types.NewIntDatum(int64(v.Direction)),
 			RetType: types.NewFieldType(mysql.TypeTiny),
-		})
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		}, types.EmptyName)
 	case *ast.TimeUnitExpr:
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
+		er.ctxStackAppend(&expression.Constant{
 			Value:   types.NewStringDatum(v.Unit.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
-		})
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		}, types.EmptyName)
 	case *ast.GetFormatSelectorExpr:
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
+		er.ctxStackAppend(&expression.Constant{
 			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
-		})
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		}, types.EmptyName)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1035,8 +1033,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.err = err
 			return
 		}
-		er.ctxStack = append(er.ctxStack, f)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
 	var val string
@@ -1066,8 +1063,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
-	er.ctxStack = append(er.ctxStack, e)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackAppend(e, types.EmptyName)
 }
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
@@ -1114,10 +1110,8 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	if er.err != nil {
 		return
 	}
-	er.ctxStack = er.ctxStack[:stkLen-2]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-2]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(2)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
@@ -1146,10 +1140,8 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 		return
 	}
 	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
-	er.ctxStack = er.ctxStack[:stkLen-1]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-1]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(1)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
@@ -1165,14 +1157,12 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 				return
 			}
 			pos = intNum
-			er.ctxStack = er.ctxStack[:stkLen-1]
-			er.ctxNameStk = er.ctxNameStk[:stkLen-1]
+			er.ctxStackPop(1)
 		}
 		er.err = err
 	}
 	if er.err == nil && pos > 0 && pos <= er.schema.Len() {
-		er.ctxStack = append(er.ctxStack, er.schema.Columns[pos-1])
-		er.ctxNameStk = append(er.ctxNameStk, er.names[pos-1])
+		er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
 	} else {
 		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
 	}
@@ -1189,10 +1179,8 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		return
 	}
 	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
-	er.ctxStack = er.ctxStack[:stkLen-1]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-1]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(1)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
@@ -1211,10 +1199,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	leftFt := args[0].GetType()
 	leftEt, leftIsNull := leftFt.EvalType(), leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
-		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
-		er.ctxNameStk = er.ctxNameStk[:stkLen-lLen-1]
-		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackPop(lLen + 1)
+		er.ctxStackAppend(expression.Null.Clone(), types.EmptyName)
 		return
 	}
 	if leftEt == types.ETInt {
@@ -1258,10 +1244,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			}
 		}
 	}
-	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-lLen-1]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(lLen + 1)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
@@ -1311,10 +1295,8 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		er.err = err
 		return
 	}
-	er.ctxStack = er.ctxStack[:stkLen-argsLen]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-argsLen]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(argsLen)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
@@ -1355,10 +1337,8 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}
 
-	er.ctxStack = er.ctxStack[:l-2]
-	er.ctxNameStk = er.ctxNameStk[:l-2]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(2)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
@@ -1368,10 +1348,8 @@ func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 		return
 	}
 	function := er.notToExpression(v.Not, ast.Regexp, &v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
-	er.ctxStack = er.ctxStack[:l-2]
-	er.ctxNameStk = er.ctxNameStk[:l-2]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(2)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
@@ -1381,15 +1359,13 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 	for i := stkLen - length; i < stkLen; i++ {
 		rows = append(rows, er.ctxStack[i])
 	}
-	er.ctxStack = er.ctxStack[:stkLen-length]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-length]
+	er.ctxStackPop(length)
 	function, err := er.newFunction(ast.RowFunc, rows[0].GetType(), rows...)
 	if err != nil {
 		er.err = err
 		return
 	}
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
@@ -1429,10 +1405,8 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 			return
 		}
 	}
-	er.ctxStack = er.ctxStack[:stkLen-3]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-3]
-	er.ctxStack = append(er.ctxStack, function)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(3)
+	er.ctxStackAppend(function, types.EmptyName)
 }
 
 // rewriteFuncCall handles a FuncCallExpr and generates a customized function.
@@ -1454,10 +1428,8 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
 			name := er.ctxNameStk[stackLen-2]
 			newCol := col.Clone().(*expression.Column)
-			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-			er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
-			er.ctxStack = append(er.ctxStack, newCol)
-			er.ctxNameStk = append(er.ctxNameStk, name)
+			er.ctxStackPop(len(v.Args))
+			er.ctxStackAppend(newCol, name)
 			return true
 		}
 
@@ -1489,10 +1461,8 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			er.err = err
 			return true
 		}
-		er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-		er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
-		er.ctxStack = append(er.ctxStack, funcIf)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackPop(len(v.Args))
+		er.ctxStackAppend(funcIf, types.EmptyName)
 		return true
 	default:
 		return false
@@ -1512,17 +1482,14 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 
 	var function expression.Expression
-	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-	er.ctxNameStk = er.ctxNameStk[:stackLen-len(v.Args)]
+	er.ctxStackPop(len(v.Args))
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
 		function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
 		c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
-		er.ctxStack = append(er.ctxStack, c)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(c, types.EmptyName)
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
-		er.ctxStack = append(er.ctxStack, function)
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(function, types.EmptyName)
 	}
 }
 
@@ -1534,8 +1501,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
-		er.ctxStack = append(er.ctxStack, column)
-		er.ctxNameStk = append(er.ctxNameStk, er.names[idx])
+		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
@@ -1543,8 +1509,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		idx, err = expression.FindFieldName(outerName, v)
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
-			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)})
-			er.ctxNameStk = append(er.ctxNameStk, outerName[idx])
+			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
 			return
 		}
 		if err != nil {
@@ -1559,8 +1524,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		if idx >= 0 {
-			er.ctxStack = append(er.ctxStack, join.redundantSchema.Columns[idx])
-			er.ctxNameStk = append(er.ctxNameStk, join.redundantNames[idx])
+			er.ctxStackAppend(join.redundantSchema.Columns[idx], join.redundantNames[idx])
 			return
 		}
 	}
@@ -1645,10 +1609,8 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	if er.err != nil {
 		return
 	}
-	er.ctxStack = er.ctxStack[:stkLen-1]
-	er.ctxNameStk = er.ctxNameStk[:stkLen-1]
-	er.ctxStack = append(er.ctxStack, val)
-	er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+	er.ctxStackPop(1)
+	er.ctxStackAppend(val, types.EmptyName)
 }
 
 // hasCurrentDatetimeDefault checks if column has current_timestamp default value
