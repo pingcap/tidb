@@ -81,7 +81,6 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
-	logLevel = "warn"
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 
