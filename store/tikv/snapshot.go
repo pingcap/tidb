@@ -147,12 +147,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		s.cached = make(map[string][]byte, len(m))
 	}
 	for _, key := range keys {
-		// Updating cache using the reliable truth from TiKV, we set cache[key] = nil to mean non-exist.
-		if value, ok := m[string(key)]; ok {
-			s.cached[string(key)] = value
-		} else {
-			s.cached[string(key)] = nil
-		}
+		s.cached[string(key)] = m[string(key)]
 	}
 
 	return m, nil
