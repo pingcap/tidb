@@ -428,6 +428,9 @@ type SessionVars struct {
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
+	// UsePlanBaselines indicates whether we will use plan baselines to adjust plan.
+	UsePlanBaselines bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -514,6 +517,7 @@ func NewSessionVars() *SessionVars {
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -883,6 +887,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBRecordPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -944,6 +950,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	// It's a global variable, but it also wants to be cached in server.
 	case TiDBMaxDeltaSchemaCount:
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
+	case TiDBUsePlanBaselines:
+		s.UsePlanBaselines = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1146,6 +1154,12 @@ const (
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPlan is used to record the query plan.
+	SlowLogPlan = "Plan"
+	// SlowLogPlanPrefix is the prefix of the plan value.
+	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogPlanSuffix is the suffix of the plan value.
+	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
@@ -1168,6 +1182,7 @@ type SlowQueryLogItems struct {
 	Prepared       bool
 	HasMoreResults bool
 	PrevStmt       string
+	Plan           string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1271,6 +1286,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	if len(logItems.Plan) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
