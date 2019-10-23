@@ -139,8 +139,8 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 	return rewriter.pop(), nil
 }
 
-// FindFieldName finds the column name from []*namingForMySQLProtocol.
-func FindFieldName(names []*types.FieldName, astCol *ast.ColumnName) (int, error) {
+// FindFieldName finds the column name from NameSlice.
+func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, name := range names {

@@ -768,11 +768,9 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		// Field is a column reference.
 		idx := p.Schema().ColumnIndex(col)
 		var name *types.FieldName
+		// The column maybe the one from join's redundant part.
+		// TODO: Fully support USING/NATURAL JOIN, refactor here.
 		if idx == -1 {
-			ids := make([]int64, 0, p.Schema().Len())
-			for _, col := range p.Schema().Columns {
-				ids = append(ids, col.UniqueID)
-			}
 			if join, ok := p.(*LogicalJoin); ok {
 				idx = join.redundantSchema.ColumnIndex(col)
 				name = join.redundantNames[idx]

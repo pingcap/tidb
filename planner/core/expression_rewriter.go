@@ -148,12 +148,19 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 	if rewriter.p != nil {
 		curColLen := rewriter.p.Schema().Len()
 		defer func() {
-			names := rewriter.p.OutputNames()
-			names = names[:curColLen]
+			names := rewriter.p.OutputNames().Shallow()[:curColLen]
 			for i := curColLen; i < rewriter.p.Schema().Len(); i++ {
 				names = append(names, types.EmptyName)
 			}
 			// After rewriting finished, only old columns are visible.
+			// e.g. select * from t where t.a in (select t1.a from t1);
+			// The output columns before we enter the subquery are the columns from t.
+			// But when we leave the subquery `t.a = (select t1.a from t1 where t1.b=)`, we got a Apply operator
+			// and the output columns become [t.*, t1.*]. But t1.* is used only inside the subquery. If there's another filter
+			// which is also a subquery where t1 is involved. The name resolving will fail if we still expose the column from
+			// the previous subquery.
+			// So here we just reset the names to empty to avoid this situation.
+			// TODO: implement ScalarSubQuery and resolve it during optimizing. In building phase, we will not change the plan's structure.
 			rewriter.p.SetOutputNames(names)
 		}()
 	}
