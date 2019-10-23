@@ -780,14 +780,18 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	filterConds := make([]expression.Expression, 0)
 	for i := len(conds) - 1; i >= 0; i-- {
-		baseCol := expression.ExtractColumns(conds[i])
-		for _, col := range baseCol {
-			if col.VirtualExpr != nil {
-				filterConds = append(filterConds, conds[i])
-				conds = append(conds[:i], conds[i+1:]...)
-				break
-			}
+		if expression.ContainVirtualColumn(conds[i : i+1]) {
+			filterConds = append(filterConds, conds[i])
+			conds = append(conds[:i], conds[i+1:]...)
 		}
+		//baseCol := expression.ExtractColumns(conds[i])
+		//for _, col := range baseCol {
+		//	if col.VirtualExpr != nil {
+		//		filterConds = append(filterConds, conds[i])
+		//		conds = append(conds[:i], conds[i+1:]...)
+		//		break
+		//	}
+		//}
 	}
 	return conds, filterConds
 }

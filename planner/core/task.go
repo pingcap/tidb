@@ -62,7 +62,7 @@ type copTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols           []*expression.Column
 	idxMergePartPlans []PhysicalPlan
-	// rootTaskCons stores select conditions containing virtual columns.
+	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
 }
