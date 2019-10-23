@@ -88,6 +88,7 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	_, err = se.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
 }
 
 func tearDownIntegrationSuiteTest(s *testIntegrationSuite, c *C) {
