@@ -80,3 +80,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/check => github.com/SunRunAway/check v0.0.0-20191023073510-8b9f282a88e2
