@@ -279,11 +279,19 @@ func (e *InsertExec) Open(ctx context.Context) error {
 }
 
 func (e *InsertExec) initEvalBuffer4Dup() {
+	// Use public columns for new row.
+	numCols := len(e.Table.Cols())
+	// Use writable columns for old row for update.
 	numWritableCols := len(e.Table.WritableCols())
-	evalBufferTypes := make([]*types.FieldType, 2*numWritableCols)
-	for i, col := range e.Table.WritableCols() {
-		evalBufferTypes[i] = &col.FieldType
-		evalBufferTypes[i+numWritableCols] = &col.FieldType
+
+	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols)
+
+	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
+	for _, col := range e.Table.WritableCols() {
+		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+	}
+	for _, col := range e.Table.Cols() {
+		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
 	}
 	if e.hasExtraHandle {
 		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
