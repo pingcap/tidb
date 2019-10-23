@@ -90,11 +90,11 @@ func (b *builtinIsIPv4Sig) vectorized() bool {
 	return true
 }
 func (b *builtinJSONAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONAnyValueSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalJSON(b.ctx, input, result)
 }
 
 func (b *builtinRealAnyValueSig) vectorized() bool {
