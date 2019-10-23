@@ -3030,16 +3030,17 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 				return
 			default:
 			}
-			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = b + 1")
+			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = values(b) + 1")
 			if tk2Err != nil {
 				return
 			}
 		}
 	}()
-	tk1.MustExec("alter table nn add column c int not null default 0")
+	tk1.MustExec("alter table nn add column c int not null default 3 after a")
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
+	tk1.MustQuery("select * from nn").Check(testkit.Rows("1 3 2"))
 }
 
 type testMaxTableRowIDContext struct {
