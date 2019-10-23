@@ -35,6 +35,7 @@ type CreateIdxOpt struct {
 	SkipCheck         bool // If true, skip all the unique indices constraint check.
 	kv.AssertionProto      // If not nil, check assertion.
 	Ctx               context.Context
+	Untouched         bool // If true, the index key/value is no need to commit.
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -57,6 +58,11 @@ func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
 	return func(opt *CreateIdxOpt) {
 		opt.AssertionProto = x
 	}
+}
+
+// IndexIsUntouched uses to indicate the index kv is untouched.
+var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
+	opt.Untouched = true
 }
 
 // WithCtx returns a CreateIdxFunc.

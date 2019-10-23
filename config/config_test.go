@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -40,6 +41,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Strategy = "hash"
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
+	conf.TiKVClient.RegionCacheTTL = 600
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
@@ -69,6 +71,10 @@ txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
+region-cache-ttl=6000
+[stmt-summary]
+max-stmt-count=1000
+max-sql-length=1024
 `)
 
 	c.Assert(err, IsNil)
@@ -85,10 +91,13 @@ max-batch-size=128
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
+	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
+	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
+	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -99,7 +108,7 @@ max-batch-size=128
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
 	// Test for lof config.
-	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false))
+	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.DisableErrorStack }))
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{

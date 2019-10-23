@@ -250,21 +250,6 @@ func (d *MyDecimal) GetDigitsFrac() int8 {
 	return d.digitsFrac
 }
 
-// Copy copies a new *MyDecimal from itself.
-func (d *MyDecimal) Copy() *MyDecimal {
-	if d == nil {
-		return nil
-	}
-	dst := &MyDecimal{
-		digitsInt:  d.digitsInt,
-		digitsFrac: d.digitsFrac,
-		resultFrac: d.resultFrac,
-		negative:   d.negative,
-	}
-	copy(dst.wordBuf[:], d.wordBuf[:])
-	return dst
-}
-
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
@@ -1500,6 +1485,7 @@ func DecimalNeg(from *MyDecimal) *MyDecimal {
 // Note: DO NOT use `from1` or `from2` as `to` since the metadata
 // of `to` may be changed during evaluating.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
+	from1, from2, to = validateArgs(from1, from2, to)
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
 		return doAdd(from1, from2, to)
@@ -1510,12 +1496,35 @@ func DecimalAdd(from1, from2, to *MyDecimal) error {
 
 // DecimalSub subs one decimal from another, sets the result to 'to'.
 func DecimalSub(from1, from2, to *MyDecimal) error {
+	from1, from2, to = validateArgs(from1, from2, to)
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
 		_, err := doSub(from1, from2, to)
 		return err
 	}
 	return doAdd(from1, from2, to)
+}
+
+func validateArgs(f1, f2, to *MyDecimal) (*MyDecimal, *MyDecimal, *MyDecimal) {
+	if to == nil {
+		return f1, f2, to
+	}
+	if f1 == to {
+		tmp := *f1
+		f1 = &tmp
+	}
+	if f2 == to {
+		tmp := *f2
+		f2 = &tmp
+	}
+	to.digitsFrac = 0
+	to.digitsInt = 0
+	to.resultFrac = 0
+	to.negative = false
+	for i := range to.wordBuf {
+		to.wordBuf[i] = 0
+	}
+	return f1, f2, to
 }
 
 func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
@@ -1838,6 +1847,7 @@ DecimalMul multiplies two decimals.
     digits, fast multiplication must be implemented.
 */
 func DecimalMul(from1, from2, to *MyDecimal) error {
+	from1, from2, to = validateArgs(from1, from2, to)
 	var (
 		err         error
 		wordsInt1   = digitsToWords(int(from1.digitsInt))
@@ -1966,6 +1976,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 // to       - quotient
 // fracIncr - increment of fraction
 func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) error {
+	from1, from2, to = validateArgs(from1, from2, to)
 	to.resultFrac = myMinInt8(from1.resultFrac+int8(fracIncr), mysql.MaxDecimalScale)
 	return doDivMod(from1, from2, to, nil, fracIncr)
 }
@@ -1995,6 +2006,7 @@ DecimalMod does modulus of two decimals.
    thus, there's no requirement for M or N to be integers
 */
 func DecimalMod(from1, from2, to *MyDecimal) error {
+	from1, from2, to = validateArgs(from1, from2, to)
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	return doDivMod(from1, from2, nil, to, 0)
 }

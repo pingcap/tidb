@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +61,8 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
 
@@ -112,15 +115,19 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			// Parse slow log field.
 			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				line = line[len(variable.SlowLogRowPrefixStr):]
-				fieldValues := strings.Split(line, " ")
-				for i := 0; i < len(fieldValues)-1; i += 2 {
-					field := fieldValues[i]
-					if strings.HasSuffix(field, ":") {
-						field = field[:len(field)-1]
-					}
-					err = st.setFieldValue(tz, field, fieldValues[i+1])
-					if err != nil {
-						return rows, err
+				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
+					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
+				} else {
+					fieldValues := strings.Split(line, " ")
+					for i := 0; i < len(fieldValues)-1; i += 2 {
+						field := fieldValues[i]
+						if strings.HasSuffix(field, ":") {
+							field = field[:len(field)-1]
+						}
+						err = st.setFieldValue(tz, field, fieldValues[i+1])
+						if err != nil {
+							return rows, err
+						}
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
@@ -195,9 +202,11 @@ type slowQueryTuple struct {
 	maxWaitTime       float64
 	maxWaitAddress    string
 	memMax            int64
+	prevStmt          string
 	sql               string
 	isInternal        bool
 	succ              bool
+	plan              string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
@@ -267,6 +276,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.memMax, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogSucc:
 		st.succ, err = strconv.ParseBool(value)
+	case variable.SlowLogPlan:
+		st.plan = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -313,8 +324,24 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
+	record = append(record, types.NewStringDatum(parsePlan(st.plan)))
+	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
+}
+
+func parsePlan(planString string) string {
+	if len(planString) <= len(variable.SlowLogPlanPrefix)+len(variable.SlowLogPlanSuffix) {
+		return planString
+	}
+	planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
+	decodePlanString, err := plancodec.DecodePlan(planString)
+	if err == nil {
+		planString = decodePlanString
+	} else {
+		logutil.BgLogger().Error("decode plan in slow log failed", zap.String("plan", planString), zap.Error(err))
+	}
+	return planString
 }
 
 // ParseTime exports for testing.

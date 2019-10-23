@@ -39,7 +39,7 @@ type mockVecPlusIntBuiltinFunc struct {
 
 func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 	if p.enableAlloc {
-		return p.get(types.ETInt, n)
+		return p.bufAllocator.get(types.ETInt, n)
 	}
 	if p.buf == nil {
 		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
@@ -49,7 +49,7 @@ func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 
 func (p *mockVecPlusIntBuiltinFunc) releaseBuf(buf *chunk.Column) {
 	if p.enableAlloc {
-		p.put(buf)
+		p.bufAllocator.put(buf)
 	}
 }
 
@@ -207,7 +207,7 @@ func (p *mockBuiltinDouble) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 func (p *mockBuiltinDouble) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.get(p.evalType, input.NumRows()); err != nil {
+	if buf, err = p.baseBuiltinFunc.bufAllocator.get(p.evalType, input.NumRows()); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalString(p.ctx, input, buf); err != nil {
@@ -218,7 +218,7 @@ func (p *mockBuiltinDouble) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		str := buf.GetString(i)
 		result.AppendString(str + str)
 	}
-	p.baseBuiltinFunc.put(buf)
+	p.baseBuiltinFunc.bufAllocator.put(buf)
 	return nil
 }
 
@@ -268,7 +268,7 @@ func (p *mockBuiltinDouble) vecEvalDuration(input *chunk.Chunk, result *chunk.Co
 func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.get(p.evalType, input.NumRows()); err != nil {
+	if buf, err = p.baseBuiltinFunc.bufAllocator.get(p.evalType, input.NumRows()); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalJSON(p.ctx, input, buf); err != nil {
@@ -290,7 +290,7 @@ func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column
 		}
 		result.AppendJSON(j)
 	}
-	p.baseBuiltinFunc.put(buf)
+	p.baseBuiltinFunc.bufAllocator.put(buf)
 	return nil
 }
 
@@ -739,4 +739,75 @@ func (s *testEvaluatorSuite) TestVectorizedCheck(c *C) {
 	rowF, _, _, _ := genMockRowDouble(types.ETInt, false)
 	sf = &ScalarFunction{Function: rowF}
 	c.Assert(sf.Vectorized(), IsFalse)
+}
+
+func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
+	typeFloat := types.NewFieldType(mysql.TypeFloat)
+	col := &Column{Index: 0, RetType: typeFloat}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{typeFloat}, 1024)
+	for i := 0; i < 1024; i++ {
+		chk.AppendFloat32(0, rand.Float32())
+	}
+	result := chunk.NewColumn(typeFloat, 1024)
+	return col, chk, result
+}
+
+func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
+	col, chk, result := genFloat32Col()
+	ctx := mock.NewContext()
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+	it := chunk.NewIterator4Chunk(chk)
+	i := 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := col.EvalReal(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
+		i++
+	}
+
+	// set Sel
+	n := chk.NumRows()
+	sel := make([]int, n/2)
+	for i := 0; i < n; i += 2 {
+		sel = append(sel, i)
+	}
+	chk.SetSel(sel)
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := col.EvalReal(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
+		i++
+	}
+
+	// set an empty Sel
+	sel = sel[:0]
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+}
+
+func BenchmarkFloat32ColRow(b *testing.B) {
+	col, chk, _ := genFloat32Col()
+	ctx := mock.NewContext()
+	it := chunk.NewIterator4Chunk(chk)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			if _, _, err := col.EvalReal(ctx, row); err != nil {
+				b.Fatal(err)
+			}
+
+		}
+	}
+}
+
+func BenchmarkFloat32ColVec(b *testing.B) {
+	col, chk, result := genFloat32Col()
+	ctx := mock.NewContext()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := col.VecEvalReal(ctx, chk, result); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

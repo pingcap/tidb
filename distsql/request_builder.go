@@ -127,6 +127,12 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	return builder
 }
 
+// SetStoreType sets "StoreType" for "kv.Request".
+func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuilder {
+	builder.Request.StoreType = storeType
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
@@ -154,7 +160,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
-	builder.Request.ReplicaRead = sv.ReplicaRead
+	builder.Request.ReplicaRead = sv.GetReplicaRead()
 	return builder
 }
 

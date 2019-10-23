@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite4) TestDirtyTransaction(c *C) {
+func (s *testSuite7) TestDirtyTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -94,7 +94,7 @@ func (s *testSuite4) TestDirtyTransaction(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testSuite4) TestUnionScanWithCastCondition(c *C) {
+func (s *testSuite7) TestUnionScanWithCastCondition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ta (a varchar(20))")
@@ -107,7 +107,7 @@ func (s *testSuite4) TestUnionScanWithCastCondition(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
+func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -164,6 +164,7 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustQuery("select b from t use index (idx)").Check(testkit.Rows("1", "2"))
 	tk.MustExec("update t set b=b+2 where a=2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "3 2"))
 	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("2 3", "3 2"))
@@ -211,5 +212,33 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("insert into t1 values (2, 2, null), (3, 3, 'a');")
 	tk.MustQuery("select a,b from t1 use index(idx) where b>1 and c is not null;").Check(testkit.Rows("3 3"))
 	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+
+	// Test insert and update with untouched index.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,index idx(b));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2);")
+	tk.MustExec("update t1 set c=c+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+
+	// Test insert and update with untouched unique index.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,unique index idx(b));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2);")
+	tk.MustExec("update t1 set c=c+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1;")
+
+	// Test update with 2 index, one untouched, the other index is touched.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,unique index idx1(a), index idx2(b));")
+	tk.MustExec("insert into t1 values (1, 1, 1);")
+	tk.MustExec("update t1 set b=b+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx2);").Check(testkit.Rows("1 2 1"))
 	tk.MustExec("admin check table t1;")
 }

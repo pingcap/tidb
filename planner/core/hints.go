@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // BlockHintProcessor processes hints at different level of sql statement.
@@ -31,6 +33,11 @@ type BlockHintProcessor struct {
 	QbHints          map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
 	Ctx              sessionctx.Context
 	selectStmtOffset int
+}
+
+// MaxSelectStmtOffset returns the current stmt offset.
+func (p *BlockHintProcessor) MaxSelectStmtOffset() int {
+	return p.selectStmtOffset
 }
 
 // Enter implements Visitor interface.
@@ -123,11 +130,20 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType node
 }
 
 // getHintOffset gets the offset of stmt that the hints take effects.
-func (p *BlockHintProcessor) getHintOffset(hint *ast.TableOptimizerHint, nodeType nodeType, currentOffset int) int {
-	if hint.QBName.L != "" {
-		return p.getBlockOffset(hint.QBName, nodeType)
+func (p *BlockHintProcessor) getHintOffset(qbName model.CIStr, nodeType nodeType, currentOffset int) int {
+	if qbName.L != "" {
+		return p.getBlockOffset(qbName, nodeType)
 	}
 	return currentOffset
+}
+
+func (p *BlockHintProcessor) checkTableQBName(tables []ast.HintTable, nodeType nodeType) bool {
+	for _, table := range tables {
+		if table.QBName.L != "" && p.getBlockOffset(table.QBName, nodeType) < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // getCurrentStmtHints extracts all hints that take effects at current stmt.
@@ -139,8 +155,8 @@ func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint
 		if hint.HintName.L == hintQBName {
 			continue
 		}
-		offset := p.getHintOffset(hint, nodeType, currentOffset)
-		if offset < 0 {
+		offset := p.getHintOffset(hint.QBName, nodeType, currentOffset)
+		if offset < 0 || !p.checkTableQBName(hint.Tables, nodeType) {
 			var sb strings.Builder
 			ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 			err := hint.Restore(ctx)
@@ -153,4 +169,150 @@ func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint
 		p.QbHints[offset] = append(p.QbHints[offset], hint)
 	}
 	return p.QbHints[currentOffset]
+}
+
+func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := hint.Restore(ctx)
+	// There won't be any error for optimizer hint.
+	if err != nil {
+		logutil.BgLogger().Warn("restore hint failed", zap.Error(err))
+	}
+	return sb.String()
+}
+
+// GenHintsFromPhysicalPlan generates hints from physical plan.
+func GenHintsFromPhysicalPlan(p Plan) string {
+	var hints []*ast.TableOptimizerHint
+	switch pp := p.(type) {
+	case *Update:
+		hints = genHintsFromPhysicalPlan(pp.SelectPlan, typeUpdate)
+	case *Delete:
+		hints = genHintsFromPhysicalPlan(pp.SelectPlan, typeDelete)
+	case PhysicalPlan:
+		hints = genHintsFromPhysicalPlan(pp, typeSelect)
+	}
+	hintsStr := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		hintsStr = append(hintsStr, restoreOptimizerHint(hint))
+	}
+	return strings.Join(hintsStr, ", ")
+}
+
+func generateQBName(nodeType nodeType, blockOffset int) model.CIStr {
+	if nodeType == typeDelete && blockOffset == 0 {
+		return model.NewCIStr(defaultDeleteBlockName)
+	} else if nodeType == typeUpdate && blockOffset == 0 {
+		return model.NewCIStr(defaultUpdateBlockName)
+	}
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset))
+}
+
+func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
+	if asName != nil && asName.L != "" {
+		return *asName
+	}
+	return tblName
+}
+
+func extractTableAsName(p PhysicalPlan) *model.CIStr {
+	if len(p.Children()) > 1 {
+		return nil
+	}
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		if ts.TableAsName.L != "" {
+			return ts.TableAsName
+		}
+		return &ts.Table.Name
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		if is.TableAsName.L != "" {
+			return is.TableAsName
+		}
+		return &is.Table.Name
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		if is.TableAsName.L != "" {
+			return is.TableAsName
+		}
+		return &is.Table.Name
+	}
+	return nil
+}
+
+func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+	for _, child := range children {
+		if child.SelectBlockOffset() == -1 {
+			continue
+		}
+		var tableName *model.CIStr
+		if child.SelectBlockOffset() != parentOffset {
+			tableName = &sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+		} else {
+			tableName = extractTableAsName(child)
+		}
+		if tableName == nil {
+			continue
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
+			HintName: model.NewCIStr(joinType),
+			Tables:   []ast.HintTable{{TableName: *tableName}},
+		})
+		break
+	}
+	return res
+}
+
+func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.TableOptimizerHint) {
+	for _, child := range p.Children() {
+		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
+	}
+	switch pp := p.(type) {
+	case *PhysicalTableReader:
+		tbl := pp.TablePlans[0].(*PhysicalTableScan)
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintUseIndex),
+			Tables:   []ast.HintTable{{TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+		})
+	case *PhysicalIndexLookUpReader:
+		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintUseIndex),
+			Tables:   []ast.HintTable{{TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Indexes:  []model.CIStr{index.Index.Name},
+		})
+	case *PhysicalIndexReader:
+		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintUseIndex),
+			Tables:   []ast.HintTable{{TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Indexes:  []model.CIStr{index.Index.Name},
+		})
+	case *PhysicalHashAgg:
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintHashAgg),
+		})
+	case *PhysicalStreamAgg:
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintStreamAgg),
+		})
+	case *PhysicalMergeJoin:
+		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
+	case *PhysicalHashJoin:
+		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
+	case *PhysicalIndexJoin:
+		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+	case *PhysicalIndexMergeJoin:
+		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+	}
+	return res
 }

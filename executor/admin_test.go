@@ -44,7 +44,7 @@ func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }
 
-func (s *testSuite2) TestAdminRecoverIndex(c *C) {
+func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -145,7 +145,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 	r.Check(testkit.Rows("0"))
 
-	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX()")
 	r.Check(testkit.Rows("5"))
 
 	r = tk.MustQuery("admin recover index admin_test c2")
@@ -158,7 +158,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
+func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -209,7 +209,7 @@ func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
-func (s *testSuite2) TestAdminCleanupIndex(c *C) {
+func (s *testSuite5) TestAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -288,7 +288,7 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
+func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -336,7 +336,7 @@ func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
+func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -380,7 +380,7 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
-	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX()")
 	r.Check(testkit.Rows("3"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
 	r.Check(testkit.Rows("2003"))
@@ -399,7 +399,7 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
+func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -631,7 +631,7 @@ func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("admin check index t idx;")
 }
 
-func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
+func (s *testSuite5) TestAdminCheckWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_t_s")
