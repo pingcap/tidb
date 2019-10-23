@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 const (
@@ -70,6 +71,12 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
+	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
+	HintReadFromStorage = "read_from_storage"
+	// HintTiFlash is a label represents the tiflash storage type.
+	HintTiFlash = "tiflash"
+	// HintTiKV is a label represents the tikv storage type.
+	HintTiKV = "tikv"
 )
 
 const (
@@ -228,8 +235,13 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 		} else {
 			leftCond = append(leftCond, expr)
 		}
-	case SemiJoin, AntiSemiJoin, InnerJoin:
+	case SemiJoin, InnerJoin:
 		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
+	case AntiSemiJoin:
+		if filterCond {
+			leftCond = append(leftCond, expr)
+		}
 		rightCond = append(rightCond, expr)
 	}
 	return leftCond, rightCond
@@ -257,18 +269,13 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 					arg0, arg1 = arg1, arg0
 				}
 				if leftCol != nil && rightCol != nil {
-					// Do not derive `is not null` for anti join, since it may cause wrong results.
-					// For example:
-					// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
-					// `select * from t t1 where t1.a not in (select a from t t2 where t1.b = t2.b` does not imply `t1.b is not null`,
-					// `select * from t t1 where not exists (select * from t t2 where t2.a = t1.a)` does not imply `t1.a is not null`,
-					if deriveLeft && p.JoinType != AntiSemiJoin {
+					if deriveLeft {
 						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
-					if deriveRight && p.JoinType != AntiSemiJoin {
+					if deriveRight {
 						if isNullRejected(ctx, right.Schema(), expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
 							rightCond = append(rightCond, notNullExpr)
@@ -376,6 +383,22 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+}
+
+func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	var alias *hintTableInfo
+	if len(ds.TableAsName.L) != 0 {
+		alias = &hintTableInfo{name: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
+	} else {
+		alias = &hintTableInfo{name: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
+		ds.preferStoreType |= preferTiFlash
 	}
 }
 
@@ -1973,6 +1996,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
+		tiflashTables                               []hintTableInfo
 		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2011,6 +2035,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintReadFromStorage:
+			if hint.StoreType.L == HintTiFlash {
+				tiflashTables = tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2020,6 +2048,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		indexNestedLoopJoinTables: INLJTables,
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
+		flashTables:               tiflashTables,
 		aggHints:                  aggHints,
 	})
 }
@@ -2085,6 +2114,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
 		return nil, err
+	}
+	if b.capFlag&canExpandAST != 0 {
+		originalFields = sel.Fields.Fields
 	}
 
 	if sel.GroupBy != nil {
@@ -2387,6 +2419,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.handleHelper.pushMap(nil)
 	}
 	ds.SetSchema(schema)
+	ds.setPreferredStoreType(b.TableHints())
 
 	// Init fullIdxCols, fullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
@@ -2456,25 +2489,48 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 	}
 
-	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
-	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
-	for i := range tableInfo.View.Cols {
-		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
-		if col == nil {
-			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
+		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	}
+
+	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
+}
+
+func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
+	columnInfo := tableInfo.Cols()
+	cols := selectLogicalPlan.Schema().Columns
+	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
+	// store the origin columns' names of the underlying SelectStmt used when
+	// creating the view.
+	if tableInfo.View.Cols != nil {
+		cols = cols[:0]
+		for _, info := range columnInfo {
+			col := selectLogicalPlan.Schema().FindColumnByName(info.Name.L)
+			if col == nil {
+				return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+			}
+			cols = append(cols, col)
+		}
+	}
+
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+	projExprs := make([]expression.Expression, 0, len(tableInfo.Columns))
+	for i, col := range cols {
+		origColName := col.ColName
+		if tableInfo.View.Cols != nil {
+			origColName = tableInfo.View.Cols[i]
 		}
 		projSchema.Append(&expression.Column{
 			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 			TblName:     col.TblName,
 			OrigTblName: col.OrigTblName,
-			ColName:     tableInfo.Cols()[i].Name,
-			OrigColName: tableInfo.View.Cols[i],
+			ColName:     columnInfo[i].Name,
+			OrigColName: origColName,
 			DBName:      col.DBName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
 	}
-
 	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
@@ -2568,7 +2624,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	}
 
 	ap := &LogicalApply{LogicalJoin: *join}
-	ap.tp = TypeApply
+	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
 }

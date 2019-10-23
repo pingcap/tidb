@@ -205,6 +205,8 @@ type PhysicalTableScan struct {
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
 
+	StoreType kv.StoreType
+
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
@@ -300,14 +302,16 @@ type PhysicalIndexMergeJoin struct {
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
-	// keepOuterOrder indicates whether keeping the output result order as the
+	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
-	keepOuterOrder bool
+	KeepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
