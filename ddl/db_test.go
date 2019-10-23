@@ -94,6 +94,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	cfg := config.GetGlobalConfig()
 	newCfg := *cfg
 	newCfg.EnableTableLock = true
+	newCfg.Log.SlowThreshold = 10000
 	config.StoreGlobalConfig(&newCfg)
 
 	s.cluster = mocktikv.NewCluster()
@@ -114,7 +115,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	c.Assert(err, IsNil)
 
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
 }
 
 func tearDownSuite(s *testDBSuite, c *C) {
