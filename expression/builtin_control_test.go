@@ -21,12 +21,10 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -56,7 +54,6 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIf(c *C) {
-	defer testleak.AfterTest(c)()
 	stmtCtx := s.ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
@@ -98,7 +95,6 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIfNull(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		arg1     interface{}
 		arg2     interface{}

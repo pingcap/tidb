@@ -590,7 +590,7 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
-func (s *testSuite6) TestShardRowIDBits(c *C) {
+func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")

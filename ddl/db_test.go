@@ -95,6 +95,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	cfg := config.GetGlobalConfig()
 	newCfg := *cfg
 	newCfg.EnableTableLock = true
+	newCfg.Log.SlowThreshold = 10000
 	config.StoreGlobalConfig(&newCfg)
 
 	s.cluster = mocktikv.NewCluster()
@@ -226,6 +227,17 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	done <- errors.Trace(err)
 }
 
+func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
+	dml := fmt.Sprintf("insert into %s values", tbl)
+	for i := start; i < end; i++ {
+		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+		if i != end-1 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+}
+
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
@@ -235,9 +247,7 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
-	for i := 0; i < count; i++ {
-		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
-	}
+	batchInsert(s.tk, "t1", 0, count)
 	// add some duplicate rows
 	for i := count - 10; i < count; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
@@ -1331,9 +1341,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 
 	num := defaultBatchSize + 10
 	// add some rows
-	for i := 0; i < num; i++ {
-		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
-	}
+	batchInsert(s.tk, "t2", 0, num)
 
 	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
@@ -1520,15 +1528,22 @@ func (s *testDBSuite2) TestDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("create database drop_col_db")
 	s.tk.MustExec("use drop_col_db")
-	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
-	num := 50
+	num := 25
+	multiDDL := make([]string, 0, num)
+	sql := "create table t2 (c1 int, c2 int, c3 int, "
+	for i := 4; i < 4+num; i++ {
+		multiDDL = append(multiDDL, fmt.Sprintf("alter table t2 drop column c%d", i))
+
+		if i != 3+num {
+			sql += fmt.Sprintf("c%d int, ", i)
+		} else {
+			sql += fmt.Sprintf("c%d int)", i)
+		}
+	}
+	s.tk.MustExec(sql)
 	dmlDone := make(chan error, num)
 	ddlDone := make(chan error, num)
 
-	multiDDL := make([]string, 0, num)
-	for i := 0; i < num/2; i++ {
-		multiDDL = append(multiDDL, "alter table t2 add column c4 int", "alter table t2 drop column c4")
-	}
 	testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
 	for i := 0; i < num; i++ {
 		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
@@ -2466,16 +2481,17 @@ func (s *testDBSuite2) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 				return
 			default:
 			}
-			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = b + 1")
+			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = values(b) + 1")
 			if tk2Err != nil {
 				return
 			}
 		}
 	}()
-	tk1.MustExec("alter table nn add column c int not null default 0")
+	tk1.MustExec("alter table nn add column c int not null default 3 after a")
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
+	tk1.MustQuery("select * from nn").Check(testkit.Rows("1 3 2"))
 }
 
 func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
