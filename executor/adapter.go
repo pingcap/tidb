@@ -786,6 +786,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
 		Succ:           succ,
+		Plan:           getPlanTree(a.Plan),
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -819,6 +820,35 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+// getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanTree(p plannercore.Plan) string {
+	cfg := config.GetGlobalConfig()
+	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
+		return ""
+	}
+	var selectPlan plannercore.PhysicalPlan
+	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
+		selectPlan = physicalPlan
+	} else {
+		switch x := p.(type) {
+		case *plannercore.Delete:
+			selectPlan = x.SelectPlan
+		case *plannercore.Update:
+			selectPlan = x.SelectPlan
+		case *plannercore.Insert:
+			selectPlan = x.SelectPlan
+		}
+	}
+	if selectPlan == nil {
+		return ""
+	}
+	planTree := plannercore.EncodePlan(selectPlan)
+	if len(planTree) == 0 {
+		return planTree
+	}
+	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
