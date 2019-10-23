@@ -720,11 +720,6 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
-	nowTs, err := getStmtTimestamp(b.ctx)
-	if err != nil {
-		return err
-	}
-	utc := nowTs.UTC()
 	result.ResizeTime(n, false)
 	t64s := result.Times()
 	result.MergeNulls(buf)
@@ -739,9 +734,13 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 		if fsp < int64(types.MinFsp) {
 			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
-		res, err := convertTimeToMysqlTime(utc, int8(fsp), types.ModeHalfEven)
+		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int8(fsp))
 		if err != nil {
 			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
 		t64s[i] = res
 	}
@@ -1291,13 +1290,13 @@ func (b *builtinUTCTimestampWithoutArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	nowTs, err := getStmtTimestamp(b.ctx)
+	res, isNull, err := evalUTCTimestampWithFsp(b.ctx, types.DefaultFsp)
 	if err != nil {
 		return err
 	}
-	res, err := convertTimeToMysqlTime(nowTs.UTC(), types.DefaultFsp, types.ModeHalfEven)
-	if err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 	result.ResizeTime(n, false)
 	t64s := result.Times()
