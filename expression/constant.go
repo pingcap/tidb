@@ -119,6 +119,49 @@ func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
 }
 
+// VecEval evaluates this expression in a vectorized manner.
+func (c *Constant) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (err error) {
+	eType := c.RetType.EvalType()
+	switch eType {
+	case types.ETInt:
+		err = c.VecEvalInt(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETReal:
+		err = c.VecEvalReal(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETDuration:
+		err = c.VecEvalDuration(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		err = c.VecEvalTime(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETString:
+		err = c.VecEvalString(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETJson:
+		err = c.VecEvalJSON(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETDecimal:
+		err = c.VecEvalDecimal(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (c *Constant) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if c.DeferredExpr == nil {

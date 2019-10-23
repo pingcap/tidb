@@ -809,16 +809,41 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
+	remainGroup := false
+	e.groupRows = e.groupRows[:0]
 	for !e.executed {
 		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
 			return err
 		}
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.groupChecker.meetNewGroup(e.inputRow)
-			if err != nil {
-				return err
+		if e.executed {
+			break
+		}
+		inputChk := e.inputIter.GetChunk()
+		err := e.groupChecker.meetNewGroup(inputChk)
+		if err != nil {
+			return err
+		}
+
+		numGroups := len(e.groupChecker.groupRowsIndex)
+		begin := 0
+		for k := 0; k < numGroups; k++ {
+			if k == 0 && remainGroup {
+				var equal bool
+				// do something to comapre the remain group and the first group
+				if !equal {
+					err = e.appendResult2Chunk(chk)
+					if err != nil {
+						return err
+					}
+					e.groupRows = e.groupRows[:0]
+				}
 			}
-			if meetNewGroup {
+			end := e.groupChecker.groupRowsIndex[k]
+			for i := begin; i < end; i++ {
+				e.groupRows = append(e.groupRows, inputChk.GetRow(i))
+			}
+			begin = end
+			if k != numGroups-1 {
 				err := e.consumeGroupRows()
 				if err != nil {
 					return err
@@ -827,11 +852,9 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				if err != nil {
 					return err
 				}
-			}
-			e.groupRows = append(e.groupRows, e.inputRow)
-			if meetNewGroup {
-				e.inputRow = e.inputIter.Next()
-				return nil
+				e.groupRows = e.groupRows[:0]
+			} else {
+				remainGroup = true
 			}
 		}
 	}
@@ -854,10 +877,6 @@ func (e *StreamAggExec) consumeGroupRows() error {
 }
 
 func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.inputRow != e.inputIter.End() {
-		return nil
-	}
-
 	// Before fetching a new batch of input, we should consume the last group.
 	err = e.consumeGroupRows()
 	if err != nil {
@@ -902,59 +921,91 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 }
 
 type groupChecker struct {
-	StmtCtx      *stmtctx.StatementContext
-	GroupByItems []expression.Expression
-	curGroupKey  []types.Datum
-	tmpGroupKey  []types.Datum
+	ctx            sessionctx.Context
+	StmtCtx        *stmtctx.StatementContext
+	GroupByItems   []expression.Expression
+	groupRowsIndex []int
+	groupKey       []*chunk.Column
+	isFixedType    []bool
 }
 
-func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
+func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
+	groupKey := make([]*chunk.Column, 0, len(items))
+	isFixedType := make([]bool, len(items))
 	return &groupChecker{
+		ctx:          ctx,
 		StmtCtx:      stmtCtx,
 		GroupByItems: items,
+		groupKey:     groupKey,
+		isFixedType:  isFixedType,
 	}
 }
 
-// meetNewGroup returns a value that represents if the new group is different from last group.
+// meetNewGroup divide the chunk into more groups which the row in the same group have the same groupKey
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
+func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
+	numRows := chk.NumRows()
+	numItems := len(e.GroupByItems)
+	e.groupRowsIndex = e.groupRowsIndex[:0]
 	if len(e.GroupByItems) == 0 {
-		return false, nil
+		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
+		return nil
 	}
-	e.tmpGroupKey = e.tmpGroupKey[:0]
-	matched, firstGroup := true, false
-	if len(e.curGroupKey) == 0 {
-		matched, firstGroup = false, true
+
+	e.groupKey = e.groupKey[:0]
+	for i := 0; i < numItems; i++ {
+		col, err := expression.GetColumn(e.GroupByItems[i].GetType().EvalType(), numRows)
+		defer expression.PutColumn(col)
+		if err != nil {
+			return err
+		}
+		e.groupKey = append(e.groupKey, col)
 	}
 	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row)
+		err := item.VecEval(e.ctx, chk, e.groupKey[i])
 		if err != nil {
-			return false, err
+			return err
 		}
-		if matched {
-			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
-			if err != nil {
-				return false, err
+	}
+
+	for i := 0; i < numItems; i++ {
+		if e.groupKey[i].IsFixed() {
+			e.isFixedType[i] = true
+		} else {
+			e.isFixedType[i] = false
+		}
+	}
+	for i := 0; i < numRows; {
+		match := true
+		j := i + 1
+		for ; j < numRows; j++ {
+			for k := 0; k < numItems; k++ {
+				var equal bool
+				if !e.isFixedType[k] {
+					equal = string(e.groupKey[k].GetBytes(i)) == string(e.groupKey[k].GetBytes(j))
+				} else {
+					equal = string(e.groupKey[k].GetFixedTypeBytes(i)) == string(e.groupKey[k].GetFixedTypeBytes(j))
+				}
+				if !equal {
+					match = false
+					break
+				}
 			}
-			matched = c == 0
+			if !match {
+				break
+			}
 		}
-		e.tmpGroupKey = append(e.tmpGroupKey, v)
+		e.groupRowsIndex = append(e.groupRowsIndex, j)
+		i = j
 	}
-	if matched {
-		return false, nil
-	}
-	e.curGroupKey = e.curGroupKey[:0]
-	for _, v := range e.tmpGroupKey {
-		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
-	}
-	return !firstGroup, nil
+	return nil
 }
 
 func (e *groupChecker) reset() {
-	if e.curGroupKey != nil {
-		e.curGroupKey = e.curGroupKey[:0]
+	if e.groupRowsIndex != nil {
+		e.groupRowsIndex = e.groupRowsIndex[:0]
 	}
-	if e.tmpGroupKey != nil {
-		e.tmpGroupKey = e.tmpGroupKey[:0]
+	if e.groupKey != nil {
+		e.groupKey = e.groupKey[:0]
 	}
 }

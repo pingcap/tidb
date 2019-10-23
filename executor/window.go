@@ -83,15 +83,26 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 			e.executed = true
 			return e.consumeGroupRows(groupRows)
 		}
-		for inputRow := e.inputIter.Current(); inputRow != e.inputIter.End(); inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.groupChecker.meetNewGroup(inputRow)
+
+		inputChk := e.inputIter.GetChunk()
+		err = e.groupChecker.meetNewGroup(inputChk)
+		if err != nil {
+			return err
+		}
+
+		numGroups := len(e.groupChecker.groupRowsIndex)
+		begin := 0
+		for k := 0; k < numGroups; k++ {
+			groupRows = groupRows[:0]
+			end := e.groupChecker.groupRowsIndex[k]
+			for i := begin; i < end; i++ {
+				groupRows = append(groupRows, inputChk.GetRow(i))
+			}
+			begin = end
+			err := e.consumeGroupRows(groupRows)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
-			if meetNewGroup {
-				return e.consumeGroupRows(groupRows)
-			}
-			groupRows = append(groupRows, inputRow)
 		}
 	}
 }
@@ -126,10 +137,6 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 }
 
 func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err error) {
-	if e.inputIter != nil && e.inputIter.Current() != e.inputIter.End() {
-		return false, nil
-	}
-
 	childResult := newFirstChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
