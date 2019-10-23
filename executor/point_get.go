@@ -65,6 +65,15 @@ type PointGetExecutor struct {
 	lock     bool
 }
 
+// ReBuildRange used for cached execution for prepared point get plan
+func (e *PointGetExecutor) ReBuildRange(newIdxVals []types.Datum, newHandle int64, newStartTs uint64) error {
+	e.idxVals = newIdxVals
+	e.handle = newHandle
+	e.startTS = newStartTs
+	e.done = false
+	return nil
+}
+
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
 	return nil
