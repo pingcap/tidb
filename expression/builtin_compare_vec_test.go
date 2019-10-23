@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -35,7 +36,30 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
 			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
 		}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24},
+			{Tp: mysql.TypeInt24}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+			}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag},
+			{Tp: mysql.TypeInt24}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24},
+			{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag},
+			{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			}},
 	},
 	ast.GT:   {},
 	ast.EQ:   {},

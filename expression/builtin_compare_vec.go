@@ -366,28 +366,36 @@ func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
-		switch {
-		case isNull0 && isNull1:
+		if isNull0 && isNull1 {
 			i64s[i] = 1
-		case isNull0 != isNull1:
-			break
-		case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(args0[i]), uint64(args1[i])) == 0:
-			i64s[i] = 1
-		case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(args0[i], args1[i]) == 0:
-			i64s[i] = 1
-		case isUnsigned0 && !isUnsigned1:
+		}
+	}
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			if types.CompareUint64(uint64(args0[i]), uint64(args1[i])) == 0 {
+				i64s[i] = 1
+			}
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			if types.CompareInt64(args0[i], args1[i]) == 0 {
+				i64s[i] = 1
+			}
+		}
+	case isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
 			if args1[i] < 0 || args0[i] > math.MaxInt64 {
 				break
 			}
 			if types.CompareInt64(args0[i], args1[i]) == 0 {
 				i64s[i] = 1
 			}
-		case !isUnsigned0 && isUnsigned1:
+		}
+	case !isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
 			if args0[i] < 0 || args1[i] > math.MaxInt64 {
 				break
 			}
