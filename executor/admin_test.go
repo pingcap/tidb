@@ -505,7 +505,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite1) TestAdminCheckTable(c *C) {
+func (s *testSuite2) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
