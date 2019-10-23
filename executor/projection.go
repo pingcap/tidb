@@ -81,10 +81,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 }
 
 func (e *ProjectionExec) open(ctx context.Context) error {
-	// We have to initialize execution resources in here instead of in function "Open",
-	// because this "ProjectionExecutor" may be constructed by a "IndexLookUpJoin"
-	// and "Open" will not be called in that situation.
-
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
