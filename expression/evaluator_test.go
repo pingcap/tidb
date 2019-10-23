@@ -37,6 +37,7 @@ var _ = Suite(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	TestingT(t)
 }
 
