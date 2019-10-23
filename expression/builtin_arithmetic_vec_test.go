@@ -38,8 +38,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.IntDiv: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: -10000, end: 10000},
-				&rangeInt64Gener{begin: -10000, end: 10000},
+				&rangeInt64Gener{begin: 0, end: 10000},
+				&rangeInt64Gener{begin: 0, end: 10000},
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -54,7 +54,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: -10000, end: 10000},
+				&rangeInt64Gener{begin: 0, end: 10000},
 				&rangeInt64Gener{begin: 0, end: 10000},
 			},
 		},
@@ -63,7 +63,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 				{Tp: mysql.TypeLonglong}},
 			geners: []dataGenerator{
 				&rangeInt64Gener{begin: 0, end: 10000},
-				&rangeInt64Gener{begin: -10000, end: 10000},
+				&rangeInt64Gener{begin: 0, end: 10000},
 			},
 		},
 	},
