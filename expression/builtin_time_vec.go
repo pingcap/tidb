@@ -916,15 +916,13 @@ func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	utc := nowTs.UTC().Format(types.TimeFormat)
-	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	res, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
+	if err != nil {
+		return err
+	}
 	result.ResizeGoDuration(n, false)
 	d64s := result.GoDurations()
 	for i := 0; i < n; i++ {
-		res, err := types.ParseDuration(stmtCtx, utc, types.DefaultFsp)
-		if err != nil {
-			return err
-		}
 		d64s[i] = res.Duration
 	}
 	return nil
@@ -1297,14 +1295,13 @@ func (b *builtinUTCTimestampWithoutArgSig) vecEvalTime(input *chunk.Chunk, resul
 	if err != nil {
 		return err
 	}
-	utc := nowTs.UTC()
+	res, err := convertTimeToMysqlTime(nowTs.UTC(), types.DefaultFsp, types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
 	result.ResizeTime(n, false)
 	t64s := result.Times()
 	for i := 0; i < n; i++ {
-		res, err := convertTimeToMysqlTime(utc, types.DefaultFsp, types.ModeHalfEven)
-		if err != nil {
-			return err
-		}
 		t64s[i] = res
 	}
 	return nil
