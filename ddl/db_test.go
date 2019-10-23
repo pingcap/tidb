@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
@@ -67,7 +68,7 @@ var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 
-const defaultBatchSize = 1024
+const defaultBatchSize = variable.DefTiDBDDLReorgBatchSize
 
 type testDBSuite struct {
 	cluster    *mocktikv.Cluster
