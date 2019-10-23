@@ -37,7 +37,7 @@ type DirtyDB struct {
 
 // GetDirtyTable gets the DirtyTable by id from the DirtyDB.
 func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
-	// The index join access the tables map paralelly. 
+	// The index join access the tables map paralelly.
 	// But the map throws panic in this case. So it's locked.
 	udb.Lock()
 	dt, ok := udb.tables[tid]
