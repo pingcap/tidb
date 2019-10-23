@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite4) TestWindowFunctions(c *C) {
+func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var result *testkit.Result
 	tk.MustExec("use test")
@@ -179,7 +179,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 }
 
-func (s *testSuite4) TestWindowFunctionsDataReference(c *C) {
+func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 	// see https://github.com/pingcap/tidb/issues/11614
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
