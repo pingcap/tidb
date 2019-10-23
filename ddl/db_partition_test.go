@@ -1248,9 +1248,7 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
-	for i := 0; i < count; i++ {
-		tk.MustExec("insert into t1 values (?, ?, ?)", i, i, i)
-	}
+	batchInsert(s.tk, "t1", 0, count)
 
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
