@@ -79,15 +79,15 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
 	arg1 := buf1.{{ .type.TypeNameInColumn }}s(){{ end }}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
 {{ if eq .type.ETName "Int" }}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 {{ end }}
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
+		if result.IsNull(i) {
+            continue
 		}
 {{ if eq .type.ETName "Int" }}
 		var val int64
@@ -110,24 +110,23 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 			val = int64(types.CompareInt64(arg0[i], arg1[i]))
 		}
 {{ else if eq .type.ETName "Json" }}
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 {{ else if eq .type.ETName "Real" }}
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
+		val := types.CompareFloat64(arg0[i], arg1[i])
 {{ else if eq .type.ETName "String" }}
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 {{ else if eq .type.ETName "Duration" }}
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
+		val := buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0))
 {{ else if eq .type.ETName "Datetime" }}
-		val := int64(arg0[i].Compare(arg1[i]))
+		val := arg0[i].Compare(arg1[i])
 {{ else if eq .type.ETName "Decimal" }}
-		val := int64(arg0[i].Compare(&arg1[i]))
+		val := arg0[i].Compare(&arg1[i])
 {{ end }}
 		if val {{ .compare.Operator }} 0 {
-			val = 1
+		    i64s[i] = 1
 		} else {
-			val = 0
+		    i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -323,7 +322,6 @@ func generateDotGo(fileName string, imports string, compares []CompareContext,
 			ctx["compare"] = compareCtx
 			ctx["type"] = typeCtx
 			if compareCtx.CompareName == "NullEQ" {
-				// those types have done
 				if typeCtx.ETName == "Real" ||
 					typeCtx.ETName == "Decimal" ||
 					typeCtx.ETName == "String" {
@@ -360,10 +358,10 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []typeC
 			return err
 		}
 		for _, typeCtx := range types {
-			// those types have done
-			if typeCtx.ETName == "Real" ||
-				typeCtx.ETName == "Decimal" ||
-				typeCtx.ETName == "String" {
+			if compareCtx.CompareName == "NullEQ" &&
+				(typeCtx.ETName == "Real" ||
+					typeCtx.ETName == "Decimal" ||
+					typeCtx.ETName == "String") {
 				continue
 			}
 			err := builtinCompareVecTestCase.Execute(w, typeCtx)
