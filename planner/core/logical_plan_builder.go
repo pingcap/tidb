@@ -2353,6 +2353,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+		err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		return nil, err
 	}
 
