@@ -718,7 +718,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return errors.Trace(err)
 		}
 
-		if err1 := bo.BackoffWithMaxSleep(boTxnLockFast, int(expire), errors.New(locks[0].String())); err1 != nil {
+		if err1 := bo.BackoffWithMaxSleep(BoTxnLock, int(expire), errors.New(locks[0].String())); err1 != nil {
 			return err1
 		}
 		// Handle the killed flag when waiting for the pessimistic lock.
