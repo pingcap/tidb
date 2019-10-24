@@ -22,11 +22,17 @@ import (
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.NE:       {},
-	ast.IsNull:   {},
-	ast.LE:       {},
-	ast.LT:       {},
-	ast.Coalesce: {},
+	ast.NE:     {},
+	ast.IsNull: {},
+	ast.LE:     {},
+	ast.LT:     {},
+	ast.Coalesce: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson},
+			geners: []dataGenerator{&defaultGener{1, types.ETJson}, &defaultGener{1, types.ETJson}, &defaultGener{1, types.ETJson}}},
+	},
 	ast.NullEQ: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{0, 20}}},

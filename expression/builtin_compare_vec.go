@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -779,11 +780,47 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinCoalesceJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var buf *chunk.Column
+	var err error
+	n := input.NumRows()
+	res := make(map[int]*json.BinaryJSON)
+	result.ReserveJSON(n)
+	var count int
+	for _, a := range b.getArgs() {
+		buf, err = b.bufAllocator.get(types.ETJson, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(buf)
+		if err := a.VecEvalString(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) || res[i] != nil {
+				continue
+			}
+			js := buf.GetJSON(i)
+			res[i] = &js
+			count++
+		}
+		if count == n {
+			break
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		if res[i] == nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendJSON(*res[i])
+	}
+	return nil
 }
 
 func (b *builtinGTRealSig) vectorized() bool {
