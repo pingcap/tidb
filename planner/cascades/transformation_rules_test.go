@@ -51,14 +51,14 @@ func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
 		memo.OperandSelection: {
-			&PushSelDownTableScan{},
-			&PushSelDownTableGather{},
-			&PushSelDownSort{},
+			rulePushSelDownTableScan,
+			rulePushSelDownTableGather,
+			rulePushSelDownSort,
 		},
 		memo.OperandDataSource: {
-			&EnumeratePaths{},
+			ruleEnumeratePaths,
 		},
 	})
 	defer func() {
