@@ -1074,6 +1074,7 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err != nil {
 		return err
 	}
+	
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
