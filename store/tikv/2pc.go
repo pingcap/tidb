@@ -980,7 +980,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}()
 
 	binlogChan := c.prewriteBinlog(ctx)
-	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
+	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
 	commitDetail := c.getDetail()
