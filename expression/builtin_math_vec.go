@@ -704,14 +704,12 @@ func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	}
 
 	result.ResizeFloat64(n, false)
-	var randGen *rand.Rand
 	i64s := buf.Int64s()
 	f64s := result.Float64s()
 	rander := rand.NewSource(time.Now().UnixNano())
+	randGen := rand.New(rander)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			randGen = rand.New(rander)
-		} else {
+		if !buf.IsNull(i) {
 			randGen = rand.New(rand.NewSource(i64s[i]))
 		}
 		f64s[i] = randGen.Float64()
