@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var cryptTests = []struct {
@@ -47,7 +46,6 @@ var cryptTests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Decode]
 	for _, tt := range cryptTests {
 		str := types.NewDatum(tt.origin)
@@ -63,7 +61,6 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Encode]
 	for _, test := range cryptTests {
 		password := types.NewDatum(test.password)
@@ -118,7 +115,6 @@ var aesTests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
 		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
@@ -138,7 +134,6 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
 		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
@@ -230,7 +225,6 @@ var sha1Tests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
@@ -271,7 +265,6 @@ var sha2Tests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
 		str := types.NewDatum(tt.origin)
@@ -291,8 +284,6 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -329,7 +320,6 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	c.Assert(err, IsNil)
@@ -366,7 +356,6 @@ func decodeHex(str string) []byte {
 }
 
 func (s *testEvaluatorSuite) TestCompress(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -388,7 +377,6 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUncompress(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -419,7 +407,6 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -449,7 +436,6 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPassword(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected string
