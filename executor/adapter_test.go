@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuiteP1) TestQueryTime(c *C) {
+func (s *testSuiteP2) TestQueryTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 

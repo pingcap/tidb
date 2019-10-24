@@ -40,17 +40,52 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-var defaultTransformationMap = map[memo.Operand][]Transformation{
+// TransformationID is the handle of a Transformation. When we want to add
+// a new Transformation rule, we should first add its ID here, and create
+// the rule in the transformationRuleList below with the same order.
+type TransformationID int
+
+const (
+	rulePushSelDownTableScan TransformationID = iota
+	rulePushSelDownTableGather
+	ruleEnumeratePaths
+)
+
+var transformationRuleList = []Transformation{
+	&PushSelDownTableScan{},
+	&PushSelDownTableGather{},
+	&EnumeratePaths{},
+}
+
+var defaultTransformationMap = map[memo.Operand][]TransformationID{
 	memo.OperandSelection: {
-		&PushSelDownTableScan{},
-		&PushSelDownTableGather{},
+		rulePushSelDownTableScan,
+		rulePushSelDownTableGather,
 	},
 	memo.OperandDataSource: {
-		&EnumeratePaths{},
+		ruleEnumeratePaths,
 	},
 }
 
-var patternMap = make(map[Transformation]*memo.Pattern)
+var patternMap []*memo.Pattern
+
+// init initializes the patternMap when initializing the cascade package.
+func init() {
+	patternMap = make([]*memo.Pattern, len(transformationRuleList))
+	for id, rule := range transformationRuleList {
+		patternMap[id] = rule.GetPattern()
+	}
+}
+
+// GetTransformationRule returns the Transformation rule by its ID.
+func GetTransformationRule(id TransformationID) Transformation {
+	return transformationRuleList[id]
+}
+
+// GetPattern returns the Pattern of the given TransformationID.
+func GetPattern(id TransformationID) *memo.Pattern {
+	return patternMap[id]
+}
 
 // PushSelDownTableScan pushes the selection down to TableScan.
 type PushSelDownTableScan struct {
@@ -58,12 +93,8 @@ type PushSelDownTableScan struct {
 
 // GetPattern implements Transformation interface. The pattern of this rule is `Selection -> TableScan`.
 func (r *PushSelDownTableScan) GetPattern() *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
 	ts := memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOrTiFlash)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash, ts)
-	patternMap[r] = p
 	return p
 }
 
@@ -117,13 +148,9 @@ type PushSelDownTableGather struct {
 // GetPattern implements Transformation interface. The pattern of this rule
 // is `Selection -> TableGather -> Any`
 func (r *PushSelDownTableGather) GetPattern() *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
 	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
 	tg := memo.BuildPattern(memo.OperandTableGather, memo.EngineTiDBOnly, any)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
-	patternMap[r] = p
 	return p
 }
 
@@ -176,12 +203,7 @@ type EnumeratePaths struct {
 
 // GetPattern implements Transformation interface. The pattern of this rule is `DataSource`.
 func (r *EnumeratePaths) GetPattern() *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
-	p := memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
-	patternMap[r] = p
-	return p
+	return memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
 }
 
 // Match implements Transformation interface.
