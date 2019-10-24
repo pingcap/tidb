@@ -812,7 +812,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, waitTime uint64, key
 		return err
 	}
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, waitTime, keys...)
+	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime, keys...)
 }
 
 // LimitExec represents limit executor
