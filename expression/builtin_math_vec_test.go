@@ -107,6 +107,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
 	},
+	ast.Rand: {
+		{retEvalType: types.ETReal},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
@@ -115,6 +118,10 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFuncForRand(c *C) {
+	testVectorizedBuiltinFuncForRand(c, vecBuiltinMathCases)
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {
