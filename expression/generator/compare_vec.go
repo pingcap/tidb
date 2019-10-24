@@ -23,6 +23,8 @@ import (
 	"log"
 	"path/filepath"
 	"text/template"
+
+	. "github.com/pingcap/tidb/expression/generator/helper"
 )
 
 const header = `// Copyright 2019 PingCAP, Inc.
@@ -87,7 +89,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{ end }}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-            continue
+			continue
 		}
 {{ if eq .type.ETName "Int" }}
 		var val int64
@@ -116,16 +118,16 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{ else if eq .type.ETName "String" }}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 {{ else if eq .type.ETName "Duration" }}
-		val := buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0))
+		val := types.CompareDuration(arg0[i], arg1[i])
 {{ else if eq .type.ETName "Datetime" }}
 		val := arg0[i].Compare(arg1[i])
 {{ else if eq .type.ETName "Decimal" }}
 		val := arg0[i].Compare(&arg1[i])
 {{ end }}
 		if val {{ .compare.Operator }} 0 {
-		    i64s[i] = 1
+			i64s[i] = 1
 		} else {
-		    i64s[i] = 0
+			i64s[i] = 0
 		}
 	}
 	return nil
@@ -203,7 +205,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
 			i64s[i] = 1
 {{ else if eq .type.ETName "Duration" }}
-		case buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)) == 0:
+		case types.CompareDuration(arg0[i], arg1[i]) == 0:
 			i64s[i] = 1
 {{ else if eq .type.ETName "Datetime" }}
 		case arg0[i].Compare(arg1[i]) == 0:
@@ -268,29 +270,14 @@ type CompareContext struct {
 	Operator string
 }
 
-type typeContext struct {
-	// Describe the name of "github.com/pingcap/tidb/types".ET{{ .ETName }}
-	ETName string
-	// Describe the name of "github.com/pingcap/tidb/expression".VecExpr.VecEval{{ .TypeName }}
-	// If undefined, it's same as ETName.
-	TypeName string
-	// Describe the name of "github.com/pingcap/tidb/util/chunk".*Column.Append{{ .TypeNameInColumn }},
-	// Resize{{ .TypeNameInColumn }}, Reserve{{ .TypeNameInColumn }}, Get{{ .TypeNameInColumn }} and
-	// {{ .TypeNameInColumn }}s.
-	// If undefined, it's same as TypeName.
-	TypeNameInColumn string
-	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen()
-	Fixed bool
-}
-
-var typesMap = []typeContext{
-	{ETName: "Int", TypeNameInColumn: "Int64", Fixed: true},
-	{ETName: "Real", TypeNameInColumn: "Float64", Fixed: true},
-	{ETName: "Decimal", Fixed: true},
-	{ETName: "String", Fixed: false},
-	{ETName: "Datetime", TypeName: "Time", Fixed: true},
-	{ETName: "Duration", Fixed: false},
-	{ETName: "Json", TypeName: "JSON", Fixed: false},
+var typesMap = []TypeContext{
+	TypeInt,
+	TypeReal,
+	TypeDecimal,
+	TypeString,
+	TypeDatetime,
+	TypeDuration,
+	TypeJSON,
 }
 
 var comparesMap = []CompareContext{
@@ -303,12 +290,11 @@ var comparesMap = []CompareContext{
 	{CompareName: "NullEQ"},
 }
 
-func generateDotGo(fileName string, imports string, compares []CompareContext,
-	types []typeContext) (err error) {
+func generateDotGo(fileName string, compares []CompareContext, types []TypeContext) (err error) {
 	w := new(bytes.Buffer)
 	w.WriteString(header)
 	w.WriteString(newLine)
-	w.WriteString(imports)
+	w.WriteString(builtinCompareImports)
 
 	var ctx = make(map[string]interface{})
 	for _, compareCtx := range compares {
@@ -347,7 +333,7 @@ func generateDotGo(fileName string, imports string, compares []CompareContext,
 	return ioutil.WriteFile(fileName, data, 0644)
 }
 
-func generateTestDotGo(fileName string, compares []CompareContext, types []typeContext) error {
+func generateTestDotGo(fileName string, compares []CompareContext, types []TypeContext) error {
 	w := new(bytes.Buffer)
 	w.WriteString(header)
 	w.WriteString(builtinCompareVecTestHeader)
@@ -382,10 +368,10 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []typeC
 }
 
 // generateOneFile generate one xxx.go file and the associated xxx_test.go file.
-func generateOneFile(fileNamePrefix string, imports string, compares []CompareContext,
-	types []typeContext) (err error) {
+func generateOneFile(fileNamePrefix string, compares []CompareContext,
+	types []TypeContext) (err error) {
 
-	err = generateDotGo(fileNamePrefix+".go", imports, compares, types)
+	err = generateDotGo(fileNamePrefix+".go", compares, types)
 	if err != nil {
 		return
 	}
@@ -398,7 +384,7 @@ func main() {
 	var err error
 	outputDir := "."
 	err = generateOneFile(filepath.Join(outputDir, "builtin_compare_vec_generated"),
-		builtinCompareImports, comparesMap, typesMap)
+		comparesMap, typesMap)
 	if err != nil {
 		log.Fatalln("generateOneFile", err)
 	}
