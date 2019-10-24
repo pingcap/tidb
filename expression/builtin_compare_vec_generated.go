@@ -16,80 +16,10 @@
 package expression
 
 import (
-	"math"
-
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
-
-func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-
-		if val < 0 {
-			val = 1
-		} else {
-			val = 0
-		}
-		i64s[i] = val
-	}
-	return nil
-}
-
-func (b *builtinLTIntSig) vectorized() bool {
-	return true
-}
 
 func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -112,23 +42,20 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
-
+		val := types.CompareFloat64(arg0[i], arg1[i])
 		if val < 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -158,23 +85,20 @@ func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(&arg1[i]))
-
+		val := arg0[i].Compare(&arg1[i])
 		if val < 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -203,22 +127,18 @@ func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
-
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 		if val < 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -248,23 +168,20 @@ func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(arg1[i]))
-
+		val := arg0[i].Compare(arg1[i])
 		if val < 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -292,23 +209,22 @@ func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
-
+		val := types.CompareDuration(arg0[i], arg1[i])
 		if val < 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -337,94 +253,23 @@ func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
-
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 		if val < 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
 
 func (b *builtinLTJSONSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-
-		if val <= 0 {
-			val = 1
-		} else {
-			val = 0
-		}
-		i64s[i] = val
-	}
-	return nil
-}
-
-func (b *builtinLEIntSig) vectorized() bool {
 	return true
 }
 
@@ -449,23 +294,20 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
-
+		val := types.CompareFloat64(arg0[i], arg1[i])
 		if val <= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -495,23 +337,20 @@ func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(&arg1[i]))
-
+		val := arg0[i].Compare(&arg1[i])
 		if val <= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -540,22 +379,18 @@ func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
-
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 		if val <= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -585,23 +420,20 @@ func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(arg1[i]))
-
+		val := arg0[i].Compare(arg1[i])
 		if val <= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -629,23 +461,22 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
-
+		val := types.CompareDuration(arg0[i], arg1[i])
 		if val <= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -674,94 +505,23 @@ func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
-
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 		if val <= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
 
 func (b *builtinLEJSONSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-
-		if val > 0 {
-			val = 1
-		} else {
-			val = 0
-		}
-		i64s[i] = val
-	}
-	return nil
-}
-
-func (b *builtinGTIntSig) vectorized() bool {
 	return true
 }
 
@@ -786,23 +546,20 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
-
+		val := types.CompareFloat64(arg0[i], arg1[i])
 		if val > 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -832,23 +589,20 @@ func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(&arg1[i]))
-
+		val := arg0[i].Compare(&arg1[i])
 		if val > 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -877,22 +631,18 @@ func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
-
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 		if val > 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -922,23 +672,20 @@ func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(arg1[i]))
-
+		val := arg0[i].Compare(arg1[i])
 		if val > 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -966,23 +713,22 @@ func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
-
+		val := types.CompareDuration(arg0[i], arg1[i])
 		if val > 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1011,94 +757,23 @@ func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
-
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 		if val > 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
 
 func (b *builtinGTJSONSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-
-		if val >= 0 {
-			val = 1
-		} else {
-			val = 0
-		}
-		i64s[i] = val
-	}
-	return nil
-}
-
-func (b *builtinGEIntSig) vectorized() bool {
 	return true
 }
 
@@ -1123,23 +798,20 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
-
+		val := types.CompareFloat64(arg0[i], arg1[i])
 		if val >= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1169,23 +841,20 @@ func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(&arg1[i]))
-
+		val := arg0[i].Compare(&arg1[i])
 		if val >= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1214,22 +883,18 @@ func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
-
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 		if val >= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1259,23 +924,20 @@ func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(arg1[i]))
-
+		val := arg0[i].Compare(arg1[i])
 		if val >= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1303,23 +965,22 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
-
+		val := types.CompareDuration(arg0[i], arg1[i])
 		if val >= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1348,94 +1009,23 @@ func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
-
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 		if val >= 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
 
 func (b *builtinGEJSONSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-
-		if val == 0 {
-			val = 1
-		} else {
-			val = 0
-		}
-		i64s[i] = val
-	}
-	return nil
-}
-
-func (b *builtinEQIntSig) vectorized() bool {
 	return true
 }
 
@@ -1460,23 +1050,20 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
-
+		val := types.CompareFloat64(arg0[i], arg1[i])
 		if val == 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1506,23 +1093,20 @@ func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(&arg1[i]))
-
+		val := arg0[i].Compare(&arg1[i])
 		if val == 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1551,22 +1135,18 @@ func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
-
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 		if val == 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1596,23 +1176,20 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(arg1[i]))
-
+		val := arg0[i].Compare(arg1[i])
 		if val == 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1640,23 +1217,22 @@ func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
-
+		val := types.CompareDuration(arg0[i], arg1[i])
 		if val == 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1685,94 +1261,23 @@ func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
-
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 		if val == 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
 
 func (b *builtinEQJSONSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-
-		if val != 0 {
-			val = 1
-		} else {
-			val = 0
-		}
-		i64s[i] = val
-	}
-	return nil
-}
-
-func (b *builtinNEIntSig) vectorized() bool {
 	return true
 }
 
@@ -1797,23 +1302,20 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareFloat64(arg0[i], arg1[i]))
-
+		val := types.CompareFloat64(arg0[i], arg1[i])
 		if val != 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1843,23 +1345,20 @@ func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(&arg1[i]))
-
+		val := arg0[i].Compare(&arg1[i])
 		if val != 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1888,22 +1387,18 @@ func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(types.CompareString(buf0.GetString(i), buf1.GetString(i)))
-
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 		if val != 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1933,23 +1428,20 @@ func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(arg0[i].Compare(arg1[i]))
-
+		val := arg0[i].Compare(arg1[i])
 		if val != 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -1977,23 +1469,22 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
 
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)))
-
+		val := types.CompareDuration(arg0[i], arg1[i])
 		if val != 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
@@ -2022,92 +1513,23 @@ func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-
-		val := int64(json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)))
-
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 		if val != 0 {
-			val = 1
+			i64s[i] = 1
 		} else {
-			val = 0
+			i64s[i] = 0
 		}
-		i64s[i] = val
 	}
 	return nil
 }
 
 func (b *builtinNEJSONSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	arg0 := buf0.Int64s()
-	arg1 := buf1.Int64s()
-
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	for i := 0; i < n; i++ {
-		isNull0 := buf0.IsNull(i)
-		isNull1 := buf1.IsNull(i)
-		switch {
-		case isNull0 && isNull1:
-			i64s[i] = 1
-		case isNull0 != isNull1:
-			i64s[i] = 0
-
-		case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])) == 0:
-			i64s[i] = 1
-		case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0[i], arg1[i]) == 0:
-			i64s[i] = 1
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || arg0[i] > math.MaxInt64 {
-				break
-			}
-			if types.CompareInt64(arg0[i], arg1[i]) == 0 {
-				i64s[i] = 1
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || arg1[i] > math.MaxInt64 {
-				break
-			}
-			if types.CompareInt64(arg0[i], arg1[i]) == 0 {
-				i64s[i] = 1
-			}
-
-		}
-	}
-	return nil
-}
-
-func (b *builtinNullEQIntSig) vectorized() bool {
 	return true
 }
 
@@ -2135,7 +1557,6 @@ func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
@@ -2144,10 +1565,8 @@ func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case arg0[i].Compare(arg1[i]) == 0:
 			i64s[i] = 1
-
 		}
 	}
 	return nil
@@ -2176,9 +1595,11 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 		return err
 	}
 
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
+
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
@@ -2187,10 +1608,8 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
-		case buf0.GetDuration(i, 0).Compare(buf1.GetDuration(i, 0)) == 0:
+		case types.CompareDuration(arg0[i], arg1[i]) == 0:
 			i64s[i] = 1
-
 		}
 	}
 	return nil
@@ -2221,7 +1640,6 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
@@ -2230,10 +1648,8 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
 			i64s[i] = 1
-
 		}
 	}
 	return nil

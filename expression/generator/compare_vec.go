@@ -48,9 +48,6 @@ package expression
 const newLine = "\n"
 
 const builtinCompareImports = `import (
-	"math"
-
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -79,51 +76,21 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 
 {{ if .type.Fixed }}
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
-	arg1 := buf1.{{ .type.TypeNameInColumn }}s(){{ end }}
+	arg1 := buf1.{{ .type.TypeNameInColumn }}s()
+{{ end }}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-{{ if eq .type.ETName "Int" }}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-{{ end }}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
-		}
-{{ if eq .type.ETName "Int" }}
-		var val int64
-		switch {
-		case isUnsigned0 && isUnsigned1:
-			val = int64(types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])))
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || uint64(arg0[i]) > math.MaxInt64 {
-				val = int64(1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || uint64(arg1[i]) > math.MaxInt64 {
-				val = int64(-1)
-			} else {
-				val = int64(types.CompareInt64(arg0[i], arg1[i]))
-			}
-		case !isUnsigned0 && !isUnsigned1:
-			val = int64(types.CompareInt64(arg0[i], arg1[i]))
-		}
-{{ else if eq .type.ETName "Json" }}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-{{ else if eq .type.ETName "Real" }}
-		val := types.CompareFloat64(arg0[i], arg1[i])
-{{ else if eq .type.ETName "String" }}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-{{ else if eq .type.ETName "Duration" }}
-		val := types.CompareDuration(arg0[i], arg1[i])
-{{ else if eq .type.ETName "Datetime" }}
-		val := arg0[i].Compare(arg1[i])
-{{ else if eq .type.ETName "Decimal" }}
-		val := arg0[i].Compare(&arg1[i])
-{{ end }}
+		}{{ if eq .type.ETName "Json" }}
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)){{ else if eq .type.ETName "Real" }}
+		val := types.CompareFloat64(arg0[i], arg1[i]){{ else if eq .type.ETName "String" }}
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i)){{ else if eq .type.ETName "Duration" }}
+		val := types.CompareDuration(arg0[i], arg1[i]){{ else if eq .type.ETName "Datetime" }}
+		val := arg0[i].Compare(arg1[i]){{ else if eq .type.ETName "Decimal" }}
+		val := arg0[i].Compare(&arg1[i]){{ end }}
 		if val {{ .compare.Operator }} 0 {
 			i64s[i] = 1
 		} else {
@@ -164,10 +131,6 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{ end }}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-{{ if eq .type.ETName "Int" }}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isUnsigned1 := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-{{ end }}
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
@@ -175,45 +138,14 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		case isNull0 && isNull1:
 			i64s[i] = 1
 		case isNull0 != isNull1:
-			i64s[i] = 0
-{{ if eq .type.ETName "Int" }}
-		case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0[i]), uint64(arg1[i])) == 0:
+			i64s[i] = 0{{ if eq .type.ETName "Json" }}
+		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:{{ else if eq .type.ETName "Real" }}
+		case types.CompareFloat64(arg0[i], arg1[i]) == 0:{{ else if eq .type.ETName "String" }}
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:{{ else if eq .type.ETName "Duration" }}
+		case types.CompareDuration(arg0[i], arg1[i]) == 0:{{ else if eq .type.ETName "Datetime" }}
+		case arg0[i].Compare(arg1[i]) == 0:{{ else if eq .type.ETName "Decimal" }}
+		case arg0[i].Compare(&arg1[i]) == 0:{{ end }}
 			i64s[i] = 1
-		case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0[i], arg1[i]) == 0:
-			i64s[i] = 1
-		case isUnsigned0 && !isUnsigned1:
-			if arg1[i] < 0 || arg0[i] > math.MaxInt64 {
-				break
-			}
-			if types.CompareInt64(arg0[i], arg1[i]) == 0 {
-				i64s[i] = 1
-			}
-		case !isUnsigned0 && isUnsigned1:
-			if arg0[i] < 0 || arg1[i] > math.MaxInt64 {
-				break
-			}
-			if types.CompareInt64(arg0[i], arg1[i]) == 0 {
-				i64s[i] = 1
-			}
-{{ else if eq .type.ETName "Json" }}
-		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
-			i64s[i] = 1
-{{ else if eq .type.ETName "Real" }}
-		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
-			i64s[i] = 1
-{{ else if eq .type.ETName "String" }}
-		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
-			i64s[i] = 1
-{{ else if eq .type.ETName "Duration" }}
-		case types.CompareDuration(arg0[i], arg1[i]) == 0:
-			i64s[i] = 1
-{{ else if eq .type.ETName "Datetime" }}
-		case arg0[i].Compare(arg1[i]) == 0:
-			i64s[i] = 1
-{{ else if eq .type.ETName "Decimal" }}
-		case arg0[i].Compare(&arg1[i]) == 0:
-			i64s[i] = 1
-{{ end }}
 		}
 	}
 	return nil
@@ -270,16 +202,6 @@ type CompareContext struct {
 	Operator string
 }
 
-var typesMap = []TypeContext{
-	TypeInt,
-	TypeReal,
-	TypeDecimal,
-	TypeString,
-	TypeDatetime,
-	TypeDuration,
-	TypeJSON,
-}
-
 var comparesMap = []CompareContext{
 	{CompareName: "LT", Operator: "<"},
 	{CompareName: "LE", Operator: "<="},
@@ -288,6 +210,15 @@ var comparesMap = []CompareContext{
 	{CompareName: "EQ", Operator: "=="},
 	{CompareName: "NE", Operator: "!="},
 	{CompareName: "NullEQ"},
+}
+
+var typesMap = []TypeContext{
+	TypeReal,
+	TypeDecimal,
+	TypeString,
+	TypeDatetime,
+	TypeDuration,
+	TypeJSON,
 }
 
 func generateDotGo(fileName string, compares []CompareContext, types []TypeContext) (err error) {
@@ -299,12 +230,6 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 	var ctx = make(map[string]interface{})
 	for _, compareCtx := range compares {
 		for _, typeCtx := range types {
-			if typeCtx.TypeName == "" {
-				typeCtx.TypeName = typeCtx.ETName
-			}
-			if typeCtx.TypeNameInColumn == "" {
-				typeCtx.TypeNameInColumn = typeCtx.TypeName
-			}
 			ctx["compare"] = compareCtx
 			ctx["type"] = typeCtx
 			if compareCtx.CompareName == "NullEQ" {

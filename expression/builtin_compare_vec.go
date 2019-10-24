@@ -163,6 +163,14 @@ func (b *builtinGreatestIntSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinGEIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinLeastRealSig) vectorized() bool {
 	return true
 }
@@ -250,11 +258,43 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
+func (b *builtinEQIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNEIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinGTIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinCoalesceDurationSig) vectorized() bool {
 	return false
 }
 
 func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinNullEQIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -379,6 +419,14 @@ func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
+func (b *builtinLEIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinNullEQDecimalSig) vectorized() bool {
 	return true
 }
@@ -465,6 +513,14 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		}
 	}
 	return nil
+}
+
+func (b *builtinLTIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinCoalesceIntSig) vectorized() bool {
