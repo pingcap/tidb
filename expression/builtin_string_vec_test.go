@@ -118,7 +118,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.BitLength: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.FindInSet: {},
 	ast.Field:     {},
