@@ -1111,12 +1111,16 @@ func (b *builtinCastDurationAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *c
 	}
 
 	result.ReserveJSON(n)
+	var dur types.Duration
+	dur.Fsp = types.MaxFsp
+	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		result.AppendJSON(json.CreateBinary(buf.GetDuration(i, int(types.MaxFsp)).String()))
+		dur.Duration = ds[i]
+		result.AppendJSON(json.CreateBinary(dur.String()))
 	}
 	return nil
 }
