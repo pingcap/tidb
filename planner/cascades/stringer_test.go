@@ -51,13 +51,13 @@ func (s *testStringerSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStringerSuite) TestGroupStringer(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
 		memo.OperandSelection: {
-			&PushSelDownTableScan{},
-			&PushSelDownTableGather{},
+			rulePushSelDownTableGather,
+			rulePushSelDownTableScan,
 		},
 		memo.OperandDataSource: {
-			&EnumeratePaths{},
+			ruleEnumeratePaths,
 		},
 	})
 	defer func() {
