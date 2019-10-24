@@ -80,7 +80,6 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	result.ReserveString(n)
 	nums := buf2.Int64s()
 	for i := 0; i < n; i++ {
-		// TODO: introduce vectorized null-bitmap to speed it up.
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -405,11 +404,34 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinLTrimSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinLTrimSig
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
 func (b *builtinLTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		result.AppendString(strings.TrimLeft(str, spaceChars))
+	}
+
+	return nil
 }
 
 func (b *builtinFieldStringSig) vectorized() bool {
@@ -887,8 +909,9 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	result.ReserveString(n)
 	i64s1 := buf1.Int64s()
 	i64s2 := buf2.Int64s()
+	buf1.MergeNulls(buf2)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
