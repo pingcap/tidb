@@ -426,7 +426,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-    txn.committer.lockWaitTime = lockWaitTime
+		txn.committer.lockWaitTime = lockWaitTime
 		err := txn.committer.pessimisticLockKeys(bo, killed, keys)
 		if killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,

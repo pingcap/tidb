@@ -39,7 +39,7 @@ var (
 	ErrTiKVServerBusy              = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
 	ErrGCTooEarly                  = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 	ErrQueryInterrupted            = terror.ClassTiKV.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
-  ErrLockAcquireFailAndNoWaitSet = terror.ClassTiKV.New(mysql.ErrLockAcquireFailAndNoWaitSet, mysql.MySQLErrName[mysql.ErrLockAcquireFailAndNoWaitSet])
+	ErrLockAcquireFailAndNoWaitSet = terror.ClassTiKV.New(mysql.ErrLockAcquireFailAndNoWaitSet, mysql.MySQLErrName[mysql.ErrLockAcquireFailAndNoWaitSet])
 )
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
@@ -62,7 +62,7 @@ func init() {
 		mysql.ErrTiKVServerBusy:              mysql.ErrTiKVServerBusy,
 		mysql.ErrGCTooEarly:                  mysql.ErrGCTooEarly,
 		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
-    mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
+		mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
 		mysql.ErrLockAcquireFailAndNoWaitSet: mysql.ErrLockAcquireFailAndNoWaitSet,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
