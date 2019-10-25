@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -92,6 +93,15 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error
 		return invalidTask, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
+	pShow.SetSchema(p.schema)
+	return &rootTask{p: pShow}, nil
+}
+
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, error) {
+	if !prop.IsEmpty() {
+		return invalidTask, nil
+	}
+	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
 	return &rootTask{p: pShow}, nil
 }
@@ -442,6 +452,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			if tblTask.cost() < t.cost() {
 				t = tblTask
 			}
+			continue
+		}
+		// TiFlash storage do not support index scan.
+		if ds.preferStoreType&preferTiFlash != 0 {
 			continue
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
@@ -1007,6 +1021,14 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		AccessCondition: path.accessConds,
 		filterCondition: path.tableFilters,
 	}.Init(ds.ctx, ds.blockOffset)
+	if ds.preferStoreType&preferTiFlash != 0 {
+		ts.StoreType = kv.TiFlash
+		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
+		ts.AccessCondition = nil
+		ts.Ranges = ranger.FullIntRange(false)
+	} else {
+		ts.StoreType = kv.TiKV
+	}
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

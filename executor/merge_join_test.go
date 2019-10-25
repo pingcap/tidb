@@ -235,7 +235,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
-func (s *testSuite1) TestMergeJoin(c *C) {
+func (s *testSuite2) TestMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -331,9 +331,9 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 		"Sort_6 100000000.00 root Column#5:asc, Column#6:asc",
 		"└─MergeJoin_9 100000000.00 root inner join",
 		"  ├─TableReader_11 10000.00 root data:TableScan_10",
-		"  │ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  │ └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_13 10000.00 root data:TableScan_12",
-		"    └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -352,9 +352,9 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 		"Projection_7 10000.00 root Column#8",
 		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(Column#1, Column#4), ge(Column#5, Column#2)",
 		"  ├─TableReader_10 10000.00 root data:TableScan_9",
-		"  │ └─TableScan_9 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  │ └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_12 10000.00 root data:TableScan_11",
-		"    └─TableScan_11 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableScan_11 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",
@@ -362,7 +362,7 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	))
 }
 
-func (s *testSuite1) Test3WaysMergeJoin(c *C) {
+func (s *testSuite2) Test3WaysMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -387,7 +387,7 @@ func (s *testSuite1) Test3WaysMergeJoin(c *C) {
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 }
 
-func (s *testSuite1) TestMergeJoinDifferentTypes(c *C) {
+func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1;`)

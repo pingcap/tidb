@@ -178,6 +178,8 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrInvalidGroupFuncUse returns for using invalid group functions.
+	ErrInvalidGroupFuncUse = terror.ClassDDL.New(codeInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
 	ErrTableMustHaveColumns = terror.ClassDDL.New(codeTableMustHaveColumns, mysql.MySQLErrName[mysql.ErrTableMustHaveColumns])
 	// ErrWrongNameForIndex returns for wrong index name.
@@ -230,6 +232,8 @@ var (
 	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
+	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
+	ErrWrongTypeColumnValue = terror.ClassDDL.New(codeWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -700,6 +704,7 @@ const (
 	codeBlobCantHaveDefault                    = 1101
 	codeWrongDBName                            = 1102
 	codeWrongTableName                         = 1103
+	codeInvalidGroupFuncUse                    = terror.ErrCode(mysql.ErrInvalidGroupFuncUse)
 	codeTooManyFields                          = 1117
 	codeInvalidUseOfNull                       = 1138
 	codeWrongColumnName                        = 1166
@@ -757,6 +762,7 @@ const (
 	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
 	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	codeOnlyOnRangeListPartition               = terror.ErrCode(mysql.ErrOnlyOnRangeListPartition)
+	codeWrongTypeColumnValue                   = terror.ErrCode(mysql.ErrWrongTypeColumnValue)
 )
 
 func init() {
@@ -776,6 +782,7 @@ func init() {
 		codeFileNotFound:                           mysql.ErrFileNotFound,
 		codeErrorOnRename:                          mysql.ErrErrorOnRename,
 		codeBadField:                               mysql.ErrBadField,
+		codeInvalidGroupFuncUse:                    mysql.ErrInvalidGroupFuncUse,
 		codeInvalidUseOfNull:                       mysql.ErrInvalidUseOfNull,
 		codeWrongFKOptionForGeneratedColumn:        mysql.ErrWrongFKOptionForGeneratedColumn,
 		codeUnsupportedOnGeneratedColumn:           mysql.ErrUnsupportedOnGeneratedColumn,
@@ -819,6 +826,7 @@ func init() {
 		codeFieldNotFoundPart:                      mysql.ErrFieldNotFoundPart,
 		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
+		codeGeneratedColumnFunctionIsNotAllowed:    mysql.ErrGeneratedColumnFunctionIsNotAllowed,
 		codeGeneratedColumnRefAutoInc:              mysql.ErrGeneratedColumnRefAutoInc,
 		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
 		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
@@ -829,6 +837,7 @@ func init() {
 		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
 		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
 		codeOnlyOnRangeListPartition:               mysql.ErrOnlyOnRangeListPartition,
+		codeWrongTypeColumnValue:                   mysql.ErrWrongTypeColumnValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

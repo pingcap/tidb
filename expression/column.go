@@ -246,6 +246,17 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
+		sel := input.Sel()
+		if sel != nil {
+			for i, j := range sel {
+				if src.IsNull(j) {
+					result.SetNull(i, true)
+				} else {
+					f64s[i] = float64(f32s[j])
+				}
+			}
+			return nil
+		}
 		for i := range f32s {
 			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
 			if src.IsNull(i) {
@@ -463,6 +474,16 @@ func (col *Column) resolveIndices(schema *Schema) error {
 // Vectorized returns if this expression supports vectorized evaluation.
 func (col *Column) Vectorized() bool {
 	return true
+}
+
+// ToInfo converts the expression.Column to model.ColumnInfo for casting values,
+// beware it doesn't fill all the fields of the model.ColumnInfo.
+func (col *Column) ToInfo() *model.ColumnInfo {
+	return &model.ColumnInfo{
+		ID:        col.ID,
+		Name:      col.ColName,
+		FieldType: *col.RetType,
+	}
 }
 
 // Column2Exprs will transfer column slice to expression slice.

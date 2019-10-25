@@ -16,20 +16,24 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 )
 
 // BindHandle is used to handle all global sql bind operations.
@@ -70,6 +74,8 @@ type BindHandle struct {
 	}
 
 	lastUpdateTime types.Time
+
+	parser4Baseline *parser.Parser
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -86,6 +92,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle.sctx.Context = ctx
 	handle.bindInfo.Value.Store(make(cache, 32))
 	handle.bindInfo.parser = parser.New()
+	handle.parser4Baseline = parser.New()
 	handle.invalidBindRecordMap.Value.Store(make(map[string]*invalidBindRecordMap))
 	return handle
 }
@@ -443,4 +450,52 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs 
 		updateTs,
 		normdOrigSQL,
 		db)
+}
+
+// GenHintsFromSQL is used to generate hints from SQL.
+// It is used to avoid the circle dependence with planner package.
+var GenHintsFromSQL func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (string, error)
+
+// CaptureBaselines is used to automatically capture plan baselines.
+func (h *BindHandle) CaptureBaselines(is infoschema.InfoSchema) {
+	schemas, sqls := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceSelect()
+	for i := range sqls {
+		stmt, err := h.parser4Baseline.ParseOneStmt(sqls[i], "", "")
+		if err != nil {
+			logutil.BgLogger().Debug("parse SQL failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			continue
+		}
+		normalizedSQL, digiest := parser.NormalizeDigest(sqls[i])
+		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.Status == Using {
+			continue
+		}
+		h.sctx.Lock()
+		err = h.sctx.RefreshTxnCtx(context.TODO())
+		var hints string
+		if err == nil {
+			h.sctx.GetSessionVars().CurrentDB = schemas[i]
+			hints, err = GenHintsFromSQL(context.TODO(), h.sctx.Context, stmt, is)
+		}
+		h.sctx.Unlock()
+		if err != nil {
+			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			continue
+		}
+		// We can skip simple query like point get.
+		if hints == "" {
+			continue
+		}
+		bindsql := strings.Replace(normalizedSQL, "select", fmt.Sprintf("select /*+ %s*/", hints), 1)
+		err = h.AddBindRecord(&BindRecord{OriginalSQL: sqls[i], BindSQL: bindsql, Db: schemas[i], Status: Using})
+		if err != nil {
+			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
+		}
+	}
+}
+
+// Clear resets the bind handle. It is used for test.
+func (h *BindHandle) Clear() {
+	h.bindInfo.Store(make(cache))
+	h.invalidBindRecordMap.Store(make(map[string]*invalidBindRecordMap))
+	h.lastUpdateTime = types.ZeroTimestamp
 }

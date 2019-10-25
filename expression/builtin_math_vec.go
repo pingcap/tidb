@@ -20,6 +20,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -665,11 +666,17 @@ func (b *builtinCRC32Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinPISig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinPISig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeFloat64(n, false)
+	f64s := result.Float64s()
+	for i := range f64s {
+		f64s[i] = math.Pi
+	}
+	return nil
 }
 
 func (b *builtinRandSig) vectorized() bool {
@@ -689,11 +696,37 @@ func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCeilIntToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+
+	i64s := buf.Int64s()
+	d := result.Decimals()
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if isUnsigned || i64s[i] >= 0 {
+			d[i] = *types.NewDecFromUint(uint64(i64s[i]))
+			continue
+		}
+		d[i] = *types.NewDecFromInt(i64s[i])
+	}
+	return nil
 }
 
 func (b *builtinTruncateIntSig) vectorized() bool {
