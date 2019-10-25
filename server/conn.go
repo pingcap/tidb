@@ -617,7 +617,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
-				zap.Stringer("lastSql", getLastStmtInConn{cc}),
+				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
 				zap.Reflect("err", r),
 				zap.String("stack", string(buf)),
 			)
@@ -1232,7 +1232,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf := make([]byte, 4096)
 		stackSize := runtime.Stack(buf, false)
 		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSql", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
