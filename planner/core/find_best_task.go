@@ -751,6 +751,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 
 	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
 	if len(tableConds) == 0 {
+		// don't build an empty selection
 		tableConds = nil
 	}
 
@@ -778,7 +779,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 
 // splitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
 func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	filterConds := make([]expression.Expression, 0)
+	var filterConds []expression.Expression
 	for i := len(conds) - 1; i >= 0; i-- {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
 			filterConds = append(filterConds, conds[i])
