@@ -1101,11 +1101,11 @@ func (s *seqTestSuite) TestRenameTable(c *C) {
 	tk.MustExec("insert rename2.t values ()")
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "30001", "60001"))
 	// Make sure the drop old database doesn't affect the rename3.t's operations.
 	tk.MustExec("drop database rename2")
 	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "30001", "60001", "60002"))
 	tk.MustExec("drop database rename3")
 
 	tk.MustExec("create database rename1")
@@ -1124,7 +1124,7 @@ func (s *seqTestSuite) TestRenameTable(c *C) {
 	tk.MustExec("rename table rename2.t1 to rename2.t2")
 	tk.MustExec("insert rename2.t2 values ()")
 	result = tk.MustQuery("select * from rename2.t2")
-	result.Check(testkit.Rows("1", "2", "5001"))
+	result.Check(testkit.Rows("1", "2", "30001"))
 	tk.MustExec("drop database rename2")
 
 	tk.MustExec("create database rename1")
