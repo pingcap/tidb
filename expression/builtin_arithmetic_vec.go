@@ -486,12 +486,8 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(dividend, divisor, result []
 		if divisor[i] == 0 {
 			continue
 		}
-		lh, rh := uint64(dividend[i]), divisor[i]
-		val, err := types.DivUintWithInt(lh, rh)
-		if err != nil {
-			return err
-		}
-		result[i] = int64(val)
+		lh, rh := dividend[i], divisor[i]
+		result[i] = int64(lh / rh)
 	}
 	return nil
 }
@@ -500,12 +496,8 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(dividend, divisor, result []
 		if divisor[i] == 0 {
 			continue
 		}
-		lh, rh := dividend[i], uint64(divisor[i])
-		val, err := types.DivIntWithUint(lh, rh)
-		if err != nil {
-			return err
-		}
-		result[i] = int64(val)
+		lh, rh := dividend[i], divisor[i]
+		result[i] = int64(lh / rh)
 	}
 	return nil
 }
