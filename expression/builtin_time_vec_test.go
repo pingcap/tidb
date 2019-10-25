@@ -107,6 +107,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.MonthName: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
+	ast.DayName: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.DayOfMonth: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},

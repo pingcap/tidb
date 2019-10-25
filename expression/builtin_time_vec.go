@@ -175,11 +175,39 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 }
 
 func (b *builtinDayNameSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDayNameSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	t64s := buf.Times()
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		arg := t64s[i]
+		if arg.InvalidZero() {
+			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+		}
+		// Monday is 0, ... Sunday = 6 in MySQL
+		// but in go, Sunday is 0, ... Saturday is 6
+		// w will do a conversion.
+		res := (int64(arg.Time.Weekday()) + 6) % 7
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinWeekDaySig) vectorized() bool {
