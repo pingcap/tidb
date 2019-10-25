@@ -2417,7 +2417,6 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 		})
 		projExprs = append(projExprs, col)
 	}
-
 	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
