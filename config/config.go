@@ -104,8 +104,8 @@ type Config struct {
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
 // conflict options at the same time.
 type nullableBool struct {
-	Valid bool `toml:"valid" json:"valid"`
-	Value bool `toml:"value" json:"value"`
+	Valid bool
+	Value bool
 }
 
 var (
@@ -116,6 +116,17 @@ var (
 
 func (b *nullableBool) toBool() bool {
 	return b.Valid && b.Value
+}
+
+func (b nullableBool) MarshalJSON() ([]byte, error) {
+	switch b {
+	case nbTrue:
+		return json.Marshal(true)
+	case nbFalse:
+		return json.Marshal(false)
+	default:
+		return json.Marshal(nil)
+	}
 }
 
 func (b *nullableBool) UnmarshalText(text []byte) error {
@@ -144,9 +155,6 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	switch v.(type) {
 	case bool:
 		*b = nullableBool{true, v.(bool)}
-	case map[string]interface{}:
-		vv := v.(map[string]interface{})
-		*b = nullableBool{vv["valid"].(bool), vv["value"].(bool)}
 	case nil:
 		b.Valid = false
 		b.Value = false

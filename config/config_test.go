@@ -80,9 +80,9 @@ func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
 	err = json.Unmarshal([]byte("{\"enable-timestamp\":1}"), &log)
 	c.Assert(err, ErrorMatches, "json: cannot unmarshal float64 into Go value of type nullableBool")
 
-	err = json.Unmarshal([]byte("{\"disable-timestamp\":{\"value\":true,\"valid\":true}}"), &log)
+	err = json.Unmarshal([]byte("{\"disable-timestamp\":null}"), &log)
 	c.Assert(err, IsNil)
-	c.Assert(log.DisableTimestamp, Equals, nbTrue)
+	c.Assert(log.DisableTimestamp, Equals, nbUnset)
 }
 
 func (s *testConfigSuite) TestLogConfig(c *C) {
@@ -143,8 +143,10 @@ enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbFalse, nbUnset, nbUnset, false, false, NotNil)
 
-	c.Assert(f.Close(), IsNil)
-	c.Assert(os.Remove(configFile), IsNil)
+	defer func() {
+		c.Assert(f.Close(), IsNil)
+		c.Assert(os.Remove(configFile), IsNil)
+	}()
 }
 
 func (s *testConfigSuite) TestConfig(c *C) {
