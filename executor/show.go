@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -182,6 +183,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return nil
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions()
+	case ast.ShowBuiltins:
+		return e.fetchShowBuiltins()
 	}
 	return nil
 }
@@ -1302,4 +1305,11 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
+}
+
+func (e *ShowExec) fetchShowBuiltins() error {
+	for _, f := range expression.GetBuiltinList() {
+		e.appendRow([]interface{}{f})
+	}
+	return nil
 }

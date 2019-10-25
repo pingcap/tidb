@@ -639,3 +639,13 @@ func (s *testSuite5) TestShowEscape(c *C) {
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
 	tk.MustExec("set sql_mode=@old_sql_mode")
 }
+
+func (s *testSuite5) TestShowBuiltin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	res := tk.MustQuery("show builtins;")
+	c.Assert(res, NotNil)
+	rows := res.Rows()
+	c.Assert(266, Equals, len(rows))
+	c.Assert("abs", Equals, rows[0][0].(string))
+	c.Assert("yearweek", Equals, rows[265][0].(string))
+}

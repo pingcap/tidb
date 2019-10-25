@@ -21,6 +21,7 @@
 package expression
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -730,4 +731,14 @@ var funcs = map[string]functionClass{
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetBuiltinList returns a list of builtin functions
+func GetBuiltinList() []string {
+	res := make([]string, 0, len(funcs))
+	for funcName := range funcs {
+		res = append(res, funcName)
+	}
+	sort.Strings(res)
+	return res
 }

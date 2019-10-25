@@ -2627,6 +2627,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
+	case ast.ShowBuiltins:
+		names = []string{"Builtin_name"}
+		ftypes = []byte{mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
