@@ -865,8 +865,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// GetDirtyDB() is safe here. If this table has been modified in the transaction, non-nil DirtyTable
 		// can be found in DirtyDB now, so GetDirtyTable is safe; if this table has not been modified in the
 		// transaction, empty DirtyTable would be inserted into DirtyDB, it does not matter when multiple
-		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Thus we don't use lock
-		// to synchronize here.
+		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Although the DirtyDB looks
+		// safe for data race in all the cases, the map of golang will throw panic when it's accessed in parallel.
+		// So we lock it when getting dirty table.
 		physicalTableID := getPhysicalTableID(x.table)
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
@@ -2230,7 +2231,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
-	err = e.Open(ctx)
+	err = e.open(ctx)
 
 	return e, err
 }
