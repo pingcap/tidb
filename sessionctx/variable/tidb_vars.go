@@ -109,6 +109,9 @@ const (
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
 
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
@@ -323,6 +326,9 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
+	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
+
 	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
 	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
 )
@@ -420,4 +426,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
 )

@@ -419,7 +419,7 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestPushDownSwitcher(c *C) {
+func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	var funcs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -595,7 +595,7 @@ func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
 	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},\"desc\":true}")
 }
 
-func (s *testEvaluatorSuite) TestImplicitArgs(c *C) {
+func (s *testEvaluatorSerialSuites) TestImplicitArgs(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
