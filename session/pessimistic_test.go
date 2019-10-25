@@ -15,13 +15,13 @@ package session_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
