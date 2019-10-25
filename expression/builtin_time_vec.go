@@ -178,7 +178,7 @@ func (b *builtinDayNameSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDayNameSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDayNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETTimestamp, n)
 	if err != nil {
@@ -189,12 +189,11 @@ func (b *builtinDayNameSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf)
+	result.ReserveString(n)
 	t64s := buf.Times()
-	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if buf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
 		arg := t64s[i]
@@ -204,8 +203,8 @@ func (b *builtinDayNameSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		// Monday is 0, ... Sunday = 6 in MySQL
 		// but in go, Sunday is 0, ... Saturday is 6
 		// w will do a conversion.
-		res := (int64(arg.Time.Weekday()) + 6) % 7
-		i64s[i] = res
+		res := ((arg.Time.Weekday()) + 6) % 7
+		result.AppendString(types.WeekdayNames[res])
 	}
 	return nil
 }
