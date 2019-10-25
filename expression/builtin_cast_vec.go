@@ -923,14 +923,14 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
 	times := result.Times()
-	f64s := buf.Decimals()
+	decimals := buf.Decimals()
 	stmt := b.ctx.GetSessionVars().StmtCtx
 	fsp := int8(b.tp.Decimal)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTimeFromFloatString(stmt, string(f64s[i].ToString()), b.tp.Tp, fsp)
+		tm, err := types.ParseTimeFromFloatString(stmt, string(decimals[i].ToString()), b.tp.Tp, fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
