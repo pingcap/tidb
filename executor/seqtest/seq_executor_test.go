@@ -1088,9 +1088,6 @@ func (s *seqTestSuite) TestRenameTable(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(5000)
-	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
