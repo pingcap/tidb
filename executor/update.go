@@ -52,6 +52,24 @@ type UpdateExec struct {
 	allAssignmentsAreConstant bool
 }
 
+// Init do reset on some fields based input update plan, this is ONLY used for point update
+// with prepare statement cached execution
+func (e *UpdateExec) Init(v *plannercore.Update) {
+	e.OrderedList = v.OrderedList
+
+	e.updatedRowKeys = nil
+
+	e.rows = nil
+	e.newRowsData = nil
+
+	e.fetched = false
+	e.cursor = 0
+	e.matched = 0
+
+	e.tblColPosInfos = v.TblColPosInfos
+	e.allAssignmentsAreConstant = v.AllAssignmentsAreConstant
+}
+
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
 	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
 	if err != nil {

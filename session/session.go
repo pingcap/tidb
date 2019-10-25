@@ -1217,6 +1217,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	case *plannercore.Update:
 		s.PrepareTxnFuture(ctx)
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+		stmt.CachedPointUpdate = true
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
 		prepared.CachedPlan = nil

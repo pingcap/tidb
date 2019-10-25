@@ -174,8 +174,53 @@ type ExecStmt struct {
 	retryCount        uint
 
 	// OutputNames will be set if using cached plan
-	OutputNames []*types.FieldName
-	PsStmt      *plannercore.CachedPrepareStmt
+	OutputNames       []*types.FieldName
+	PsStmt            *plannercore.CachedPrepareStmt
+	CachedPointUpdate bool
+}
+
+// TryReuseUpdateExecutor reuse point update executor in cached plan execution for prepare statement
+func (a *ExecStmt) TryReuseUpdateExecutor() (Executor, error) {
+	// only for point update with autocommit mode in prepared statement
+	if a.PsStmt != nil && a.PsStmt.Executor != nil {
+		var (
+			ok           bool
+			updateExe    *UpdateExec
+			pointGetExe  *PointGetExecutor
+			updatePlan   *plannercore.Update
+			pointGetPlan *plannercore.PointGetPlan
+			b            *executorBuilder
+		)
+		updateExe, ok = a.PsStmt.Executor.(*UpdateExec)
+		if !ok {
+			a.PsStmt.Executor = nil
+			return nil, nil
+		}
+		pointGetExe, ok = updateExe.children[0].(*PointGetExecutor)
+		if !ok {
+			a.PsStmt.Executor = nil
+			return nil, nil
+		}
+		updatePlan, ok = a.Plan.(*plannercore.Update)
+		if !ok {
+			return nil, nil
+		}
+		pointGetPlan, ok = updatePlan.SelectPlan.(*plannercore.PointGetPlan)
+		if !ok {
+			return nil, nil
+		}
+		b = newExecutorBuilder(a.Ctx, a.InfoSchema)
+		startTs, err := b.getStartTS()
+		if err != nil {
+			return nil, err
+		}
+		// reset pointGet executor
+		pointGetExe.Init(pointGetPlan, startTs)
+		// reset Update executor
+		updateExe.Init(updatePlan)
+		return updateExe, nil
+	}
+	return nil, nil
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -669,10 +714,25 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
+	var e Executor
+	var err error
+	if a.PsStmt != nil && a.PsStmt.Executor != nil {
+		e, err = a.TryReuseUpdateExecutor()
+		if err != nil {
+			return nil, err
+		}
+		if e != nil {
+			return e, nil
+		}
+	}
+
 	b := newExecutorBuilder(ctx, a.InfoSchema)
-	e := b.build(a.Plan)
+	e = b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
+	}
+	if a.CachedPointUpdate {
+		a.PsStmt.Executor = e
 	}
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
