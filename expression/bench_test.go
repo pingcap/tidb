@@ -353,6 +353,21 @@ func (rig *rangeInt64Gener) gen() interface{} {
 	return int64(rand.Intn(rig.end-rig.begin) + rig.begin)
 }
 
+//rangeUint64Gener used to generate uint64 items in [begin, end).
+type rangeUint64Gener struct {
+	begin uint64
+	end   uint64
+}
+
+func (rig *rangeUint64Gener) gen() interface{} {
+	if rig.end == 0 {
+		return rand.Uint64()
+	} else if rig.begin == 0 {
+		return uint64(rand.Uint64() % (rig.end))
+	}
+	return uint64(rand.Uint64()%(rig.end-rig.begin) + rig.begin)
+}
+
 // numStrGener is used to generate number strings.
 type numStrGener struct {
 	rangeInt64Gener

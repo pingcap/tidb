@@ -471,17 +471,17 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	}
 	return err
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUU(dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUU(dividend, divisor, result []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
 		}
 		lh, rh := uint64(dividend[i]), uint64(divisor[i])
-		resulti64s[i] = int64(lh / rh)
+		result[i] = int64(lh / rh)
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUI(dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUI(dividend, divisor, result []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
@@ -491,11 +491,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideUI(dividend, divisor, resulti64
 		if err != nil {
 			return err
 		}
-		resulti64s[i] = int64(val)
+		result[i] = int64(val)
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideIU(dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideIU(dividend, divisor, result []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
@@ -505,17 +505,17 @@ func (b *builtinArithmeticIntDivideIntSig) divideIU(dividend, divisor, resulti64
 		if err != nil {
 			return err
 		}
-		resulti64s[i] = int64(val)
+		result[i] = int64(val)
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideII(dividend, divisor, resulti64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideII(dividend, divisor, result []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
 		}
 		lh, rh := dividend[i], divisor[i]
-		resulti64s[i] = lh / rh
+		result[i] = lh / rh
 	}
 	return nil
 }

@@ -41,8 +41,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeUint64Gener{begin: 0, end: math.MaxUint64},
+				&rangeUint64Gener{begin: 0, end: math.MaxUint64},
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
