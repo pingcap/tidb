@@ -277,13 +277,6 @@ func compareBool(l, r bool) int {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	// Do NOT prune any other access path if the path is table scan the tiflash.
-	if rhs.path.storeType == kv.TiFlash {
-		return 1
-	}
-	if lhs.path.storeType == kv.TiFlash {
-		return 0
-	}
 	setsResult, comparable := compareColumnSet(lhs.columnSet, rhs.columnSet)
 	if !comparable {
 		return 0
@@ -362,6 +355,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
+			if candidates[i].path.storeType == kv.TiFlash {
+				continue
+			}
 			result := compareCandidates(candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
