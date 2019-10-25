@@ -24,8 +24,6 @@ import (
 const (
 	codeClosed                     terror.ErrCode = 1
 	codeNotExist                                  = 2
-	codeConditionNotMatch                         = 3
-	codeLockConflict                              = 4
 	codeLazyConditionPairsNotMatch                = 5
 	codeRetryable                                 = 6
 	codeCantSetNilValue                           = 7
@@ -38,15 +36,15 @@ const (
 	codeKeyExists = 1062
 )
 
+// TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
+// *WARNING*: changing this string will affect the backward compatibility.
+const TxnRetryableMark = "[try again later]"
+
 var (
 	// ErrClosed is used when close an already closed txn.
 	ErrClosed = terror.ClassKV.New(codeClosed, "Error: Transaction already closed")
 	// ErrNotExist is used when try to get an entry with an unexist key from KV store.
 	ErrNotExist = terror.ClassKV.New(codeNotExist, "Error: key not exist")
-	// ErrConditionNotMatch is used when condition is not met.
-	ErrConditionNotMatch = terror.ClassKV.New(codeConditionNotMatch, "Error: Condition not match")
-	// ErrLockConflict is used when try to lock an already locked key.
-	ErrLockConflict = terror.ClassKV.New(codeLockConflict, "Error: Lock conflict")
 	// ErrLazyConditionPairsNotMatch is used when value in store differs from expect pairs.
 	ErrLazyConditionPairsNotMatch = terror.ClassKV.New(codeLazyConditionPairsNotMatch, "Error: Lazy condition pairs not match")
 	// ErrRetryable is used when KV store occurs RPC error or some other
@@ -69,13 +67,21 @@ var (
 	ErrKeyExists = terror.ClassKV.New(codeKeyExists, "key already exist")
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = terror.ClassKV.New(codeNotImplemented, "not implemented")
+	// ErrWriteConflict is the error when the commit meets an write conflict error.
+	ErrWriteConflict = terror.ClassKV.New(mysql.ErrWriteConflict,
+		mysql.MySQLErrName[mysql.ErrWriteConflict]+" "+TxnRetryableMark)
+	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
+	ErrWriteConflictInTiDB = terror.ClassKV.New(mysql.ErrWriteConflictInTiDB,
+		mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB]+" "+TxnRetryableMark)
 )
 
 func init() {
 	kvMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeKeyExists:     mysql.ErrDupEntry,
-		codeEntryTooLarge: mysql.ErrTooBigRowsize,
-		codeTxnTooLarge:   mysql.ErrTxnTooLarge,
+		codeKeyExists:                mysql.ErrDupEntry,
+		codeEntryTooLarge:            mysql.ErrTooBigRowsize,
+		codeTxnTooLarge:              mysql.ErrTxnTooLarge,
+		mysql.ErrWriteConflict:       mysql.ErrWriteConflict,
+		mysql.ErrWriteConflictInTiDB: mysql.ErrWriteConflictInTiDB,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
 }
@@ -87,8 +93,8 @@ func IsRetryableError(err error) bool {
 	}
 
 	if ErrRetryable.Equal(err) ||
-		ErrLockConflict.Equal(err) ||
-		ErrConditionNotMatch.Equal(err) ||
+		ErrWriteConflict.Equal(err) ||
+		ErrWriteConflictInTiDB.Equal(err) ||
 		// TiKV exception message will tell you if you should retry or not
 		strings.Contains(err.Error(), "try again later") {
 		return true
