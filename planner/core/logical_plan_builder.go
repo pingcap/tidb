@@ -3301,7 +3301,10 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.FromLast {
 			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
 		}
-		spec := f.Spec
+		spec := &f.Spec
+		if f.Spec.Name.L != "" {
+			spec = b.windowSpecs[f.Spec.Name.L]
+		}
 		if spec.Frame == nil {
 			continue
 		}
@@ -3322,11 +3325,11 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 
-		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
+		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
 		if err != nil {
 			return err
 		}
-		err = b.checkOriginWindowFrameBound(&end, &spec, orderByItems)
+		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
 		if err != nil {
 			return err
 		}
@@ -3434,7 +3437,6 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		windowFunc.Spec = *spec
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
