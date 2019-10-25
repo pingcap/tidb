@@ -2541,7 +2541,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+	builder := NewPlanBuilder(MockContext(), s.is)
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
