@@ -77,9 +77,6 @@ func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(log.EnableTimestamp, Equals, nbFalse)
 
-	err = json.Unmarshal([]byte("{\"enable-timestamp\":1}"), &log)
-	c.Assert(err, ErrorMatches, "json: cannot unmarshal float64 into Go value of type nullableBool")
-
 	err = json.Unmarshal([]byte("{\"disable-timestamp\":null}"), &log)
 	c.Assert(err, IsNil)
 	c.Assert(log.DisableTimestamp, Equals, nbUnset)

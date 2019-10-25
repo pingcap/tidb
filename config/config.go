@@ -155,15 +155,8 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	switch v.(type) {
 	case bool:
 		*b = nullableBool{true, v.(bool)}
-	case nil:
-		b.Valid = false
-		b.Value = false
-		return nil
 	default:
-		err = fmt.Errorf("json: cannot unmarshal %v into Go value of type nullableBool", reflect.TypeOf(v).Name())
-	}
-	if err != nil {
-		b.Valid = false
+		*b = nbUnset
 	}
 	return err
 }
