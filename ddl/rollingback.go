@@ -17,14 +17,39 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
+func updateNullColumnFlags(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, flag uint) error {
+	nullCols, err := getNullColInfos(tblInfo, indexInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, col := range nullCols {
+		col.Flag = flag
+	}
+
+	return nil
+}
+
 func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
+
+	if indexInfo.Primary {
+		nullCols, err := getNullColInfos(tblInfo, indexInfo)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		for _, col := range nullCols {
+			// Field PreventNullInsertFlag flag reset.
+			col.Flag = col.Flag &^ mysql.PreventNullInsertFlag
+		}
+	}
+
 	// the second args will be used in onDropIndex.
 	job.Args = []interface{}{indexInfo.Name, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
@@ -146,13 +171,13 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
-func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		w.reorgCtx.notifyReorgCancel()
-		ver, err = w.onCreateIndex(d, t, job)
+		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index workers are not started, remove the indexInfo in tableInfo.
 		ver, err = convertNotStartAddIdxJob2RollbackJob(t, job, errCancelledDDLJob)
@@ -246,12 +271,15 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
-		ver, err = rollingbackAddindex(w, d, t, job)
+		ver, err = rollingbackAddindex(w, d, t, job, false)
+		// TODO:
+	case model.ActionAddPrimaryKey:
+		ver, err = rollingbackAddindex(w, d, t, job, true)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
-	case model.ActionDropIndex:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropTable, model.ActionDropView:
 		err = rollingbackDropTableOrView(t, job)

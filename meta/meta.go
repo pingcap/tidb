@@ -625,17 +625,22 @@ func (m *Meta) reorgJobPhysicalTableID(id int64) []byte {
 	return b
 }
 
-func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
-	if err == nil {
-		err = m.txn.HSet(key, m.jobIDKey(job.ID), b)
-	}
-	return errors.Trace(err)
+func (m *Meta) reorgJobBatchZeroVals(jobID, workerID int64) []byte {
+	b := make([]byte, 16, 20)
+	binary.BigEndian.PutUint64(b, uint64(jobID))
+	b = append(b, "_wid"...)
+	binary.BigEndian.PutUint64(b[8:], uint64(jobID))
+	b = append(b, "_batch"...)
+	return b
 }
 
 // AddHistoryDDLJob adds DDL job to history.
-func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
-	return m.addHistoryDDLJob(mDDLJobHistoryKey, job)
+func (m *Meta) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
+	if err == nil {
+		err = m.txn.HSet(mDDLJobHistoryKey, m.jobIDKey(job.ID), b)
+	}
+	return errors.Trace(err)
 }
 
 func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
@@ -738,6 +743,34 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, phys
 	}
 	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
+}
+
+func (m *Meta) UpdatePrimaryKeyReorgBatchZeroVals(job *model.Job, workerID int64, batchZeroVals map[string]int64) error {
+	vals, err := json.Marshal(batchZeroVals)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobBatchZeroVals(job.ID, workerID), vals)
+	return errors.Trace(err)
+}
+
+func (m *Meta) RemovePrimaryKeyReorg(job *model.Job, workerIDs ...int64) error {
+	for _, id := range workerIDs {
+		if err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobBatchZeroVals(job.ID, id)); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (m *Meta) GetPrimaryKeyReorgBatchZeroVals(job *model.Job, workerID int64) (map[string]int64, error) {
+	vals, err := m.txn.HGet(mDDLJobReorgKey, m.reorgJobBatchZeroVals(job.ID, workerID))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	batchVals := make(map[string]int64)
+	err = json.Unmarshal(vals, &batchVals)
+	return batchVals, errors.Trace(err)
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.

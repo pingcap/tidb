@@ -66,6 +66,9 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# enable-pk-is-handle is used to control alter primary key feature. Default is true, indicate the alter primary key feature is disabled.
+enable-pk-is-handle = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

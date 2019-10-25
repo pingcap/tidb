@@ -20,6 +20,7 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/ngaut/log"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -230,6 +231,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 			value[0] = kv.UnCommitIndexKVFlag
 		}
 		err = rm.Set(key, value)
+		log.Warnf("set idx %v, v %v, err %v", indexedValues, h, err)
 		if ss != nil {
 			ss.SetAssertion(key, kv.None)
 		}
@@ -245,6 +247,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 			value = append(value, kv.UnCommitIndexKVFlag)
 		}
 		err = rm.Set(key, value)
+		log.Warnf("set idx %v, v %v, err %v", indexedValues, h, err)
 		if ss != nil {
 			ss.SetAssertion(key, kv.None)
 		}

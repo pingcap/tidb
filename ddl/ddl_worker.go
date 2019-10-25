@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -279,14 +280,15 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 	if !job.IsCancelled() {
 		switch job.Type {
-		case model.ActionAddIndex:
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State != model.JobStateRollbackDone {
 				break
 			}
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
 	}
@@ -305,7 +307,12 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
-	err = t.AddHistoryDDLJob(job)
+	log.Warnf("args:%v", job.Args)
+	updateRawArgs := true
+	if job.Type == model.ActionAddPrimaryKey {
+		updateRawArgs = false
+	}
+	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
 
@@ -452,6 +459,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+		log.Warnf("---------------- job:%v, args:%v", job, job.Args)
 	}
 }
 
@@ -528,8 +536,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:
-		ver, err = w.onCreateIndex(d, t, job)
-	case model.ActionDropIndex:
+		ver, err = w.onCreateIndex(d, t, job, false)
+	case model.ActionAddPrimaryKey:
+		ver, err = w.onCreateIndex(d, t, job, true)
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(t, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(t, job)

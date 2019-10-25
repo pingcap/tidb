@@ -89,6 +89,8 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// EnablePKIsHandle is used to control alter primary key feature.
+	EnablePKIsHandle bool `toml:"enable-pk-is-handle" json:"enable-pk-is-handle"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -345,6 +347,7 @@ var defaultConf = Config{
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
+	EnablePKIsHandle:             true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,

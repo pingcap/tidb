@@ -45,11 +45,12 @@ import (
 var _ = Suite(&testStateChangeSuite{})
 
 type testStateChangeSuite struct {
-	lease time.Duration
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	p     *parser.Parser
+	lease  time.Duration
+	store  kv.Storage
+	dom    *domain.Domain
+	se     session.Session
+	p      *parser.Parser
+	preSQL string
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
@@ -615,7 +616,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  "))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil> YES BTREE  "))
 		}
 	}
 
@@ -629,7 +630,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil> YES BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 
@@ -734,6 +735,16 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
+	sql1 := "ALTER TABLE t add primary key index_b(b);"
+	sql2 := "ALTER TABLE t add primary key index_b(c);"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1068]Multiple primary key defined")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
@@ -764,6 +775,20 @@ func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelDropPrimaryKey(c *C) {
+	s.preSQL = "ALTER TABLE t add primary key index_b(c);"
+	defer func() {
+		s.preSQL = ""
+	}()
+	sql1 := "alter table t drop primary key;"
+	sql2 := "alter table t drop primary key;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]index PRIMARY doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
@@ -782,6 +807,10 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	c.Assert(err, IsNil)
+	if len(s.preSQL) != 0 {
+		_, err := s.se.Execute(context.Background(), s.preSQL)
+		c.Assert(err, IsNil)
+	}
 	defer s.se.Execute(context.Background(), "drop table t")
 
 	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")

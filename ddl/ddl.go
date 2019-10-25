@@ -105,7 +105,7 @@ var (
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
 	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, mysql.MySQLErrName[mysql.ErrInvalidUseOfNull])
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
 	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
@@ -706,7 +706,7 @@ const (
 	codeWrongTableName                         = 1103
 	codeInvalidGroupFuncUse                    = terror.ErrCode(mysql.ErrInvalidGroupFuncUse)
 	codeTooManyFields                          = 1117
-	codeInvalidUseOfNull                       = 1138
+	codeInvalidUseOfNull                       = terror.ErrCode(mysql.ErrInvalidUseOfNull)
 	codeWrongColumnName                        = 1166
 	codeWrongKeyColumn                         = 1167
 	codeBlobKeyWithoutLength                   = 1170

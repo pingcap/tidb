@@ -358,7 +358,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
@@ -366,10 +366,10 @@ func (s *testSuite) TestDDL(c *C) {
 
 	// Add multiple history jobs.
 	historyJob1 := &model.Job{ID: 1234}
-	err = t.AddHistoryDDLJob(historyJob1)
+	err = t.AddHistoryDDLJob(historyJob1, true)
 	c.Assert(err, IsNil)
 	historyJob2 := &model.Job{ID: 123}
-	err = t.AddHistoryDDLJob(historyJob2)
+	err = t.AddHistoryDDLJob(historyJob2, true)
 	c.Assert(err, IsNil)
 	all, err := t.GetAllHistoryDDLJobs()
 	c.Assert(err, IsNil)

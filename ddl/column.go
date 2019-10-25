@@ -386,8 +386,8 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
-		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+		err = modifyColumnFromNull2NotNull(w, dbInfo, tblInfo, job, true, oldCol, newCol)
 		if err != nil {
 			return ver, err
 		}
@@ -553,7 +553,9 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 }
 
 // modifyColumnFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
-func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) error {
+// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+func modifyColumnFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, needRollingback bool,
+	oldCol, newCol *model.ColumnInfo) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
@@ -565,7 +567,9 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 	// If there is a null value inserted, it cannot be modified and needs to be rollback.
 	err = checkForNullValue(ctx, oldCol.Tp == newCol.Tp, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 	if err != nil {
-		job.State = model.JobStateRollingback
+		if needRollingback {
+			job.State = model.JobStateRollingback
+		}
 		return errors.Trace(err)
 	}
 

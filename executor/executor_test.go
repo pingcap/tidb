@@ -456,7 +456,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	err = tk.Se.CommitTxn(context.Background())
 	c.Assert(err, IsNil)
