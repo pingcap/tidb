@@ -90,12 +90,15 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(f.Close(), IsNil)
+		c.Assert(os.Remove(configFile), IsNil)
+	}()
 
 	var testLoad = func(confStr string, expectedEnableErrorStack, expectedDisableErrorStack, expectedEnableTimestamp, expectedDisableTimestamp nullableBool, resultedDisableTimestamp, resultedDisableErrorVerbose bool, valid Checker) {
 		conf = defaultConf
 		_, err = f.WriteString(confStr)
 		c.Assert(err, IsNil)
-		c.Assert(f.Sync(), IsNil)
 		c.Assert(conf.Load(configFile), IsNil)
 		c.Assert(conf.Log.EnableErrorStack, Equals, expectedEnableErrorStack)
 		c.Assert(conf.Log.DisableErrorStack, Equals, expectedDisableErrorStack)
@@ -140,10 +143,6 @@ enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbFalse, nbUnset, nbUnset, false, false, NotNil)
 
-	defer func() {
-		c.Assert(f.Close(), IsNil)
-		c.Assert(os.Remove(configFile), IsNil)
-	}()
 }
 
 func (s *testConfigSuite) TestConfig(c *C) {
