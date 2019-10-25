@@ -400,7 +400,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 }
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	numOuterChks, numOuterRows := task.outerResult.NumChunks(), task.outerResult.Len()
+	numOuterChks := task.outerResult.NumChunks()
 	var outerMatch [][]bool
 	if imw.outerMergeCtx.filter != nil {
 		outerMatch = make([][]bool, numOuterChks)
@@ -413,13 +413,12 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 			}
 		}
 	}
-	task.outerOrderIdx = make([]chunk.RowPtr, 0, numOuterRows)
-	numChunk := uint32(task.outerResult.NumChunks())
-	for i := uint32(0); i < numChunk; i++ {
-		numRow := uint32(task.outerResult.GetChunk(int(i)).NumRows())
-		for j := uint32(0); j < numRow; j++ {
+	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
+	for i := 0; i < numOuterChks; i++ {
+		numRow := task.outerResult.GetChunk(int(i)).NumRows()
+		for j := 0; j < numRow; j++ {
 			if len(outerMatch) == 0 || outerMatch[i][j] {
-				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: i, RowIdx: j})
+				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			}
 		}
 	}
