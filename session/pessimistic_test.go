@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -479,6 +480,47 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 5")
 	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
 	tk2.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,17)")
+
+	tk.MustExec("set @@autocommit = 0")
+	tk2.MustExec("set @@autocommit = 0")
+	tk3.MustExec("set @@autocommit = 0")
+
+	// test get ts failed for handlePessimisticLockError when using nowait
+	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
+	// the txn correctness should be ensured
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return"), IsNil)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from tk where c1 > 0 for update nowait")
+	tk2.MustExec("begin pessimistic")
+	_, err := tk2.Exec("select * from tk where c1 > 0 for update nowait")
+	c.Check(err, NotNil)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from tk where c1 > 0 for update nowait")
+	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("update tk set c2 = 1 where c1 = 5")        // here lock succ happen in getTs failed from pd
+	tk2.MustExec("update tk set c2 = c2 + 100 where c1 > 0") // this will not get effect
+	time.Sleep(3 * time.Second)
+	_, err = tk2.Exec("commit")
+	c.Check(err, NotNil) // txn abort because pessimistic lock not found
+	tk3.MustExec("commit")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 1"))
+	tk3.MustQuery("select * from tk where c1 = 4 for update nowait").Check(testkit.Rows("4 4"))
+	tk3.MustQuery("select * from tk where c1 = 3 for update nowait").Check(testkit.Rows("3 3"))
+	tk3.MustExec("commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
 }
 
 func (s *testPessimisticSuite) TestWaitLockKill(c *C) {

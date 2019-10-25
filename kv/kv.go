@@ -368,6 +368,8 @@ type SplitableStore interface {
 }
 
 // Used for pessimistic lock wait time
+// these two constants are special for lock protocol with tikv
+// 0 means always wait, 1 means nowait, others meaning lock wait in milliseconds
 var (
 	LockAlwaysWait = uint64(0)
 	LockNoWait     = uint64(1)

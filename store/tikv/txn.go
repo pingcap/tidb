@@ -426,8 +426,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		txn.committer.lockWaitTime = lockWaitTime
-		err := txn.committer.pessimisticLockKeys(bo, killed, keys)
+		err := txn.committer.pessimisticLockKeys(bo, killed, lockWaitTime, keys)
 		if killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
@@ -482,6 +481,9 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
+		failpoint.Inject("AsyncRollBackSleep", func() {
+			time.Sleep(2 * time.Second)
+		})
 		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))

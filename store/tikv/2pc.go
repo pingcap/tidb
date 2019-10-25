@@ -46,7 +46,10 @@ type twoPhaseCommitAction interface {
 type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
-type actionPessimisticLock struct{ killed *uint32 }
+type actionPessimisticLock struct {
+	killed       *uint32
+	lockWaitTime uint64
+}
 type actionPessimisticRollback struct{}
 
 var (
@@ -125,8 +128,6 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
-	// Used for select for update in ms, 0 means always wait, 1 means nowait
-	lockWaitTime uint64
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -666,7 +667,6 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      c.pessimisticTTL,
 		IsFirstLock:  c.isFirstLock,
-		WaitTimeout:  c.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
@@ -682,7 +682,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -718,7 +718,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// if the lock left behind whose related txn is already committed or rollbacked,
 			// (eg secondary locks not committed or rollbacked yet)
 			// we cant return "nowait conflict" directly
-			if c.lockWaitTime == kv.LockNoWait && lock.LockType == pb.Op_PessimisticLock {
+			if action.lockWaitTime == kv.LockNoWait && lock.LockType == pb.Op_PessimisticLock {
 				// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
 				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
 					return ErrLockAcquireFailAndNoWaitSet
@@ -947,8 +947,9 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime uint64,
+	keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {

@@ -572,17 +572,17 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 // GetTimestampWithRetry tries to get timestamp using retry and backoff mechanism
 func (a *ExecStmt) GetTimestampWithRetry(ctx context.Context) (uint64, error) {
 	tsoMaxBackoff := 15000
-	bo := tikv.NewBackoffer(context.Background(), tsoMaxBackoff)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("ExecStmt.GetTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	bo := tikv.NewBackoffer(ctx, tsoMaxBackoff)
 	for {
 		ts, err := a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
 		// mock get ts fail
-		failpoint.Inject("ExecStmt get ts error", func() (uint64, error) {
-			return 0, errors.New("ExecStmt get ts error")
+		failpoint.Inject("ExecStmtGetTsError", func() (uint64, error) {
+			return 0, errors.New("ExecStmtGetTsError")
 		})
 
 		if err == nil {
