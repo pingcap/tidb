@@ -1467,14 +1467,25 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
-		agg := basePhysicalAgg{
-			GroupByItems: la.GroupByItems,
-			AggFuncs:     la.AggFuncs,
-		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
-		agg.SetSchema(la.schema.Clone())
+		agg := NewPhysicalHashAgg(la, prop, taskTp)
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs
+}
+
+// ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
+// and returns the two preferAggType hints.
+func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
+	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
+	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.aggHints.preferAggType = 0
+		preferHash, preferStream = false, false
+	}
+	return
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1487,15 +1498,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		}
 	}
 
-	preferHash := (la.aggHints.preferAggType & preferHashAgg) > 0
-	preferStream := (la.aggHints.preferAggType & preferStreamAgg) > 0
-	if preferHash && preferStream {
-		errMsg := "Optimizer aggregation hints are conflicted"
-		warning := ErrInternal.GenWithStack(errMsg)
-		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-		la.aggHints.preferAggType = 0
-		preferHash, preferStream = false, false
-	}
+	preferHash, preferStream := la.ResetHintIfConflicted()
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash {

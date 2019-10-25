@@ -48,6 +48,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandSelection: {
 		&ImplSelection{},
 	},
+	memo.OperandAggregation: {
+		&ImplHashAgg{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -185,4 +188,33 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
 	}
+}
+
+// ImplHashAgg is the implementation rule which implements LogicalAggregation
+// to PhysicalHashAgg.
+type ImplHashAgg struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	if !prop.IsEmpty() {
+		return false
+	}
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	_, preferStream := la.ResetHintIfConflicted()
+	if preferStream {
+		// If the LogicalAggregation has a StreamAgg hint but it cannot be implemented as PhysicalStreamAgg,
+		// we will generate a PhysicalHashAgg in the rule `ImplStreamAgg`. So we have no need to regenerate
+		// a HashAgg in this rule.
+		return false
+	}
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	hashAgg := plannercore.NewPhysicalHashAgg(la, reqProp)
+	// TODO: Implement TiKVHashAgg
+	return impl.NewTiDBHashAggImpl(hashAgg), nil
 }

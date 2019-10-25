@@ -14,6 +14,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -402,6 +404,20 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+}
+
+// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
+func NewPhysicalHashAgg(la *LogicalAggregation, prop *property.PhysicalProperty, taskTp ...property.TaskType) *PhysicalHashAgg {
+	newProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	if len(taskTp) == 1 {
+		newProp.TaskTp = taskTp[0]
+	}
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, newProp)
+	agg.SetSchema(la.schema.Clone())
+	return agg
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.

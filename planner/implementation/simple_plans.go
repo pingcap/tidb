@@ -69,3 +69,21 @@ func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implem
 func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
 	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }
+
+// TiDBHashAggImpl is the implementation of PhysicalHashAgg in TiDB layer.
+type TiDBHashAggImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true)
+	agg.cost = selfCost + children[0].GetCost()
+	return agg.cost
+}
+
+// NewTiDBHashAggImpl creates a new TiDBHashAggImpl.
+func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
+	return &TiDBHashAggImpl{baseImpl{plan: agg}}
+}
