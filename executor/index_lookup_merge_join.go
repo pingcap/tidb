@@ -16,6 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
+	"sync"
+	"sync/atomic"
+
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -25,9 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
-	"sort"
-	"sync"
-	"sync/atomic"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
