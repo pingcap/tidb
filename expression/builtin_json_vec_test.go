@@ -18,28 +18,67 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
-	ast.JSONKeys:         {},
+	ast.JSONKeys: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
+	},
 	ast.JSONArrayAppend:  {},
 	ast.JSONContainsPath: {},
 	ast.JSONExtract:      {},
 	ast.JSONLength:       {},
-	ast.JSONType:         {},
+	ast.JSONType:         {{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}}},
 	ast.JSONArray:        {},
 	ast.JSONArrayInsert:  {},
 	ast.JSONContains:     {},
-	ast.JSONObject:       {},
-	ast.JSONSet:          {},
-	ast.JSONSearch:       {},
-	ast.JSONReplace:      {},
-	ast.JSONDepth:        {},
-	ast.JSONUnquote:      {},
-	ast.JSONRemove:       {},
-	ast.JSONMerge:        {},
-	ast.JSONInsert:       {},
-	ast.JSONQuote:        {},
+	ast.JSONObject: {
+		{
+			retEvalType: types.ETJson,
+			childrenTypes: []types.EvalType{
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+				types.ETString, types.ETJson,
+			},
+			geners: []dataGenerator{
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+				&randLenStrGener{10, 20}, nil,
+			},
+		},
+	},
+	ast.JSONSet:     {},
+	ast.JSONSearch:  {},
+	ast.JSONReplace: {},
+	ast.JSONDepth:   {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
+	ast.JSONUnquote: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
+	},
+	ast.JSONRemove: {},
+	ast.JSONMerge:  {},
+	ast.JSONInsert: {},
+	ast.JSONQuote: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {

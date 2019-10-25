@@ -107,10 +107,18 @@ func (s *testSuite) TestIndexJoinOverflow(c *C) {
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
 }
 
-func (s *testSuite2) TestIssue11061(c *C) {
+func (s *testSuite5) TestIssue11061(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(c varchar(30), index ix_c(c(10)))")
 	tk.MustExec("insert into t1 (c) values('7_chars'), ('13_characters')")
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1)").Check(testkit.Rows("20"))
+}
+
+func (s *testSuite5) TestIndexJoinPartitionTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	tk.MustExec("insert into t values(1, 27, 2)")
+	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
 }
