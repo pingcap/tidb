@@ -188,19 +188,23 @@ type Log struct {
 }
 
 func (l *Log) getDisableTimestamp() bool {
+	if l.EnableTimestamp == nbUnset && l.DisableTimestamp == nbUnset {
+		return false
+	}
 	if l.EnableTimestamp == nbUnset {
-		// if DisableTimestamp is also nbUnset, toBool is default to false
 		return l.DisableTimestamp.toBool()
 	}
 	return !l.EnableTimestamp.toBool()
 }
 
 func (l *Log) getDisableErrorStack() bool {
-	if l.DisableErrorStack == nbUnset {
-		// if EnableErrorStack is also nbUnset, toBool is default to false
-		return !l.EnableErrorStack.toBool()
+	if l.EnableErrorStack == nbUnset && l.DisableErrorStack == nbUnset {
+		return true
 	}
-	return l.DisableErrorStack.toBool()
+	if l.EnableErrorStack == nbUnset {
+		return l.DisableErrorStack.toBool()
+	}
+	return !l.EnableErrorStack.toBool()
 }
 
 // Security is the security section of the config.

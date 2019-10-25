@@ -141,7 +141,7 @@ disable-timestamp = true
 [Log]
 enable-error-stack = false
 disable-error-stack = false
-`, nbFalse, nbFalse, nbUnset, nbUnset, false, false, NotNil)
+`, nbFalse, nbFalse, nbUnset, nbUnset, false, true, NotNil)
 
 }
 
