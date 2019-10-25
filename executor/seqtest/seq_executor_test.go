@@ -1145,4 +1145,3 @@ func (s *seqTestSuite) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 }
-
