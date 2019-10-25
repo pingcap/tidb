@@ -459,15 +459,10 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	resulti64s := result.Int64s()
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
+	if isLHSUnsigned && isRHSUnsigned {
 		err = b.divideUU(dividend, divisor, resulti64s)
-	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideUI(dividend, divisor, resulti64s)
-	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.divideIU(dividend, divisor, resulti64s)
-	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideII(dividend, divisor, resulti64s)
+	} else {
+		err = b.divideOther(dividend, divisor, resulti64s)
 	}
 	return err
 }
@@ -481,27 +476,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(dividend, divisor, result []
 	}
 	return nil
 }
-func (b *builtinArithmeticIntDivideIntSig) divideUI(dividend, divisor, result []int64) error {
-	for i := 0; i < len(dividend); i++ {
-		if divisor[i] == 0 {
-			continue
-		}
-		lh, rh := dividend[i], divisor[i]
-		result[i] = int64(lh / rh)
-	}
-	return nil
-}
-func (b *builtinArithmeticIntDivideIntSig) divideIU(dividend, divisor, result []int64) error {
-	for i := 0; i < len(dividend); i++ {
-		if divisor[i] == 0 {
-			continue
-		}
-		lh, rh := dividend[i], divisor[i]
-		result[i] = int64(lh / rh)
-	}
-	return nil
-}
-func (b *builtinArithmeticIntDivideIntSig) divideII(dividend, divisor, result []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideOther(dividend, divisor, result []int64) error {
 	for i := 0; i < len(dividend); i++ {
 		if divisor[i] == 0 {
 			continue
