@@ -667,6 +667,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      c.pessimisticTTL,
 		IsFirstLock:  c.isFirstLock,
+		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
