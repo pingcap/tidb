@@ -415,7 +415,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	}
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
 	for i := 0; i < numOuterChks; i++ {
-		numRow := task.outerResult.GetChunk(int(i)).NumRows()
+		numRow := task.outerResult.GetChunk(i).NumRows()
 		for j := 0; j < numRow; j++ {
 			if len(outerMatch) == 0 || outerMatch[i][j] {
 				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
