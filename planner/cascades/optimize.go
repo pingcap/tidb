@@ -29,7 +29,7 @@ var DefaultOptimizer = NewOptimizer()
 
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
-	transformationRuleMap map[memo.Operand][]Transformation
+	transformationRuleMap map[memo.Operand][]TransformationID
 	implementationRuleMap map[memo.Operand][]ImplementationRule
 }
 
@@ -43,7 +43,7 @@ func NewOptimizer() *Optimizer {
 }
 
 // ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
-func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
+func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]TransformationID) *Optimizer {
 	opt.transformationRuleMap = rules
 	return opt
 }
@@ -54,9 +54,9 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 	return opt
 }
 
-// GetTransformationRules gets the all the candidate transformation rules of the optimizer
+// GetTransformationIDs gets the all the candidate TransformationIDs of the optimizer
 // based on the logical plan node.
-func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
+func (opt *Optimizer) GetTransformationIDs(node plannercore.LogicalPlan) []TransformationID {
 	return opt.transformationRuleMap[memo.GetOperand(node)]
 }
 
@@ -195,8 +195,9 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 // findMoreEquiv finds and applies the matched transformation rules.
 func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
-		pattern := GetPattern(rule)
+	for _, ruleID := range opt.GetTransformationIDs(expr.ExprNode) {
+		rule := GetTransformationRule(ruleID)
+		pattern := GetPattern(ruleID)
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}
@@ -286,7 +287,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	// Handle implementation rules for each equivalent GroupExpr.
 	var cumCost float64
 	var childImpls []memo.Implementation
-	var childPlans []plannercore.PhysicalPlan
 	err := opt.fillGroupStats(g)
 	if err != nil {
 		return nil, err
@@ -300,7 +300,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		}
 		for _, impl := range impls {
 			cumCost = 0.0
-			childPlans = childPlans[:0]
 			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
 				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
@@ -313,7 +312,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 				}
 				cumCost += childImpl.GetCost()
 				childImpls = append(childImpls, childImpl)
-				childPlans = append(childPlans, childImpl.GetPlan())
 			}
 			if impl.GetCost() == math.MaxFloat64 {
 				continue
@@ -323,16 +321,15 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 				continue
 			}
 			if groupImpl == nil || groupImpl.GetCost() > cumCost {
-				impl.GetPlan().SetChildren(childPlans...)
-				groupImpl = impl
+				groupImpl = impl.AttachChildren(childImpls...)
 				costLimit = cumCost
 			}
 		}
 	}
 	// Handle enforcer rules for required physical property.
-	for _, rule := range GetEnforcerRules(reqPhysProp) {
+	for _, rule := range GetEnforcerRules(g, reqPhysProp) {
 		newReqPhysProp := rule.NewProperty(reqPhysProp)
-		enforceCost := rule.GetEnforceCost(outCount)
+		enforceCost := rule.GetEnforceCost(g, outCount)
 		childImpl, err := opt.implGroup(g, newReqPhysProp, costLimit-enforceCost)
 		if err != nil {
 			return nil, err
