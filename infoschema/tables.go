@@ -17,9 +17,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/sysinfo"
 )
 
 const (
@@ -87,6 +89,9 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBConfig                         = "TIDB_CONFIG"
+	tableTiDBStatsInfoCluster               = "TIDB_STATS_INFO_CLUSTER"
+	tableTiDBNetworkInfo                    = "TIDB_NETWORK_INFO"
+	tableTidbNetworkLatencyCluster          = "TIDB_NETWORK_LATENCY_CLUSTER"
 )
 
 type columnInfo struct {
@@ -666,6 +671,24 @@ var tableTiDBServersInfoCols = []columnInfo{
 var tableTiDBConfigCols = []columnInfo{
 	{"item", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"value", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTiDBStatsInfoClusterCols = []columnInfo{
+	{"DDL_ID", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CPU_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
+	{"MEM_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
+}
+
+var tableTiDBNetworkInfoCols = []columnInfo{
+	{"BYTES_SENT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"BYTES_RECV", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTidbNetworkLatencyClusterCols = []columnInfo{
+	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1866,6 +1889,43 @@ func dataForConfigInfo() ([][]types.Datum, error) {
 	return rows, nil
 }
 
+func dataForStatsInfoCluster() ([][]types.Datum, error) {
+	var rows [][]types.Datum
+
+	cpuUsage, err := sysinfo.GetCpuUsage()
+	if err != nil {
+		return nil, err
+	}
+	memUsage, err := sysinfo.GetMemUsage()
+	if err != nil {
+		return nil, err
+	}
+	row := types.MakeDatums(
+		infosync.GetServerInfo().ID, // DDL_ID
+		cpuUsage,                    // CPU_USAGE
+		memUsage,                    // MEM_USAGE
+	)
+	rows = append(rows, row)
+	return rows, nil
+}
+
+func dataForNetworkInfo() ([][]types.Datum, error) {
+	info, err := sysinfo.GetNetInfo()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]types.Datum, 0, len(info))
+	for _, v := range info {
+		row := types.MakeDatums(
+			v.BytesSent, // BYTES_SENT
+			v.BytesRecv, // BYTES_RECV
+			v.Name,      // LABEL
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 func getKeyValueFromValue(prefix string, m map[string]interface{}, target map[string]string) {
 	for k, v := range m {
 		key := k
@@ -1878,6 +1938,69 @@ func getKeyValueFromValue(prefix string, m map[string]interface{}, target map[st
 		}
 		target[key] = fmt.Sprintf("%v", v)
 	}
+}
+
+func dataForNetworkLatencyCluster(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	stores, err := tikvHelper.RegionCache.GetAllStores()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]string)
+	for _, store := range stores {
+		if strings.Contains(store.Address, ":") {
+			ip := strings.Split(store.Address, ":")[0]
+			m[ip] = ip
+		}
+	}
+
+	membersStat, err := tikvHelper.GetMembersStat()
+	if err != nil {
+		return nil, err
+	}
+	if membersStat == nil {
+		return nil, nil
+	}
+	for _, member := range membersStat.Members {
+		for _, peer := range member.PeerUrls {
+			ip := getHostIP(peer)
+			m[ip] = ip
+		}
+	}
+
+	rows := make([][]types.Datum, 0, len(m))
+	for _, addr := range m {
+		latency, err := sysinfo.GetNetLatency(addr)
+		if err != nil {
+			return nil, err
+		}
+		row := types.MakeDatums(
+			infosync.GetServerInfo().IP, // SOURCE
+			addr,                        // TARGET
+			latency,                     // LATENCY
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func getHostIP(url string) string {
+	hostIP := ""
+	if strings.Contains(url, "//") {
+		hostIP = strings.Split(url, "://")[1]
+		hostIP = strings.Split(hostIP, ":")[0]
+	} else {
+		hostIP = url
+	}
+	return hostIP
 }
 
 var tableNameToColumns = map[string][]columnInfo{
@@ -1922,6 +2045,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBConfig:                         tableTiDBConfigCols,
+	tableTiDBStatsInfoCluster:               tableTiDBStatsInfoClusterCols,
+	tableTiDBNetworkInfo:                    tableTiDBNetworkInfoCols,
+	tableTidbNetworkLatencyCluster:          tableTidbNetworkLatencyClusterCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2031,6 +2157,12 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBConfig:
 		fullRows, err = dataForConfigInfo()
+	case tableTiDBStatsInfoCluster:
+		fullRows, err = dataForStatsInfoCluster()
+	case tableTiDBNetworkInfo:
+		fullRows, err = dataForNetworkInfo()
+	case tableTidbNetworkLatencyCluster:
+		fullRows, err = dataForNetworkLatencyCluster(ctx)
 	}
 	if err != nil {
 		return nil, err

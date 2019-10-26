@@ -20,4 +20,5 @@ const (
 	Regions    = "/pd/api/v1/regions"
 	RegionByID = "/pd/api/v1//region/id/"
 	Stores     = "/pd/api/v1/stores"
+	Members    = "/pd/api/v1/members"
 )

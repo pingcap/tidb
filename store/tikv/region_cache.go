@@ -262,6 +262,10 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	}
 }
 
+func (c *RegionCache) GetAllStores() ([]*metapb.Store, error) {
+	return c.pdClient.GetAllStores(context.Background())
+}
+
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
 	Region  RegionVerID
