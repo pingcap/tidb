@@ -281,7 +281,8 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 
 		compressed, err := deflate([]byte(str))
 		if err != nil {
-			result.AppendString(string(""))
+			result.AppendNull()
+			continue
 		}
 
 		resultLength := 4 + len(compressed)
@@ -300,7 +301,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			buffer[len(buffer)-1] = '.'
 		}
 
-		result.AppendString(string(buffer))
+		result.AppendBytes(buffer)
 	}
 	return nil
 }
