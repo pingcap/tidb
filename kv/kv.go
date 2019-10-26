@@ -270,6 +270,8 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// TaskToken represents a single task
+	TaskToken uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.

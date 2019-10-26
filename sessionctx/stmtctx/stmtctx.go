@@ -15,6 +15,7 @@ package stmtctx
 
 import (
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"sync"
@@ -136,7 +137,8 @@ type StatementContext struct {
 		digest     string
 	}
 	Tables    []TableEntry
-	PointExec bool // for point update cached execution, Constant expression need to set "paramMarker"
+	PointExec bool   // for point update cached execution, Constant expression need to set "paramMarker"
+	Token     uint64 // a unique identifier of the statement
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -430,6 +432,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
+	sc.Token = rand.Uint64()
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

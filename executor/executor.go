@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"runtime"
 	"strconv"
 	"sync"
@@ -1597,6 +1598,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return err
 	}
+	sc.Token = rand.Uint64()
 	vars.StmtCtx = sc
 	for _, warn := range hintWarns {
 		vars.StmtCtx.AppendWarning(warn)
