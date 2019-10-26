@@ -21,7 +21,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
@@ -253,27 +252,6 @@ func (b *builtinCompressSig) vectorized() bool {
 	return true
 }
 
-var (
-	bytePool = sync.Pool{
-		New: func() interface{} {
-			return make([]byte, defaultChunkSize)
-		},
-	}
-)
-
-func allocByteSlice(n int) []byte {
-	if n > defaultChunkSize {
-		return make([]byte, n)
-	}
-	return bytePool.Get().([]byte)
-}
-
-func deallocateByteSlice(b []byte) {
-	if cap(b) <= defaultChunkSize {
-		bytePool.Put(b)
-	}
-}
-
 // evalString evals COMPRESS(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -315,9 +293,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			resultLength++
 		}
 
-		buffer := allocByteSlice(resultLength)
-		defer deallocateByteSlice(buffer)
-
+		buffer := make([]byte, resultLength)
 		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
 		copy(buffer[4:], compressed)
 
