@@ -51,6 +51,8 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	defer sessVars.CleanBuffers()
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
+	// TODO: some transactions don't need to get ts here.
+	// txn, err := e.ctx.Txn(false)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err

@@ -110,7 +110,10 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullRange()).
-		SetDAGRequest(dagPB).
+		SetDAGRequest(distsql.DAGReqFuture{
+			DAGReq:  dagPB,
+			StartTS: nil,
+		}).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -263,7 +266,10 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
-		SetDAGRequest(dagPB).
+		SetDAGRequest(distsql.DAGReqFuture{
+			DAGReq:  dagPB,
+			StartTS: nil,
+		}).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -630,7 +636,10 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
 	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranges).
-		SetDAGRequest(dagPB).
+		SetDAGRequest(distsql.DAGReqFuture{
+			DAGReq:  dagPB,
+			StartTS: nil,
+		}).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()

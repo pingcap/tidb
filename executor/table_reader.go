@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -59,7 +58,7 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 	// kvRanges are only use for union scan.
 	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
+	dagPB    distsql.DAGReqFuture
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
@@ -95,14 +94,14 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		e.dagPB.DAGReq.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
 			return err
 		}
 	}
 	if e.runtimeStats != nil {
 		collExec := true
-		e.dagPB.CollectExecutionSummaries = &collExec
+		e.dagPB.DAGReq.CollectExecutionSummaries = &collExec
 	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)

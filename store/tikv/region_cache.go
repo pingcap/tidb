@@ -284,7 +284,9 @@ func (c *RPCContext) String() string {
 
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
+func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32,
+	readRegion string,
+) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -297,15 +299,21 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	regionStore := cachedRegion.getStore()
-	var store *Store
-	var peer *metapb.Peer
-	var storeIdx int
-	switch replicaRead {
-	case kv.ReplicaReadFollower:
-		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
-	default:
-		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
+	var store *Store = nil
+	var peer *metapb.Peer = nil
+	var storeIdx int = 0
+	if readRegion != "" {
+		store, peer, storeIdx = cachedRegion.StorePeerByRegion(regionStore, readRegion)
 	}
+	if store == nil && peer == nil {
+		switch replicaRead {
+		case kv.ReplicaReadFollower:
+			store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		default:
+			store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
+		}
+	}
+
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 	if err != nil {
 		return nil, err
@@ -1034,6 +1042,16 @@ func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*
 	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
+func (r *Region) StorePeerByRegion(rs *RegionStore, region string) (*Store, *metapb.Peer, int) {
+	for i, store := range rs.stores {
+		if store.region == region {
+			// TODO: load balance.
+			return r.getStorePeer(rs, int32(i))
+		}
+	}
+	return nil, nil, 0
+}
+
 // RegionVerID is a unique ID that can identify a Region at a specific version.
 type RegionVerID struct {
 	id      uint64
@@ -1168,6 +1186,8 @@ type Store struct {
 	resolveMutex sync.Mutex   // protect pd from concurrent init requests
 	fail         uint32       // store fail count, see RegionStore.storeFails
 	storeType    kv.StoreType // type of the store
+
+	region string
 }
 
 type resolveState uint64
@@ -1212,6 +1232,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
+		s.region = store.GetRegion()
 		s.storeType = kv.TiKV
 		for _, label := range store.Labels {
 			if label.Key == "engine" {
@@ -1267,9 +1288,10 @@ func (s *Store) reResolve(c *RegionCache) {
 		}
 	}
 	addr = store.GetAddress()
-	if s.addr != addr {
+	region := store.GetRegion()
+	if s.addr != addr || s.region != region {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, region: region, storeType: storeType}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore

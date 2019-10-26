@@ -34,6 +34,7 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
+	github.com/petermattis/goid v0.0.0-20180202154549-b0b1615b78e5
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
@@ -77,7 +78,7 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/kvproto => github.com/TennyZhuang/kvproto v0.0.0-20191014051905-14a9d2ffcaeb
+replace github.com/pingcap/kvproto => github.com/TennyZhuang/kvproto v0.0.0-20191025112214-354cce20b919
 
 replace github.com/pingcap/pd => github.com/TennyZhuang/pd v0.0.0-20191014112351-59b7c129fc63
 

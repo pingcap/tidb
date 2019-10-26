@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+
+	"github.com/pingcap/tidb/util/futures"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -73,11 +75,12 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 }
 
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
-func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
+func (builder *RequestBuilder) SetDAGRequest(dag DAGReqFuture) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
-		builder.Request.StartTs = dag.StartTs
-		builder.Request.Data, builder.err = dag.Marshal()
+		builder.Request.StartTs = dag.DAGReq.StartTs
+		builder.Request.StartTsFuture = dag.StartTS
+		builder.Request.Data, builder.err = dag.DAGReq.Marshal()
 	}
 
 	return builder
@@ -337,4 +340,10 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		high = []byte(kv.Key(high).Next())
 	}
 	return low, high, nil
+}
+
+// DAGReqFuture is a future of DagReqRequest.
+type DAGReqFuture struct {
+	DAGReq  *tipb.DAGRequest
+	StartTS futures.TSFuture
 }

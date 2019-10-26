@@ -145,6 +145,7 @@ type Request struct {
 	req  interface{}
 	kvrpcpb.Context
 	ReplicaReadSeed uint32
+	ReadRegion      string
 }
 
 // NewRequest returns new kv rpc request.
@@ -163,10 +164,18 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 }
 
 // NewReplicaReadRequest returns new kv rpc request with replica read.
-func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed uint32, ctxs ...kvrpcpb.Context) *Request {
+func NewReplicaReadRequest(
+	typ CmdType,
+	pointer interface{},
+	replicaReadType kv.ReplicaReadType,
+	replicaReadSeed uint32,
+	readRegion string,
+	ctxs ...kvrpcpb.Context,
+) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
 	req.ReplicaReadSeed = replicaReadSeed
+	req.ReadRegion = readRegion
 	return req
 }
 

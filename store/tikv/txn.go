@@ -29,6 +29,9 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+
+	"github.com/petermattis/goid"
+	"github.com/pingcap/tidb/util/futures"
 )
 
 var (
@@ -87,6 +90,10 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 
 // newTikvTxnWithStartTS creates a txn with startTS.
 func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
+	logutil.QPLogger().Info(
+		"newTikvTxnWithStartTS",
+		zap.Int64("goid", goid.Get()),
+	)
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	return &tikvTxn{
@@ -262,6 +269,10 @@ func (txn *tikvTxn) IsPessimistic() bool {
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
+	logutil.QPLogger().Info(
+		"tikvTxn::Commit",
+		zap.Int64("goid", goid.Get()),
+	)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.Commit", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -492,6 +503,10 @@ func (txn *tikvTxn) IsReadOnly() bool {
 
 func (txn *tikvTxn) StartTS() uint64 {
 	return txn.startTS
+}
+
+func (txn *tikvTxn) StartTSFuture() (futures.TSFuture, error) {
+	return nil, nil
 }
 
 func (txn *tikvTxn) Valid() bool {

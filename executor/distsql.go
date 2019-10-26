@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -212,7 +211,7 @@ type IndexReaderExecutor struct {
 	ranges          []*ranger.Range
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
+	dagPB    distsql.DAGReqFuture
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
@@ -275,7 +274,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		e.dagPB.DAGReq.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
 			return err
 		}
@@ -283,7 +282,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	if e.runtimeStats != nil {
 		collExec := true
-		e.dagPB.CollectExecutionSummaries = &collExec
+		e.dagPB.DAGReq.CollectExecutionSummaries = &collExec
 	}
 	e.kvRanges = kvRanges
 
@@ -320,10 +319,10 @@ type IndexLookUpExecutor struct {
 	keepOrder bool
 	desc      bool
 	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
+	dagPB     distsql.DAGReqFuture
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
-	tableRequest *tipb.DAGRequest
+	tableRequest distsql.DAGReqFuture
 	// columns are only required by union scan.
 	columns        []*model.ColumnInfo
 	indexStreaming bool
@@ -399,14 +398,14 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.idxPlans)
+		e.dagPB.DAGReq.Executors, _, err = constructDistExec(e.ctx, e.idxPlans)
 		if err != nil {
 			return err
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, _, err = constructDistExec(e.ctx, e.tblPlans)
+		e.tableRequest.DAGReq.Executors, _, err = constructDistExec(e.ctx, e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -432,7 +431,7 @@ var indexLookupDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexL
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
 		collExec := true
-		e.dagPB.CollectExecutionSummaries = &collExec
+		e.dagPB.DAGReq.CollectExecutionSummaries = &collExec
 	}
 
 	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), e.ctx.GetSessionVars().MemQuotaIndexLookupReader)

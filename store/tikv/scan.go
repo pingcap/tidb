@@ -198,7 +198,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			sreq.EndKey = reqStartKey
 			sreq.Reverse = true
 		}
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, s.snapshot.replicaReadSeed, pb.Context{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, s.snapshot.replicaReadSeed, "", pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
 		})

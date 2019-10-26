@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+
+	"github.com/pingcap/tidb/util/futures"
 )
 
 // Transaction options
@@ -177,8 +179,11 @@ type Transaction interface {
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
-	// StartTS returns the transaction start timestamp.
+	// StartTS returns
 	StartTS() uint64
+	// StartTSFuture returns the transaction start timestamp in a future.
+	// Nil means the timestamp is resolved, need to call `StartTS` instead.
+	StartTSFuture() (futures.TSFuture, error)
 	// Valid returns if the transaction is valid.
 	// A transaction become invalid after commit or rollback.
 	Valid() bool
@@ -238,10 +243,11 @@ const (
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
-	Tp        int64
-	StartTs   uint64
-	Data      []byte
-	KeyRanges []KeyRange
+	Tp            int64
+	StartTs       uint64
+	StartTsFuture futures.TSFuture
+	Data          []byte
+	KeyRanges     []KeyRange
 
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be

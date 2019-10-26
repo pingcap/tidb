@@ -69,6 +69,9 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
+
+	"github.com/petermattis/goid"
+	"github.com/pingcap/tidb/sessiontxn"
 )
 
 var (
@@ -162,7 +165,7 @@ func (h *StmtHistory) Count() int {
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
-	txn         TxnState
+	txn         sessiontxn.TxnState
 
 	mu struct {
 		sync.RWMutex
@@ -391,11 +394,19 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) doCommit(ctx context.Context) error {
+	logutil.QPLogger().Info(
+		"session::doCommit is called",
+		zap.Int64("goid", goid.Get()),
+		zap.Bool("pending", s.txn.Pending()),
+	)
+	// Shouldn't commit pending transactions.
+	s.txn.ChangePendingToValidIfNeed(s.getMembufCap())
+
 	if !s.txn.Valid() {
 		return nil
 	}
 	defer func() {
-		s.txn.changeToInvalid()
+		s.txn.ChangeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
 	if s.txn.IsReadOnly() {
@@ -441,16 +452,17 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	var txnSize int
 	var isPessimistic bool
 	if s.txn.Valid() {
 		txnSize = s.txn.Size()
 		isPessimistic = s.txn.IsPessimistic()
-	}
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
@@ -543,7 +555,8 @@ func (s *session) RollbackTxn(ctx context.Context) {
 		}
 	}
 	s.cleanRetryInfo()
-	s.txn.changeToInvalid()
+	s.txn.ChangePendingToValidIfNeed(kv.DefaultTxnMembufCap) // Maybe in ChangeToInvalid is better
+	s.txn.ChangeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 }
@@ -604,7 +617,8 @@ func (s *session) isTxnRetryableError(err error) bool {
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
-	if s.txn.doNotCommit == nil {
+	doNotCommit := s.txn.DoNotCommit()
+	if doNotCommit == nil {
 		return nil
 	}
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
@@ -615,7 +629,7 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
 		return nil
 	}
-	return errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block:" + doNotCommit.Error())
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
@@ -628,7 +642,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
-		s.txn.changeToInvalid()
+		s.txn.ChangeToInvalid()
 	}()
 
 	connID := s.sessionVars.ConnectionID
@@ -717,7 +731,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			zap.Error(err),
 			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
-		s.txn.changeToInvalid()
+		s.txn.ChangeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
 	return err
@@ -1212,7 +1226,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	switch prepared.CachedPlan.(type) {
 	case *plannercore.PointGetPlan:
 		resultSet, err = stmt.PointGet(ctx, is)
-		s.txn.changeToInvalid()
+		s.txn.ChangeToInvalid()
 	case *plannercore.Update:
 		s.PrepareTxnFuture(ctx)
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
@@ -1298,18 +1312,21 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
-	if s.txn.pending() && active {
+	if s.txn.Pending() && active {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
-		if err := s.txn.changePendingToValid(txnCap); err != nil {
+		if err := s.txn.ChangePendingToValidIfNeed(txnCap); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
-			s.txn.cleanup()
+			s.txn.Cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
 			return &s.txn, err
 		}
+	}
+	if s.txn.Valid() {
+		// TODO: only set variables if need.
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		if s.sessionVars.TxnCtx.IsPessimistic {
 			s.txn.SetOption(kv.Pessimistic, true)
@@ -1363,6 +1380,7 @@ func (s *session) isTxnRetryable() bool {
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
+	logutil.QPLogger().Info("session::NewTxn is called")
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
 		err := s.CommitTxn(ctx)
@@ -1384,7 +1402,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	s.txn.changeInvalidToValid(txn)
+	s.txn.AttachValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1688,7 +1706,7 @@ func createSession(store kv.Storage) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
-	s.txn.init()
+	s.txn.Init()
 	return s, nil
 }
 
@@ -1712,7 +1730,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	s.txn.init()
+	s.txn.Init()
 	return s, nil
 }
 
@@ -1908,7 +1926,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) {
-	if s.txn.validOrPending() {
+	if s.txn.ValidOrPending() {
 		return
 	}
 
@@ -1930,12 +1948,11 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 // PrepareTxnFuture uses to try to get txn future.
 func (s *session) PrepareTxnFuture(ctx context.Context) {
-	if s.txn.validOrPending() {
-		return
-	}
-
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
+	logutil.QPLogger().Info(
+		"session::PrepareTxnFuture is called",
+		zap.Int64("goid", goid.Get()),
+	)
+	s.txn.ChangeInvalidToPendingIfNeed(ctx, s.store, s.sessionVars.LowResolutionTSO)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -1958,7 +1975,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
-	s.txn.changeInvalidToValid(txn)
+	s.txn.AttachValid(txn)
 	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {

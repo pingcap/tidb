@@ -17,6 +17,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
+
+	"github.com/pingcap/tidb/util/futures"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -62,6 +64,11 @@ func (t *mockTxn) IsReadOnly() bool {
 func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
+
+func (t *mockTxn) StartTSFuture() (futures.TSFuture, error) {
+	return nil, nil
+}
+
 func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }

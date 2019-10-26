@@ -32,6 +32,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"sync"
 )
 
 const (
@@ -386,4 +388,24 @@ func SetTag(ctx context.Context, key string, value interface{}) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.SetTag(key, value)
 	}
+}
+
+var qp_mutex sync.Mutex
+var qp_logger *zap.Logger = nil
+var qp_props *zaplog.ZapProperties = nil
+
+func QPLogger() *zap.Logger {
+	if qp_logger != nil {
+		return qp_logger
+	}
+	qp_mutex.Lock()
+	defer qp_mutex.Unlock()
+	cfg := &zaplog.Config{
+		Level: "debug",
+		File: zaplog.FileLogConfig{
+			Filename: "qupeng.log",
+		},
+	}
+	qp_logger, qp_props, _ = zaplog.InitLogger(cfg)
+	return qp_logger
 }

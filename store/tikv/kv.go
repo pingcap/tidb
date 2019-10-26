@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+
+	"github.com/petermattis/goid"
 )
 
 type storeCache struct {
@@ -258,6 +260,10 @@ func (s *tikvStore) runSafePointChecker() {
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
+	logutil.QPLogger().Info(
+		"tikvStore::Begin",
+		zap.Int64("goid", goid.Get()),
+	)
 	txn, err := newTiKVTxn(s)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -268,6 +274,11 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 
 // BeginWithStartTS begins a transaction with startTS.
 func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
+	logutil.QPLogger().Info(
+		"tikvStore::BeginWithStartTS",
+		zap.Int64("goid", goid.Get()),
+		// zap.Stack("stack"),
+	)
 	txn, err := newTikvTxnWithStartTS(s, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -280,6 +291,10 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
 	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
+}
+
+func (s *tikvStore) GetPDClient() pd.Client {
+	return s.pdClient
 }
 
 func (s *tikvStore) Close() error {

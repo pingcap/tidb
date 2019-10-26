@@ -256,7 +256,10 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
 	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
-		SetDAGRequest(dagPB).
+		SetDAGRequest(distsql.DAGReqFuture{
+			DAGReq:  dagPB,
+			StartTS: nil,
+		}).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
 

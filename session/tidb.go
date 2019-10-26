@@ -259,7 +259,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	}
 	err = finishStmt(ctx, sctx, se, sessVars, err, s)
 
-	if se.txn.pending() {
+	if se.txn.Pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
 		//
@@ -268,7 +268,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// select 1
 		//
 		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
+		se.txn.ChangeToInvalid()
 	}
 	return rs, err
 }

@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
+
+	"go.uber.org/zap"
 )
 
 // Config number limitations
@@ -57,6 +59,7 @@ var (
 // Config contains configuration options.
 type Config struct {
 	Host             string          `toml:"host" json:"host"`
+	Region           string          `toml:"region" json: "region"`
 	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
 	Port             uint            `toml:"port" json:"port"`
 	Cors             string          `toml:"cors" json:"cors"`
@@ -327,6 +330,7 @@ type StmtSummary struct {
 
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
+	Region:                       "",
 	AdvertiseAddress:             "",
 	Port:                         4000,
 	Cors:                         "",
@@ -537,6 +541,8 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
+
+	logutil.QPLogger().Info("Config loaded", zap.String("region", c.Region))
 
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.

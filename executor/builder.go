@@ -49,6 +49,11 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+
+	"github.com/petermattis/goid"
+	"github.com/pingcap/tidb/util/futures"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -333,9 +338,9 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
 	readerExec *IndexLookUpExecutor) {
 	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
+	readerExec.dagPB.DAGReq.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
 	for i := 0; i <= len(is.Index.Columns); i++ {
-		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
+		readerExec.dagPB.DAGReq.OutputOffsets = append(readerExec.dagPB.DAGReq.OutputOffsets, uint32(i))
 	}
 	readerExec.ranges = ranger.FullRange()
 	ts := readerPlan.TablePlans[0].(*plannercore.PhysicalTableScan)
@@ -1204,11 +1209,16 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
+	if startTS != 0 {
+		b.startTS = startTS
+		return startTS, nil
+	}
+
 	txn, err := b.ctx.Txn(true)
 	if err != nil {
 		return 0, err
 	}
-	if startTS == 0 && txn.Valid() {
+	if txn.Valid() {
 		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
@@ -1216,6 +1226,36 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 		return 0, errors.Trace(ErrGetStartTS)
 	}
 	return startTS, nil
+}
+
+func (b *executorBuilder) getStartTSFuture() (uint64, futures.TSFuture, error) {
+	if b.startTS != 0 {
+		// Return the cached value.
+		return b.startTS, nil, nil
+	}
+
+	startTS := b.ctx.GetSessionVars().SnapshotTS
+	if startTS != 0 {
+		b.startTS = startTS
+		return startTS, nil, nil
+	}
+
+	txn, err := b.ctx.Txn(false)
+	if err != nil {
+		return 0, nil, err
+	}
+	if txn.Valid() {
+		b.startTS = txn.StartTS()
+		return b.startTS, nil, nil
+	}
+	tsFuture, err := txn.StartTSFuture()
+	if err != nil {
+		return 0, nil, err
+	}
+	if tsFuture == nil {
+		panic("must get ts future from a pending txn")
+	}
+	return 0, tsFuture, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -1651,18 +1691,26 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 	return executors, streaming, nil
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
-	dagReq = &tipb.DAGRequest{}
-	dagReq.StartTs, err = b.getStartTS()
-	if err != nil {
-		return nil, false, err
-	}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
-	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = sc.PushDownFlags()
-	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq distsql.DAGReqFuture, streaming bool, err error) {
+	dagReq.DAGReq = &tipb.DAGRequest{}
+	dagReq.DAGReq.StartTs, dagReq.StartTS, err = b.getStartTSFuture()
+	logutil.QPLogger().Info(
+		"constructDAGReq, calling getStartTS",
+		zap.Int64("goid", goid.Get()),
+		zap.Uint64("ts", dagReq.DAGReq.StartTs),
+		zap.Error(err),
+	)
 
-	distsql.SetEncodeType(b.ctx, dagReq)
+	if err != nil {
+		return dagReq, false, err
+	}
+
+	dagReq.DAGReq.TimeZoneName, dagReq.DAGReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.DAGReq.Flags = sc.PushDownFlags()
+	dagReq.DAGReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+
+	distsql.SetEncodeType(b.ctx, dagReq.DAGReq)
 	return dagReq, streaming, err
 }
 
@@ -1827,7 +1875,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
 	}
-	if containsLimit(dagReq.Executors) {
+	if containsLimit(dagReq.DAGReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
@@ -1836,10 +1884,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if !collect {
 		e.feedback.Invalidate()
 	}
-	e.dagPB.CollectRangeCounts = &collect
+	e.dagPB.DAGReq.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
-		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+		dagReq.DAGReq.OutputOffsets = append(dagReq.DAGReq.OutputOffsets, uint32(i))
 	}
 
 	return e, nil
@@ -1892,7 +1940,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		plans:           v.IndexPlans,
 		outputColumns:   v.OutputColumns,
 	}
-	if containsLimit(dagReq.Executors) {
+	if containsLimit(dagReq.DAGReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, is.Hist, int64(is.StatsCount()), is.Desc)
@@ -1901,10 +1949,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	if !collect {
 		e.feedback.Invalidate()
 	}
-	e.dagPB.CollectRangeCounts = &collect
+	e.dagPB.DAGReq.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
-		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
+		dagReq.DAGReq.OutputOffsets = append(dagReq.DAGReq.OutputOffsets, uint32(col.Index))
 	}
 
 	return e, nil
@@ -1934,11 +1982,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
+	indexReq.DAGReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
 	tbl, _ := b.is.TableByID(is.Table.ID)
 
 	for i := 0; i < v.Schema().Len(); i++ {
-		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
+		tableReq.DAGReq.OutputOffsets = append(tableReq.DAGReq.OutputOffsets, uint32(i))
 	}
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
@@ -1968,19 +2016,19 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:       v.PushedLimit,
 	}
 
-	if containsLimit(indexReq.Executors) {
+	if containsLimit(indexReq.DAGReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	// do not collect the feedback for table request.
 	collectTable := false
-	e.tableRequest.CollectRangeCounts = &collectTable
+	e.tableRequest.DAGReq.CollectRangeCounts = &collectTable
 	collectIndex := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}
-	e.dagPB.CollectRangeCounts = &collectIndex
+	e.dagPB.DAGReq.CollectRangeCounts = &collectIndex
 	if v.ExtraHandleCol != nil {
 		e.handleIdx = v.ExtraHandleCol.Index
 	}
@@ -2059,9 +2107,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
-	if e.runtimeStats != nil && e.dagPB.CollectExecutionSummaries == nil {
+	if e.runtimeStats != nil && e.dagPB.DAGReq.CollectExecutionSummaries == nil {
 		colExec := true
-		e.dagPB.CollectExecutionSummaries = &colExec
+		e.dagPB.DAGReq.CollectExecutionSummaries = &colExec
 	}
 
 	sort.Sort(sortutil.Int64Slice(handles))

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -37,6 +38,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+
+	"github.com/petermattis/goid"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tipb/go-tipb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
@@ -46,16 +54,173 @@ type CopClient struct {
 	kv.RequestTypeSupportedChecker
 	store           *tikvStore
 	replicaReadSeed uint32
+
+	selfRegion    string
+	primaryRegion string
+	cachedStores  []*metapb.Store
+
+	conns map[string]*grpc.ClientConn
+}
+
+func (c *CopClient) getTikvStoresInRegion(ctx context.Context, region string) (filtered []*metapb.Store, err error) {
+	if len(c.cachedStores) == 0 {
+		c.cachedStores, err = c.store.GetPDClient().GetAllStores(ctx)
+		logutil.QPLogger().Info("CopClient::getStores success")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	filtered = make([]*metapb.Store, 0, len(c.cachedStores))
+	for _, s := range c.cachedStores {
+		if s.Region == region {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered, nil
+}
+
+func (c *CopClient) getAppliedIndices(bo *Backoffer, ctxArray []*RPCContext) ([]uint64, error) {
+	if c.selfRegion == "" {
+		cfg := config.GetGlobalConfig()
+		c.selfRegion = cfg.Region
+		c.primaryRegion = "Beijing" // Hard code for now.
+	}
+	stores, err := c.getTikvStoresInRegion(bo.ctx, c.primaryRegion)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.conns == nil {
+		c.conns = make(map[string]*grpc.ClientConn)
+	}
+
+	for _, store := range stores {
+		addr := store.GetAddress()
+		logutil.QPLogger().Info("getAppliedIndices trying", zap.String("addr", addr))
+
+		conn := c.conns[addr]
+		if conn == nil {
+			var err error
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			conn, err = grpc.DialContext(
+				ctx,
+				addr,
+				grpc.WithInsecure(),
+				grpc.WithBackoffMaxDelay(time.Second*3),
+				grpc.WithKeepaliveParams(keepalive.ClientParameters{
+					Time:                time.Duration(10) * time.Second,
+					Timeout:             time.Duration(3) * time.Second,
+					PermitWithoutStream: true,
+				}),
+			)
+			cancel()
+			if err != nil {
+				logutil.QPLogger().Warn("establish grpc conn", zap.Error(err))
+				return nil, err
+			}
+			c.conns[addr] = conn
+		}
+		logutil.QPLogger().Info("getAppliedIndices get conn sucess")
+
+		client := tikvpb.NewDCProxyClient(conn)
+		// Construct the request.
+		var req = new(kvrpcpb.GetCommittedIndexAndTsRequest)
+		for _, c := range ctxArray {
+			reqCtx := &kvrpcpb.Context{
+				RegionId: c.Region.GetID(),
+				RegionEpoch: &metapb.RegionEpoch{
+					ConfVer: c.Region.confVer,
+					Version: c.Region.ver,
+				},
+				Peer: c.Peer,
+			}
+			req.Contexts = append(req.Contexts, reqCtx)
+		}
+		resp, err := client.GetCommittedIndexAndTs(bo.ctx, req)
+		if err != nil {
+			logutil.QPLogger().Warn("RPC GetCommittedIndexAndTs", zap.Error(err))
+			return nil, err
+		}
+
+		for _, committedIndex := range resp.GetCommittedIndices() {
+			if committedIndex == 0 {
+				return nil, errors.New("GetCommittedIndexAndTs meets 0")
+			}
+		}
+		return resp.GetCommittedIndices(), nil
+	}
+	return nil, errors.New("unimplemented")
+}
+
+func (c *CopClient) sendReqWithAppliedIndices(
+	req *kv.Request,
+	tasks []*copTask,
+	appliedIndices []uint64,
+	stores *metapb.Store,
+) (kv.Response, error) {
+	return nil, errors.New("unimplemented")
 }
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	logutil.QPLogger().Info(
+		"CopClient::Send is called",
+		zap.Int64("goid", goid.Get()),
+	)
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
 		return copErrorResponse{err}
 	}
+
+	if req.StartTs == 0 {
+		if req.StartTsFuture == nil {
+			panic("StartTs and StartTsFuture can't be nil")
+		}
+		// Improvement for access TiKVs and PDs in different DCs.
+		var rpcCtxArray = make([]*RPCContext, 0, len(tasks))
+		for _, task := range tasks {
+			rpcCtx, err := c.store.regionCache.GetTiKVRPCContext(bo, task.region, kv.ReplicaReadLeader, 0, "")
+			if err != nil {
+				logutil.QPLogger().Warn("CopClient::Send gets contexts fail, fallback")
+				goto FALLBACK
+			}
+			rpcCtxArray = append(rpcCtxArray, rpcCtx)
+		}
+
+		appliedIndices, err := c.getAppliedIndices(bo, rpcCtxArray)
+		if err != nil {
+			logutil.QPLogger().Warn(
+				"CopClient::Send gets applied indices fail, fallback",
+				zap.Error(err),
+			)
+		} else {
+			for i, task := range tasks {
+				// task.readRegion = c.selfRegion
+				task.readRegion = c.primaryRegion // TODO: should be self region.
+				task.appliedIndex = appliedIndices[i]
+			}
+		}
+
+		req.StartTs, err = req.StartTsFuture.Wait()
+		if err != nil {
+			logutil.QPLogger().Error("CopClient::Send wait ts fail", zap.Error(err))
+			return copErrorResponse{err}
+		}
+		logutil.QPLogger().Info("CopClient::Send gets start ts", zap.Uint64("ts", req.StartTs))
+
+		// TODO: avoid unmarshal/marshal twice.
+		dagReq := new(tipb.DAGRequest)
+		dagReq.Unmarshal(req.Data)
+		dagReq.StartTs = req.StartTs
+		if req.Data, err = dagReq.Marshal(); err != nil {
+			panic("marshal dag request shoudn't fail")
+		}
+	}
+
+FALLBACK:
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
@@ -91,6 +256,10 @@ type copTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
+
+	// For read on followers or learners.
+	appliedIndex uint64
+	readRegion   string
 }
 
 func (r *copTask) String() string {
@@ -645,17 +814,20 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
-		Tp:     worker.req.Tp,
-		Data:   worker.req.Data,
-		Ranges: task.ranges.toPBRanges(),
-	}, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
+	copReq := &coprocessor.Request{
+		Tp:           worker.req.Tp,
+		Data:         worker.req.Data,
+		Ranges:       task.ranges.toPBRanges(),
+		AppliedIndex: task.appliedIndex,
+	}
+	ctx := kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		HandleTime:     true,
 		ScanDetail:     true,
-	})
+	}
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, copReq, worker.req.ReplicaRead, worker.replicaReadSeed, task.readRegion, ctx)
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)
 	if err != nil {
