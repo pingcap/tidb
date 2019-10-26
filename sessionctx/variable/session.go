@@ -476,6 +476,9 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+	// CreateTableInsertingID specifies ID of the newly created table when executing 'create table ... select' DDL job
+	// A valid table ID(!= 0) indicating the table is just created and need to insert data from its 'select' part
+	CreateTableInsertingID int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -736,6 +739,27 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	}
 	val, ok := s.systems[name]
 	return val, ok
+}
+
+// InsertingDataForCreateTable indicates if it's in a 'inserting data from select' state of creating table.
+// ********************************************************************************************************
+// In order to make 'create table ... select' atomic, it's required to insert data from select
+// statement during the execution of ddl job at ddl owner side. The original query is parsed again inside a
+// ddl job, and a insert/replace executor is created to insert data from the 'select' part of statement.
+// This functions tells if we're trying to insert data inside a ddl job.
+// ********************************************************************************************************
+// TODO: current implementation is an expedience, refactor it later.
+func (s *SessionVars) InsertingDataForCreateTable() bool {
+	return s.CreateTableInsertingID != 0
+}
+
+// deleteSystemVar deletes a system variable.
+func (s *SessionVars) deleteSystemVar(name string) error {
+	if name != CharacterSetResults {
+		return ErrCantSetToNull
+	}
+	delete(s.systems, name)
+	return nil
 }
 
 func (s *SessionVars) setDDLReorgPriority(val string) {

@@ -40,6 +40,9 @@ const (
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
 )
 
+// CreateSessionContext is a trick to create a temporary session
+var CreateSessionContext func(store kv.Storage) (sessionctx.Context, error)
+
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
 	JobID, ElementID int64

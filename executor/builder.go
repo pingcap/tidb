@@ -36,11 +36,14 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
@@ -714,6 +717,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
+
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
@@ -822,12 +826,86 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
-	e := &DDLExec{
+	if b.ctx.GetSessionVars().InsertingDataForCreateTable() {
+		// Create insert executor if we need to insert data for 'create table ... select', see comments of
+		// `InsertingDataForCreateTable()` for more explanations.
+		return b.buildCreateTableInsert(v, b.ctx.GetSessionVars().CreateTableInsertingID)
+	}
+	return &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		stmt:         v.Statement,
 		is:           b.is,
 	}
-	return e
+}
+
+// buildCreateTableInsert builds a CreateTableInsertExec to insert data when creating table by 'create table ... select'
+func (b *executorBuilder) buildCreateTableInsert(v *plannercore.DDL, tableID int64) Executor {
+	stmt, ok := v.Statement.(*ast.CreateTableStmt)
+	if !ok || v.InsertPlan.SelectPlan == nil {
+		b.err = errors.Errorf("Unexpected plan: %s", v.Statement.Text())
+		return nil
+	}
+	selectExec := b.build(v.InsertPlan.SelectPlan)
+
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	m := meta.NewMeta(txn)
+	dbInfo, ok := b.is.SchemaByName(stmt.Table.Schema)
+	if !ok {
+		b.err = infoschema.ErrDatabaseNotExists.GenWithStackByArgs(stmt.Table.Schema.L)
+		return nil
+	}
+	tbInfo, err := m.GetTable(dbInfo.ID, tableID)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+
+	// We have to create an allocator here, which is not the one created by InfoSchema, but it should be fine.
+	alloc := autoid.NewAllocator(b.ctx.GetStore(), tbInfo.GetDBID(dbInfo.ID), tbInfo.IsAutoIncColUnsigned())
+	tbl, err := tables.TableFromMeta(alloc, tbInfo)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	if tbInfo.AutoIncID > 1 {
+		// The operation of the minus 1 to make sure that the current value doesn't be used,
+		// the next Alloc operation will get this value.
+		// Its behavior is consistent with MySQL.
+		if err = tbl.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+	}
+
+	insertVal := &InsertValues{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selectExec),
+		Table:        tbl,
+		Columns:      v.InsertPlan.Columns,
+		GenExprs:     v.InsertPlan.GenCols.Exprs,
+		SelectExec:   selectExec,
+	}
+	err = insertVal.initInsertColumns()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	switch stmt.OnDuplicate {
+	case ast.OnDuplicateKeyHandlingReplace:
+		return &CreateTableInsertExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			insert: &ReplaceExec{InsertValues: insertVal},
+		}
+	default:
+		return &CreateTableInsertExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			insert: &InsertExec{InsertValues: insertVal},
+		}
+	}
 }
 
 // buildTrace builds a TraceExec for future executing. This method will be called

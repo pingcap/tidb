@@ -404,3 +404,27 @@ func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 		}
 	}
 }
+
+func (s *testFieldTypeSuite) TestClone(c *C) {
+	defer testleak.AfterTest(c)()
+
+	ft := NewFieldType(mysql.TypeDecimal)
+	c.Assert(ft.Equal(CloneField(ft)), IsTrue)
+
+	ft = NewFieldType(mysql.TypeLong)
+	ft.Flen = 5
+	ft.Flag = mysql.UnsignedFlag | mysql.ZerofillFlag
+	c.Assert(ft.Equal(CloneField(ft)), IsTrue)
+
+	ft = NewFieldType(mysql.TypeFloat)
+	ft.Flen = 7
+	ft.Decimal = 3
+	ft.Charset = charset.CharsetASCII
+	ft.Collate = charset.CharsetBin
+	ft.Elems = []string{"a", "b", "c"}
+	c.Assert(ft.Equal(CloneField(ft)), IsTrue)
+
+	ftc := CloneField(ft)
+	ftc.Elems = append(ftc.Elems, "d")
+	c.Assert(ft.Equal(ftc), IsFalse)
+}

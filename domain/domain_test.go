@@ -235,9 +235,12 @@ func (*testSuite) TestT(c *C) {
 	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
 	c.Assert(err, IsNil)
 	// Test for fetchSchemasWithTables when "tables" isn't nil.
-	err = dd.CreateTable(ctx, &ast.CreateTableStmt{Table: &ast.TableName{
+	err = dd.CreateTable(
+		ctx,
+		&ast.CreateTableStmt{Table: &ast.TableName{
 		Schema: model.NewCIStr("aaa"),
-		Name:   model.NewCIStr("tbl")}})
+		Name:   model.NewCIStr("tbl")}},
+		0)
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)

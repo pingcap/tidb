@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -34,6 +35,9 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -45,11 +49,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
-	if err := job.DecodeArgs(tbInfo); err != nil {
-		// Invalid arguments, cancel this job.
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
+	var withSelect bool   // if this is a 'create table ... select' job
+	var snapshotTS uint64 // the snapshot timestamp to do 'select' query
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
@@ -59,28 +60,79 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		return ver, errors.Trace(err)
 	}
-
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
+	if err = job.DecodeArgs(tbInfo, &withSelect, &snapshotTS); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if job.IsRollingback() {
+		err = t.DropTableOrView(job.SchemaID, job.TableID, true)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				logutil.BgLogger().Warn("Cancelling create table job, but database does not exists", zap.Int64("SchemaID", job.SchemaID))
+			} else if meta.ErrTableNotExists.Equal(err) {
+				logutil.BgLogger().Warn("Cancelling create table job, but table does not exists", zap.Int64("SchemaID", job.SchemaID), zap.Int64("TableID", job.TableID))
+			} else {
+				return ver, errors.Trace(err)
+			}
+		}
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tbInfo)
+		// for 'create table', a rolling-back may be caused by errors from inserting-data, or cancel command.
+		if job.Error != nil {
+			// for insert error, `job.Error` is set already.
+			err = job.Error
+		} else {
+			// for cancel command, use 'cancel DDL job' as err
+			err = errCancelledDDLJob
+		}
+		return ver, err
+	}
 
+	originalState := job.SchemaState
 	switch tbInfo.State {
 	case model.StateNone:
-		// none -> public
-		tbInfo.State = model.StatePublic
+		// none -> reorganization (for 'create table ... select')
+		// none -> public (for other 'create table' syntax)
+		err = checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if withSelect {
+			tbInfo.State = model.StateWriteReorganization
+			job.SchemaState = model.StateWriteReorganization
+		} else {
+			tbInfo.State = model.StatePublic
+			job.SchemaState = model.StatePublic
+		}
 		tbInfo.UpdateTS = t.StartTS
 		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
-		return ver, nil
+	case model.StateWriteReorganization:
+		// reorganization -> public (insert data before we make the table public)
+		err = doCreateTableInsert(d, t, job, tbInfo, snapshotTS)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		tbInfo.State = model.StatePublic
+		job.SchemaState = model.StatePublic
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+	tbInfo.UpdateTS = t.StartTS
+	ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+	if err != nil {
+		return ver, err
+	}
+	if tbInfo.State == model.StatePublic {
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, tbInfo.State, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+	}
+	return ver, nil
 }
 
 func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -826,6 +878,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
+// onAddTablePartition handles ActionAddTablePartition DDL job
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}
@@ -953,4 +1006,37 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
+}
+
+// doCreateTableInsert inserts data into created table from 'select' query for 'create table ... select' syntax.
+// a global session is used because this called in DDL owner server(rather than the server communicating with the client)
+// TODO: copy & set necessary session variables from original TiDB server
+func doCreateTableInsert(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, snapshotTS uint64) error {
+	sctx, err := util.CreateSessionContext(d.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	closable := sctx.(interface{ Close() })
+	if closable == nil {
+		job.State = model.JobStateCancelling
+		return errors.Errorf("temporary session cannot be closed, should never happen")
+	}
+	defer closable.Close()
+
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sctx.GetSessionVars().CreateTableInsertingID = tbInfo.ID
+	sctx.GetSessionVars().CurrentDB = dbInfo.Name.L
+	sctx.GetSessionVars().SnapshotTS = snapshotTS
+
+	_, err = sctx.(sqlexec.SQLExecutor).Execute(context.Background(), job.Query)
+	if err != nil {
+		job.State = model.JobStateCancelling
+		return errors.Trace(err)
+	}
+	job.SetRowCount(int64(sctx.GetSessionVars().StmtCtx.AffectedRows()))
+	return nil
 }

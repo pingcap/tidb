@@ -230,7 +230,10 @@ type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
-	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	// CreateTable handles 'create table' ddl.
+	// 'snapshotTS' is used to specify the 'select' query timestamp of 'create table ... select',
+	// if there is no 'select' part, 'snapshotTS' is meaningless
+	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt, snapshotTS uint64) (err error)
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
@@ -611,6 +614,9 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
+			if historyJob.Type == model.ActionCreateTable {
+				ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(historyJob.GetRowCount()))
+			}
 			return nil
 		}
 

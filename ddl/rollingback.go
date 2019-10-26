@@ -267,6 +267,23 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	return cancelOnlyNotHandledJob(job)
 }
 
+func rollingbackCreateTable(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateWriteReorganization {
+		job.State = model.JobStateRollingback
+	} else {
+		job.State = model.JobStateCancelled
+		if job.Error != nil {
+			// preserve error message so it can be shown by the client.
+			err = errCancelledDDLJob.GenWithStack("Job ran failed, caused by: %s", job.Error.Error())
+		} else {
+			err = errCancelledDDLJob
+		}
+		return
+	}
+	logutil.Logger(w.logCtx).Info("[ddl] rollback DDL job", zap.String("worker", w.String()), zap.String("job", job.String()))
+	return
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -297,6 +314,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable:
 		ver, err = cancelOnlyNotHandledJob(job)
+	case model.ActionCreateTable:
+		ver, err = rollingbackCreateTable(w, d, t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

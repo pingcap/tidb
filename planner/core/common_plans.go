@@ -662,6 +662,9 @@ type DDL struct {
 	baseSchemaProducer
 
 	Statement ast.DDLNode
+
+	// InsertPlan is for 'create table ... select' syntax
+	InsertPlan Insert
 }
 
 // Explain represents a explain plan.

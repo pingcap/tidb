@@ -404,12 +404,15 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
-	if stmt.Select != nil {
-		// FIXME: a temp error noticing 'not implemented' (issue 4754)
-		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
-		return
-	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+
+	if len(stmt.Cols) == 0 && stmt.ReferTable == nil && stmt.Select == nil {
 		p.err = ddl.ErrTableMustHaveColumns
+		return
+	}
+
+	// 'for update' cannot be used as part of the 'create table ... select'
+	if tblName, contains := containsForUpdate(stmt.Select); contains {
+		p.err = ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs(tblName, stmt.Table.Name)
 		return
 	}
 }
@@ -840,4 +843,69 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			break
 		}
 	}
+}
+
+// containsForUpdate checks if a node is/contains a 'for update' query. If yes, it returns name of the table that the
+// lock applied on. The name will be used to generate the error message of 'ErrCantUpdateTableInCreateTableSelect'.
+func containsForUpdate(node ast.ResultSetNode) (*model.CIStr, bool) {
+	if node == nil {
+		return nil, false
+	}
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		if x.LockTp == ast.SelectLockForUpdate {
+			return getSourceTableName(x.From), true
+		}
+	case *ast.UnionStmt:
+		for _, stmt := range x.SelectList.Selects {
+			if tblName, contains := containsForUpdate(stmt); contains {
+				return tblName, true
+			}
+			return nil, false
+		}
+	case *ast.Join:
+		if tblName, contains := containsForUpdate(x.Left); contains {
+			return tblName, true
+		}
+		return containsForUpdate(x.Right)
+	case *ast.SubqueryExpr:
+		return containsForUpdate(x.Query)
+	default:
+	}
+	return nil, false
+}
+
+// getTableName picks name/alias of a source table from node
+func getSourceTableName(node ast.ResultSetNode) *model.CIStr {
+	if node == nil {
+		return nil
+	}
+	switch x := node.(type) {
+	case *ast.TableName:
+		return &x.Name
+	case *ast.TableSource:
+		if x.AsName.L != "" {
+			return &x.AsName
+		}
+		return getSourceTableName(x.Source)
+	case *ast.SelectStmt:
+		return getSourceTableName(x.From)
+	case *ast.TableRefsClause:
+		return getSourceTableName(x.TableRefs)
+	case *ast.UnionStmt:
+		for _, sel := range x.SelectList.Selects {
+			if name := getSourceTableName(sel); name != nil {
+				return name
+			}
+		}
+	case *ast.Join:
+		if name := getSourceTableName(x.Left); name != nil {
+			return name
+		}
+		return getSourceTableName(x.Right)
+	case *ast.SubqueryExpr:
+		return getSourceTableName(x.Query)
+	default:
+	}
+	return nil
 }

@@ -2374,6 +2374,8 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
 	var authErr error
+	var err error
+	p := new(DDL)
 	switch v := node.(type) {
 	case *ast.AlterDatabaseStmt:
 		if v.AlterDefaultDatabase {
@@ -2454,6 +2456,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
 				v.ReferTable.Name.L, "", authErr)
 		}
+		err = b.buildCreateTableInsertPlan(ctx, p, v)
 	case *ast.CreateViewStmt:
 		b.capFlag |= canExpandAST
 		defer func() {
@@ -2560,8 +2563,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		// Repair table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
-	p := &DDL{Statement: node}
-	return p, nil
+	p.Statement = node
+	return p, err
 }
 
 const (
@@ -2649,6 +2652,182 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	}
 
 	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
+}
+
+// buildCreateTableInsertPlan builds insert plan for 'create table ... select' syntax, it also modify
+// the column definitions of `CreateTableStmt` by combining the columns from 'create table' part and 'select' part
+func (b *PlanBuilder) buildCreateTableInsertPlan(ctx context.Context, p *DDL, v *ast.CreateTableStmt) error {
+	// build select plan.
+	if v.Select == nil {
+		return nil
+	}
+	selectPlan, err := b.Build(ctx, v.Select)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	colDefs := make([]*ast.ColumnDef, 0, len(v.Cols))
+
+	// resolve column attributes for the result of select,
+	// see https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html for more details, if there is.
+	for _, colDef := range v.Cols {
+		idx, err1 := expression.FindFieldName(selectPlan.OutputNames(), colDef.Name)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if idx == -1 {
+			// columns named only in 'create table' part come first.
+			colDefs = append(colDefs, colDef)
+		}
+	}
+	for i, name := range selectPlan.OutputNames() {
+		found := findColumn(name, v.Cols)
+		if found == nil {
+			exprCol := selectPlan.Schema().Columns[i]
+			// columns named in 'select' part come after.
+			colDef, err1 := b.colExprToColumnDef(exprCol, name, v.Table)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			colDefs = append(colDefs, colDef)
+		} else {
+			// columns named in both parts come after(as well).
+			colDefs = append(colDefs, found)
+		}
+	}
+	// replace original column definitions with the combined ones
+	v.Cols = colDefs
+
+	// handle generated columns
+	mockColumns := make([]*table.Column, 0, len(colDefs))
+	mockExprCols := make([]*expression.Column, 0, len(colDefs))
+	mockNames := make([]*types.FieldName, 0, len(colDefs))
+	for idx, colDef := range colDefs {
+		expr, mockColumn := buildMockColumn(colDef, idx)
+		mockExprCols = append(mockExprCols, expr)
+		mockColumns = append(mockColumns, mockColumn)
+
+		name := &types.FieldName{
+			ColName: colDef.Name.Name,
+			TblName: colDef.Name.Table,
+			DBName: colDef.Name.Schema,
+		}
+		mockNames = append(mockNames, name)
+	}
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan.SetSchema(expression.NewSchema(mockExprCols...))
+	mockTablePlan.names = mockNames
+
+	genCols, err := b.resolveGeneratedColumns(ctx, mockColumns, nil, mockTablePlan)
+
+	// handle insert columns.
+	colMap := make(map[string]bool)
+	for _, col := range genCols.Columns {
+		colMap[col.Name.L] = true
+	}
+	var insertCols []*ast.ColumnName
+	for _, col := range selectPlan.OutputNames() {
+		if _, ok := colMap[col.ColName.L]; ok {
+			return ErrBadGeneratedColumn.GenWithStackByArgs(col.ColName.L, v.Table.Name.O)
+		}
+		insertCols = append(insertCols, &ast.ColumnName{Name: col.ColName})
+	}
+
+	// build insert plan.
+	var plan PhysicalPlan
+	plan, _, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	p.InsertPlan = Insert{
+		Columns:    insertCols,
+		GenCols:    genCols,
+		SelectPlan: plan,
+	}
+	return nil
+}
+
+// colExprToColumnDef is used by 'create table ... select', it converts expression.Column `c` to ColumnDef:
+//  if `c` refers to a column of the source table, we copy some of the column attributes from the referred column.
+//  if `c` is an expression(for example, `count(*)`), the original table/column cannot be found, we define the ColumnDef with default column attributes.
+// see https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html for more details, if there are.
+func (b *PlanBuilder) colExprToColumnDef(c *expression.Column, outputName *types.FieldName, tableName *ast.TableName) (*ast.ColumnDef, error) {
+	d := &ast.ColumnDef{}
+	d.Name = &ast.ColumnName{
+		Schema: tableName.Schema,
+		Table:  tableName.Name,
+		Name:   outputName.ColName,
+	}
+	d.Tp = types.CloneField(c.GetType())
+
+	// auto-increment attribute will not be preserved
+	d.Tp.Flag &= ^mysql.AutoIncrementFlag
+	// no index will be preserved
+	d.Tp.Flag &= ^mysql.PriKeyFlag
+	d.Tp.Flag &= ^mysql.UniqueKeyFlag
+	d.Tp.Flag &= ^mysql.MultipleKeyFlag
+
+	table, err := b.is.TableByName(outputName.DBName, outputName.OrigTblName)
+	if err != nil {
+		return d, nil
+	}
+	tblInfo := table.Meta()
+
+	isFound := false
+	for _, col := range tblInfo.Columns {
+		if col.Name.L == outputName.OrigColName.L && tblInfo.Name.L == outputName.OrigTblName.L {
+			isFound = true
+			// copy column comment
+			if len(col.Comment) > 0 {
+				option := &ast.ColumnOption{
+					Tp:     ast.ColumnOptionComment,
+					Expr:   ast.NewValueExpr(col.Comment),
+					Stored: false,
+				}
+				d.Options = append(d.Options, option)
+			}
+
+			// copy column default value
+			switch dv := col.DefaultValue.(type) {
+			case nil:
+				// Do nothing
+			case string:
+				if strings.ToUpper(dv) == strings.ToUpper(ast.CurrentTimestamp) {
+					option := &ast.ColumnOption{
+						Tp:   ast.ColumnOptionDefaultValue,
+						Expr: &ast.FuncCallExpr{FnName: model.NewCIStr(strings.ToUpper(ast.CurrentTimestamp))},
+					}
+					d.Options = append(d.Options, option)
+				} else {
+					option := &ast.ColumnOption{
+						Tp:   ast.ColumnOptionDefaultValue,
+						Expr: ast.NewValueExpr(dv),
+					}
+					d.Options = append(d.Options, option)
+				}
+			case uint64, float64:
+				// For numbers declared as `interface{}`, json package unmarshal them as `float64`
+				option := &ast.ColumnOption{
+					Tp:   ast.ColumnOptionDefaultValue,
+					Expr: ast.NewValueExpr(dv),
+				}
+				d.Options = append(d.Options, option)
+			case ast.ExprNode:
+				option := &ast.ColumnOption{
+					Tp:   ast.ColumnOptionDefaultValue,
+					Expr: dv,
+				}
+				d.Options = append(d.Options, option)
+			default:
+				return nil, errors.Errorf("Unexpected default value: '%s'", dv)
+			}
+		}
+	}
+	if !isFound {
+		return nil, ErrUnknownColumn.GenWithStackByArgs(outputName.OrigColName, outputName.OrigTblName)
+	}
+
+	return d, nil
 }
 
 func buildShowProcedureSchema() (*expression.Schema, []*types.FieldName) {
@@ -2867,4 +3046,38 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 	schema.Append(buildColumnWithName("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumnWithName("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema.col2Schema(), schema.names
+}
+
+// buildMockColumn mocks `expression.Column` and `table.Column` to resolve generated columns, because some columns are
+// not generated / not be public in planner
+func buildMockColumn(colDef *ast.ColumnDef, idx int) (*expression.Column, *table.Column) {
+	expr := &expression.Column{
+		RetType: colDef.Tp,
+		Index:   idx,
+	}
+	mockColumn := &table.Column{
+		ColumnInfo: &model.ColumnInfo{Name: colDef.Name.Name},
+	}
+	for _, option := range colDef.Options {
+		if option.Tp == ast.ColumnOptionGenerated && option.Expr != nil {
+			var buf = bytes.NewBuffer([]byte{})
+			option.Expr.Format(buf)
+
+			mockColumn.GeneratedExprString = buf.String()
+			mockColumn.GeneratedExpr = option.Expr
+			mockColumn.GeneratedStored = option.Stored
+			break
+		}
+	}
+	return expr, mockColumn
+}
+
+// findColumn tries to find column from a `ColumnDef` by the `name`
+func findColumn(name *types.FieldName, cols []*ast.ColumnDef) *ast.ColumnDef {
+	for _, col := range cols {
+		if col.Name.Name.L == name.ColName.L {
+			return col
+		}
+	}
+	return nil
 }

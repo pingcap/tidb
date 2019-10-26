@@ -41,6 +41,21 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// CloneField makes a deep copy of FieldType
+func CloneField(ft *FieldType) *FieldType {
+	elems := make([]string, len(ft.Elems))
+	copy(elems, ft.Elems)
+	return &FieldType{
+		Tp:      ft.Tp,
+		Flag:    ft.Flag,
+		Flen:    ft.Flen,
+		Decimal: ft.Decimal,
+		Charset: ft.Charset,
+		Collate: ft.Collate,
+		Elems:   elems,
+	}
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.

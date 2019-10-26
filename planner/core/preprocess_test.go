@@ -185,12 +185,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
 
-		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
-		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-		{"CREATE TABLE t (m int) SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
-
 		{"select * from ( select 1 ) a, (select 2) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
@@ -206,6 +200,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
+
+		{"CREATE TABLE t SELECT * FROM u FOR UPDATE;", false, core.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("u", "t")},
+		{"CREATE TABLE t SELECT * FROM u FOR UPDATE UNION SELECT * FROM v;", false, core.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("u", "t")},
+		{"CREATE TABLE t SELECT u.a FROM u JOIN v ON u.a = v.a FOR UPDATE;", false, core.ErrCantUpdateTableInCreateTableSelect},
+		{"CREATE TABLE t SELECT a FROM (SELECT 1 AS a, 2 AS b) AS temp FOR UPDATE;", false, core.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("temp", "t")},
+		{"CREATE TABLE t SELECT a FROM (SELECT 1 AS a, 2 AS b FOR UPDATE) AS temp;", false, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()

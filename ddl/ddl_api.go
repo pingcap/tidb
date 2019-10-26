@@ -402,6 +402,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 	return nil
 }
 
+// buildColumnAndConstraint builds table.Column from ast.ColumnDef and ast.Constraint
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) (*table.Column, []*ast.Constraint, error) {
@@ -1226,6 +1227,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 			tblInfo.Partition.Definitions[i].ID = genIDs[i+1]
 		}
 	}
+	tblInfo.State = model.StateNone
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -1233,7 +1235,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
+		Args:       []interface{}{tblInfo, false /*withSelect*/, 0 /*snapshotTS*/},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1370,7 +1372,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	return tbInfo, nil
 }
 
-func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt, snapshotTS uint64) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
@@ -1407,7 +1409,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		SchemaName: schema.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo},
+		Args:       []interface{}{tbInfo, s.Select != nil, snapshotTS},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1438,9 +1440,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 		}
 
-		if tbInfo.AutoIncID > 1 {
+		if tbInfo.AutoIncID > 1 && s.Select == nil {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
+			// But if s.Select != nil, we've rebased auto increase ID before inserting data.
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
@@ -2925,7 +2928,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
-// AlterTableCharset changes the table charset and collate.
+// AlterTableCharsetAndCollate changes the table charset and collate.
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
@@ -3137,9 +3140,15 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
+	}
+
+	tb, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil || tb.Meta().IsView() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
 	if tb.Meta().IsView() {

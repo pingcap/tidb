@@ -755,6 +755,37 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	r.Check(testkit.Rows("test1 tt id 41"))
 }
 
+func (s *seqTestSuite) TestAutoIncrementInCreateTableSelect(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	step := int64(10)
+	autoIDStep := autoid.GetStep()
+	autoid.SetStep(step)
+	defer autoid.SetStep(autoIDStep)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// test for a table created by `create ... select` syntax
+	tk.MustExec("create table create_target(idx int key auto_increment) select 1 as idx;")
+	r := tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("insert into create_target values ()")
+	r = tk.MustQuery("select * from create_target;")
+	// the new result should be 1 + step(10) + 1 = 12
+	r.Check(testkit.Rows("1", "12"))
+
+	tk.MustExec("drop table create_target;")
+	tk.MustExec("create table create_target(idx int key auto_increment) auto_increment=5 select 1 as d;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("5 1"))
+	tk.MustExec("insert into create_target(d) values (2);")
+	r = tk.MustQuery("select * from create_target;")
+	// the new result should be initial-value(5) + step(10) = 15
+	r.Check(testkit.Rows("5 1", "15 2"))
+
+}
+
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")

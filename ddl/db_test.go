@@ -139,18 +139,22 @@ func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk.MustExec("create table test_add_index_with_pk(a int not null, b int not null default '0', primary key(a))")
 	s.tk.MustExec("insert into test_add_index_with_pk values(1, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx (a)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustQuery("select a from test_add_index_with_pk").Check(testkit.Rows("1"))
 	s.tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
 	s.tk.MustExec("create table test_add_index_with_pk1(a int not null, b int not null default '0', c int, d int, primary key(c))")
 	s.tk.MustExec("insert into test_add_index_with_pk1 values(1, 1, 1, 1)")
 	s.tk.MustExec("alter table test_add_index_with_pk1 add index idx (c)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustExec("insert into test_add_index_with_pk1 values(2, 2, 2, 2)")
 	s.tk.MustQuery("select * from test_add_index_with_pk1").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 	s.tk.MustExec("create table test_add_index_with_pk2(a int not null, b int not null default '0', c int unsigned, d int, primary key(c))")
 	s.tk.MustExec("insert into test_add_index_with_pk2 values(1, 1, 1, 1)")
 	s.tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
@@ -843,6 +847,66 @@ func (s *testDBSuite4) TestAlterLock(c *C) {
 	s.tk.MustExec("use " + s.schemaName)
 	s.mustExec(c, "create table t_index_lock (c1 int, c2 int, C3 int)")
 	s.mustExec(c, "alter table t_index_lock add index (c1, c2), lock=none")
+}
+
+func (s *testDBSuite) TestCancelCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	sql := "create database if not exists test_db; use test_db;"
+	s.tk.MustExec(sql)
+	sql = "drop table if exists test_source; create table test_source(a int); insert into test_source values (1), (2);"
+	s.tk.MustExec(sql)
+
+	testCases := []struct {
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+	}{
+		// Check create table.
+		{model.JobStateNone, model.StateNone},
+		{model.JobStateRunning, model.StateWriteReorganization},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionCreateTable && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err error
+	for i := range testCases {
+		testCase = &testCases[i]
+		sql = "create table test_cancel_create select * from test_source"
+		_, err = s.tk.Exec(sql)
+		c.Assert(checkErr, IsNil)
+		c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	}
+	// make sure the table can be created normally
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	s.tk.Exec("create table test_cancel_create select * from test_source")
 }
 
 func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {

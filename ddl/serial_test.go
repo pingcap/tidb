@@ -605,7 +605,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
+func (s *testSerialSuite) TestFailedJobByErrorCountLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`), IsNil)
 	defer func() {
@@ -622,7 +622,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Job ran failed, caused by: [ddl:-1]mock do job error")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {

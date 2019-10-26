@@ -985,6 +985,7 @@ func init() {
 			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 		}
 	}
+
 }
 
 // TableDualExec represents a dual table executor.
@@ -1567,7 +1568,20 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
-	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+	case *ast.CreateTableStmt:
+		// We may need to insert data for 'create table ... select', see comments of
+		// `InsertingDataForCreateTable()` for more explanations.
+		if ctx.GetSessionVars().InsertingDataForCreateTable() {
+			ignoreError := stmt.OnDuplicate == ast.OnDuplicateKeyHandlingIgnore
+			sc.InInsertStmt = true
+			sc.DupKeyAsWarning = ignoreError
+			sc.BadNullAsWarning = !vars.StrictSQLMode || ignoreError
+			sc.TruncateAsWarning = !vars.StrictSQLMode || ignoreError
+			sc.DividedByZeroAsWarning = !vars.StrictSQLMode || ignoreError
+			sc.IgnoreZeroInDate = !vars.StrictSQLMode || ignoreError
+		}
+		// Make sure the sql_mode is strict when checking column default value.
+	case *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
