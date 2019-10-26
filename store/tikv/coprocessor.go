@@ -65,7 +65,7 @@ type CopClient struct {
 func (c *CopClient) getTikvStoresInRegion(ctx context.Context, region string) (filtered []*metapb.Store, err error) {
 	if len(c.cachedStores) == 0 {
 		c.cachedStores, err = c.store.GetPDClient().GetAllStores(ctx)
-		logutil.QPLogger().Info("CopClient::getStores returns", zap.Error(err))
+		logutil.QPLogger().Info("CopClient::getStores success")
 		if err != nil {
 			return nil, err
 		}
@@ -73,14 +73,10 @@ func (c *CopClient) getTikvStoresInRegion(ctx context.Context, region string) (f
 
 	filtered = make([]*metapb.Store, 0, len(c.cachedStores))
 	for _, s := range c.cachedStores {
-		logutil.QPLogger().Info("test region",
-			zap.String("test", s.Region), zap.String("want", region),
-		)
 		if s.Region == region {
 			filtered = append(filtered, s)
 		}
 	}
-	logutil.QPLogger().Info("get store", zap.String("region", region), zap.Int("get", len(filtered)))
 	return filtered, nil
 }
 
