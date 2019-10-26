@@ -320,7 +320,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	logutil.BgLogger().Debug("tikv reports region failed",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
-	s.regionCache.InvalidateCachedRegion(ctx.Region)
+	if ctx.Region.id != 0 {
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+	}
 	return false, nil
 }
 
