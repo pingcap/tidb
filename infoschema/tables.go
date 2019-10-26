@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/config"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -84,6 +86,7 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
+	tableTiDBConfig                         = "TIDB_CONFIG"
 )
 
 type columnInfo struct {
@@ -658,6 +661,11 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"LEASE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTiDBConfigCols = []columnInfo{
+	{"item", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"value", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1830,6 +1838,48 @@ func dataForServersInfo() ([][]types.Datum, error) {
 	return rows, nil
 }
 
+func dataForConfigInfo() ([][]types.Datum, error) {
+	conf := config.GetGlobalConfig()
+	data, err := json.Marshal(conf)
+	if err != nil {
+		return nil, err
+	}
+
+	var m map[string]interface{}
+	err = json.Unmarshal(data, &m)
+	if err != nil {
+		return nil, err
+	}
+	resultMap := make(map[string]string)
+	getKeyValueFromValue("", m, resultMap)
+	keys := make([]string, 0, len(resultMap))
+	for k := range resultMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	rows := make([][]types.Datum, 0, len(keys))
+	for _, k := range keys {
+		v := resultMap[k]
+		row := types.MakeDatums(k, v)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func getKeyValueFromValue(prefix string, m map[string]interface{}, target map[string]string) {
+	for k, v := range m {
+		key := k
+		if len(prefix) > 0 {
+			key = prefix + "." + k
+		}
+		if reflect.TypeOf(v).Kind() == reflect.Map {
+			getKeyValueFromValue(key, v.(map[string]interface{}), target)
+			continue
+		}
+		target[key] = fmt.Sprintf("%v", v)
+	}
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -1871,6 +1921,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
+	tableTiDBConfig:                         tableTiDBConfigCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1978,6 +2029,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
+	case tableTiDBConfig:
+		fullRows, err = dataForConfigInfo()
 	}
 	if err != nil {
 		return nil, err

@@ -20,13 +20,15 @@ const (
 	clusterTableProcesslist                         = tableProcesslist + clusterTableSuffix
 	clusterTableNameEventsStatementsSummaryByDigest = TableNameEventsStatementsSummaryByDigestUpper + clusterTableSuffix
 	clusterTableServerVariable                      = "SERVER_VARIABLES" + clusterTableSuffix
+	clusterTableTiDBConfig                          = tableTiDBConfig + clusterTableSuffix
 )
 
 // cluster table columns
 var (
-	clusterSlowQueryCols   []columnInfo
-	clusterProcesslistCols []columnInfo
-	clusterServerVarCols   []columnInfo
+	clusterSlowQueryCols       []columnInfo
+	clusterProcesslistCols     []columnInfo
+	clusterServerVarCols       []columnInfo
+	clusterTableTiDBConfigCols []columnInfo
 )
 
 // register for cluster memory tables;
@@ -35,6 +37,7 @@ var clusterTableMap = map[string]struct{}{
 	clusterTableProcesslist:                         {},
 	clusterTableNameEventsStatementsSummaryByDigest: {},
 	clusterTableServerVariable:                      {},
+	clusterTableTiDBConfig:                          {},
 }
 
 var clusterTableCols = []columnInfo{
@@ -53,6 +56,10 @@ func init() {
 	clusterServerVarCols = append(clusterServerVarCols, sessionVarCols...)
 	clusterServerVarCols = append(clusterServerVarCols, clusterTableCols...)
 
+	// TiDB_CONFIG
+	clusterTableTiDBConfigCols = append(clusterTableTiDBConfigCols, tableTiDBConfigCols...)
+	clusterTableTiDBConfigCols = append(clusterTableTiDBConfigCols, clusterTableCols...)
+
 	// Register tidb_mem_cluster information_schema tables.
 	tableNameToColumns[clusterTableSlowLog] = clusterSlowQueryCols
 	tableNameToColumns[clusterTableProcesslist] = clusterProcesslistCols
@@ -62,6 +69,9 @@ func init() {
 
 	// Register Server_variables
 	tableNameToColumns[clusterTableServerVariable] = clusterServerVarCols
+
+	// Register TiDB_CONFIG
+	tableNameToColumns[clusterTableTiDBConfig] = clusterTableTiDBConfigCols
 }
 
 func IsClusterTable(tableName string) bool {
@@ -81,6 +91,8 @@ func GetClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 		rows = dataForClusterTableNameEventsStatementsSummaryByDigest()
 	case clusterTableServerVariable:
 		rows, err = dataForServerVar(ctx)
+	case clusterTableTiDBConfig:
+		rows, err = dataForClusterConfigInfo()
 	}
 	return rows, err
 }
@@ -102,6 +114,14 @@ func dataForClusterProcesslist(ctx sessionctx.Context) ([][]types.Datum, error) 
 func dataForClusterTableNameEventsStatementsSummaryByDigest() [][]types.Datum {
 	rows := stmtsummary.StmtSummaryByDigestMap.ToDatum()
 	return appendClusterColumnsToRows(rows)
+}
+
+func dataForClusterConfigInfo() ([][]types.Datum, error) {
+	rows, err := dataForConfigInfo()
+	if err != nil {
+		return nil, err
+	}
+	return appendClusterColumnsToRows(rows), nil
 }
 
 func dataForServerVar(ctx sessionctx.Context) (rows [][]types.Datum, err error) {
