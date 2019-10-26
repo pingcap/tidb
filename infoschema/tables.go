@@ -89,9 +89,9 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBConfig                         = "TIDB_CONFIG"
-	tableTiDBStatsInfoCluster               = "TIDB_STATS_INFO_CLUSTER"
+	tableTiDBStatsInfo                      = "TIDB_STATS_INFO"
 	tableTiDBNetworkInfo                    = "TIDB_NETWORK_INFO"
-	tableTidbNetworkLatencyCluster          = "TIDB_NETWORK_LATENCY_CLUSTER"
+	tableTidbNetworkLatency                 = "TIDB_NETWORK_LATENCY"
 )
 
 type columnInfo struct {
@@ -673,7 +673,7 @@ var tableTiDBConfigCols = []columnInfo{
 	{"value", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var tableTiDBStatsInfoClusterCols = []columnInfo{
+var tableTiDBStatsInfoCols = []columnInfo{
 	{"DDL_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"CPU_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
 	{"MEM_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
@@ -685,7 +685,7 @@ var tableTiDBNetworkInfoCols = []columnInfo{
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var tableTidbNetworkLatencyClusterCols = []columnInfo{
+var tableTidbNetworkLatencyCols = []columnInfo{
 	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
@@ -1889,7 +1889,7 @@ func dataForConfigInfo() ([][]types.Datum, error) {
 	return rows, nil
 }
 
-func dataForStatsInfoCluster() ([][]types.Datum, error) {
+func dataForStatsInfo() ([][]types.Datum, error) {
 	var rows [][]types.Datum
 
 	cpuUsage, err := sysinfo.GetCpuUsage()
@@ -1940,7 +1940,7 @@ func getKeyValueFromValue(prefix string, m map[string]interface{}, target map[st
 	}
 }
 
-func dataForNetworkLatencyCluster(ctx sessionctx.Context) ([][]types.Datum, error) {
+func dataForNetworkLatency(ctx sessionctx.Context) ([][]types.Datum, error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
 		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
@@ -2045,9 +2045,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBConfig:                         tableTiDBConfigCols,
-	tableTiDBStatsInfoCluster:               tableTiDBStatsInfoClusterCols,
+	tableTiDBStatsInfo:                      tableTiDBStatsInfoCols,
 	tableTiDBNetworkInfo:                    tableTiDBNetworkInfoCols,
-	tableTidbNetworkLatencyCluster:          tableTidbNetworkLatencyClusterCols,
+	tableTidbNetworkLatency:                 tableTidbNetworkLatencyCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2157,12 +2157,12 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBConfig:
 		fullRows, err = dataForConfigInfo()
-	case tableTiDBStatsInfoCluster:
-		fullRows, err = dataForStatsInfoCluster()
+	case tableTiDBStatsInfo:
+		fullRows, err = dataForStatsInfo()
 	case tableTiDBNetworkInfo:
 		fullRows, err = dataForNetworkInfo()
-	case tableTidbNetworkLatencyCluster:
-		fullRows, err = dataForNetworkLatencyCluster(ctx)
+	case tableTidbNetworkLatency:
+		fullRows, err = dataForNetworkLatency(ctx)
 	}
 	if err != nil {
 		return nil, err

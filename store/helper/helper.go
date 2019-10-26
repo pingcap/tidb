@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"io"
 	"math"
@@ -742,7 +741,6 @@ func (h *Helper) GetMembersStat() (*MembersStat, error) {
 		return nil, errors.Trace(err)
 	}
 
-	fmt.Printf("%v", membersStat)
 	var mem = &MembersStat{}
 	for _, m := range membersStat.Members {
 		mem.Members = append(mem.Members, Member{

@@ -21,14 +21,20 @@ const (
 	clusterTableNameEventsStatementsSummaryByDigest = TableNameEventsStatementsSummaryByDigestUpper + clusterTableSuffix
 	clusterTableServerVariable                      = "SERVER_VARIABLES" + clusterTableSuffix
 	clusterTableTiDBConfig                          = tableTiDBConfig + clusterTableSuffix
+	clusterTableTiDBStatsInfoCluster                = tableTiDBStatsInfo + clusterTableSuffix
+	clusterTableTiDBNetworkInfo                     = tableTiDBNetworkInfo + clusterTableSuffix
+	clusterTableTidbNetworkLatencyCluster           = tableTidbNetworkLatency + clusterTableSuffix
 )
 
 // cluster table columns
 var (
-	clusterSlowQueryCols       []columnInfo
-	clusterProcesslistCols     []columnInfo
-	clusterServerVarCols       []columnInfo
-	clusterTableTiDBConfigCols []columnInfo
+	clusterSlowQueryCols               []columnInfo
+	clusterProcesslistCols             []columnInfo
+	clusterServerVarCols               []columnInfo
+	clusterTableTiDBConfigCols         []columnInfo
+	clusterTableTiDBStatsInfoCols      []columnInfo
+	clusterTableTiDBNetworkInfoCols    []columnInfo
+	clusterTableTidbNetworkLatencyCols []columnInfo
 )
 
 // register for cluster memory tables;
@@ -38,6 +44,9 @@ var clusterTableMap = map[string]struct{}{
 	clusterTableNameEventsStatementsSummaryByDigest: {},
 	clusterTableServerVariable:                      {},
 	clusterTableTiDBConfig:                          {},
+	clusterTableTiDBStatsInfoCluster:                {},
+	clusterTableTiDBNetworkInfo:                     {},
+	clusterTableTidbNetworkLatencyCluster:           {},
 }
 
 var clusterTableCols = []columnInfo{
@@ -60,6 +69,23 @@ func init() {
 	clusterTableTiDBConfigCols = append(clusterTableTiDBConfigCols, tableTiDBConfigCols...)
 	clusterTableTiDBConfigCols = append(clusterTableTiDBConfigCols, clusterTableCols...)
 
+	// TiDB_Stats_info
+	clusterTableTiDBStatsInfoCols = append(clusterTableTiDBStatsInfoCols, tableTiDBStatsInfoCols...)
+	clusterTableTiDBStatsInfoCols = append(clusterTableTiDBStatsInfoCols, clusterTableCols...)
+
+	// TiDB_network_info
+	clusterTableTiDBNetworkInfoCols = append(clusterTableTiDBNetworkInfoCols, tableTiDBNetworkInfoCols...)
+	clusterTableTiDBNetworkInfoCols = append(clusterTableTiDBNetworkInfoCols, clusterTableCols...)
+
+	// TiDB_network_latency
+	clusterTableTidbNetworkLatencyCols = append(clusterTableTidbNetworkLatencyCols, tableTidbNetworkLatencyCols...)
+	clusterTableTidbNetworkLatencyCols = append(clusterTableTidbNetworkLatencyCols, clusterTableCols...)
+
+	registerTables()
+
+}
+
+func registerTables() {
 	// Register tidb_mem_cluster information_schema tables.
 	tableNameToColumns[clusterTableSlowLog] = clusterSlowQueryCols
 	tableNameToColumns[clusterTableProcesslist] = clusterProcesslistCols
@@ -72,6 +98,15 @@ func init() {
 
 	// Register TiDB_CONFIG
 	tableNameToColumns[clusterTableTiDBConfig] = clusterTableTiDBConfigCols
+
+	// Register TiDB_Stats_info
+	tableNameToColumns[clusterTableTiDBStatsInfoCluster] = clusterTableTiDBStatsInfoCols
+
+	// Register TiDB_network_info
+	tableNameToColumns[clusterTableTiDBNetworkInfo] = clusterTableTiDBNetworkInfoCols
+
+	// Register TiDB_Stats_info
+	tableNameToColumns[clusterTableTidbNetworkLatencyCluster] = clusterTableTidbNetworkLatencyCols
 }
 
 func IsClusterTable(tableName string) bool {
@@ -93,6 +128,12 @@ func GetClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 		rows, err = dataForServerVar(ctx)
 	case clusterTableTiDBConfig:
 		rows, err = dataForClusterConfigInfo()
+	case clusterTableTiDBStatsInfoCluster:
+		rows, err = dataForClusterStatsInfo()
+	case clusterTableTiDBNetworkInfo:
+		rows, err = dataForClusterNetworkInfo()
+	case clusterTableTidbNetworkLatencyCluster:
+		rows, err = dataForClusterNetworkLatency(ctx)
 	}
 	return rows, err
 }
@@ -134,6 +175,30 @@ func dataForServerVar(ctx sessionctx.Context) (rows [][]types.Datum, err error) 
 		}
 		row := types.MakeDatums(name, value)
 		rows = append(rows, row)
+	}
+	return appendClusterColumnsToRows(rows), nil
+}
+
+func dataForClusterStatsInfo() ([][]types.Datum, error) {
+	rows, err := dataForStatsInfo()
+	if err != nil {
+		return nil, err
+	}
+	return appendClusterColumnsToRows(rows), nil
+}
+
+func dataForClusterNetworkInfo() ([][]types.Datum, error) {
+	rows, err := dataForNetworkInfo()
+	if err != nil {
+		return nil, err
+	}
+	return appendClusterColumnsToRows(rows), nil
+}
+
+func dataForClusterNetworkLatency(ctx sessionctx.Context) ([][]types.Datum, error) {
+	rows, err := dataForNetworkLatency(ctx)
+	if err != nil {
+		return nil, err
 	}
 	return appendClusterColumnsToRows(rows), nil
 }
