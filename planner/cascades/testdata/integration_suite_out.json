@@ -116,5 +116,64 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestAggregation",
+    "Cases": [
+      {
+        "SQL": "explain select sum(a) from t",
+        "Result": [
+          "Projection_6 1.00 root Column#3",
+          "└─HashAgg_7 1.00 root funcs:sum(Column#5)",
+          "  └─Projection_10 10000.00 root cast(Column#1)",
+          "    └─TableReader_8 10000.00 root data:TableScan_9",
+          "      └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t",
+        "Result": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      {
+        "SQL": "explain select max(a), min(b) from t",
+        "Result": [
+          "Projection_6 1.00 root Column#3, Column#4",
+          "└─HashAgg_7 1.00 root funcs:max(Column#1), min(Column#2)",
+          "  └─TableReader_8 10000.00 root data:TableScan_9",
+          "    └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select max(a), min(b) from t",
+        "Result": [
+          "4 11"
+        ]
+      },
+      {
+        "SQL": "explain select b, avg(a) from t group by b order by b",
+        "Result": [
+          "Projection_8 8000.00 root Column#2, Column#3",
+          "└─Sort_14 8000.00 root Column#2:asc",
+          "  └─HashAgg_10 8000.00 root group by:Column#8, funcs:avg(Column#6), firstrow(Column#7)",
+          "    └─Projection_13 10000.00 root cast(Column#1), Column#2, Column#2",
+          "      └─TableReader_11 10000.00 root data:TableScan_12",
+          "        └─TableScan_12 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b, avg(a) from t group by b order by b",
+        "Result": [
+          "11 1.0000",
+          "22 2.0000",
+          "33 3.0000",
+          "44 4.0000"
+        ]
+      }
+    ]
   }
 ]

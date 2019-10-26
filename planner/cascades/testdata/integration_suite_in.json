@@ -24,5 +24,16 @@
       "explain select b from t order by b",
       "select b from t order by b"
     ]
+  },
+  {
+    "name": "TestAggregation",
+    "cases": [
+      "explain select sum(a) from t",
+      "select a from t",
+      "explain select max(a), min(b) from t",
+      "select max(a), min(b) from t",
+      "explain select b, avg(a) from t group by b order by b",
+      "select b, avg(a) from t group by b order by b"
+    ]
   }
 ]

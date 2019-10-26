@@ -53,6 +53,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandSort: {
 		&ImplSort{},
 	},
+	memo.OperandAggregation: {
+		&ImplHashAgg{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
