@@ -84,7 +84,7 @@ func (c *CopClient) getAppliedIndices(bo *Backoffer, ctxArray []*RPCContext) ([]
 	if c.selfRegion == "" {
 		cfg := config.GetGlobalConfig()
 		c.selfRegion = cfg.Region
-		c.primaryRegion = "Beijing" // Hard code for now.
+		c.primaryRegion = "beijing" // Hard code for now.
 	}
 	stores, err := c.getTikvStoresInRegion(bo.ctx, c.primaryRegion)
 	if err != nil {
@@ -198,8 +198,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			)
 		} else {
 			for i, task := range tasks {
-				// task.readRegion = c.selfRegion
-				task.readRegion = c.primaryRegion // TODO: should be self region.
+				task.readRegion = c.selfRegion
 				task.appliedIndex = appliedIndices[i]
 			}
 		}
