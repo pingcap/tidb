@@ -700,3 +700,44 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	}
 	return &storesStat, nil
 }
+
+// MembersStat members all information get from PD's api.
+type MembersStat struct {
+	Members []Member `json:"members"`
+}
+
+type Member struct {
+	PeerUrls []string `json:"peer_urls"`
+}
+
+// GetMembersStat gets the TiPD store information by accessing PD's api.
+func (h *Helper) GetMembersStat() (*MembersStat, error) {
+	etcd, ok := h.Store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.WithStack(errors.New("not implemented"))
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Members, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+	var membersStat MembersStat
+	err = json.NewDecoder(resp.Body).Decode(&membersStat)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &membersStat, nil
+}
