@@ -1499,11 +1499,22 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
-	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
+	viewInfo, err := buildViewInfo(ctx, s)
+	if err != nil {
+		return err
+	}
 
-	colObjects := make([]interface{}, 0, len(viewInfo.Cols))
-	for _, col := range viewInfo.Cols {
-		colObjects = append(colObjects, col)
+	cols := make([]*table.Column, len(s.Cols))
+	colObjects := make([]interface{}, 0, len(s.Cols))
+
+	for i, v := range s.Cols {
+		cols[i] = table.ToColumn(&model.ColumnInfo{
+			Name:   v,
+			ID:     int64(i),
+			Offset: i,
+			State:  model.StatePublic,
+		})
+		colObjects = append(colObjects, v)
 	}
 
 	if err = checkTooLongColumn(colObjects); err != nil {
@@ -1542,33 +1553,16 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	return d.callHookOnChanged(err)
 }
 
-func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
-	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption, Cols: s.SchemaCols}
-	var tableColumns = make([]*table.Column, len(s.SchemaCols))
-	if s.Cols == nil {
-		for i, v := range s.SchemaCols {
-			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v,
-				ID:      int64(i),
-				Offset:  i,
-				State:   model.StatePublic,
-				Version: model.CurrLatestColumnInfoVersion,
-			})
-		}
-	} else {
-		for i, v := range s.Cols {
-			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v,
-				ID:      int64(i),
-				Offset:  i,
-				State:   model.StatePublic,
-				Version: model.CurrLatestColumnInfoVersion,
-			})
-		}
+func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
+	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
+	var sb strings.Builder
+	if err := s.Select.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
+		return nil, err
 	}
 
-	return viewInfo, tableColumns
+	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
+		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
 
 func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
@@ -1616,6 +1610,15 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 	// Check for range columns partition.
 	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
 		return err
+	}
+
+	if s != nil {
+		for _, def := range s.Partition.Definitions {
+			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, pi.Columns, exprs); err != nil {
+				return err
+			}
+		}
 	}
 
 	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
@@ -2212,7 +2215,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := buildPartitionInfo(meta, d, spec)
+	partInfo, err := buildPartitionInfo(ctx, meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3527,7 +3530,7 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 	return comment, nil
 }
 
-func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	if meta.Partition.Type == model.PartitionTypeRange {
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -3554,6 +3557,12 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+		if len(part.Columns) > 0 {
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, part.Columns, clause.Exprs); err != nil {
+				return nil, err
+			}
+		}
+
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
@@ -3570,6 +3579,41 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, colNames []model.CIStr, exprs []ast.ExprNode) error {
+	// Validate() has already checked len(colNames) = len(exprs)
+	// create table ... partition by range columns (cols)
+	// partition p0 values less than (expr)
+	// check the type of cols[i] and expr is consistent.
+	for i, colExpr := range exprs {
+		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			continue
+		}
+
+		colName := colNames[i]
+		colInfo := getColumnInfoByName(meta, colName.L)
+		if colInfo == nil {
+			return errors.Trace(ErrFieldNotFoundPart)
+		}
+		colType := &colInfo.FieldType
+
+		val, err := expression.EvalAstExpr(ctx, colExpr)
+		if err != nil {
+			return err
+		}
+
+		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		switch colType.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			switch val.Kind() {
+			case types.KindString, types.KindBytes:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
 }
 
 // LockTables uses to execute lock tables statement.
