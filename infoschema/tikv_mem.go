@@ -21,9 +21,9 @@ func IsTiKVMemTable(tableName string) bool {
 }
 
 var tikvInfoCols = []columnInfo{
-	{"CPU", mysql.TypeDouble, 22, 0, nil, nil},
-	{"MEM", mysql.TypeDouble, 22, 0, nil, nil},
-	{"NET", mysql.TypeDouble, 22, 0, nil, nil},
-	{"DISK", mysql.TypeDouble, 22, 0, nil, nil},
-	{"OTHER", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CPU_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"NETWORK_IN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"NETWORK_OUT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"TOTAL_MEMORY", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"USED_MEMORY", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 }

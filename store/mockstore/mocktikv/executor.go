@@ -163,9 +163,9 @@ func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error
 		e.execDetail.update(begin, values)
 	}(time.Now())
 	if e.rows == nil {
+		e.sctx = mock.NewContext()
 		rows, err := getTiKVMemTableRows(e.tableName)
 		if len(rows) == 0 {
-			e.sctx = mock.NewContext()
 			rows, err = infoschema.GetClusterMemTableRows(e.sctx, e.tableName)
 		}
 		if err != nil {
@@ -210,10 +210,10 @@ func dataForTiKVInfo() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums(
 			float64(0.1),
-			float64(0.1),
-			float64(0.1),
-			float64(0.1),
-			"hello tikv",
+			uint64(100),
+			uint64(200),
+			uint64(300),
+			uint64(400),
 		),
 	)
 	return records
