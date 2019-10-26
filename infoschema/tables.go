@@ -88,10 +88,11 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableTiDBConfig                         = "TIDB_CONFIG"
-	tableTiDBStatsInfo                      = "TIDB_SERVER_STATS_INFO"
-	tableTiDBNetworkInfo                    = "TIDB_SERVER_NETWORK_INFO"
-	tableTidbNetworkLatency                 = "TIDB_SERVER_NETWORK_LATENCY"
+	// tidb server info
+	tableTiDBConfig         = "TIDB_CONFIG"
+	tableTiDBStatsInfo      = "TIDB_SERVER_STATS_INFO"
+	tableTiDBNetworkInfo    = "TIDB_SERVER_NET_STATS_INFO"
+	tableTidbNetworkLatency = "TIDB_SERVER_NETWORK_LATENCY"
 	// PD server info
 	tablePDServerInfo           = "PD_SERVER_INFO_CLUSTER"
 	tablePDServerDiskInfo       = "PD_SERVER_DISK_INFO_CLUSTER"
@@ -681,15 +682,16 @@ var tableTiDBConfigCols = []columnInfo{
 }
 
 var tableTiDBStatsInfoCols = []columnInfo{
-	{"DDL_ID", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"CPU_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
 	{"MEM_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
 }
 
 var tableTiDBNetworkInfoCols = []columnInfo{
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"BYTES_SENT", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"BYTES_RECV", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tableTidbNetworkLatencyCols = []columnInfo{
@@ -706,6 +708,7 @@ var tablePDServerInfoCols = []columnInfo{
 	{"CPU_FREQUENT", mysql.TypeDouble, 22, 0, nil, nil},
 	{"CPU_THREAD", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"MEM_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tablePDServerDiskInfoCols = []columnInfo{
@@ -713,6 +716,7 @@ var tablePDServerDiskInfoCols = []columnInfo{
 	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DISK_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DISK_SIZE", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tablePDServerNetcardCols = []columnInfo{
@@ -722,12 +726,14 @@ var tablePDServerNetcardCols = []columnInfo{
 	{"NETCARD_DRIVER", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"MAC_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SPEED", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tablePDServerStatsInfoCols = []columnInfo{
 	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"CPU_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MEM_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tablePDServerNetStatsInfoCols = []columnInfo{
@@ -735,12 +741,14 @@ var tablePDServerNetStatsInfoCols = []columnInfo{
 	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"BYTES_SENT", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"BYTES_RECV", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tablePDServerNetworkLatencyCol = []columnInfo{
 	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1953,7 +1961,7 @@ func dataForStatsInfo() ([][]types.Datum, error) {
 		return nil, err
 	}
 	row := types.MakeDatums(
-		infosync.GetServerInfo().ID, // DDL_ID
+		infosync.GetServerInfo().IP, // IP
 		cpuUsage,                    // CPU_USAGE
 		memUsage,                    // MEM_USAGE
 	)
@@ -1969,9 +1977,10 @@ func dataForNetworkInfo() ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, len(info))
 	for _, v := range info {
 		row := types.MakeDatums(
-			v.BytesSent, // BYTES_SENT
-			v.BytesRecv, // BYTES_RECV
-			v.Name,      // LABEL
+			infosync.GetServerInfo().IP, // IP,
+			v.Name,                      // NetCARD_NAME
+			v.BytesSent,                 // BYTES_SENT
+			v.BytesRecv,                 // BYTES_RECV
 		)
 		rows = append(rows, row)
 	}
@@ -2191,6 +2200,7 @@ func dataForPDServerInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 			cpuFrequent,
 			cpuThread,
 			int64(serverInfo.MemSize),
+			serverInfo.Name,
 		)
 		rows = append(rows, row)
 	}
@@ -2218,6 +2228,7 @@ func dataForPDServerDiskInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 				int64(serverInfo.Port),
 				diskInfo.DiskType,
 				int64(diskInfo.DiskSize),
+				serverInfo.Name,
 			)
 			rows = append(rows, row)
 		}
@@ -2248,6 +2259,7 @@ func dataForPDServerNetcardInfo(ctx sessionctx.Context) ([][]types.Datum, error)
 				netCardInfo.Driver,
 				netCardInfo.MACAddress,
 				int64(netCardInfo.Speed),
+				serverInfo.Name,
 			)
 			rows = append(rows, row)
 		}
@@ -2274,6 +2286,7 @@ func dataForPDServerStatsInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 			serverStatsInfo.IP,
 			serverStatsInfo.CPUUsage,
 			serverStatsInfo.MemUsage,
+			serverStatsInfo.Name,
 		)
 		rows = append(rows, row)
 	}
@@ -2301,6 +2314,7 @@ func dataForPDServerNetStatsInfo(ctx sessionctx.Context) ([][]types.Datum, error
 				net.Name,
 				net.BytesSent,
 				net.BytesRecv,
+				serverStatsInfo.Name,
 			)
 			rows = append(rows, row)
 		}
@@ -2327,6 +2341,7 @@ func dataForPDServerNetworkLacencies(ctx sessionctx.Context) ([][]types.Datum, e
 			latency.Source,
 			latency.Target,
 			latency.Latency,
+			latency.Name,
 		)
 		rows = append(rows, row)
 	}

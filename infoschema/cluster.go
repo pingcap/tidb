@@ -7,6 +7,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"strconv"
 	"strings"
 )
 
@@ -50,7 +51,7 @@ var clusterTableMap = map[string]struct{}{
 }
 
 var clusterTableCols = []columnInfo{
-	{"TiDB_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"NODE_ID", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil},
 }
 
 func init() {
@@ -205,7 +206,7 @@ func dataForClusterNetworkLatency(ctx sessionctx.Context) ([][]types.Datum, erro
 
 func appendClusterColumnsToRows(rows [][]types.Datum) [][]types.Datum {
 	for i := range rows {
-		rows[i] = append(rows[i], types.NewUintDatum(uint64(infosync.GetGlobalServerID())))
+		rows[i] = append(rows[i], types.NewStringDatum("tidb"+strconv.FormatInt(infosync.GetGlobalServerID(), 10)))
 	}
 	return rows
 }

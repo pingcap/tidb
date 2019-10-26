@@ -829,6 +829,7 @@ func (h *Helper) GetPDServerNetworkLatencyByAddr(addr string) ([]*NetworkLatency
 
 // StaticNodeInfo static node info
 type StaticNodeInfo struct {
+	Name string `json:"pd_name"`
 	IP   string `json:"ip"`
 	Port int    `json:"port"`
 
@@ -868,6 +869,7 @@ type StatsInfo struct {
 	CPUUsage float64     `json:"cpu_usage"`
 	MemUsage float64     `json:"mem_usage"`
 	NetUsage []*NetUsage `json:"net_usage"`
+	Name     string      `json:"pd_name"`
 }
 
 type NetUsage struct {
@@ -881,4 +883,5 @@ type NetworkLatency struct {
 	Source  string `json:"source"`
 	Target  string `json:"target"`
 	Latency string `json:"latency"`
+	Name    string `json:"pd_name"`
 }
