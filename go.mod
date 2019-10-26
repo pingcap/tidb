@@ -54,6 +54,7 @@ require (
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
 	github.com/sirupsen/logrus v1.2.0
+	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -80,3 +81,9 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/kvproto => github.com/crazycs520/kvproto v0.0.0-20191019041535-13904503e947
+
+replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20191025111928-07ee0e9e0f91
+
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20191025083943-997795afdec7

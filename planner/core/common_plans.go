@@ -726,6 +726,10 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 			storeType = "tikv"
 		case kv.TiFlash:
 			storeType = "tiflash"
+		case kv.ClusterMem:
+			storeType = "tidbs_mem"
+		case kv.TiKVMem:
+			storeType = "tikvs_mem"
 		default:
 			err = errors.Errorf("the store type %v is unknown", x.StoreType)
 			return

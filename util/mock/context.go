@@ -260,6 +260,7 @@ func NewContext() *Context {
 		sessionVars: variable.NewSessionVars(),
 		ctx:         ctx,
 		cancel:      cancel,
+		sm:          util.GetglobalSessionManager(),
 	}
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32

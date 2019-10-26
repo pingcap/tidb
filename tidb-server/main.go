@@ -401,6 +401,9 @@ func overrideConfig() {
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
+	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = cfg.Host
+	}
 	var err error
 	if actualFlags[nmPort] {
 		var p int

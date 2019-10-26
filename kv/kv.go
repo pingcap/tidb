@@ -235,6 +235,10 @@ const (
 	TiKV StoreType = iota
 	// TiFlash means the type of a store is TiFlash.
 	TiFlash
+	// ClusterMem means the data is in the memory of all TiDB servers.
+	ClusterMem
+	// TiKVMem means the data is in the memory of TiKV servers.
+	TiKVMem
 )
 
 // Request represents a kv request.

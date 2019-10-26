@@ -52,8 +52,8 @@ func Init() {
 			}
 			tbls = append(tbls, meta)
 			meta.ID = autoid.GenLocalSchemaID()
-			for _, c := range meta.Columns {
-				c.ID = autoid.GenLocalSchemaID()
+			for i, c := range meta.Columns {
+				c.ID = int64(i) + 1
 			}
 		}
 		dbInfo := &model.DBInfo{

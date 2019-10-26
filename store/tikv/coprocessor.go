@@ -17,8 +17,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/domain/infosync"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -213,12 +215,19 @@ const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
-	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
 
+	switch req.StoreType {
+	case kv.TiKVMem:
+		return buildTiKVMemCopTasks(bo, cache, req)
+	case kv.ClusterMem:
+		return buildTiDBMemCopTasks(ranges, req)
+	}
+
+	rangesLen := ranges.len()
 	var tasks []*copTask
 	appendTask := func(region RegionVerID, ranges *copRanges) {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
@@ -254,6 +263,61 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 			zap.Int("task len", len(tasks)))
 	}
 	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
+	return tasks, nil
+}
+
+func buildTiKVMemCopTasks(bo *Backoffer, cache *RegionCache, req *kv.Request) ([]*copTask, error) {
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
+	err := cache.loadAllStores(bo)
+	if err != nil {
+		return nil, err
+	}
+	storeIDs := cache.getAllStoreIDs()
+	tasks := make([]*copTask, 0, len(storeIDs))
+	for _, id := range storeIDs {
+		region := cache.getAnyRegionInStore(id)
+		if region == nil {
+			continue
+		}
+		ranges := &copRanges{mid: []kv.KeyRange{kv.KeyRange{region.meta.StartKey, region.meta.EndKey}}}
+		tasks = append(tasks, &copTask{
+			region: region.VerID(),
+			ranges: ranges,
+			// Channel buffer is 2 for handling region split.
+			// In a common case, two region split tasks will not be blocked.
+			respChan:  make(chan *copResponse, 2),
+			cmdType:   cmdType,
+			storeType: req.StoreType,
+		})
+	}
+	return tasks, nil
+}
+
+func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error) {
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
+	servers, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	tasks := make([]*copTask, 0, len(servers))
+	for _, ser := range servers {
+		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
+		tasks = append(tasks, &copTask{
+			ranges: ranges,
+			// Channel buffer is 2 for handling region split.
+			// In a common case, two region split tasks will not be blocked.
+			respChan:  make(chan *copResponse, 2),
+			cmdType:   cmdType,
+			storeType: req.StoreType,
+			storeAddr: addr,
+		})
+	}
 	return tasks, nil
 }
 
@@ -656,6 +720,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		HandleTime:     true,
 		ScanDetail:     true,
 	})
+	if len(task.storeAddr) > 0 {
+		sender.storeAddr = task.storeAddr
+	}
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)
 	if err != nil {
@@ -807,7 +874,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	// When the request is using streaming API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
-	} else {
+	} else if task.ranges != nil && task.ranges.len() > 0 {
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {

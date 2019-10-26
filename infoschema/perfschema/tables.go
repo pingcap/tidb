@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
+	tableNameEventsStatementsSummaryByDigest      = "events_statements_summary_by_digest"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.

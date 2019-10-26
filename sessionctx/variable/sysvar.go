@@ -16,7 +16,9 @@ package variable
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -996,4 +998,35 @@ type GlobalVarAccessor interface {
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(name string, value string) error
+}
+
+var ServerVariableMap map[string]struct{} = map[string]struct{}{
+	TiDBGeneralLog:          struct{}{},
+	TiDBSlowLogThreshold:    struct{}{},
+	TiDBRecordPlanInSlowLog: struct{}{},
+	TiDBDDLSlowOprThreshold: struct{}{},
+	TiDBQueryLogMaxLen:      struct{}{},
+}
+
+func IsServerVariable(name string) bool {
+	_, ok := ServerVariableMap[name]
+	return ok
+}
+
+func SetServerVar(name string, val string) error {
+	switch name {
+	case TiDBGeneralLog:
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBSlowLogThreshold:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBRecordPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+	case TiDBDDLSlowOprThreshold:
+		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
+	case TiDBQueryLogMaxLen:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+	default:
+		return errors.Errorf("unknow server config item: %v", name)
+	}
+	return nil
 }

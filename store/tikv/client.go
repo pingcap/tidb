@@ -287,7 +287,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
+	// req.GetRegionId() == 0 means its a mem table scan.
+	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.GetRegionId() != 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}

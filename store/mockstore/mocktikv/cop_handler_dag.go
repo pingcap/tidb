@@ -16,7 +16,9 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/infoschema"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -91,7 +93,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
-	if len(req.Ranges) == 0 {
+	if len(req.Ranges) == 0 && req.Context.GetRegionId() != 0 {
 		return nil, nil, nil, errors.New("request range is null")
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
@@ -165,6 +167,10 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildTopN(ctx, curr)
 	case tipb.ExecType_TypeLimit:
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
+	case tipb.ExecType_TypeMemTableScan:
+		currExec, err = h.buildMemTableScan(ctx, curr)
+	case tipb.ExecType_TypeSetServerVar:
+		currExec, err = h.buildSetServerVarExec(ctx, curr)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
@@ -184,6 +190,44 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		src = curr
 	}
 	return src, nil
+}
+
+func isTiKVMemTable(tableName string) bool {
+	tableName = strings.ToUpper(tableName)
+	switch tableName {
+	case "TIKV_INFOS":
+		return true
+	}
+	return false
+}
+
+func (h *rpcHandler) buildMemTableScan(ctx *dagContext, executor *tipb.Executor) (*memTableScanExec, error) {
+	memTblScan := executor.MemTblScan
+	if !isTiKVMemTable(memTblScan.TableName) && !infoschema.IsClusterTable(memTblScan.TableName) {
+		return nil, errors.Errorf("table %s is not a tikv/tidb memory table", memTblScan.TableName)
+	}
+
+	columns := memTblScan.Columns
+	ctx.evalCtx.setColumnInfo(columns)
+	ids := make([]int64, len(columns))
+	for i, col := range columns {
+		ids[i] = col.ColumnId
+	}
+
+	return &memTableScanExec{
+		tableName:  memTblScan.TableName,
+		columnIDs:  ids,
+		execDetail: new(execDetail),
+	}, nil
+}
+
+func (h *rpcHandler) buildSetServerVarExec(ctx *dagContext, executor *tipb.Executor) (*setServerVarExec, error) {
+	setExec := executor.SetServerVar
+	return &setServerVarExec{
+		name:       setExec.VariableName,
+		value:      setExec.VariableValue,
+		execDetail: new(execDetail),
+	}, nil
 }
 
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
@@ -331,7 +375,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
 	}
 
-	return &streamAggExec{
+	e := &streamAggExec{
 		evalCtx:           ctx.evalCtx,
 		aggExprs:          aggs,
 		aggCtxs:           aggCtxs,
@@ -340,7 +384,8 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
 		execDetail:        new(execDetail),
-	}, nil
+	}
+	return e, nil
 }
 
 func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {

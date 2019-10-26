@@ -234,6 +234,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		handleCol = ds.handleCol
 		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
 	}
+	originSchemaColumns := ds.schema.Columns
+	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
@@ -242,14 +244,23 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
-	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
-		if handleCol == nil {
-			handleCol = ds.newExtraHandleSchemaCol()
-			handleColInfo = model.NewExtraHandleColInfo()
+	if ds.schema.Len() == 0 {
+		if !infoschema.IsMemoryDB(ds.DBName.L) {
+			if handleCol == nil {
+				handleCol = ds.newExtraHandleSchemaCol()
+				handleColInfo = model.NewExtraHandleColInfo()
+				ds.Columns = append(ds.Columns, handleColInfo)
+				ds.schema.Append(handleCol)
+			}
+		} else if (infoschema.IsTiKVMemTable(ds.tableInfo.Name.O) || infoschema.IsClusterTable(ds.tableInfo.Name.O)) && len(originColumns) > 0 {
+			// use the first line.
+			handleCol = originSchemaColumns[0]
+			handleColInfo = originColumns[0]
+			ds.Columns = append(ds.Columns, handleColInfo)
+			ds.schema.Append(handleCol)
 		}
-		ds.Columns = append(ds.Columns, handleColInfo)
-		ds.schema.Append(handleCol)
 	}
+
 	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
 		ds.handleCol = nil
 	}

@@ -16,7 +16,11 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -66,6 +70,153 @@ type executor interface {
 	// ExecDetails returns its and its children's execution details.
 	// The order is same as DAGRequest.Executors, which children are in front of parents.
 	ExecDetails() []*execDetail
+}
+
+type setServerVarExec struct {
+	name       string
+	value      string
+	execDetail *execDetail
+	src        executor
+}
+
+func (e *setServerVarExec) SetSrcExec(exec executor) {
+	e.src = exec
+}
+
+func (e *setServerVarExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *setServerVarExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
+}
+
+func (e *setServerVarExec) ResetCounts() {
+}
+
+func (e *setServerVarExec) Counts() []int64 {
+	return nil
+}
+
+func (e *setServerVarExec) Cursor() ([]byte, bool) {
+	return nil, false
+}
+
+func (e *setServerVarExec) Next(ctx context.Context) ([][]byte, error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, nil)
+	}(time.Now())
+
+	err := variable.SetServerVar(e.name, e.value)
+	return nil, err
+}
+
+type memTableScanExec struct {
+	tableName string
+	columnIDs []int64
+	sctx      *mock.Context
+
+	execDetail *execDetail
+	src        executor
+
+	rows   [][]types.Datum
+	cursor int
+	counts []int64
+}
+
+func (e *memTableScanExec) SetSrcExec(exec executor) {
+	e.src = exec
+}
+
+func (e *memTableScanExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *memTableScanExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
+}
+
+func (e *memTableScanExec) ResetCounts() {
+}
+
+func (e *memTableScanExec) Counts() []int64 {
+	if e.counts == nil {
+		return nil
+	}
+	return []int64{int64(e.cursor)}
+}
+
+func (e *memTableScanExec) Cursor() ([]byte, bool) {
+	return nil, false
+}
+
+func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, values)
+	}(time.Now())
+	if e.rows == nil {
+		rows, err := getTiKVMemTableRows(e.tableName)
+		if len(rows) == 0 {
+			e.sctx = mock.NewContext()
+			rows, err = infoschema.GetClusterMemTableRows(e.sctx, e.tableName)
+		}
+		if err != nil {
+			return nil, err
+		}
+		e.rows = rows
+	}
+	var row []types.Datum
+	if e.cursor < len(e.rows) {
+		row = make([]types.Datum, len(e.columnIDs))
+		for i := range e.columnIDs {
+			// For mem-table, the column offset should equal to column id -1 .
+			offset := int(e.columnIDs[i] - 1)
+			row[i] = e.rows[e.cursor][offset]
+		}
+		e.cursor++
+	}
+	if len(row) == 0 {
+		return nil, nil
+	}
+	values = make([][]byte, len(row))
+	for i, d := range row {
+		handleData, err1 := codec.EncodeValue(e.sctx.GetSessionVars().StmtCtx, nil, d)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		values[i] = handleData
+	}
+	return values, nil
+}
+
+func getTiKVMemTableRows(tableName string) (rows [][]types.Datum, err error) {
+	tableName = strings.ToUpper(tableName)
+	switch tableName {
+	case "TIKV_INFOS":
+		rows = dataForTiKVInfo()
+	}
+	return rows, err
+}
+
+func dataForTiKVInfo() (records [][]types.Datum) {
+	records = append(records,
+		types.MakeDatums(
+			float64(0.1),
+			float64(0.1),
+			float64(0.1),
+			float64(0.1),
+			"hello tikv",
+		),
+	)
+	return records
 }
 
 type tableScanExec struct {

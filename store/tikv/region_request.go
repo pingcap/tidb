@@ -117,6 +117,12 @@ func (s *RegionRequestSender) SendReqCtx(
 			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
+		case kv.TiKVMem:
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+		case kv.ClusterMem:
+			rpcCtx = &RPCContext{
+				Addr: s.storeAddr,
+			}
 		default:
 			err = errors.Errorf("unsupported storage type: %v", sType)
 		}
@@ -197,6 +203,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
+	if ctx.Meta == nil {
+		return errors.Trace(err)
+	}
 	s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
 
 	// Retry on send request failure when it's not canceled.

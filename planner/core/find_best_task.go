@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/util/plancodec"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -189,6 +190,10 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 		return nil, nil
 	}
 	if !infoschema.IsMemoryDB(ds.DBName.L) {
+		return nil, nil
+	}
+
+	if infoschema.IsClusterTable(ds.table.Meta().Name.O) || infoschema.IsTiKVMemTable(ds.table.Meta().Name.O) {
 		return nil, nil
 	}
 
@@ -1029,6 +1034,20 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	} else {
 		ts.StoreType = kv.TiKV
 	}
+	if infoschema.IsMemoryDB(ds.DBName.L) {
+		if infoschema.IsClusterTable(ds.tableInfo.Name.O) {
+			ts.StoreType = kv.ClusterMem
+			ts.Init(ds.ctx, ds.blockOffset)
+			ts.tp = plancodec.TypeMemTableScan
+		}
+
+		if infoschema.IsTiKVMemTable(ds.tableInfo.Name.O) {
+			ts.StoreType = kv.TiKVMem
+			ts.Init(ds.ctx, ds.blockOffset)
+			ts.tp = plancodec.TypeMemTableScan
+		}
+	}
+
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

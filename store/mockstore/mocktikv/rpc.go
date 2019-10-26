@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -145,6 +146,9 @@ type rpcHandler struct {
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
+	if ctx.GetRegionId() == 0 {
+		return nil
+	}
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
 		return &errorpb.Error{
@@ -654,10 +658,11 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
-	Cluster       *Cluster
-	MvccStore     MVCCStore
-	streamTimeout chan *tikvrpc.Lease
-	done          chan struct{}
+	Cluster             *Cluster
+	MvccStore           MVCCStore
+	streamTimeout       chan *tikvrpc.Lease
+	done                chan struct{}
+	clusterMemStoreAddr string
 }
 
 // NewRPCClient creates an RPCClient.
@@ -680,6 +685,15 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 		return nil, err
 	}
 	if store == nil {
+		if len(c.clusterMemStoreAddr) == 0 {
+			serverInfo := infosync.GetServerInfo()
+			if serverInfo != nil {
+				c.clusterMemStoreAddr = serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
+			}
+		}
+		if c.clusterMemStoreAddr == addr {
+			return nil, nil
+		}
 		return nil, errors.New("connect fail")
 	}
 	if store.GetState() == metapb.StoreState_Offline ||
@@ -701,8 +715,10 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	handler := &rpcHandler{
 		cluster:   c.Cluster,
 		mvccStore: c.MvccStore,
+	}
+	if store != nil {
 		// set store id for current request
-		storeID: store.GetId(),
+		handler.storeID = store.GetId()
 	}
 	return handler, nil
 }

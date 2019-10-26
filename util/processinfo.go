@@ -95,3 +95,13 @@ type SessionManager interface {
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 }
+
+var globalSessionManager SessionManager
+
+func SetglobalSessionManager(sm SessionManager) {
+	globalSessionManager = sm
+}
+
+func GetglobalSessionManager() SessionManager {
+	return globalSessionManager
+}

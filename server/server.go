@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -117,6 +118,7 @@ type Server struct {
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 	statusServer   *http.Server
+	grpcServer     *grpc.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -299,6 +301,7 @@ func (s *Server) loadTLSCertificates() {
 // Run runs the server.
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+	util.SetglobalSessionManager(s)
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
@@ -392,6 +395,10 @@ func (s *Server) Close() {
 		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
 		s.statusServer = nil
+	}
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+		s.grpcServer = nil
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }

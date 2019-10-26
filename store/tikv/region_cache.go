@@ -930,6 +930,26 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 	return
 }
 
+func (c *RegionCache) getAllStoreIDs() []uint64 {
+	storeID := make([]uint64, 0, len(c.storeMu.stores))
+	c.storeMu.Lock()
+	for id, _ := range c.storeMu.stores {
+		storeID = append(storeID, id)
+	}
+	c.storeMu.Unlock()
+	return storeID
+}
+
+func (c *RegionCache) getAnyRegionInStore(storeID uint64) *Region {
+	for _, r := range c.mu.regions {
+		if r.GetLeaderStoreID() == storeID {
+			return r
+		}
+	}
+	return nil
+
+}
+
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
@@ -1187,6 +1207,17 @@ const (
 	needCheck
 	deleted
 )
+
+func (c *RegionCache) loadAllStores(bo *Backoffer) error {
+	stores, err := c.pdClient.GetAllStores(bo.ctx)
+	if err != nil {
+		return err
+	}
+	for _, store := range stores {
+		_ = c.getStoreByStoreID(store.Id)
+	}
+	return nil
+}
 
 // initResolve resolves addr for store that never resolved.
 func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err error) {

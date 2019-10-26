@@ -55,15 +55,16 @@ var (
 //
 
 var (
-	mMetaPrefix       = []byte("m")
-	mNextGlobalIDKey  = []byte("NextGlobalID")
-	mSchemaVersionKey = []byte("SchemaVersionKey")
-	mDBs              = []byte("DBs")
-	mDBPrefix         = "DB"
-	mTablePrefix      = "Table"
-	mTableIDPrefix    = "TID"
-	mBootstrapKey     = []byte("BootstrapKey")
-	mSchemaDiffPrefix = "Diff"
+	mMetaPrefix            = []byte("m")
+	mNextGlobalIDKey       = []byte("NextGlobalID")
+	mNextGlobalServerIDKey = []byte("NextGlobalServerID")
+	mSchemaVersionKey      = []byte("SchemaVersionKey")
+	mDBs                   = []byte("DBs")
+	mDBPrefix              = "DB"
+	mTablePrefix           = "Table"
+	mTableIDPrefix         = "TID"
+	mBootstrapKey          = []byte("BootstrapKey")
+	mSchemaDiffPrefix      = "Diff"
 )
 
 var (
@@ -115,6 +116,14 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	defer globalIDMutex.Unlock()
 
 	return m.txn.Inc(mNextGlobalIDKey, 1)
+}
+
+// GenGlobalServerID generates next id globally.
+func (m *Meta) GenGlobalServerID() (int64, error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
+
+	return m.txn.Inc(mNextGlobalServerIDKey, 1)
 }
 
 // GenGlobalIDs generates the next n global IDs.

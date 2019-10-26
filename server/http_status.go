@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -254,17 +256,40 @@ func (s *Server) startHTTPServer() {
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.setupStatuServerAndRPCServer(addr, serverMux)
+}
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		err = s.statusServer.ListenAndServe()
-	}
-
+func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	// Create the main listener.
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		return
 	}
+
+	// Create a cmux.
+	m := cmux.New(l)
+
+	// Match connections in order:
+	// First HTTP, and otherwise grpc.
+	httpL := m.Match(cmux.HTTP1Fast())
+	grpcL := m.Match(cmux.Any())
+
+	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	//s.grpcServer = rpcserver.CreateRPCServer()
+	s.grpcServer = mocktikv.CreateRPCServer()
+
+	// Use the muxed listeners for your servers.
+	go s.grpcServer.Serve(grpcL)
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		go s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
+	} else {
+		go s.statusServer.Serve(httpL)
+	}
+	//go s.statusServer.Serve(httpL)
+
+	// Start serving!
+	m.Serve()
 }
 
 // status of TiDB.

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"strconv"
 	"time"
 
@@ -42,6 +43,8 @@ const (
 	ServerInformationPath = "/tidb/server/info"
 	// ServerMinStartTSPath store the server min start timestamp.
 	ServerMinStartTSPath = "/tidb/server/minstartts"
+
+	ServerGenIDPath = "/tidb/server/id"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
@@ -55,6 +58,7 @@ const (
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli        *clientv3.Client
+	store          kv.Storage
 	info           *ServerInfo
 	serverInfoPath string
 	minStartTS     uint64
@@ -67,6 +71,7 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
+	ServerID   int64  `json:"server_id"`
 	ID         string `json:"ddl_id"`
 	IP         string `json:"ip"`
 	Port       uint   `json:"listening_port"`
@@ -81,11 +86,13 @@ type ServerVersionInfo struct {
 }
 
 var globalInfoSyncer *InfoSyncer
+var globalServerID int64
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client, store kv.Storage) (*InfoSyncer, error) {
 	globalInfoSyncer = &InfoSyncer{
 		etcdCli:        etcdCli,
+		store:          store,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
@@ -161,6 +168,13 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
+	id, err := is.GenGlobalServerID(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	is.info.ServerID = id
+	globalServerID = id
+
 	infoBuf, err := json.Marshal(is.info)
 	if err != nil {
 		return errors.Trace(err)
@@ -168,6 +182,22 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	str := string(hack.String(infoBuf))
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	return err
+}
+
+func GetGlobalServerID() int64 {
+	return globalServerID
+}
+
+func (is *InfoSyncer) GenGlobalServerID(ctx context.Context) (int64, error) {
+	var id int64
+	err := kv.RunInNewTxn(is.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err error
+		id, err = t.GenGlobalServerID()
+		return errors.Trace(err)
+	})
+	logutil.BgLogger().Info("gen server id", zap.Int64("id", int64(id)), zap.Error(err))
+	return id, err
 }
 
 // RemoveServerInfo remove self server static information from etcd.

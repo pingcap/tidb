@@ -16,6 +16,9 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tipb/go-tipb"
+	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -89,6 +92,13 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
+		if v.IsCluster {
+			err := e.setClusterServerVar(ctx, name, v)
+			if err != nil {
+				return err
+			}
+		}
+
 		syns := e.getSynonyms(name)
 		// Set system variable
 		for _, n := range syns {
@@ -99,6 +109,65 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 	return nil
+}
+
+func (e *SetExecutor) setClusterServerVar(ctx context.Context, name string, v *expression.VarAssignment) error {
+	sysVar := variable.GetSysVar(name)
+	if sysVar == nil {
+		return variable.UnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if !variable.IsServerVariable(name) {
+		return errors.Errorf("variable `%v` is not a cluster server variable", name)
+	}
+	value, err := e.getVarValue(v, sysVar)
+	if err != nil {
+		return err
+	}
+	if value.IsNull() {
+		value.SetString("")
+	}
+	valStr, err := value.ToString()
+	if err != nil {
+		return err
+	}
+
+	setExec := PhysicalSetClusterVar{
+		name:  name,
+		value: valStr,
+	}.ToPB()
+	dagReq := &tipb.DAGRequest{
+		Executors: []*tipb.Executor{setExec},
+	}
+	dagData, err := dagReq.Marshal()
+	if err != nil {
+		return err
+	}
+	req := &kv.Request{
+		Tp:        kv.ReqTypeDAG,
+		Data:      dagData,
+		StoreType: kv.ClusterMem,
+		StartTs:   math.MaxUint64,
+	}
+
+	resp := e.ctx.GetClient().Send(ctx, req, e.ctx.GetSessionVars().KVVars)
+	if resp == nil {
+		return errors.New("client returns nil response")
+	}
+	_, err = resp.Next(ctx)
+	return err
+}
+
+type PhysicalSetClusterVar struct {
+	name  string
+	value string
+}
+
+func (p PhysicalSetClusterVar) ToPB() *tipb.Executor {
+	setExec := &tipb.SetServerVar{
+		VariableName:  p.name,
+		VariableValue: p.value,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeSetServerVar, SetServerVar: setExec}
 }
 
 func (e *SetExecutor) getSynonyms(varName string) []string {
