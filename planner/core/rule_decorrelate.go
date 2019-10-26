@@ -201,6 +201,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					if len(apply.corCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
+						groupByColumns := expression.NewSchema(agg.groupByCols...)
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1]
 							// If the join key is not in the aggregation's schema, add first row function.
@@ -214,7 +215,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
 							}
 							// If group by cols don't contain the join key, add it into this.
-							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+							if !groupByColumns.Contains(eqCond.GetArgs()[1].(*expression.Column)) {
 								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
 							}
 						}

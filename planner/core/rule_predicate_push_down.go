@@ -392,11 +392,6 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p
 }
 
-// getGbyColIndex gets the column's index in the group-by columns.
-func (la *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
-	return expression.NewSchema(la.groupByCols...).ColumnIndex(col)
-}
-
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
@@ -404,6 +399,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
+	groupByColumns := expression.NewSchema(la.groupByCols...)
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:
@@ -416,7 +412,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 			extractedCols := expression.ExtractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {
-				if la.getGbyColIndex(col) == -1 {
+				if !groupByColumns.Contains(col) {
 					ok = false
 					break
 				}
