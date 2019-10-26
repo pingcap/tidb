@@ -317,6 +317,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 
 		buffer := allocByteSlice(resultLength)
 		defer deallocateByteSlice(buffer)
+		buffer = buffer[:resultLength]
 
 		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
 		copy(buffer[4:], compressed)
