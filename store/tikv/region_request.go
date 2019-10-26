@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"sync/atomic"
 	"time"
 
@@ -56,6 +57,7 @@ type RegionRequestSender struct {
 	regionCache  *RegionCache
 	client       Client
 	storeAddr    string
+	storeID      uint64
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
 }
@@ -118,7 +120,15 @@ func (s *RegionRequestSender) SendReqCtx(
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
 		case kv.TiKVMem:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+			//rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+			store := s.regionCache.getStoreByStoreID(s.storeID)
+			rpcCtx = &RPCContext{
+				Addr: store.addr,
+				Peer: &metapb.Peer{
+					StoreId:   store.storeID,
+					IsLearner: false,
+				},
+			}
 		case kv.ClusterMem:
 			rpcCtx = &RPCContext{
 				Addr: s.storeAddr,

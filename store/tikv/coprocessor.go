@@ -91,6 +91,7 @@ type copTask struct {
 
 	respChan  chan *copResponse
 	storeAddr string
+	storeID   uint64
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
 }
@@ -222,7 +223,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 
 	switch req.StoreType {
 	case kv.TiKVMem:
-		return buildTiKVMemCopTasks(bo, cache, req)
+		return buildTiKVMemCopTasks(bo, ranges, cache, req)
 	case kv.ClusterMem:
 		return buildTiDBMemCopTasks(ranges, req)
 	}
@@ -266,7 +267,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	return tasks, nil
 }
 
-func buildTiKVMemCopTasks(bo *Backoffer, cache *RegionCache, req *kv.Request) ([]*copTask, error) {
+func buildTiKVMemCopTasks(bo *Backoffer, ranges *copRanges, cache *RegionCache, req *kv.Request) ([]*copTask, error) {
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -278,19 +279,24 @@ func buildTiKVMemCopTasks(bo *Backoffer, cache *RegionCache, req *kv.Request) ([
 	storeIDs := cache.getAllStoreIDs()
 	tasks := make([]*copTask, 0, len(storeIDs))
 	for _, id := range storeIDs {
-		region := cache.getAnyRegionInStore(id)
-		if region == nil {
+		store := cache.getStoreByStoreID(id)
+		//region := cache.getAnyRegionInStore(id)
+		//if region == nil {
+		//	continue
+		//}
+		if len(store.addr) == 0 || id == 0 {
 			continue
+
 		}
-		ranges := &copRanges{mid: []kv.KeyRange{kv.KeyRange{region.meta.StartKey, region.meta.EndKey}}}
 		tasks = append(tasks, &copTask{
-			region: region.VerID(),
 			ranges: ranges,
 			// Channel buffer is 2 for handling region split.
 			// In a common case, two region split tasks will not be blocked.
 			respChan:  make(chan *copResponse, 2),
 			cmdType:   cmdType,
 			storeType: req.StoreType,
+			storeAddr: store.addr,
+			storeID:   store.storeID,
 		})
 	}
 	return tasks, nil
@@ -720,8 +726,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		HandleTime:     true,
 		ScanDetail:     true,
 	})
-	if len(task.storeAddr) > 0 {
+	if len(task.storeAddr) > 0 || task.storeID > 0 {
 		sender.storeAddr = task.storeAddr
+		sender.storeID = task.storeID
 	}
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)

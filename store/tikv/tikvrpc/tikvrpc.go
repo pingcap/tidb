@@ -464,8 +464,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	if region != nil {
 		ctx.RegionId = region.Id
 		ctx.RegionEpoch = region.RegionEpoch
-		ctx.Peer = peer
 	}
+	ctx.Peer = peer
 
 	switch req.Type {
 	case CmdGet:
