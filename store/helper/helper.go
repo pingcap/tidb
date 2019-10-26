@@ -708,7 +708,8 @@ type MembersStat struct {
 }
 
 type Member struct {
-	PeerUrls []string `json:"peer_urls"`
+	PeerUrls   []string `json:"peer_urls"`
+	ClientUrls []string `json:"client_urls"`
 }
 
 // GetMembersStat gets the TiPD store information by accessing PD's api.
@@ -744,8 +745,140 @@ func (h *Helper) GetMembersStat() (*MembersStat, error) {
 	var mem = &MembersStat{}
 	for _, m := range membersStat.Members {
 		mem.Members = append(mem.Members, Member{
-			PeerUrls: m.PeerUrls,
+			PeerUrls:   m.PeerUrls,
+			ClientUrls: m.ClientUrls,
 		})
 	}
 	return mem, nil
+}
+
+func (h *Helper) GetPDServerInfoByAddr(addr string) (*StaticNodeInfo, error) {
+	req, err := http.NewRequest("GET", protocol+addr+pdapi.PDServerInfo, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	var serverInfo StaticNodeInfo
+	err = json.NewDecoder(resp.Body).Decode(&serverInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &serverInfo, nil
+}
+
+func (h *Helper) GetPDServerStatsInfoByAddr(addr string) (*StatsInfo, error) {
+	req, err := http.NewRequest("GET", protocol+addr+pdapi.PDServerStatInfo, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	var serverStatsInfo StatsInfo
+	err = json.NewDecoder(resp.Body).Decode(&serverStatsInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &serverStatsInfo, nil
+}
+
+func (h *Helper) GetPDServerNetworkLatencyByAddr(addr string) ([]*NetworkLatency, error) {
+	req, err := http.NewRequest("GET", protocol+addr+pdapi.PDServerNetworkLatency, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	var serverNetworkLatency []*NetworkLatency
+	err = json.NewDecoder(resp.Body).Decode(&serverNetworkLatency)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return serverNetworkLatency, nil
+}
+
+// StaticNodeInfo static node info
+type StaticNodeInfo struct {
+	IP   string `json:"ip"`
+	Port int    `json:"port"`
+
+	CPUInfo   *CPUInfo    `json:"cpu_info"`
+	MemSize   uint        `json:"mem_size"`
+	DiskInfos []*DiskInfo `json:"disk_infos"`
+
+	NetcardInfos []*NetcardInfo `json:"netcard_infos"`
+}
+
+// CPUInfo cpu info
+type CPUInfo struct {
+	CPUVendor    string  `json:"cpu_vendor"`
+	CPUModel     string  `json:"cpu_model"`
+	CPUFrequency float64 `json:"cpu_frequency"`
+	CPUThread    uint    `json:"cpu_thread"`
+}
+
+// DiskInfo disk info
+type DiskInfo struct {
+	DiskType string `json:"disk_type"`
+	DiskSize uint   `json:"disk_size"`
+}
+
+// NetcardInfo netcard info
+type NetcardInfo struct {
+	Name       string `json:"name,omitempty"`
+	Driver     string `json:"driver,omitempty"`
+	MACAddress string `json:"macaddress,omitempty"`
+	Port       string `json:"port,omitempty"`
+	Speed      uint   `json:"speed,omitempty"` // device max supported speed in Mbps
+}
+
+type StatsInfo struct {
+	IP string `json:"ip"`
+
+	CPUUsage float64     `json:"cpu_usage"`
+	MemUsage float64     `json:"mem_usage"`
+	NetUsage []*NetUsage `json:"net_usage"`
+}
+
+type NetUsage struct {
+	Name      string `json:"name"`
+	BytesSent uint64 `json:"bytesSent"`
+	BytesRecv uint64 `json:"bytesRecv"`
+}
+
+// NetworkLatency network latency
+type NetworkLatency struct {
+	Source  string `json:"source"`
+	Target  string `json:"target"`
+	Latency string `json:"latency"`
 }

@@ -89,9 +89,16 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBConfig                         = "TIDB_CONFIG"
-	tableTiDBStatsInfo                      = "TIDB_STATS_INFO"
-	tableTiDBNetworkInfo                    = "TIDB_NETWORK_INFO"
-	tableTidbNetworkLatency                 = "TIDB_NETWORK_LATENCY"
+	tableTiDBStatsInfo                      = "TIDB_SERVER_STATS_INFO"
+	tableTiDBNetworkInfo                    = "TIDB_SERVER_NETWORK_INFO"
+	tableTidbNetworkLatency                 = "TIDB_SERVER_NETWORK_LATENCY"
+	// PD server info
+	tablePDServerInfo           = "PD_SERVER_INFO_CLUSTER"
+	tablePDServerDiskInfo       = "PD_SERVER_DISK_INFO_CLUSTER"
+	tablePDServerNetcardInfo    = "PD_SERVER_NETCARD_INFO_CLUSTER"
+	tablePDServerStatsInfo      = "PD_SERVER_STATS_INFO_CLUSTER"
+	tablePDServerNetStatsInfo   = "PD_SERVER_NET_STATS_INFO_CLUSTER"
+	tablePDServerNetworkLatency = "PD_SERVER_NETWORK_LATENCY_CLUSTER"
 )
 
 type columnInfo struct {
@@ -686,6 +693,51 @@ var tableTiDBNetworkInfoCols = []columnInfo{
 }
 
 var tableTidbNetworkLatencyCols = []columnInfo{
+	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
+}
+
+var tablePDServerInfoCols = []columnInfo{
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CPU_VENDOR", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CPU_MODE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CPU_FREQUENT", mysql.TypeDouble, 22, 0, nil, nil},
+	{"CPU_THREAD", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MEM_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tablePDServerDiskInfoCols = []columnInfo{
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DISK_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DISK_SIZE", mysql.TypeLonglong, 64, 0, nil, nil},
+}
+
+var tablePDServerNetcardCols = []columnInfo{
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NETCARD_DRIVER", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"MAC_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SPEED", mysql.TypeLonglong, 64, 0, nil, nil},
+}
+
+var tablePDServerStatsInfoCols = []columnInfo{
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CPU_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MEM_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
+}
+
+var tablePDServerNetStatsInfoCols = []columnInfo{
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"BYTES_SENT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"BYTES_RECV", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tablePDServerNetworkLatencyCol = []columnInfo{
 	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
@@ -2003,6 +2055,284 @@ func getHostIP(url string) string {
 	return hostIP
 }
 
+func getHostIPPort(url string) string {
+	hostIP := ""
+	if strings.Contains(url, "//") {
+		hostIP = strings.Split(url, "://")[1]
+	} else {
+		hostIP = url
+	}
+	return hostIP
+}
+
+func getAllPDMembersHttpAddr(tikvHelper *helper.Helper) ([]string, error) {
+	hostMap := make(map[string]struct{})
+	membersStat, err := tikvHelper.GetMembersStat()
+	if err != nil {
+		return nil, err
+	}
+	if membersStat == nil {
+		return nil, nil
+	}
+	for _, member := range membersStat.Members {
+		for _, peer := range member.ClientUrls {
+			ip := getHostIPPort(peer)
+			hostMap[ip] = struct{}{}
+		}
+	}
+	addrs := make([]string, 0, len(hostMap))
+	for ip := range hostMap {
+		addrs = append(addrs, ip)
+	}
+	return addrs, nil
+}
+
+func getPDServersInfoByAddrs(tikvStore tikv.Storage) ([]*helper.StaticNodeInfo, error) {
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	pdAddrs, err := getAllPDMembersHttpAddr(tikvHelper)
+	if err != nil {
+		return nil, err
+	}
+
+	serverInfos := make([]*helper.StaticNodeInfo, 0, len(pdAddrs))
+	for _, addr := range pdAddrs {
+		serverInfo, err := tikvHelper.GetPDServerInfoByAddr(addr)
+		if err != nil {
+			return nil, err
+		}
+		if serverInfo == nil {
+			continue
+		}
+		serverInfos = append(serverInfos, serverInfo)
+	}
+	return serverInfos, nil
+}
+
+func getPDServersStatsInfoByAddrs(tikvStore tikv.Storage) ([]*helper.StatsInfo, error) {
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	pdAddrs, err := getAllPDMembersHttpAddr(tikvHelper)
+	if err != nil {
+		return nil, err
+	}
+
+	serverStatsInfos := make([]*helper.StatsInfo, 0, len(pdAddrs))
+	for _, addr := range pdAddrs {
+		serverInfo, err := tikvHelper.GetPDServerStatsInfoByAddr(addr)
+		if err != nil {
+			return nil, err
+		}
+		if serverInfo == nil {
+			continue
+		}
+		serverStatsInfos = append(serverStatsInfos, serverInfo)
+	}
+	return serverStatsInfos, nil
+}
+
+func getPDServersNetworkLatencyByAddrs(tikvStore tikv.Storage) ([]*helper.NetworkLatency, error) {
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	pdAddrs, err := getAllPDMembersHttpAddr(tikvHelper)
+	if err != nil {
+		return nil, err
+	}
+
+	serverNetworkLatencies := make([]*helper.NetworkLatency, 0, len(pdAddrs))
+	for _, addr := range pdAddrs {
+		latencies, err := tikvHelper.GetPDServerNetworkLatencyByAddr(addr)
+		if err != nil {
+			return nil, err
+		}
+		if latencies == nil {
+			continue
+		}
+		serverNetworkLatencies = append(serverNetworkLatencies, latencies...)
+	}
+	return serverNetworkLatencies, nil
+}
+
+func dataForPDServerInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	serverInfos, err := getPDServersInfoByAddrs(tikvStore)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		var cpuVendor, cpuMode string
+		var cpuFrequent float64
+		var cpuThread int64
+		if cpuInfo := serverInfo.CPUInfo; cpuInfo != nil {
+			cpuVendor = cpuInfo.CPUVendor
+			cpuMode = cpuInfo.CPUModel
+			cpuFrequent = cpuInfo.CPUFrequency
+			cpuThread = int64(cpuInfo.CPUThread)
+		}
+		row := types.MakeDatums(
+			serverInfo.IP,
+			int64(serverInfo.Port),
+			cpuVendor,
+			cpuMode,
+			cpuFrequent,
+			cpuThread,
+			int64(serverInfo.MemSize),
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func dataForPDServerDiskInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	serverInfos, err := getPDServersInfoByAddrs(tikvStore)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		for _, diskInfo := range serverInfo.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
+			row := types.MakeDatums(
+				serverInfo.IP,
+				int64(serverInfo.Port),
+				diskInfo.DiskType,
+				int64(diskInfo.DiskSize),
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func dataForPDServerNetcardInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	serverInfos, err := getPDServersInfoByAddrs(tikvStore)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		for _, netCardInfo := range serverInfo.NetcardInfos {
+			if netCardInfo == nil {
+				continue
+			}
+			row := types.MakeDatums(
+				serverInfo.IP,
+				int64(serverInfo.Port),
+				netCardInfo.Name,
+				netCardInfo.Driver,
+				netCardInfo.MACAddress,
+				int64(netCardInfo.Speed),
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func dataForPDServerStatsInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	serverStatsInfos, err := getPDServersStatsInfoByAddrs(tikvStore)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(serverStatsInfos))
+	for _, serverStatsInfo := range serverStatsInfos {
+		if serverStatsInfo == nil {
+			continue
+		}
+		row := types.MakeDatums(
+			serverStatsInfo.IP,
+			serverStatsInfo.CPUUsage,
+			serverStatsInfo.MemUsage,
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func dataForPDServerNetStatsInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	serverStatsInfos, err := getPDServersStatsInfoByAddrs(tikvStore)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(serverStatsInfos))
+	for _, serverStatsInfo := range serverStatsInfos {
+		if serverStatsInfo == nil {
+			continue
+		}
+		for _, net := range serverStatsInfo.NetUsage {
+			row := types.MakeDatums(
+				serverStatsInfo.IP,
+				net.Name,
+				net.BytesSent,
+				net.BytesRecv,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func dataForPDServerNetworkLacencies(ctx sessionctx.Context) ([][]types.Datum, error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	networkLatencies, err := getPDServersNetworkLatencyByAddrs(tikvStore)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(networkLatencies))
+	for _, latency := range networkLatencies {
+		if latency == nil {
+			continue
+		}
+		row := types.MakeDatums(
+			latency.Source,
+			latency.Target,
+			latency.Latency,
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -2048,6 +2378,12 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBStatsInfo:                      tableTiDBStatsInfoCols,
 	tableTiDBNetworkInfo:                    tableTiDBNetworkInfoCols,
 	tableTidbNetworkLatency:                 tableTidbNetworkLatencyCols,
+	tablePDServerInfo:                       tablePDServerInfoCols,
+	tablePDServerDiskInfo:                   tablePDServerDiskInfoCols,
+	tablePDServerNetcardInfo:                tablePDServerNetcardCols,
+	tablePDServerStatsInfo:                  tablePDServerStatsInfoCols,
+	tablePDServerNetStatsInfo:               tablePDServerNetStatsInfoCols,
+	tablePDServerNetworkLatency:             tablePDServerNetworkLatencyCol,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2163,6 +2499,18 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForNetworkInfo()
 	case tableTidbNetworkLatency:
 		fullRows, err = dataForNetworkLatency(ctx)
+	case tablePDServerInfo:
+		fullRows, err = dataForPDServerInfo(ctx)
+	case tablePDServerDiskInfo:
+		fullRows, err = dataForPDServerDiskInfo(ctx)
+	case tablePDServerNetcardInfo:
+		fullRows, err = dataForPDServerNetcardInfo(ctx)
+	case tablePDServerStatsInfo:
+		fullRows, err = dataForPDServerStatsInfo(ctx)
+	case tablePDServerNetStatsInfo:
+		fullRows, err = dataForPDServerNetStatsInfo(ctx)
+	case tablePDServerNetworkLatency:
+		fullRows, err = dataForPDServerNetworkLacencies(ctx)
 	}
 	if err != nil {
 		return nil, err
