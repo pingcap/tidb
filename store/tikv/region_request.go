@@ -15,7 +15,7 @@ package tikv
 
 import (
 	"context"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tipb/go-tipb"
 	"sync/atomic"
