@@ -197,6 +197,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 				zap.Error(err),
 			)
 		} else {
+			logutil.QPLogger().Warn(
+				"CopClient::Send gets applied indices success",
+				zap.Error(err),
+			)
 			for i, task := range tasks {
 				task.readRegion = c.selfRegion
 				task.appliedIndex = appliedIndices[i]
@@ -217,6 +221,8 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		if req.Data, err = dagReq.Marshal(); err != nil {
 			panic("marshal dag request shoudn't fail")
 		}
+	} else {
+		logutil.QPLogger().Info("CopClient::Send with resolved TS")
 	}
 
 FALLBACK:
