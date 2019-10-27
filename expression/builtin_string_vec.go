@@ -1010,7 +1010,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 		}
 		end := pos + length
 		if end < pos {
-			result.AppendNull()
+			result.AppendString("")
 			continue
 		} else if end < numRunes {
 			result.AppendString(string(runes[pos:end]))
