@@ -864,9 +864,6 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 		}
 	}
 
-	if n.From == nil && n.Where != nil {
-		ctx.WriteKeyWord(" FROM DUAL")
-	}
 	if n.Where != nil {
 		ctx.WriteKeyWord(" WHERE ")
 		if err := n.Where.Restore(ctx); err != nil {

@@ -697,10 +697,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for dual
 		{"select 1 from dual", true, "SELECT 1"},
 		{"select 1 from dual limit 1", true, "SELECT 1 LIMIT 1"},
-		{"select 1 where exists (select 2)", false, ""},
-		{"select 1 from dual where not exists (select 2)", true, "SELECT 1 FROM DUAL WHERE NOT EXISTS (SELECT 2)"},
+		{"select 1 where exists (select 2)", true, "SELECT 1 WHERE EXISTS (SELECT 2)"},
+		{"select 1 from dual where not exists (select 2)", true, "SELECT 1 WHERE NOT EXISTS (SELECT 2)"},
 		{"select 1 as a from dual order by a", true, "SELECT 1 AS `a` ORDER BY `a`"},
-		{"select 1 as a from dual where 1 < any (select 2) order by a", true, "SELECT 1 AS `a` FROM DUAL WHERE 1<ANY (SELECT 2) ORDER BY `a`"},
+		{"select 1 as a from dual where 1 < any (select 2) order by a", true, "SELECT 1 AS `a` WHERE 1<ANY (SELECT 2) ORDER BY `a`"},
 		{"select 1 order by 1", true, "SELECT 1 ORDER BY 1"},
 
 		// for https://github.com/pingcap/tidb/issues/320
@@ -708,6 +708,13 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for https://github.com/pingcap/tidb/issues/1050
 		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true, "SELECT SQL_NO_CACHE * FROM `test` WHERE 1 LIMIT 0,2000"},
+
+		// for https://github.com/pingcap/parser/issues/115
+		{"select 1 where true", true, "SELECT 1 WHERE TRUE"},
+		{"select 1 group by 1", true, "SELECT 1 GROUP BY 1"},
+		{"select 1 having true", true, "SELECT 1 HAVING TRUE"},
+		{"select 1 order by 1", true, "SELECT 1 ORDER BY 1"},
+		{"select 1 limit 1", true, "SELECT 1 LIMIT 1"},
 
 		{`ANALYZE TABLE t`, true, "ANALYZE TABLE `t`"},
 
