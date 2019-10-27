@@ -41,13 +41,20 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	qiniuAuth "github.com/qiniu/api.v7/v7/auth"
+	"github.com/qiniu/api.v7/v7/auth/qbox"
+	"github.com/qiniu/api.v7/v7/client"
+	. "github.com/qiniu/api.v7/v7/storage"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -1245,7 +1252,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 
 		into := selectIntoInfo.(*ast.SelectInto)
 		if into.Tp == ast.SelectIntoOutfile || into.Tp == ast.SelectIntoDumpfile {
-			err = cc.writeChunksToFile(ctx, rs, into, serverStatus)
+			err = cc.writeChunksToFile(ctx, rs, into)
 		} else {
 			err = cc.writeChunksToVars(ctx, rs, into, serverStatus)
 		}
@@ -1385,7 +1392,7 @@ func (cc *clientConn) writeChunksToVars(ctx context.Context, rs ResultSet, into 
 }
 
 //write chunks to buffer
-func (cc *clientConn) writeChunksToDump(ctx context.Context, rs ResultSet, into *ast.SelectInto, serverStatus uint16, data *[]byte, writer io.Writer) error {
+func (cc *clientConn) writeChunksToDump(ctx context.Context, rs ResultSet, into *ast.SelectInto, data *[]byte, writer io.Writer) error {
 	const DumpBufferSize = 5
 	fieldData := cc.alloc.AllocWithLen(0, 1024)
 	req := rs.NewChunk()
@@ -1483,7 +1490,7 @@ func (f *DumpFile) Open(filename string) error {
 		return errors.Errorf("The TiDB server is running with the %s option so it cannot execute this statement", "--secure-file-priv")
 	}
 
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0666)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return err
 	}
@@ -1507,10 +1514,220 @@ func (f *DumpFile) Abort() error {
 	return nil
 }
 
+var (
+	testAK                  = "h19uEKgGG0hEfSQOMYXEv_YSTEJ1fuFh4s6sF5bT"
+	testSK                  = "wdP7n73IAzYF-SUEhvQyc-OVDmmhzYBkf-fbeVi3"
+	testBucket              = "ti3"
+	testBucketPrivate       = os.Getenv("QINIU_TEST_BUCKET_PRIVATE")
+	testBucketPrivateDomain = os.Getenv("QINIU_TEST_DOMAIN_PRIVATE")
+	testPipeline            = os.Getenv("QINIU_TEST_PIPELINE")
+	testDebug               = os.Getenv("QINIU_SDK_DEBUG")
+
+	testKey      = "outfile.txt"
+	testFetchUrl = "http://devtools.qiniu.com/qiniu.png"
+	testSiteUrl  = "http://devtools.qiniu.com"
+)
+
+var (
+	mac              *qbox.Mac
+	bucketManager    *BucketManager
+	operationManager *OperationManager
+	formUploader     *FormUploader
+	resumeUploader   *ResumeUploader
+	base64Uploader   *Base64Uploader
+	clt              client.Client
+)
+
+func qiniuInit() {
+	client.TurnOnDebug()
+	clt = client.Client{
+		Client: &http.Client{
+			Timeout: time.Minute * 10,
+		},
+	}
+	mac = qiniuAuth.New(testAK, testSK)
+	cfg := Config{}
+	cfg.Zone = &Zone_z2
+	cfg.UseCdnDomains = true
+	bucketManager = NewBucketManagerEx(mac, &cfg, &clt)
+	operationManager = NewOperationManagerEx(mac, &cfg, &clt)
+	formUploader = NewFormUploaderEx(&cfg, &clt)
+	resumeUploader = NewResumeUploaderEx(&cfg, &clt)
+	base64Uploader = NewBase64UploaderEx(&cfg, &clt)
+	rand.Seed(time.Now().Unix())
+}
+
+func TestPutWithoutSize(r io.Reader) {
+	qiniuInit()
+
+	var putRet PutRet
+	putPolicy := PutPolicy{
+		Scope:           "ti3",
+		DeleteAfterDays: 7,
+	}
+	upToken := putPolicy.UploadToken(mac)
+	testKey := fmt.Sprintf("testRPutFileKey_%d", rand.Int())
+
+	// var writer io.Writer = f
+	// for {
+	// 	cnt, err := r.Read(buf)
+	// 	if err != nil {
+	// 		if err == io.EOF {
+	// 			break
+	// 		}
+	// 		return err
+	// 	}
+	// 	// if _, err := f.Write(buf[:cnt]); err != nil {
+	// 	// 	return err
+	// 	// }
+	// }
+
+	rds := []io.Reader{
+		r,
+		// strings.NewReader("hello world"),
+		// strings.NewReader(strings.Repeat("he", 1<<blockBits)),
+		// NewNotSeekerReader(strings.NewReader(strings.Repeat("test", 1<<blockBits))),
+	}
+
+	for _, rd := range rds {
+
+		err := resumeUploader.PutWithoutSize(context.Background(), &putRet, upToken, testKey, rd, nil)
+		if err != nil {
+			panic(fmt.Sprintf("PutWithoutSize() error, %s", err))
+		}
+		fmt.Printf("Key: %s, Hash:%s", putRet.Key, putRet.Hash)
+	}
+}
+
+type ResultSetReader struct {
+	cc   *clientConn
+	ctx  context.Context
+	rs   ResultSet
+	into *ast.SelectInto
+	data []byte
+}
+
+func (r *ResultSetReader) Read(b []byte) (int, error) {
+	cc := r.cc
+	ctx := r.ctx
+	rs := r.rs
+	into := r.into
+
+	const DumpBufferSize = 1024
+	fieldData := cc.alloc.AllocWithLen(0, 1024)
+	// var fieldData []byte
+
+	req := rs.NewChunk()
+	binary := into.Tp == ast.SelectIntoDumpfile
+
+	var lineTerm []byte
+	var lineStart []byte
+	var fieldTerm []byte
+	var fieldEscape byte
+
+	var fieldEnclose byte
+	var encloseOptFlag bool
+	//defaultFileTerm := []byte{0}
+
+	if binary {
+		fieldTerm = nil
+	} else {
+		lineTerm = []byte(into.LinesInfo.Terminated)
+		lineStart = []byte(into.LinesInfo.Starting)
+		fieldTerm = []byte(into.FieldsInfo.Terminated)
+		fieldEscape = byte(into.FieldsInfo.Escaped)
+
+		if into.FieldsInfo.OptEnclosed > 0 {
+			fieldEnclose = into.FieldsInfo.OptEnclosed
+			encloseOptFlag = true
+		} else {
+			fieldEnclose = into.FieldsInfo.Enclosed
+			encloseOptFlag = false
+		}
+	}
+
+	if len(r.data) >= DumpBufferSize {
+		// b = (r.data)[:DumpBufferSize]
+		copy(b, (r.data)[:DumpBufferSize])
+		r.data = (r.data)[DumpBufferSize:]
+
+		return DumpBufferSize, nil
+	} else if len(r.data) > 0 {
+		length := len(r.data)
+		// b = (r.data)[:length]
+		copy(b, (r.data)[:length])
+		r.data = (r.data)[length:]
+
+		return length, nil
+	}
+
+	for {
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, req)
+		if err != nil {
+			return 0, err
+		}
+
+		rowCount := req.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		for i := 0; i < rowCount; i++ {
+			fieldData = fieldData[:0]
+
+			fieldData, err = dumpTextRowOnly(fieldData, rs.Columns(), req.GetRow(i), binary,
+				fieldTerm, fieldEscape, fieldEnclose, encloseOptFlag)
+			if err != nil {
+				return 0, err
+			}
+
+			if !binary {
+				r.data = append(r.data, lineStart...)
+			}
+
+			r.data = append(r.data, fieldData...)
+			//换行符
+			if !binary {
+				r.data = append(r.data, lineTerm...)
+			}
+
+			cc.calcAffectedRows()
+
+			if len(r.data) >= DumpBufferSize {
+				// b = (r.data)[:DumpBufferSize]
+				copy(b, (r.data)[:DumpBufferSize])
+				r.data = (r.data)[DumpBufferSize:]
+
+				return DumpBufferSize, nil
+			} else if len(r.data) > 0 {
+				length := len(r.data)
+				// b = (r.data)[:length]
+				copy(b, (r.data)[:length])
+				r.data = (r.data)[length:]
+
+				return length, nil
+			}
+		}
+		//结束符
+		//*data = append(*data, defaultFileTerm...)
+	}
+	return 0, io.EOF
+
+}
+
 //Dump to file
 //param binary: outfile:0, dumpfile:1
-func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into *ast.SelectInto, serverStatus uint16) error {
-	data := cc.alloc.AllocWithLen(0, 1024)
+func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into *ast.SelectInto) error {
+	r := &ResultSetReader{
+		cc:   cc,
+		ctx:  ctx,
+		rs:   rs,
+		into: into,
+		data: cc.alloc.AllocWithLen(0, 1024), //make([]byte, 1024),
+	}
+	TestPutWithoutSize(r)
+	return nil
+	buf := cc.alloc.AllocWithLen(1024, 1024)
 
 	f := &DumpFile{}
 	//If the secure_file_priv system variable is set to a nonempty directory name,
@@ -1522,9 +1739,25 @@ func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into 
 		return err
 	}
 
-	var writer io.Writer = f
-	if err = cc.writeChunksToDump(ctx, rs, into, serverStatus, &data, writer); err != nil {
-		return err
+	// r := &ResultSetReader{
+	// 	cc:   cc,
+	// 	ctx:  ctx,
+	// 	rs:   rs,
+	// 	into: into,
+	// 	data: cc.alloc.AllocWithLen(0, 1024), //make([]byte, 1024),
+	// }
+	// var writer io.Writer = f
+	for {
+		cnt, err := r.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		if _, err := f.Write(buf[:cnt]); err != nil {
+			return err
+		}
 	}
 
 	return f.Close()
