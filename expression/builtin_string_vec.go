@@ -747,11 +747,54 @@ func (b *builtinSubstringBinary2ArgsSig) vecEvalString(input *chunk.Chunk, resul
 }
 
 func (b *builtinSubstring2ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubstring2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		pos := nums[i]
+
+		runes := []rune(str)
+		length := int64(len(runes))
+		if pos < 0 {
+			pos += length
+		} else {
+			pos--
+		}
+		if pos > length || pos < 0 {
+			pos = length
+		}
+		result.AppendString(string(runes[pos:]))
+	}
+
+	return nil
 }
 
 func (b *builtinTrim2ArgsSig) vectorized() bool {
