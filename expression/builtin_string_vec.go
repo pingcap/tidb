@@ -522,7 +522,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 		count := counts[i]
 
 		if len(delim) == 0 {
-			result.AppendNull()
+			result.AppendString("")
 			continue
 		}
 
@@ -538,7 +538,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 			count = -count
 			if count < 0 {
 				// -count overflows max int64, returns an empty string.
-				result.AppendNull()
+				result.AppendString("")
 				continue
 			}
 
