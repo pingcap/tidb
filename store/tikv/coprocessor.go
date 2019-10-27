@@ -284,6 +284,7 @@ func buildTiKVMemCopTasks(bo *Backoffer, ranges *copRanges, cache *RegionCache, 
 		//if region == nil {
 		//	continue
 		//}
+		logutil.BgLogger().Warn("build mem tikv scan loop", zap.String("store addr", store.addr), zap.Uint64("id", id))
 		if len(store.addr) == 0 || id == 0 {
 			continue
 
@@ -299,6 +300,7 @@ func buildTiKVMemCopTasks(bo *Backoffer, ranges *copRanges, cache *RegionCache, 
 			storeID:   store.storeID,
 		})
 	}
+	logutil.BgLogger().Warn("build mem tikv scan", zap.Int("task num", len(tasks)), zap.Int("store num", len(storeIDs)))
 	return tasks, nil
 }
 

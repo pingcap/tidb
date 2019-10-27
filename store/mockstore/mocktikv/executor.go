@@ -204,6 +204,8 @@ func getTiKVMemTableRows(tableName string) (rows [][]types.Datum, err error) {
 		rows = dataForTiKVInfo()
 	case "TIKV_SERVER_NET_STATS_INFO_CLUSTER":
 		rows = dataForTiKVNetStatsInfo()
+	case "TIKV_INFOS":
+		rows = dataForTiKVServerInfo()
 	}
 	return rows, err
 }
@@ -228,6 +230,19 @@ func dataForTiKVNetStatsInfo() (records [][]types.Datum) {
 			int64(1000),
 			int64(2000),
 			"tikv1",
+		),
+	)
+	return records
+}
+
+func dataForTiKVServerInfo() (records [][]types.Datum) {
+	records = append(records,
+		types.MakeDatums(
+			float64(0.1),
+			uint64(1000),
+			uint64(2000),
+			uint64(1000),
+			uint64(2000),
 		),
 	)
 	return records

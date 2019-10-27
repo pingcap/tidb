@@ -233,10 +233,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	if ctx.Meta == nil {
-		return errors.Trace(err)
+	if ctx.Meta != nil {
+		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
 	}
-	s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
