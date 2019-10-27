@@ -981,7 +981,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf2)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
 		return err
 	}
 
@@ -1016,7 +1016,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 			result.AppendString(string(runes[pos:end]))
 			continue
 		}
-		
+
 		result.AppendString(string(runes[pos:]))
 	}
 
