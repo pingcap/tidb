@@ -84,6 +84,7 @@ func (c *CopClient) getAppliedIndices(bo *Backoffer, ctxArray []*RPCContext) ([]
 	if c.selfRegion == "" {
 		cfg := config.GetGlobalConfig()
 		c.selfRegion = cfg.Region
+		logutil.QPLogger().Info("CopClient self region", zap.String("region", c.selfRegion))
 		c.primaryRegion = "beijing" // Hard code for now.
 	}
 	stores, err := c.getTikvStoresInRegion(bo.ctx, c.primaryRegion)

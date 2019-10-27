@@ -288,6 +288,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	readRegion string,
 ) (*RPCContext, error) {
 	ts := time.Now().Unix()
+	logutil.QPLogger().Info("RegionCache::GetTiKVRPCContext", zap.String("region", readRegion))
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
@@ -1044,6 +1045,11 @@ func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*
 
 func (r *Region) StorePeerByRegion(rs *RegionStore, region string) (*Store, *metapb.Peer, int) {
 	for i, store := range rs.stores {
+		logutil.QPLogger().Info(
+			"Region::StorePeerByRegion",
+			zap.String("test", store.region),
+			zap.String("want", region),
+		)
 		if store.region == region {
 			// TODO: load balance.
 			return r.getStorePeer(rs, int32(i))
