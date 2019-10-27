@@ -1011,6 +1011,24 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	} else {
 		s.ClearValue(sessionctx.LastExecuteDDL)
 	}
+
+	if selectStmt, ok := stmtNode.(*ast.SelectStmt); ok {
+		val := s.Value(sessionctx.SelectInto)
+		if val != nil {
+			s.SetValue(sessionctx.SelectInto, nil)
+			panic("TODO")
+		}
+
+		into := selectStmt.Into
+
+		if into != nil {
+			if into.Tp != ast.SelectIntoVars && into.FileName == "" {
+				return nil, errors.New("Select Into: filename is empty")
+			}
+			s.SetValue(sessionctx.SelectInto, into)
+		}
+	}
+
 	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)

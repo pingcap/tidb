@@ -90,6 +90,8 @@ var (
 	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
 	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
+	errSpFetchNoData       = terror.ClassServer.New(codeSpFetchNoData, mysql.MySQLErrName[mysql.ErrSpFetchNoData])
+	errTooManyRows         = terror.ClassServer.New(codeErrTooManyRows, mysql.MySQLErrName[mysql.ErrTooManyRows])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -621,6 +623,8 @@ const (
 	codeNotAllowedCommand   = 1148
 	codeAccessDenied        = mysql.ErrAccessDenied
 	codeMaxExecTimeExceeded = mysql.ErrMaxExecTimeExceeded
+	codeSpFetchNoData       = mysql.ErrSpFetchNoData
+	codeErrTooManyRows      = mysql.ErrTooManyRows
 )
 
 func init() {
@@ -628,6 +632,8 @@ func init() {
 		codeNotAllowedCommand:   mysql.ErrNotAllowedCommand,
 		codeAccessDenied:        mysql.ErrAccessDenied,
 		codeMaxExecTimeExceeded: mysql.ErrMaxExecTimeExceeded,
+		codeSpFetchNoData:       mysql.ErrSpFetchNoData,
+		codeErrTooManyRows:      mysql.ErrTooManyRows,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

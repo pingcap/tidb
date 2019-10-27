@@ -639,6 +639,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0"},
 	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400"},
 	{ScopeGlobal, "thread_pool_size", "16"},
+	{ScopeGlobal, "secure_file_priv", "/tmp/"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -986,6 +987,9 @@ const (
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
 	ThreadPoolSize = "thread_pool_size"
+	// SecureFilePriv is the name if "secure_file_priv" variable.
+	SecureFilePriv = "secure_file_priv"
+
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

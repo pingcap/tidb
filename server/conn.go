@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -51,6 +52,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -1153,6 +1155,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		killConn(cc)
 		return executor.ErrQueryInterrupted
 	}
+
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
@@ -1235,7 +1238,24 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		logutil.Logger(ctx).Error("write query result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
 	}()
 	var err error
-	if mysql.HasCursorExistsFlag(serverStatus) {
+
+	selectIntoInfo := cc.ctx.Value(sessionctx.SelectInto)
+	if selectIntoInfo != nil {
+		defer cc.ctx.SetValue(sessionctx.SelectInto, nil)
+
+		into := selectIntoInfo.(*ast.SelectInto)
+		if into.Tp == ast.SelectIntoOutfile || into.Tp == ast.SelectIntoDumpfile {
+			err = cc.writeChunksToFile(ctx, rs, into, serverStatus)
+		} else {
+			err = cc.writeChunksToVars(ctx, rs, into, serverStatus)
+		}
+
+		if err != nil {
+			err = cc.writeError(err)
+		} else {
+			err = cc.writeOK()
+		}
+	} else if mysql.HasCursorExistsFlag(serverStatus) {
 		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
 	} else {
 		err = cc.writeChunks(ctx, rs, binary, serverStatus)
@@ -1306,6 +1326,209 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		}
 	}
 	return cc.writeEOF(serverStatus)
+}
+
+func isSecureFilePath(fileName string) bool {
+	//get dirName from sysVar
+	sysVarSecureFilePath := variable.SysVars["secure_file_priv"].Value
+
+	if len(sysVarSecureFilePath) < 1 {
+		return true
+	} else if len(fileName) < 1 {
+		return false
+	} else if len(fileName) >= 512 {
+		return false
+	} else if fileName[0] != '/' {
+		return false
+	} else if strings.Index(fileName, "./") > -1 {
+		return false
+	} else if !strings.HasPrefix(fileName, sysVarSecureFilePath) {
+		return false
+	}
+
+	return true
+}
+
+func (cc *clientConn) calcAffectedRows() {
+	cc.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+}
+
+func (cc *clientConn) writeChunksToVars(ctx context.Context, rs ResultSet, into *ast.SelectInto, serverStatus uint16) error {
+	req := rs.NewChunk()
+
+	{
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, req)
+		if err != nil {
+			return err
+		}
+
+		rowCount := req.NumRows()
+		if rowCount == 0 {
+			return errSpFetchNoData
+		} else if rowCount > 1 {
+			return errTooManyRows
+		}
+
+		for i := 0; i < rowCount; i++ {
+			err = dumpTextFieldToVars(cc.ctx.GetSessionVars().Users, into.Vars, rs.Columns(), req.GetRow(i))
+			if err != nil {
+				return err
+			}
+
+			cc.calcAffectedRows()
+		}
+	}
+
+	return nil
+
+}
+
+//write chunks to buffer
+func (cc *clientConn) writeChunksToDump(ctx context.Context, rs ResultSet, into *ast.SelectInto, serverStatus uint16, data *[]byte, writer io.Writer) error {
+	const DumpBufferSize = 5
+	fieldData := cc.alloc.AllocWithLen(0, 1024)
+	req := rs.NewChunk()
+	binary := into.Tp == ast.SelectIntoDumpfile
+
+	//写的顺序: [line-start]...[enclose][fieldEscape][field][space-padding][enclose][field-term]...[line-term]
+	var lineTerm []byte
+	var lineStart []byte
+	var fieldTerm []byte
+	var fieldEscape byte
+
+	var fieldEnclose byte
+	var encloseOptFlag bool
+	//defaultFileTerm := []byte{0}
+
+	if binary {
+		fieldTerm = nil
+	} else {
+		lineTerm = []byte(into.LinesInfo.Terminated)
+		lineStart = []byte(into.LinesInfo.Starting)
+		fieldTerm = []byte(into.FieldsInfo.Terminated)
+		fieldEscape = byte(into.FieldsInfo.Escaped)
+
+		if into.FieldsInfo.OptEnclosed > 0 {
+			fieldEnclose = into.FieldsInfo.OptEnclosed
+			encloseOptFlag = true
+		} else {
+			fieldEnclose = into.FieldsInfo.Enclosed
+			encloseOptFlag = false
+		}
+	}
+
+	for {
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, req)
+		if err != nil {
+			return err
+		}
+
+		rowCount := req.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		for i := 0; i < rowCount; i++ {
+			fieldData = fieldData[:0]
+
+			fieldData, err = dumpTextRowOnly(fieldData, rs.Columns(), req.GetRow(i), binary,
+				fieldTerm, fieldEscape, fieldEnclose, encloseOptFlag)
+			if err != nil {
+				return err
+			}
+
+			if !binary {
+				*data = append(*data, lineStart...)
+			}
+
+			*data = append(*data, fieldData...)
+			//换行符
+			if !binary {
+				*data = append(*data, lineTerm...)
+			}
+
+			cc.calcAffectedRows()
+
+			//分片
+			for len(*data) >= DumpBufferSize {
+				cnt, err := writer.Write((*data)[:DumpBufferSize])
+				if err != nil {
+					return err
+				}
+				*data = (*data)[cnt:]
+			}
+		}
+		//结束符
+		//*data = append(*data, defaultFileTerm...)
+	}
+
+	//最后一片
+	cnt, err := writer.Write(*data)
+	if err != nil {
+		return err
+	}
+	fmt.Println(cnt)
+
+	return nil
+}
+
+//本地文件接口
+type DumpFile struct {
+	file *os.File
+}
+
+func (f *DumpFile) Open(filename string) error {
+	if !isSecureFilePath(filename) {
+		return errors.Errorf("The TiDB server is running with the %s option so it cannot execute this statement", "--secure-file-priv")
+	}
+
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0666)
+	if err != nil {
+		return err
+	}
+
+	f.file = file
+
+	return nil
+}
+
+func (f *DumpFile) Write(p []byte) (n int, err error) {
+	n, err = f.file.Write(p)
+	return
+}
+
+func (f *DumpFile) Close() error {
+	err := f.file.Close()
+	return err
+}
+
+func (f *DumpFile) Abort() error {
+	return nil
+}
+
+//Dump to file
+//param binary: outfile:0, dumpfile:1
+func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into *ast.SelectInto, serverStatus uint16) error {
+	data := cc.alloc.AllocWithLen(0, 1024)
+
+	f := &DumpFile{}
+	//If the secure_file_priv system variable is set to a nonempty directory name,
+	// the file to be written must be located in that directory.
+
+	//file cannot be existing
+	err := f.Open(into.FileName)
+	if err != nil {
+		return err
+	}
+
+	var writer io.Writer = f
+	if err = cc.writeChunksToDump(ctx, rs, into, serverStatus, &data, writer); err != nil {
+		return err
+	}
+
+	return f.Close()
+
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.

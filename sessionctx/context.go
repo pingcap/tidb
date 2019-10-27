@@ -123,6 +123,8 @@ const (
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
+	// SelectInto
+	SelectInto basicCtxType = 4
 )
 
 type connIDCtxKeyType struct{}
