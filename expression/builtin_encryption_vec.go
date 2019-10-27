@@ -358,25 +358,29 @@ func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		payload := buf.GetString(i)
 
 		if len(payload) == 0 {
-			result.AppendString("")
+			result.AppendNull()
+			continue
 		}
 		if len(payload) <= 4 {
 			// corrupted
 			sc.AppendWarning(errZlibZData)
-			result.AppendString("")
+			result.AppendNull()
+			continue
 		}
 		length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
 		bytes, err := inflate([]byte(payload[4:]))
 		if err != nil {
 			sc.AppendWarning(errZlibZData)
-			result.AppendString("")
+			result.AppendNull()
+			continue
 		}
 		if length < uint32(len(bytes)) {
 			sc.AppendWarning(errZlibZBuf)
-			result.AppendString("")
+			result.AppendNull()
+			continue
 		}
 
-		result.AppendString(string(bytes))
+		result.AppendBytes(bytes)
 	}
 
 	return nil
