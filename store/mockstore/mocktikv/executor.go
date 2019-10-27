@@ -200,8 +200,10 @@ func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error
 func getTiKVMemTableRows(tableName string) (rows [][]types.Datum, err error) {
 	tableName = strings.ToUpper(tableName)
 	switch tableName {
-	case "TIKV_INFOS":
+	case "TIKV_SERVER_STATS_INFO_CLUSTER":
 		rows = dataForTiKVInfo()
+	case "TIKV_SERVER_NET_STATS_INFO_CLUSTER":
+		rows = dataForTiKVNetStatsInfo()
 	}
 	return rows, err
 }
@@ -209,11 +211,23 @@ func getTiKVMemTableRows(tableName string) (rows [][]types.Datum, err error) {
 func dataForTiKVInfo() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums(
+			"0.0.0.0",
 			float64(0.1),
-			uint64(100),
-			uint64(200),
-			uint64(300),
-			uint64(400),
+			float64(0.2),
+			"tikv1",
+		),
+	)
+	return records
+}
+
+func dataForTiKVNetStatsInfo() (records [][]types.Datum) {
+	records = append(records,
+		types.MakeDatums(
+			"0.0.0.0",
+			"eth0",
+			int64(1000),
+			int64(2000),
+			"tikv1",
 		),
 	)
 	return records

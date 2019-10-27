@@ -39,6 +39,10 @@ github.com/crazycs520/tipb v0.0.0-20191025054918-3710de5b0513 h1:trhYPGvwWvbqhca
 github.com/crazycs520/tipb v0.0.0-20191025054918-3710de5b0513/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
 github.com/crazycs520/tipb v0.0.0-20191025111928-07ee0e9e0f91 h1:nYjZf93B46Qsad25jabapIg8oYl0t5TxozN5ZPWJDe4=
 github.com/crazycs520/tipb v0.0.0-20191025111928-07ee0e9e0f91/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
+github.com/crazycs520/tipb v0.0.0-20191027003447-3accab24c854 h1:m5TghInhu1aK8/AXzGfn0UAc0IqGNkq4RIB/w1K+6Js=
+github.com/crazycs520/tipb v0.0.0-20191027003447-3accab24c854/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
+github.com/crazycs520/tipb v0.0.0-20191027005214-0328e130474e h1:MVl+1Kz9A9Vc/+510kavW8auZVJys2RqRLtU0yUevY4=
+github.com/crazycs520/tipb v0.0.0-20191027005214-0328e130474e/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 h1:iwZdTE0PVqJCos1vaoKsclOGD3ADKpshg3SRtYBbwso=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548/go.mod h1:e6NPNENfs9mPDVNRekM7lKScauxd5kXTr1Mfyig6TDM=
 github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65 h1:hxuZop6tSoOi0sxFzoGGYdRqNrPubyaIf9KoBG9tPiE=

@@ -93,6 +93,12 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 
 		if v.IsCluster {
+			if strings.HasPrefix(name, "tidb.") {
+				name = name[5:]
+			} else if strings.HasPrefix(name, "tikv.") {
+				name = name[5:]
+				return errors.Errorf("variable `%v` is not support to modify tikv config", name)
+			}
 			err := e.setClusterServerVar(ctx, name, v)
 			if err != nil {
 				return err

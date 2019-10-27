@@ -93,6 +93,7 @@ func registerTables() {
 
 	// Register tikv mem_table to information_schema tables.
 	tableNameToColumns[tableTiKVInfo] = tikvInfoCols
+	tableNameToColumns[tableTiKVNetStatsInfo] = tikvNetStatsInfoCols
 
 	// Register Server_variables
 	tableNameToColumns[clusterTableServerVariable] = clusterServerVarCols
