@@ -239,7 +239,7 @@ func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	la := expr.ExprNode.(*plannercore.LogicalAggregation)
-	hashAgg := plannercore.NewPhysicalHashAgg(la, reqProp)
+	hashAgg := plannercore.NewPhysicalHashAgg(la, reqProp.ExpectedCnt, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	// TODO: Implement TiKVHashAgg
 	return impl.NewTiDBHashAggImpl(hashAgg), nil
 }

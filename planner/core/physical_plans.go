@@ -14,8 +14,6 @@
 package core
 
 import (
-	"math"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -407,15 +405,11 @@ type PhysicalHashAgg struct {
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
-func NewPhysicalHashAgg(la *LogicalAggregation, prop *property.PhysicalProperty, taskTp ...property.TaskType) *PhysicalHashAgg {
-	newProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	if len(taskTp) == 1 {
-		newProp.TaskTp = taskTp[0]
-	}
+func NewPhysicalHashAgg(la *LogicalAggregation, expectedCnt float64, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	agg := basePhysicalAgg{
 		GroupByItems: la.GroupByItems,
 		AggFuncs:     la.AggFuncs,
-	}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, newProp)
+	}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(expectedCnt), la.blockOffset, prop)
 	agg.SetSchema(la.schema.Clone())
 	return agg
 }
