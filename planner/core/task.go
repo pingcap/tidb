@@ -389,7 +389,8 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 // GetCost computes cost of hash join operator itself.
 func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	innerCnt, outerCnt := lCnt, rCnt
-	if (p.InnerChildIdx == 1 && p.OuterHashJoin == false) || (p.InnerChildIdx == 0 && p.OuterHashJoin == true) {
+	// Taking the right as the inner for right join or using the outer to build a hash table.
+	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
 		innerCnt, outerCnt = rCnt, lCnt
 	}
 	sessVars := p.ctx.GetSessionVars()
@@ -436,7 +437,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.ConcurrencyFactor
 	// Cost of traveling the hash table when building the hash table from the outer table
-	if p.OuterHashJoin {
+	if p.UseOuterToBuild {
 		cpuCost += innerCnt * sessVars.CPUFactor / float64(p.Concurrency)
 	}
 	return cpuCost + memoryCost
