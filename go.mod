@@ -80,3 +80,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20191028024321-055fc1066f0d
