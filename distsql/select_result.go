@@ -203,6 +203,15 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 			r.respChunkDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
 		}
 
+		if r.respChunkDecoder.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
+			if chk.NumRows() > 0 {
+				return nil
+			}
+			r.respChunkDecoder.ReuseIntermChk(chk)
+			r.respChkIdx++
+			return nil
+		}
+
 		r.respChunkDecoder.Decode(chk)
 
 		if r.respChunkDecoder.IsFinished() {

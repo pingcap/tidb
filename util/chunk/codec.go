@@ -119,7 +119,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		col.nullBitmap = buffer[:numNullBitmapBytes]
+		col.nullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
 		c.setAllNotNull(col)
@@ -130,7 +130,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes])
+		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes:numOffsetBytes])
 		buffer = buffer[numOffsetBytes:]
 		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
@@ -138,7 +138,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	}
 
 	// decode data.
-	col.data = buffer[:numDataBytes]
+	col.data = buffer[:numDataBytes:numDataBytes]
 	return buffer[numDataBytes:]
 }
 
@@ -238,6 +238,29 @@ func (c *Decoder) Reset(data []byte) {
 // IsFinished indicates whether Decoder.intermChk has been dried up.
 func (c *Decoder) IsFinished() bool {
 	return c.remainedRows == 0
+}
+
+// RemainedRows indicates Decoder.intermChk has remained rows.
+func (c *Decoder) RemainedRows() int {
+	return c.remainedRows
+}
+
+// ReuseIntermChk reuse Decoder.intermChk.
+func (c *Decoder) ReuseIntermChk(chk *Chunk) {
+	for i := 0; i < c.intermChk.NumCols(); i++ {
+		c.intermChk.columns[i].length = c.remainedRows
+		elemLen := getFixedLen(c.codec.colTypes[i])
+		if elemLen == varElemLen {
+			// For var-length types, we need to adjust the offsets before reuse.
+			if deltaOffset := c.intermChk.columns[i].offsets[0]; deltaOffset != 0 {
+				for j := 0; j < len(c.intermChk.columns[i].offsets); j++ {
+					c.intermChk.columns[i].offsets[j] -= deltaOffset
+				}
+			}
+		}
+	}
+	chk.SwapColumns(c.intermChk)
+	c.remainedRows = 0
 }
 
 func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
