@@ -191,7 +191,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 		}
 		if b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
-			b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = p.Schema().Columns[0].TblName
+			b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.Schema().Columns[0].DBName, TableName: p.Schema().Columns[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -341,13 +341,13 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 // the logicalPlan match some optimizer hints, and hints are not expected to take effect in this case.
 func extractTableAlias(p Plan) *hintTableInfo {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
-		tblName := p.Schema().Columns[0].TblName.L
+		firstCol := p.Schema().Columns[0]
 		for _, column := range p.Schema().Columns {
-			if column.TblName.L != tblName {
+			if column.TblName.L != firstCol.TblName.L || column.DBName.L != firstCol.DBName.L {
 				return nil
 			}
 		}
-		return &hintTableInfo{name: p.Schema().Columns[0].TblName, selectOffset: p.SelectBlockOffset()}
+		return &hintTableInfo{dbName: firstCol.DBName, tblName: firstCol.TblName, selectOffset: p.SelectBlockOffset()}
 	}
 	return nil
 }
@@ -393,9 +393,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 
 	var alias *hintTableInfo
 	if len(ds.TableAsName.L) != 0 {
-		alias = &hintTableInfo{name: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
+		alias = &hintTableInfo{dbName: ds.DBName, tblName: *ds.TableAsName, selectOffset: ds.SelectBlockOffset()}
 	} else {
-		alias = &hintTableInfo{name: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
+		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
 	if hintInfo.ifPreferTiFlash(alias) {
 		ds.preferStoreType |= preferTiFlash
@@ -2002,11 +2002,11 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = append(INLJTables, tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -2015,7 +2015,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			aggHints.preferAggToCop = true
 		case HintUseIndex:
 			if len(hint.Tables) != 0 {
+				dbName := hint.Tables[0].DBName
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+				}
 				indexHintList = append(indexHintList, indexHintInfo{
+					dbName:  dbName,
 					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
 						IndexNames: hint.Indexes,
@@ -2026,7 +2031,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			}
 		case HintIgnoreIndex:
 			if len(hint.Tables) != 0 {
+				dbName := hint.Tables[0].DBName
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+				}
 				indexHintList = append(indexHintList, indexHintInfo{
+					dbName:  dbName,
 					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
 						IndexNames: hint.Indexes,
@@ -2037,7 +2047,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			}
 		case HintReadFromStorage:
 			if hint.StoreType.L == HintTiFlash {
-				tiflashTables = tableNames2HintTableInfo(hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		default:
 			// ignore hints that not implemented
@@ -2114,6 +2124,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
 		return nil, err
+	}
+	if b.capFlag&canExpandAST != 0 {
+		originalFields = sel.Fields.Fields
 	}
 
 	if sel.GroupBy != nil {
@@ -2341,7 +2354,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}
@@ -2467,6 +2480,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+		err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		return nil, err
 	}
 
@@ -2486,25 +2500,48 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 	}
 
-	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
-	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
-	for i := range tableInfo.View.Cols {
-		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
-		if col == nil {
-			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
+		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	}
+
+	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
+}
+
+func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
+	columnInfo := tableInfo.Cols()
+	cols := selectLogicalPlan.Schema().Columns
+	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
+	// store the origin columns' names of the underlying SelectStmt used when
+	// creating the view.
+	if tableInfo.View.Cols != nil {
+		cols = cols[:0]
+		for _, info := range columnInfo {
+			col := selectLogicalPlan.Schema().FindColumnByName(info.Name.L)
+			if col == nil {
+				return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+			}
+			cols = append(cols, col)
+		}
+	}
+
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+	projExprs := make([]expression.Expression, 0, len(tableInfo.Columns))
+	for i, col := range cols {
+		origColName := col.ColName
+		if tableInfo.View.Cols != nil {
+			origColName = tableInfo.View.Cols[i]
 		}
 		projSchema.Append(&expression.Column{
 			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 			TblName:     col.TblName,
 			OrigTblName: col.OrigTblName,
-			ColName:     tableInfo.Cols()[i].Name,
-			OrigColName: tableInfo.View.Cols[i],
+			ColName:     columnInfo[i].Name,
+			OrigColName: origColName,
 			DBName:      col.DBName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
 	}
-
 	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
@@ -2958,7 +2995,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			if _, ok := asNames[x.tableInfo]; !ok {
 				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
 			}
-			asNames[x.tableInfo] = append(asNames[x.tableInfo], &alias.name)
+			asNames[x.tableInfo] = append(asNames[x.tableInfo], &alias.tblName)
 		}
 	case *LogicalProjection:
 		if !x.calculateGenCols {
@@ -2981,7 +3018,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			if _, ok := asNames[ds.tableInfo]; !ok {
 				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
 			}
-			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], &alias.name)
+			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], &alias.tblName)
 		}
 	default:
 		for _, child := range p.Children() {

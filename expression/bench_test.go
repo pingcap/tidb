@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -362,6 +363,18 @@ func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
 }
 
+// ipv6StrGener is used to generate ipv6 strings.
+type ipv6StrGener struct {
+}
+
+func (g *ipv6StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -444,6 +457,15 @@ func (g *dataStrGener) gen() interface{} {
 	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
 }
 
+// constStrGener always returns the given string
+type constStrGener struct {
+	s string
+}
+
+func (g *constStrGener) gen() interface{} {
+	return g.s
+}
+
 type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
@@ -472,11 +494,16 @@ type vecExprBenchCase struct {
 type vecExprBenchCases map[string][]vecExprBenchCase
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
-	batchSize := 1024
 	var gen dataGenerator
 	if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
 		gen = testCase.geners[colIdx]
-	} else {
+	}
+	fillColumnWithGener(eType, chk, colIdx, gen)
+}
+
+func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
+	batchSize := 1024
+	if gen == nil {
 		gen = &defaultGener{0.2, eType}
 	}
 

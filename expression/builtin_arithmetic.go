@@ -670,6 +670,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticIntDivideIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
 		return sig, nil
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETDecimal, types.ETDecimal)
@@ -677,6 +678,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
 	sig := &builtinArithmeticIntDivideDecimalSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IntDivideDecimal)
 	return sig, nil
 }
 
@@ -834,6 +836,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticModRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
@@ -842,6 +845,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticModDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModDecimal)
 		return sig, nil
 	} else {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
@@ -849,6 +853,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticModIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModInt)
 		return sig, nil
 	}
 }
