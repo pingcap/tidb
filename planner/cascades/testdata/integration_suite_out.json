@@ -114,6 +114,48 @@
           "33",
           "44"
         ]
+      },
+      {
+        "SQL": "explain select b from t order by a+b",
+        "Result": [
+          "Projection_7 10000.00 root Column#3",
+          "└─Projection_12 10000.00 root Column#3, Column#4",
+          "  └─Sort_8 10000.00 root Column#6:asc",
+          "    └─Projection_13 10000.00 root Column#3, Column#4, plus(Column#4, Column#3)",
+          "      └─Projection_9 10000.00 root Column#2, Column#1",
+          "        └─TableReader_10 10000.00 root data:TableScan_11",
+          "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t order by a+b",
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
+      },
+      {
+        "SQL": "explain select b from t order by b, a+b, a",
+        "Result": [
+          "Projection_7 10000.00 root Column#3",
+          "└─Projection_12 10000.00 root Column#3, Column#4",
+          "  └─Sort_8 10000.00 root Column#3:asc, Column#6:asc, Column#4:asc",
+          "    └─Projection_13 10000.00 root Column#3, Column#4, plus(Column#4, Column#3)",
+          "      └─Projection_9 10000.00 root Column#2, Column#1",
+          "        └─TableReader_10 10000.00 root data:TableScan_11",
+          "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t order by b, a+b, a",
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
       }
     ]
   }
