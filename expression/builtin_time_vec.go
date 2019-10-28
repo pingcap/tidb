@@ -1192,15 +1192,11 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
-					return err
-				}
-				result.SetNull(i, true)
-				continue
+		if ds[i].InvalidZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
 			}
-			i64s[i] = 0
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64(ds[i].Time.Weekday() + 1)
