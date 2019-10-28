@@ -474,6 +474,40 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	}
 }
 
+func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
+	txn := s.begin(c)
+	c.Assert(txn.Set([]byte("x"), []byte("v")), IsNil)
+
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	loc, err := s.store.regionCache.LocateKey(bo, []byte("x"))
+	c.Assert(err, IsNil)
+	batch := batchKeys{region: loc.Region, keys: [][]byte{[]byte("x")}}
+	mutations := make([]*kvrpcpb.Mutation, len(batch.keys))
+	for i, k := range batch.keys {
+		tmp := commiter.mutations[string(k)]
+		mutations[i] = &tmp.Mutation
+	}
+	prewrite := &kvrpcpb.PrewriteRequest{
+		Mutations:    mutations,
+		PrimaryLock:  commiter.primary(),
+		StartVersion: commiter.startTS,
+		LockTtl:      commiter.lockTTL,
+		MinCommitTs:  commiter.startTS + 100, // Set minCommitTS
+	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, prewrite)
+	_, err = s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	c.Assert(err, IsNil)
+
+	// Make commitTS less than minCommitTS.
+	commiter.commitTS = commiter.startTS + 1
+	// Ensure that the new commit ts is greater than minCommitTS when retry
+	time.Sleep(3 * time.Millisecond)
+	err = commiter.commitKeys(bo, commiter.keys)
+	c.Assert(err, IsNil)
+}
+
 func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	// This test checks that the isPessimisticLock field is set in the request even when no keys are pessimistic lock.
 	txn := s.begin(c)
