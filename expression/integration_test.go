@@ -41,16 +41,20 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = Suite(&testIntegrationSuite2{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
+}
+
+type testIntegrationSuite2 struct {
+	testIntegrationSuite
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -65,7 +69,6 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
@@ -74,7 +77,6 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -240,7 +242,7 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
 }
 
-func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	ctx := context.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -568,7 +570,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
 
-func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -987,7 +989,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 }
 
-func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestEncryptionBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1152,7 +1154,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	originSQLMode := s.ctx.GetSessionVars().StrictSQLMode
 	s.ctx.GetSessionVars().StrictSQLMode = true
 	defer func() {
@@ -2146,7 +2148,7 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3501,7 +3503,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
-func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestOtherBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

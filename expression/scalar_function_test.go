@@ -21,12 +21,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
-	defer testleak.AfterTest(c)()
-
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -51,7 +48,6 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
-	defer testleak.AfterTest(c)()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),

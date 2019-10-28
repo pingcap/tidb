@@ -2231,7 +2231,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
-	err = e.Open(ctx)
+	err = e.open(ctx)
 
 	return e, err
 }

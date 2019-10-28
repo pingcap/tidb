@@ -22,12 +22,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestColumn(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
 	c.Assert(col.Equal(nil, col), IsTrue)
@@ -98,8 +95,6 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col1 := &Column{
 		UniqueID: 12,
 	}
@@ -112,8 +107,6 @@ func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
 		cols = append(cols, &Column{UniqueID: int64(i)})
@@ -126,8 +119,6 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
 	colInfo := &model.ColumnInfo{ID: 0}
@@ -140,8 +131,6 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
@@ -172,7 +161,6 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColHybird(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	// bit
