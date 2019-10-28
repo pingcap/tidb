@@ -379,8 +379,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
 			return inNode, true
 		}
-		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
-		er.ctxNameStk = append(er.ctxNameStk, er.names[index])
+		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 		return inNode, true
 	case *ast.FuncCallExpr:
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {

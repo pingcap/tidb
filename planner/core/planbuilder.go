@@ -1017,7 +1017,6 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				DBName:  tn.Schema,
 			})
 			schema.Append(&expression.Column{
-
 				RetType:  &col.FieldType,
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
@@ -1028,7 +1027,6 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 			DBName:  tn.Schema,
 		})
 		schema.Append(&expression.Column{
-
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       -1,
