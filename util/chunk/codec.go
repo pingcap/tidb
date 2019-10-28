@@ -192,12 +192,13 @@ func init() {
 
 // Decoder decodes the data returned from the coprocessor and stores the result in Chunk.
 // How Decoder works:
-// 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk using Codec.Decode. intermChk is
-//    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU and
-//    memory cost.
+// 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk(intermediate chunk) using Codec.Decode.
+//    intermChk is introduced to simplify the implementation of decode phase. This phase uses pointer operations with
+//    less CPU and memory cost.
 // 2. Decode phase:
-//    2.1 Set the number of rows that should be decoded to a multiple of 8 greater than
-//        chk.RequiredRows() - chk.NumRows(), this can reduce the cost when copying the srcCol.nullBitMap into destCol.nullBitMap.
+//    2.1 Set the number of rows to be decoded to a value that is a multiple of 8 and greater than
+//        `chk.RequiredRows() - chk.NumRows()`. This reduces the overhead of copying the srcCol.nullBitMap into
+//        destCol.nullBitMap.
 //    2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
 //        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
 //    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
