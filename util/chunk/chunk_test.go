@@ -538,11 +538,19 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
+<<<<<<< HEAD
 	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
 	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
 	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
 	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
 	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
+=======
+	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[2] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[3] = (initCap+7)>>3 + 0 + initCap*sizeTime + sizeTime
+	colUsage[4] = (initCap+7)>>3 + 0 + initCap*8 + 8
+>>>>>>> b3ad90e... util: increase column's nullBitmap's capacity (#12470)
 
 	expectedUsage := 0
 	for i := range colUsage {
@@ -572,7 +580,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	chk.AppendDuration(4, durationObj)
 
 	memUsage = chk.MemoryUsage()
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
