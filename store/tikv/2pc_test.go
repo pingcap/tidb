@@ -556,7 +556,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= 5000, IsTrue)
+			c.Assert(uint64(expire-now) <= PessimisticLockTTL, IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)

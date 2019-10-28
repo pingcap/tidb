@@ -320,7 +320,7 @@ max-retry-count = 256
 
 # default TTL in milliseconds for pessimistic lock.
 # The value must between "15s" and "120s".
-ttl = "40s"
+ttl = "10s"
 
 [stmt-summary]
 # max number of statements kept in memory.

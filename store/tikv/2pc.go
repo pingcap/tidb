@@ -66,7 +66,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64 = 15000 // 15s ~ 40s
+	PessimisticLockTTL uint64 = 10000 // 3s ~ 30s
 )
 
 func (actionPrewrite) String() string {
@@ -599,8 +599,8 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	const lockTTL = 3000 // 3s
-	ticker := time.NewTicker(time.Duration(lockTTL) * time.Millisecond / 3)
+	// Ticker is set to 1/2 of the PessimisticLockTTL.
+	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -633,7 +633,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 
-			newTTL := uptime + lockTTL
+			newTTL := uptime + PessimisticLockTTL
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
@@ -664,13 +664,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 
 	t0 := oracle.GetTimeFromTS(c.forUpdateTS)
 	elapsed := uint64(time.Since(t0) / time.Millisecond)
-	pessimisticTTL := elapsed + 3000
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
 		Mutations:    mutations,
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      pessimisticTTL,
+		LockTtl:      elapsed + PessimisticLockTTL,
 		IsFirstLock:  c.isFirstLock,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {

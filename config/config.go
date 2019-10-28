@@ -36,8 +36,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize    = 4096 // MB
-	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 120
+	MinPessimisticTTL = time.Second * 3
+	MaxPessimisticTTL = time.Second * 30
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -425,7 +425,7 @@ var defaultConf = Config{
 	PessimisticTxn: PessimisticTxn{
 		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "40s",
+		TTL:           "10s",
 	},
 	StmtSummary: StmtSummary{
 		MaxStmtCount: 100,
