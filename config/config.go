@@ -104,8 +104,8 @@ type Config struct {
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
 // conflict options at the same time.
 type nullableBool struct {
-	Valid bool
-	Value bool
+	IsValid bool
+	IsTrue bool
 }
 
 var (
@@ -115,7 +115,7 @@ var (
 )
 
 func (b *nullableBool) toBool() bool {
-	return b.Valid && b.Value
+	return b.IsValid && b.IsTrue
 }
 
 func (b nullableBool) MarshalJSON() ([]byte, error) {
@@ -448,9 +448,9 @@ var defaultConf = Config{
 		SlowThreshold:       logutil.DefaultSlowThreshold,
 		ExpensiveThreshold:  10000,
 		DisableErrorStack:   nbUnset,
-		EnableErrorStack:    nbUnset, // If both options are unset, getDisableErrorStack() returns true
+		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
-		DisableTimestamp:    nbUnset, // If both options are unset, getDisableTimestamp() returns false
+		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
