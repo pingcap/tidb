@@ -37,3 +37,18 @@ func (impl *SortImpl) CalcCost(outCount float64, children ...memo.Implementation
 	impl.cost = sort.GetCost(cnt) + children[0].GetCost()
 	return impl.cost
 }
+
+// NominalSortImpl is the implementation of NominalSort.
+type NominalSortImpl struct {
+	baseImpl
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	return children[0]
+}
+
+// NewNominalSortImpl creates a new NominalSort Implementation.
+func NewNominalSortImpl(sort *plannercore.NominalSort) *NominalSortImpl {
+	return &NominalSortImpl{baseImpl{plan: sort}}
+}
