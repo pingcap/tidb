@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -115,6 +116,26 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 		s.checkAll(keys, c)
 		s.deleteKeys(keys, c)
 	}
+}
+
+func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
+	txn := s.beginTxn(c)
+	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+
+	txn = s.beginTxn(c)
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()})
+	_, err := snapshot.BatchGet([]kv.Key{kv.Key("x"), kv.Key("y")})
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
+	_, err = snapshot.Get(kv.Key("x"))
+	c.Assert(err, IsNil)
+
+	_, err = snapshot.Get(kv.Key("y"))
+	c.Assert(kv.IsErrNotFound(err), IsTrue)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
 }
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
