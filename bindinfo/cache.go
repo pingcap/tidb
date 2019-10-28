@@ -44,7 +44,7 @@ type Binding struct {
 	UpdateTime types.Time
 	Charset    string
 	Collation  string
-	// hint is the parsed hints, it is used to bind hints to stmt node.
+	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *HintsSet
 	// id is the string form of all hints. It is used to uniquely identify different hints.
 	id string
