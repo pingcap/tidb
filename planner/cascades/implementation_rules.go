@@ -232,18 +232,8 @@ type ImplHashAgg struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	la := expr.ExprNode.(*plannercore.LogicalAggregation)
-	_, preferStream := la.ResetHintIfConflicted()
-	if preferStream {
-		// If the LogicalAggregation has a StreamAgg hint but it cannot be implemented as PhysicalStreamAgg,
-		// we will generate a PhysicalHashAgg in the rule `ImplStreamAgg`. So we have no need to regenerate
-		// a HashAgg in this rule.
-		return false
-	}
-	return true
+	// TODO: deal with the hints when we have implemented StreamAgg.
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
