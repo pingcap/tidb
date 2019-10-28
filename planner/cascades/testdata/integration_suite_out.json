@@ -76,5 +76,45 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestSort",
+    "Cases": [
+      {
+        "SQL": "explain select a from t order by a",
+        "Result": [
+          "Projection_7 10000.00 root Column#1",
+          "└─TableReader_8 10000.00 root data:TableScan_9",
+          "  └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t order by a",
+        "Result": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      {
+        "SQL": "explain select b from t order by b",
+        "Result": [
+          "Projection_7 10000.00 root Column#2",
+          "└─Sort_12 10000.00 root Column#2:asc",
+          "  └─TableReader_10 10000.00 root data:TableScan_11",
+          "    └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t order by b",
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
+      }
+    ]
   }
 ]
