@@ -103,10 +103,10 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 	result := lBindRecord.shallowCopy()
 	for _, rbind := range rBindRecord.Bindings {
 		found := false
-		for j, bind := range result.Bindings {
-			if bind.id == rbind.id {
+		for j, lbind := range lBindRecord.Bindings {
+			if lbind.id == rbind.id {
 				found = true
-				if rbind.UpdateTime.Compare(bind.UpdateTime) >= 0 {
+				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
 					result.Bindings[j] = rbind
 				}
 				break
