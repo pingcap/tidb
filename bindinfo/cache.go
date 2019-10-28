@@ -141,7 +141,7 @@ func (br *BindRecord) shallowCopy() *BindRecord {
 	result := BindRecord{
 		OriginalSQL: br.OriginalSQL,
 		Db:          br.Db,
-		Bindings:    make([]Binding, 0, len(br.Bindings)),
+		Bindings:    make([]Binding, len(br.Bindings)),
 	}
 	copy(result.Bindings, br.Bindings)
 	return &result
