@@ -234,6 +234,7 @@ func (s *testEvaluatorSuite) TestPadCharToFullLength(c *C) {
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalString(ctx, row)
 		c.Assert(err, IsNil)
+		c.Assert(len(v), Equals, ft.Flen)
 		c.Assert(v, Equals, result.GetString(i))
 	}
 }
