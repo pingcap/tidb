@@ -997,7 +997,6 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 		str := buf.GetString(i)
 		pos := positions[i]
 		length := lengths[i]
-
 		runes := []rune(str)
 		numRunes := int64(len(runes))
 		if pos < 0 {
@@ -1016,7 +1015,6 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 			result.AppendString(string(runes[pos:end]))
 			continue
 		}
-
 		result.AppendString(string(runes[pos:]))
 	}
 
