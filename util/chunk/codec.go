@@ -193,7 +193,7 @@ func init() {
 // Decoder decodes the data returned from the coprocessor and stores the result in Chunk.
 // How Decoder works:
 // 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk using Codec.Decode. intermChk is
-//    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU andF
+//    introduced to simplify the implementation of decode phase. This phase uses pointer operations with less CPU and
 //    memory cost.
 // 2. Decode phase:
 //    2.1 Set the number of rows that should be decoded to a multiple of 8 greater than
