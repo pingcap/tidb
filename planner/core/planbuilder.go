@@ -65,12 +65,14 @@ type tableHintInfo struct {
 }
 
 type hintTableInfo struct {
-	name         model.CIStr
+	dbName       model.CIStr
+	tblName      model.CIStr
 	selectOffset int
 	matched      bool
 }
 
 type indexHintInfo struct {
+	dbName    model.CIStr
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
 }
@@ -80,13 +82,18 @@ type aggHintInfo struct {
 	preferAggToCop bool
 }
 
-func tableNames2HintTableInfo(hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		if tableInfo.dbName.L == "" {
+			tableInfo.dbName = defaultDBName
+		}
+		hintTableInfos[i] = tableInfo
 	}
 	return hintTableInfos
 }
@@ -122,7 +129,7 @@ func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []
 			if table == nil {
 				continue
 			}
-			if curEntry.name.L == table.name.L && table.selectOffset == curEntry.selectOffset {
+			if curEntry.dbName.L == table.dbName.L && curEntry.tblName.L == table.tblName.L && table.selectOffset == curEntry.selectOffset {
 				hintTables[i].matched = true
 				hintMatched = true
 				break
@@ -137,7 +144,7 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
 	for i, table := range hintTables {
-		buffer.WriteString(table.name.L)
+		buffer.WriteString(table.tblName.L)
 		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
@@ -150,7 +157,7 @@ func extractUnmatchedTables(hintTables []hintTableInfo) []string {
 	var tableNames []string
 	for _, table := range hintTables {
 		if !table.matched {
-			tableNames = append(tableNames, table.name.O)
+			tableNames = append(tableNames, table.tblName.O)
 		}
 	}
 	return tableNames
@@ -329,7 +336,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]model.CIStr, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
 		ctx:           sctx,
@@ -572,7 +579,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -589,7 +596,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
 		for _, hint := range hints.indexHintList {
-			if hint.tblName == tblName {
+			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
 			}
 		}

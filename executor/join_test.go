@@ -986,6 +986,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Sort().Check(testkit.Rows("-277544960", "-277544960"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Sort().Check(testkit.Rows("-1327693824", "-277544960", "-277544960", "148307968"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a where t.a = -277544960").Sort().Check(testkit.Rows("-277544960", "-277544960"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Sort().Check(testkit.Rows("-277544960", "-277544960", "<nil>", "<nil>", "<nil>", "<nil>"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a order by t.a desc").Check(testkit.Rows("148307968", "-277544960", "-277544960", "-1327693824"))
 	tk.MustExec("DROP TABLE IF EXISTS t;")

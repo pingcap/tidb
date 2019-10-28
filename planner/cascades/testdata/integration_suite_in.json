@@ -15,5 +15,14 @@
       "explain select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
       "select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5"
     ]
+  },
+  {
+    "name": "TestSort",
+    "cases": [
+      "explain select a from t order by a",
+      "select a from t order by a",
+      "explain select b from t order by b",
+      "select b from t order by b"
+    ]
   }
 ]
