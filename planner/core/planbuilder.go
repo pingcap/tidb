@@ -65,12 +65,14 @@ type tableHintInfo struct {
 }
 
 type hintTableInfo struct {
-	name         model.CIStr
+	dbName       model.CIStr
+	tblName      model.CIStr
 	selectOffset int
 	matched      bool
 }
 
 type indexHintInfo struct {
+	dbName    model.CIStr
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
 }
@@ -80,13 +82,18 @@ type aggHintInfo struct {
 	preferAggToCop bool
 }
 
-func tableNames2HintTableInfo(hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		if tableInfo.dbName.L == "" {
+			tableInfo.dbName = defaultDBName
+		}
+		hintTableInfos[i] = tableInfo
 	}
 	return hintTableInfos
 }
@@ -122,7 +129,7 @@ func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []
 			if table == nil {
 				continue
 			}
-			if curEntry.name.L == table.name.L && table.selectOffset == curEntry.selectOffset {
+			if curEntry.dbName.L == table.dbName.L && curEntry.tblName.L == table.tblName.L && table.selectOffset == curEntry.selectOffset {
 				hintTables[i].matched = true
 				hintMatched = true
 				break
@@ -137,7 +144,7 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
 	for i, table := range hintTables {
-		buffer.WriteString(table.name.L)
+		buffer.WriteString(table.tblName.L)
 		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
@@ -150,7 +157,7 @@ func extractUnmatchedTables(hintTables []hintTableInfo) []string {
 	var tableNames []string
 	for _, table := range hintTables {
 		if !table.matched {
-			tableNames = append(tableNames, table.name.O)
+			tableNames = append(tableNames, table.tblName.O)
 		}
 	}
 	return tableNames
@@ -183,6 +190,15 @@ var clauseMsg = map[clauseCode]string{
 	globalOrderByClause: "global ORDER clause",
 }
 
+type capFlagType = uint64
+
+const (
+	_ capFlagType = iota
+	// canExpandAST indicates whether the origin AST can be expanded during plan
+	// building. ONLY used for `CreateViewStmt` now.
+	canExpandAST
+)
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -194,7 +210,10 @@ type PlanBuilder struct {
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
-	optFlag       uint64
+	// optFlag indicates the flags of the optimizer rules.
+	optFlag uint64
+	// capFlag indicates the capability flags.
+	capFlag capFlagType
 
 	curClause clauseCode
 
@@ -317,7 +336,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]model.CIStr, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
 		ctx:           sctx,
@@ -371,7 +390,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -560,7 +579,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
@@ -577,7 +596,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
 		for _, hint := range hints.indexHintList {
-			if hint.tblName == tblName {
+			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
 			}
 		}
@@ -1508,6 +1527,8 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		if raw.DBName == "" {
 			return nil, ErrNoDB
 		}
+	case *ast.ShutdownStmt:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	}
 	return p, nil
 }
@@ -2230,17 +2251,23 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.capFlag |= canExpandAST
+		defer func() {
+			b.capFlag &= ^canExpandAST
+		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
 		}
 		schema := plan.Schema()
-		if v.Cols != nil && len(v.Cols) != schema.Len() {
-			return nil, ddl.ErrViewWrongList
+		if v.Cols == nil {
+			v.Cols = make([]model.CIStr, len(schema.Columns))
+			for i, col := range schema.Columns {
+				v.Cols[i] = col.ColName
+			}
 		}
-		v.SchemaCols = make([]model.CIStr, schema.Len())
-		for i, col := range schema.Columns {
-			v.SchemaCols[i] = col.ColName
+		if len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
 		}
 		if _, ok := plan.(LogicalPlan); ok {
 			if b.ctx.GetSessionVars().User != nil {

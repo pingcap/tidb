@@ -33,6 +33,35 @@ import (
 	"golang.org/x/tools/container/intsets"
 )
 
+// cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
+// to reduce unnecessary allocation for Expression arguments array
+type cowExprRef struct {
+	ref []Expression
+	new []Expression
+}
+
+// Set will allocate new array if changed flag true
+func (c *cowExprRef) Set(i int, changed bool, val Expression) {
+	if c.new != nil {
+		c.new[i] = val
+		return
+	}
+	if !changed {
+		return
+	}
+	c.new = make([]Expression, len(c.ref))
+	copy(c.new, c.ref[:i])
+	c.new[i] = val
+}
+
+// Result return the final reference
+func (c *cowExprRef) Result() []Expression {
+	if c.new != nil {
+		return c.new
+	}
+	return c.ref
+}
+
 // Filter the input expressions, append the results to result.
 func Filter(result []Expression, input []Expression, filter func(Expression) bool) []Expression {
 	for _, e := range input {
@@ -146,30 +175,46 @@ func setExprColumnInOperand(expr Expression) Expression {
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
+	_, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	return resExpr
+}
+
+// ColumnSubstituteImpl tries to substitute column expr using newExprs,
+// the newFunctionInternal is only called if its child is substituted
+func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
 		if id == -1 {
-			return v
+			return false, v
 		}
 		newExpr := newExprs[id]
 		if v.InOperand {
 			newExpr = setExprColumnInOperand(newExpr)
 		}
-		return newExpr
+		return true, newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			newFunc.GetArgs()[0] = ColumnSubstitute(newFunc.GetArgs()[0], schema, newExprs)
-			return newFunc
+			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
+			return true, newFunc
 		}
-		newArgs := make([]Expression, 0, len(v.GetArgs()))
-		for _, arg := range v.GetArgs() {
-			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
+		// cowExprRef is a copy-on-write util, args array allocation happens only
+		// when expr in args is changed
+		refExprArr := cowExprRef{v.GetArgs(), nil}
+		substituted := false
+		for idx, arg := range v.GetArgs() {
+			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			refExprArr.Set(idx, changed, newFuncExpr)
+			if changed {
+				substituted = true
+			}
 		}
-		return NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
+		if substituted {
+			return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+		}
 	}
-	return expr
+	return false, expr
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.

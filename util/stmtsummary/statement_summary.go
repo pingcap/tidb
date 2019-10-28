@@ -230,6 +230,26 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	return rows
 }
 
+// GetMoreThanOnceSelect gets select SQLs that occurred more than once.
+func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string) {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
+
+	schemas := make([]string, 0, len(values))
+	sqls := make([]string, 0, len(values))
+	for _, value := range values {
+		summary := value.(*stmtSummaryByDigest)
+		summary.Lock()
+		if strings.HasPrefix(summary.normalizedSQL, "select") && summary.execCount > 1 {
+			schemas = append(schemas, summary.schemaName)
+			sqls = append(sqls, summary.sampleSQL)
+		}
+		summary.Unlock()
+	}
+	return schemas, sqls
+}
+
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 	value = ssMap.normalizeEnableValue(value)

@@ -1,0 +1,162 @@
+[
+  {
+    "Name": "TestPKIsHandleRangeScan",
+    "Cases": [
+      {
+        "SQL": "explain select b from t where a > 1",
+        "Result": [
+          "Projection_8 3333.33 root Column#2",
+          "└─TableReader_9 3333.33 root data:TableScan_10",
+          "  └─TableScan_10 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t where a > 1",
+        "Result": [
+          "4",
+          "6"
+        ]
+      },
+      {
+        "SQL": "explain select b from t where a > 1 and a < 3",
+        "Result": [
+          "Projection_8 2.00 root Column#2",
+          "└─TableReader_9 2.00 root data:TableScan_10",
+          "  └─TableScan_10 2.00 cop[tikv] table:t, range:(1,3), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t where a > 1 and a < 3",
+        "Result": null
+      },
+      {
+        "SQL": "explain select b from t where a > 1 and b < 6",
+        "Result": [
+          "Projection_9 2666.67 root Column#2",
+          "└─TableReader_10 2666.67 root data:Selection_11",
+          "  └─Selection_11 2666.67 cop[tikv] lt(Column#2, 6)",
+          "    └─TableScan_12 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t where a > 1 and b < 6",
+        "Result": [
+          "4"
+        ]
+      },
+      {
+        "SQL": "explain select a from t where a * 3 + 1 > 9 and a < 5",
+        "Result": [
+          "Projection_9 4.00 root Column#1",
+          "└─TableReader_10 4.00 root data:Selection_11",
+          "  └─Selection_11 4.00 cop[tikv] gt(plus(mul(Column#1, 3), 1), 9)",
+          "    └─TableScan_12 5.00 cop[tikv] table:t, range:[-inf,5), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t where a * 3 + 1 > 9 and a < 5",
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "explain select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
+        "Result": [
+          "Projection_10 3.20 root Column#1",
+          "└─Selection_11 3.20 root lt(sin(cast(Column#1)), 0.5)",
+          "  └─TableReader_12 4.00 root data:Selection_13",
+          "    └─Selection_13 4.00 cop[tikv] gt(plus(mul(Column#1, 3), 1), 9)",
+          "      └─TableScan_14 5.00 cop[tikv] table:t, range:[-inf,5), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
+        "Result": [
+          "3"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSort",
+    "Cases": [
+      {
+        "SQL": "explain select a from t order by a",
+        "Result": [
+          "Projection_7 10000.00 root Column#1",
+          "└─TableReader_8 10000.00 root data:TableScan_9",
+          "  └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t order by a",
+        "Result": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      {
+        "SQL": "explain select b from t order by b",
+        "Result": [
+          "Projection_7 10000.00 root Column#2",
+          "└─Sort_12 10000.00 root Column#2:asc",
+          "  └─TableReader_10 10000.00 root data:TableScan_11",
+          "    └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t order by b",
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
+      },
+      {
+        "SQL": "explain select b from t order by a+b",
+        "Result": [
+          "Projection_7 10000.00 root Column#3",
+          "└─Projection_12 10000.00 root Column#3, Column#4",
+          "  └─Sort_8 10000.00 root Column#6:asc",
+          "    └─Projection_13 10000.00 root Column#3, Column#4, plus(Column#4, Column#3)",
+          "      └─Projection_9 10000.00 root Column#2, Column#1",
+          "        └─TableReader_10 10000.00 root data:TableScan_11",
+          "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t order by a+b",
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
+      },
+      {
+        "SQL": "explain select b from t order by b, a+b, a",
+        "Result": [
+          "Projection_7 10000.00 root Column#3",
+          "└─Projection_12 10000.00 root Column#3, Column#4",
+          "  └─Sort_8 10000.00 root Column#3:asc, Column#6:asc, Column#4:asc",
+          "    └─Projection_13 10000.00 root Column#3, Column#4, plus(Column#4, Column#3)",
+          "      └─Projection_9 10000.00 root Column#2, Column#1",
+          "        └─TableReader_10 10000.00 root data:TableScan_11",
+          "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select b from t order by b, a+b, a",
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
+      }
+    ]
+  }
+]
