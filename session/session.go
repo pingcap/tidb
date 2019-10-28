@@ -1080,13 +1080,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("SQL", sql))
 		return nil, util.SyntaxError(err)
 	}
-	durParse := time.Since(startTS)
-	s.GetSessionVars().DurationParse = durParse
+	parseDur := time.Since(startTS)
+	s.GetSessionVars().DurationParse = parseDur
 	isInternal := s.isInternal()
 	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+		sessionExecuteParseDurationInternal.Observe(parseDur.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		sessionExecuteParseDurationGeneral.Observe(parseDur.Seconds())
 	}
 
 	compiler := executor.Compiler{Ctx: s}
@@ -1108,12 +1108,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("SQL", sql))
 			return nil, err
 		}
-		durCompile := time.Since(startTS)
-		s.GetSessionVars().DurationCompile = durCompile
+		compileDur := time.Since(startTS)
+		s.GetSessionVars().DurationCompile = compileDur
 		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
+			sessionExecuteCompileDurationInternal.Observe(compileDur.Seconds())
 		} else {
-			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
+			sessionExecuteCompileDurationGeneral.Observe(compileDur.Seconds())
 		}
 		s.currentPlan = stmt.Plan
 
@@ -1921,8 +1921,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
-		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
-		if pessTxnConf.Enable {
+		pessimisticTxnConf := config.GetGlobalConfig().PessimisticTxn
+		if pessimisticTxnConf.Enable {
 			if s.sessionVars.TxnMode == ast.Pessimistic {
 				s.sessionVars.TxnCtx.IsPessimistic = true
 			}
