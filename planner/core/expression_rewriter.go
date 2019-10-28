@@ -155,7 +155,7 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 			// After rewriting finished, only old columns are visible.
 			// e.g. select * from t where t.a in (select t1.a from t1);
 			// The output columns before we enter the subquery are the columns from t.
-			// But when we leave the subquery `t.a = (select t1.a from t1 where t1.b=)`, we got a Apply operator
+			// But when we leave the subquery `t.a in (select t1.a from t1)`, we got a Apply operator
 			// and the output columns become [t.*, t1.*]. But t1.* is used only inside the subquery. If there's another filter
 			// which is also a subquery where t1 is involved. The name resolving will fail if we still expose the column from
 			// the previous subquery.
@@ -368,8 +368,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		col := schema.Columns[idx]
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.sctx, col.Index, col.RetType))
-		er.ctxNameStk = append(er.ctxNameStk, types.EmptyName)
+		er.ctxStackAppend(expression.NewValuesFunc(er.sctx, col.Index, col.RetType), types.EmptyName)
 		return inNode, true
 	case *ast.WindowFuncExpr:
 		index, ok := -1, false

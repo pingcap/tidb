@@ -602,8 +602,8 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	return schema, names
 }
 
-// ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and *FiledName.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, []*types.FieldName) {
+// ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for _, col := range colInfos {
