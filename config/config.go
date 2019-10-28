@@ -105,7 +105,7 @@ type Config struct {
 // conflict options at the same time.
 type nullableBool struct {
 	IsValid bool
-	IsTrue bool
+	IsTrue  bool
 }
 
 var (
