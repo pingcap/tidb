@@ -148,7 +148,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i], _ = expression.PushDownNot(nil, expr, false)
+		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
 	}
 	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
@@ -198,7 +198,7 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo) (_ *property.
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i], _ = expression.PushDownNot(nil, expr, false)
+		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
 	}
 	ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx

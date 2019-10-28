@@ -4133,7 +4133,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
-			conds[i], _ = expression.PushDownNot(sctx, cond, false)
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {

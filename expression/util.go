@@ -290,28 +290,28 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
-func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) ([]Expression, bool) {
+func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]Expression, bool) {
 	newExprs := make([]Expression, 0, len(exprs))
 	flag := false
 	for _, expr := range exprs {
-		newExpr, changed := PushDownNot(ctx, expr, not)
+		newExpr, changed := pushNotAcrossExpr(ctx, expr, not)
 		flag = changed || flag
 		newExprs = append(newExprs, newExpr)
 	}
 	return newExprs, flag
 }
 
-// PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
+// pushNotAcrossExpr try to eliminate the NOT expr in expression tree. It will records whether there's already NOT pushed.
+func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return PushDownNot(f.GetCtx(), f.GetArgs()[0], !not)
+			return pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
 			}
-			newArgs, changed := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			newArgs, changed := pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), false)
 			if !changed {
 				return f, false
 			}
@@ -323,11 +323,11 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) (Expression,
 			)
 			funcName := f.FuncName.L
 			if not {
-				newArgs, _ = doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				newArgs, _ = pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), true)
 				funcName = oppositeOp[f.FuncName.L]
 				changed = true
 			} else {
-				newArgs, changed = doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+				newArgs, changed = pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), false)
 			}
 			if !changed {
 				return f, false
@@ -339,6 +339,12 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) (Expression,
 		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr, not
+}
+
+// PushDownNot pushes the `not` function down to the expression's arguments.
+func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
+	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
+	return newExpr
 }
 
 // Contains tests if `exprs` contains `e`.
