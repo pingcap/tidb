@@ -255,7 +255,7 @@ func (b *builtinCompressSig) vectorized() bool {
 
 var (
 	defaultByteSize = 1024
-	bytePool = sync.Pool{
+	bytePool        = sync.Pool{
 		New: func() interface{} {
 			return make([]byte, defaultByteSize)
 		},
