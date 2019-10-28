@@ -1171,7 +1171,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(cc.writeEOF(serverStatus))
+	if cl, ok := rs.(fetchNotifier); ok {
+		cl.OnFetchReturned()
+	}
+	return cc.writeEOF(serverStatus)
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
