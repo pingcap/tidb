@@ -696,8 +696,11 @@ func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv
 	switch storeType {
 	case kv.TiKV:
 		size += tablecodec.RecordRowKeyLen
-	case kv.TiFlash:
 		if pkIsHandle {
+			size -= 8 /* value in tikv do NOT contain the primary key */
+		}
+	case kv.TiFlash:
+		if !pkIsHandle {
 			size += 8 /* row_id length */
 		}
 	}
@@ -707,8 +710,9 @@ func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv
 // GetIndexAvgRowSize computes average row size for a index scan.
 func (coll *HistColl) GetIndexAvgRowSize(cols []*expression.Column, isUnique bool) (size float64) {
 	size = coll.GetAvgRowSize(cols, true)
-	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8) + rowID(8)
-	size += 27
+	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
+	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
+	size += 19
 	if !isUnique {
 		// add the len("_")
 		size++

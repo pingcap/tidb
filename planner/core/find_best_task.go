@@ -1067,7 +1067,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, ds.tableInfo.PKIsHandle)
+	var rowSize float64
+	if ts.StoreType == kv.TiKV {
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, ds.tableInfo.PKIsHandle)
+	} else {
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ts.Schema().Columns, ts.StoreType, ds.tableInfo.PKIsHandle)
+	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
