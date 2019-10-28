@@ -88,6 +88,7 @@ func (e *ErrDeadlock) Error() string {
 	return "deadlock"
 }
 
+// ErrCommitTSExpired is returned when commit.CommitTS < lock.MinCommitTS
 type ErrCommitTSExpired struct {
 	kvrpcpb.CommitTsExpired
 }
