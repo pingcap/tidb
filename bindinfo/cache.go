@@ -38,7 +38,7 @@ type Binding struct {
 	BindSQL string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
-	// 2. using: BindRecord is in the normal active mode.
+	// 2. using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
