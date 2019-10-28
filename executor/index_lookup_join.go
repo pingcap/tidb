@@ -378,11 +378,17 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	requiredRows := ow.batchSize
 	if ow.lookup.isOuterJoin {
 		// If it is outerJoin, push the requiredRows down.
-		requiredRows = int(atomic.LoadInt64(&ow.lookup.requiredRows))
+		// Note: buildTask is triggered when `Open` is called, but
+		// ow.lookup.requiredRows is set when `Next` is called. Thus we check
+		// whether it's 0 here.
+		if parentRequired := int(atomic.LoadInt64(&ow.lookup.requiredRows)); parentRequired != 0 {
+			requiredRows = parentRequired
+		}
 	}
-
+	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := chunk.NewChunkWithCapacity(ow.outerCtx.rowTypes, ow.ctx.GetSessionVars().MaxChunkSize)
+		chk := chunk.NewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize)
+		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := Next(ctx, ow.executor, chk)
 		if err != nil {
 			return task, err
