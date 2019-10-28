@@ -135,7 +135,7 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	resI64s := result.Int64s()
 
 	if len(b.args) == 3 {
-		pathCol, err := b.bufAllocator.get(types.ETJson, nr)
+		pathCol, err := b.bufAllocator.get(types.ETString, nr)
 		if err != nil {
 			return err
 		}
