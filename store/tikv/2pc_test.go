@@ -537,14 +537,14 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	err = txn.LockKeys(context.Background(), nil, txn.startTS, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL
-	c.Assert(elapsedTTL, GreaterEqual, uint64(100))
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
+	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
 	lr := newLockResolver(s.store)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS)
 	c.Assert(err, IsNil)
-	c.Assert(status.ttl, Equals, lockInfo.LockTtl)
+	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
 	// Check primary lock TTL is auto increasing while the pessimistic txn is ongoing.
 	for i := 0; i < 50; i++ {
@@ -556,7 +556,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= PessimisticLockTTL, IsTrue)
+			c.Assert(uint64(expire-now) <= 5000, IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)

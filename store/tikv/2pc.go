@@ -108,9 +108,8 @@ type twoPhaseCommitter struct {
 	cleanWg   sync.WaitGroup
 	detail    unsafe.Pointer
 
-	primaryKey     []byte
-	forUpdateTS    uint64
-	pessimisticTTL uint64
+	primaryKey  []byte
+	forUpdateTS uint64
 
 	mu struct {
 		sync.RWMutex
@@ -578,15 +577,17 @@ const (
 )
 
 type ttlManager struct {
-	state ttlManagerState
-	ch    chan struct{}
+	state  ttlManagerState
+	ch     chan struct{}
+	killed *uint32
 }
 
-func (tm *ttlManager) run(c *twoPhaseCommitter) {
+func (tm *ttlManager) run(c *twoPhaseCommitter, killed *uint32) {
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
 	}
+	tm.killed = killed
 	go tm.keepAlive(c)
 }
 
@@ -598,14 +599,18 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	// Ticker is set to 1/3 of the PessimisticLockTTL.
-	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
+	const lockTTL = 3000 // 3s
+	ticker := time.NewTicker(time.Duration(lockTTL) * time.Millisecond / 3)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-tm.ch:
 			return
 		case <-ticker.C:
+			// If kill signal is received, the ttlManager should exit.
+			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
+				return
+			}
 			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
@@ -628,7 +633,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 
-			newTTL := uptime + PessimisticLockTTL
+			newTTL := uptime + lockTTL
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
@@ -657,12 +662,15 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		mutations[i] = mut
 	}
 
+	t0 := oracle.GetTimeFromTS(c.forUpdateTS)
+	elapsed := uint64(time.Since(t0) / time.Millisecond)
+	pessimisticTTL := elapsed + 3000
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
 		Mutations:    mutations,
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      c.pessimisticTTL,
+		LockTtl:      pessimisticTTL,
 		IsFirstLock:  c.isFirstLock,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
