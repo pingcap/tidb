@@ -80,7 +80,6 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	result.ReserveString(n)
 	nums := buf2.Int64s()
 	for i := 0; i < n; i++ {
-		// TODO: introduce vectorized null-bitmap to speed it up.
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -910,8 +909,9 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	result.ReserveString(n)
 	i64s1 := buf1.Int64s()
 	i64s2 := buf2.Int64s()
+	buf1.MergeNulls(buf2)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
