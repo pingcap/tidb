@@ -319,7 +319,7 @@ enable = true
 max-retry-count = 256
 
 # default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "120s".
+# The value must between "3s" and "30s".
 ttl = "10s"
 
 [stmt-summary]
