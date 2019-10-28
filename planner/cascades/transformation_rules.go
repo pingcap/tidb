@@ -48,12 +48,14 @@ type TransformationID int
 const (
 	rulePushSelDownTableScan TransformationID = iota
 	rulePushSelDownTableGather
+	rulePushSelDownSort
 	ruleEnumeratePaths
 )
 
 var transformationRuleList = []Transformation{
 	&PushSelDownTableScan{},
 	&PushSelDownTableGather{},
+	&PushSelDownSort{},
 	&EnumeratePaths{},
 }
 
@@ -61,6 +63,7 @@ var defaultTransformationMap = map[memo.Operand][]TransformationID{
 	memo.OperandSelection: {
 		rulePushSelDownTableScan,
 		rulePushSelDownTableGather,
+		rulePushSelDownSort,
 	},
 	memo.OperandDataSource: {
 		ruleEnumeratePaths,
@@ -221,4 +224,39 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil
+}
+
+// PushSelDownSort pushes the Selection down to the child of Sort.
+type PushSelDownSort struct {
+}
+
+// GetPattern implements Transformation interface. The pattern of this rule
+// is `Selection -> Sort`.
+func (r *PushSelDownSort) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownSort) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `sel->sort->x` to `sort->sel->x`.
+func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	newSelExpr := memo.NewGroupExpr(sel)
+	newSelExpr.Children = append(newSelExpr.Children, childGroup)
+	newSelGroup := memo.NewGroupWithSchema(newSelExpr, childGroup.Prop.Schema)
+
+	newSortExpr := memo.NewGroupExpr(sort)
+	newSortExpr.Children = append(newSortExpr.Children, newSelGroup)
+	return []*memo.GroupExpr{newSortExpr}, true, false, nil
 }
