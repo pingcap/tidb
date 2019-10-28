@@ -81,4 +81,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/kvproto => gitlab.com/sticnarf/kvproto v0.0.0-20191024032002-4c0582efc199
+replace github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20191028092548-5369a1a8884b
