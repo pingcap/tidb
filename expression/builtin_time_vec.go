@@ -491,19 +491,19 @@ func (b *builtinFromDaysSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+	if err = b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
-	t64s := result.Times()
+	ts := result.Times()
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		t64s[i] = types.TimeFromDays(i64s[i])
+		ts[i] = types.TimeFromDays(i64s[i])
 	}
 	return nil
 }
