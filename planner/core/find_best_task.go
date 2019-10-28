@@ -63,9 +63,9 @@ var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, prop
 
 var invalidTask = &rootTask{cst: math.MaxFloat64}
 
-// getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
+// GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
-func getPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
+func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
