@@ -24,6 +24,7 @@ import (
 var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONKeys: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}}},
 	},
 	ast.JSONArrayAppend:  {},
 	ast.JSONContainsPath: {},
