@@ -254,22 +254,23 @@ func (b *builtinCompressSig) vectorized() bool {
 }
 
 var (
+	defaultByteSize = 1024
 	bytePool = sync.Pool{
 		New: func() interface{} {
-			return make([]byte, defaultChunkSize)
+			return make([]byte, defaultByteSize)
 		},
 	}
 )
 
 func allocByteSlice(n int) []byte {
-	if n > defaultChunkSize {
+	if n > defaultByteSize {
 		return make([]byte, n)
 	}
 	return bytePool.Get().([]byte)
 }
 
 func deallocateByteSlice(b []byte) {
-	if cap(b) <= defaultChunkSize {
+	if cap(b) <= defaultByteSize {
 		bytePool.Put(b)
 	}
 }
