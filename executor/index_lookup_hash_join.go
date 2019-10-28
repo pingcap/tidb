@@ -465,9 +465,9 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 }
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, h hash.Hash64) {
-	buf := make([]byte, 1)
+	buf, numChks := make([]byte, 1), task.outerResult.NumChunks()
 	task.lookupMap = newRowHashMap(task.outerResult.Len())
-	for chkIdx := 0; chkIdx < task.outerResult.NumChunks(); chkIdx++ {
+	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
 	OUTER:
@@ -489,7 +489,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 				logutil.Logger(ctx).Error("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
 				return
 			}
-			rowPtr := chunk.RowPtr{ChkIdx: 0, RowIdx: uint32(rowIdx)}
+			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 			task.lookupMap.Put(h.Sum64(), rowPtr)
 		}
 	}
