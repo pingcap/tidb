@@ -271,7 +271,8 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if err := b.args[1].VecEvalString(b.ctx, input, pathBuf); err != nil {
 			return err
 		}
-		result.MergeNulls(jsonBuf, pathBuf)
+
+		result.MergeNulls(jsonBuf)
 		for i := 0; i < nr; i++ {
 			if result.IsNull(i) {
 				continue
@@ -280,6 +281,11 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 			if jsonItem.TypeCode != json.TypeCodeObject && jsonItem.TypeCode != json.TypeCodeArray {
 				resI64s[i] = 1
+				continue
+			}
+
+			if pathBuf.IsNull(i) {
+				result.SetNull(i, true)
 				continue
 			}
 
