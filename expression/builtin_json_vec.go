@@ -97,37 +97,11 @@ func (b *builtinJSONReplaceSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinJSONArraySig) vectorized() bool {
-	return true
+	return false
 }
 
 func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	nr := input.NumRows()
-	jsons := make([][]interface{}, nr)
-	for i := 0; i < nr; i++ {
-		jsons[i] = make([]interface{}, 0, len(b.args))
-	}
-	for _, arg := range b.args {
-		j, err := b.bufAllocator.get(types.ETJson, nr)
-		if err != nil {
-			return err
-		}
-		defer b.bufAllocator.put(j)
-		if err = arg.VecEvalJSON(b.ctx, input, j); err != nil {
-			return err
-		}
-		for i := 0; i < nr; i++ {
-			if j.IsNull(i) {
-				jsons[i] = append(jsons[i], json.CreateBinary(nil))
-			} else {
-				jsons[i] = append(jsons[i], j.GetJSON(i))
-			}
-		}
-	}
-	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
-		result.AppendJSON(json.CreateBinary(jsons[i]))
-	}
-	return nil
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinJSONContainsSig) vectorized() bool {
