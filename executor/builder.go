@@ -1007,9 +1007,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	// reverse the inner and the outer
 	if e.outerHashJoin {
 		v.InnerChildIdx = 1 - v.InnerChildIdx
-		var conds = v.LeftConditions
-		v.LeftConditions = v.RightConditions
-		v.RightConditions = conds
+		v.LeftConditions, v.RightConditions = v.RightConditions, v.LeftConditions
 	}
 
 	defaultValues := v.DefaultValues
@@ -1044,7 +1042,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(b.ctx, v.JoinType, (v.InnerChildIdx == 0 && e.outerHashJoin == false) || (v.InnerChildIdx == 1 && e.outerHashJoin), defaultValues,
+		e.joiners[i] = newJoiner(b.ctx, v.JoinType, (v.InnerChildIdx == 0 && !e.outerHashJoin) || (v.InnerChildIdx == 1 && e.outerHashJoin), defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	executorCountHashJoinExec.Inc()
