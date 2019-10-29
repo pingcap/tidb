@@ -14,9 +14,6 @@
 package core
 
 import (
-	"fmt"
-
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
@@ -45,9 +42,9 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 
 	switch p := plan.(type) {
 	case *PhysicalHashAgg:
-		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
-		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
@@ -67,10 +64,10 @@ func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFun
 	}
 }
 
-// injectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
+// InjectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
 // of `aggFuncs`, and all the item of `groupByItems` are columns or constants,
 // we do not need to build the `proj`.
-func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
+func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
 	wrapCastForAggFuncs(aggPlan.SCtx(), aggFuncs)
@@ -101,7 +98,6 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			newArg := &expression.Column{
 				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
 				RetType:  arg.GetType(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 				Index:    cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
@@ -118,7 +114,6 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 		newArg := &expression.Column{
 			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  item.GetType(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 			Index:    cursor,
 		}
 		projSchemaCols = append(projSchemaCols, newArg)
@@ -188,7 +183,6 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  itemExpr.GetType(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(bottomProjSchemaCols))),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)

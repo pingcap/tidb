@@ -57,7 +57,7 @@ func (s *testCascadesSuite) TearDownSuite(c *C) {
 func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	stmt, err := s.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
@@ -73,7 +73,7 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
 	stmt, err := s.ParseOneStmt("select a from t", "", "")
 	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
@@ -87,7 +87,7 @@ func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
 func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	stmt, err := s.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
