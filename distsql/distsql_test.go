@@ -655,3 +655,79 @@ func BenchmarkDecodeToChunk_string(b *testing.B) {
 		codec.DecodeToChunkTest(buffer, chk)
 	}
 }
+
+func BenchmarkDecodeToChunkReuse_int(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendInt64(colOrdinal, 123)
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	acodec := chunk.NewDecoder(
+		chunk.NewChunkWithCapacity(colTypes, 0),
+		colTypes)
+
+	chk.SetRequiredRows(1024, 1024)
+	chk.Reset()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		acodec.Reset(buffer)
+		for !acodec.IsFinished() {
+			for !chk.IsFull() && !acodec.IsFinished() {
+				acodec.ReuseIntermChk(chk)
+			}
+			chk.Reset()
+		}
+	}
+}
+
+func BenchmarkDecodeToChunkReuse_string(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendString(colOrdinal, "123456")
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	acodec := chunk.NewDecoder(
+		chunk.NewChunkWithCapacity(colTypes, 0),
+		colTypes)
+
+	chk.SetRequiredRows(1024, 1024)
+	chk.Reset()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		acodec.Reset(buffer)
+		for !acodec.IsFinished() {
+			for !chk.IsFull() && !acodec.IsFinished() {
+				acodec.ReuseIntermChk(chk)
+			}
+			chk.Reset()
+		}
+	}
+}
