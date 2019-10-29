@@ -875,22 +875,13 @@ func checkColumnValueConstraint(col *table.Column) error {
 	return nil
 }
 
-func checkDuplicateColumn(cols []interface{}) error {
-	colNames := set.StringSet{}
-	colName := model.NewCIStr("")
-	for _, col := range cols {
-		switch x := col.(type) {
-		case *ast.ColumnDef:
-			colName = x.Name.Name
-		case model.CIStr:
-			colName = x
-		default:
-			colName.O, colName.L = "", ""
-		}
-		if colNames.Exist(colName.L) {
+func checkDuplicateColumn(colNames []model.CIStr) error {
+	colNameSet := set.StringSet{}
+	for _, colName := range colNames {
+		if colNameSet.Exist(colName.L) {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(colName.O)
 		}
-		colNames.Insert(colName.L)
+		colNameSet.Insert(colName.L)
 	}
 	return nil
 }
@@ -952,18 +943,9 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(cols []interface{}) error {
-	var colName string
-	for _, col := range cols {
-		switch x := col.(type) {
-		case *ast.ColumnDef:
-			colName = x.Name.Name.O
-		case model.CIStr:
-			colName = x.O
-		default:
-			colName = ""
-		}
-		if len(colName) > mysql.MaxColumnNameLength {
+func checkTooLongColumn(colNames []model.CIStr) error {
+	for _, colName := range colNames {
+		if len(colName.O) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.GenWithStackByArgs(colName)
 		}
 	}
@@ -1294,20 +1276,20 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	colDefs := s.Cols
-	colObjects := make([]interface{}, 0, len(colDefs))
+	colNames := make([]model.CIStr, 0, len(colDefs))
 	for _, col := range colDefs {
-		colObjects = append(colObjects, col)
+		colNames = append(colNames, col.Name.Name)
 	}
 	if err := checkTooLongTable(ident.Name); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := checkDuplicateColumn(colObjects); err != nil {
+	if err := checkDuplicateColumn(colNames); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := checkGeneratedColumn(colDefs); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := checkTooLongColumn(colObjects); err != nil {
+	if err := checkTooLongColumn(colNames); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := checkTooManyColumns(colDefs); err != nil {
@@ -1514,7 +1496,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 
 	cols := make([]*table.Column, len(s.Cols))
-	colObjects := make([]interface{}, 0, len(s.Cols))
+	colNames := make([]model.CIStr, 0, len(s.Cols))
 
 	for i, v := range s.Cols {
 		cols[i] = table.ToColumn(&model.ColumnInfo{
@@ -1523,13 +1505,13 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 			Offset: i,
 			State:  model.StatePublic,
 		})
-		colObjects = append(colObjects, v)
+		colNames = append(colNames, v)
 	}
 
-	if err = checkTooLongColumn(colObjects); err != nil {
+	if err = checkTooLongColumn(colNames); err != nil {
 		return err
 	}
-	if err = checkDuplicateColumn(colObjects); err != nil {
+	if err = checkDuplicateColumn(colNames); err != nil {
 		return err
 	}
 
