@@ -22,7 +22,11 @@
       "explain select a from t order by a",
       "select a from t order by a",
       "explain select b from t order by b",
-      "select b from t order by b"
+      "select b from t order by b",
+      "explain select b from t order by a+b",
+      "select b from t order by a+b",
+      "explain select b from t order by b, a+b, a",
+      "select b from t order by b, a+b, a"
     ]
   },
   {
