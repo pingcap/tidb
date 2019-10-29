@@ -481,7 +481,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
 	}
 
-	return b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1)
+	return b.buildPhysicalIndexLookUpReader(dbName, tbl, idx)
 }
 
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
@@ -610,7 +610,7 @@ func (b *planBuilder) getGenExprs(dbName model.CIStr, tbl table.Table, idx *mode
 	return genExprsMap, nil
 }
 
-func (b *planBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int) (Plan, error) {
+func (b *planBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
 	genExprsMap, err := b.getGenExprs(dbName, tbl, idx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -692,27 +692,50 @@ func (b *planBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table}.init(b.ctx)
 	ts.SetSchema(tblSchema)
-	cop := &copTask{indexPlan: is, tablePlan: ts}
+	if tbl.Meta().GetPartitionInfo() != nil {
+		pid := tbl.(table.PhysicalTable).GetPhysicalID()
+		is.physicalTableID = pid
+		is.isPartition = true
+		ts.physicalTableID = pid
+		ts.isPartition = true
+	}
+	cop := &copTask{
+		indexPlan:   is,
+		tablePlan:   ts,
+	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(id, idx, true)
+	is.initSchema(idx, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }
 
-func (b *planBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
+func (b *planBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl table.Table) ([]Plan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
-	indices := make([]table.Index, 0, len(tblInfo.Indices))
+	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
-	for i, idx := range tbl.Indices() {
+	for _, idx := range tbl.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
 			continue
 		}
-		indices = append(indices, idx)
-		reader, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, i)
+		indexInfos = append(indexInfos, idxInfo)
+		// For partition tables.
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				t := tbl.(table.PartitionedTable).GetPartition(def.ID)
+				reader, err := b.buildPhysicalIndexLookUpReader(dbName, t, idxInfo)
+				if err != nil {
+					return nil, nil, err
+				}
+				indexLookUpReaders = append(indexLookUpReaders, reader)
+			}
+			continue
+		}
+		// For non-partition tables.
+		reader, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -721,23 +744,21 @@ func (b *planBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl ta
 	if len(indexLookUpReaders) == 0 {
 		return nil, nil, nil
 	}
-	return indexLookUpReaders, indices, nil
+	return indexLookUpReaders, indexInfos, nil
 }
 
 func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
 	tbl := as.Tables[0]
-	p := &CheckTable{
-		DBName:  tbl.Schema.O,
-		TblInfo: tbl.TableInfo,
-	}
-
 	tableInfo := as.Tables[0].TableInfo
 	table, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
 	}
-
-	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(tbl.Schema, table)
+	p := &CheckTable{
+		DBName: tbl.Schema.O,
+		Table:  table,
+	}
+	readerPlans, indexInfos, err := b.buildPhysicalIndexLookUpReaders(tbl.Schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -745,7 +766,7 @@ func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 	for _, plan := range readerPlans {
 		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
 	}
-	p.Indices = indices
+	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers
 	return p, nil
 }

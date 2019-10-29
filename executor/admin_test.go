@@ -515,6 +515,109 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func (s *testSuite) TestAdminCheckPartitionTableFailed(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test_p")
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec("create table admin_test_p (c1 int key,c2 int,c3 int,index idx(c2)) partition by range (c1) (" +
+		"partition p0 values less than (1)," +
+		"partition p1 values less than (2)," +
+		"partition p2 values less than (3)," +
+		"partition p3 values less than (4)," +
+		"partition p4 values less than (5)," +
+		"partition p5 values less than (maxvalue))")
+	tk.MustExec("insert admin_test_p (c1, c2, c3) values (0,0,0), (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	tk.MustExec("admin check table admin_test_p")
+
+	// Make some corrupted index. Build the index information.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test_p")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(tbl, NotNil)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	tk.Se.GetSessionVars().MaxChunkSize = 3
+
+	// Reduce one row of index on partitions.
+	// Table count > index count.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
+		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+		// TODO: fix admin recover for partition table.
+		//r := tk.MustQuery("admin recover index admin_test_p idx")
+		//r.Check(testkit.Rows("0 0"))
+		//tk.MustExec("admin check table admin_test_p")
+		// Manual recover index.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+
+	// Add one row of index on partitions.
+	// Table count < index count.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i+8), int64(i+8))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
+		// TODO: fix admin recover for partition table.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i+8))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+
+	// Table count = index count, but the index value was wrong.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i+8), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
+		// TODO: fix admin recover for partition table.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+}
+
 func (s *testSuite) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)

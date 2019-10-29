@@ -507,7 +507,6 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		return true, nil
 	}
 	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
