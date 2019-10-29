@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testStringerSuite{})
+var _ = Suite(&testTransformationRuleSuite{})
 
-type testStringerSuite struct {
+type testTransformationRuleSuite struct {
 	*parser.Parser
 	is        infoschema.InfoSchema
 	sctx      sessionctx.Context
@@ -36,25 +36,27 @@ type testStringerSuite struct {
 	optimizer *Optimizer
 }
 
-func (s *testStringerSuite) SetUpSuite(c *C) {
+func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
 	s.optimizer = NewOptimizer()
 	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "stringer_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
 }
 
-func (s *testStringerSuite) TearDownSuite(c *C) {
+func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
-func (s *testStringerSuite) TestGroupStringer(c *C) {
+func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
 		memo.OperandSelection: {
-			rulePushSelDownTableGather,
 			rulePushSelDownTableScan,
+			rulePushSelDownTableGather,
+			rulePushSelDownSort,
+			rulePushSelDownProjection,
 		},
 		memo.OperandDataSource: {
 			ruleEnumeratePaths,
