@@ -193,7 +193,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 		return nil, nil
 	}
 
-	if infoschema.IsClusterTable(ds.table.Meta().Name.O) || infoschema.IsTiKVMemTable(ds.table.Meta().Name.O) {
+	if infoschema.IsClusterTable(ds.table.Meta().Name.O) {
 		return nil, nil
 	}
 
@@ -1037,12 +1037,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	if infoschema.IsMemoryDB(ds.DBName.L) {
 		if infoschema.IsClusterTable(ds.tableInfo.Name.O) {
 			ts.StoreType = kv.ClusterMem
-			ts.Init(ds.ctx, ds.blockOffset)
-			ts.tp = plancodec.TypeMemTableScan
-		}
-
-		if infoschema.IsTiKVMemTable(ds.tableInfo.Name.O) {
-			ts.StoreType = kv.TiKVMem
 			ts.Init(ds.ctx, ds.blockOffset)
 			ts.tp = plancodec.TypeMemTableScan
 		}

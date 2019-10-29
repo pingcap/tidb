@@ -16,11 +16,10 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -158,16 +157,15 @@ func (e *memTableScanExec) Cursor() ([]byte, bool) {
 	return nil, false
 }
 
+var GetClusterMemTableRows func(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error)
+
 func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error) {
 	defer func(begin time.Time) {
 		e.execDetail.update(begin, values)
 	}(time.Now())
-	if e.rows == nil {
+	if e.rows == nil && GetClusterMemTableRows != nil {
 		e.sctx = mock.NewContext()
-		rows, err := getTiKVMemTableRows(e.tableName)
-		if len(rows) == 0 {
-			rows, err = infoschema.GetClusterMemTableRows(e.sctx, e.tableName)
-		}
+		rows, err := GetClusterMemTableRows(e.sctx, e.tableName)
 		if err != nil {
 			return nil, err
 		}
@@ -195,57 +193,6 @@ func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error
 		values[i] = handleData
 	}
 	return values, nil
-}
-
-func getTiKVMemTableRows(tableName string) (rows [][]types.Datum, err error) {
-	tableName = strings.ToUpper(tableName)
-	switch tableName {
-	case "TIKV_SERVER_STATS_INFO_CLUSTER":
-		rows = dataForTiKVInfo()
-	case "TIKV_SERVER_NET_STATS_INFO_CLUSTER":
-		rows = dataForTiKVNetStatsInfo()
-	case "TIKV_INFOS":
-		rows = dataForTiKVServerInfo()
-	}
-	return rows, err
-}
-
-func dataForTiKVInfo() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums(
-			"0.0.0.0",
-			float64(0.1),
-			float64(0.2),
-			"tikv1",
-		),
-	)
-	return records
-}
-
-func dataForTiKVNetStatsInfo() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums(
-			"0.0.0.0",
-			"eth0",
-			int64(1000),
-			int64(2000),
-			"tikv1",
-		),
-	)
-	return records
-}
-
-func dataForTiKVServerInfo() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums(
-			float64(0.1),
-			uint64(1000),
-			uint64(2000),
-			uint64(1000),
-			uint64(2000),
-		),
-	)
-	return records
 }
 
 type tableScanExec struct {

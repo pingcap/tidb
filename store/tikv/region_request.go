@@ -15,9 +15,6 @@ package tikv
 
 import (
 	"context"
-	"github.com/golang/protobuf/proto"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tipb/go-tipb"
 	"sync/atomic"
 	"time"
 
@@ -121,34 +118,6 @@ func (s *RegionRequestSender) SendReqCtx(
 			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
-		case kv.TiKVMem:
-			//rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
-			store := s.regionCache.getStoreByStoreID(s.storeID)
-			rpcCtx = &RPCContext{
-				Addr: store.addr,
-				Peer: &metapb.Peer{
-					StoreId:   store.storeID,
-					IsLearner: false,
-				},
-			}
-			if req.Type == tikvrpc.CmdCop {
-				cop := req.Cop()
-				dagReq := new(tipb.DAGRequest)
-				err := proto.Unmarshal(cop.Data, dagReq)
-				if err != nil {
-					return nil, nil, err
-				}
-				for _, executor := range dagReq.Executors {
-					if executor.Tp == tipb.ExecType_TypeMemTableScan {
-						storeID := store.storeID
-						executor.MemTblScan.StoreId = &storeID
-					}
-				}
-				cop.Data, err = dagReq.Marshal()
-				if err != nil {
-					return nil, nil, err
-				}
-			}
 		case kv.ClusterMem:
 			rpcCtx = &RPCContext{
 				Addr: s.storeAddr,

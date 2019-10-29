@@ -1001,11 +1001,11 @@ type GlobalVarAccessor interface {
 }
 
 var ServerVariableMap map[string]struct{} = map[string]struct{}{
-	TiDBGeneralLog:          struct{}{},
-	TiDBSlowLogThreshold:    struct{}{},
-	TiDBRecordPlanInSlowLog: struct{}{},
-	TiDBDDLSlowOprThreshold: struct{}{},
-	TiDBQueryLogMaxLen:      struct{}{},
+	TiDBGeneralLog:          {},
+	TiDBSlowLogThreshold:    {},
+	TiDBRecordPlanInSlowLog: {},
+	TiDBDDLSlowOprThreshold: {},
+	TiDBQueryLogMaxLen:      {},
 }
 
 func IsServerVariable(name string) bool {

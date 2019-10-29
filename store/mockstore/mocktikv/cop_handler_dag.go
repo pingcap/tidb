@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/infoschema"
 	"io"
 	"time"
 
@@ -191,10 +190,12 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	return src, nil
 }
 
+var IsClusterTable func(tableName string) bool
+
 func (h *rpcHandler) buildMemTableScan(ctx *dagContext, executor *tipb.Executor) (*memTableScanExec, error) {
 	memTblScan := executor.MemTblScan
-	if !infoschema.IsTiKVMemTable(memTblScan.TableName) && !infoschema.IsClusterTable(memTblScan.TableName) {
-		return nil, errors.Errorf("table %s is not a tikv/tidb memory table", memTblScan.TableName)
+	if IsClusterTable != nil && !IsClusterTable(memTblScan.TableName) {
+		return nil, errors.Errorf("table %s is not a tidb memory table", memTblScan.TableName)
 	}
 
 	columns := memTblScan.Columns

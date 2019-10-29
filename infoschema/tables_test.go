@@ -455,13 +455,9 @@ func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
 	tk.MustQuery("select * from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("test t 0 PRIMARY 1 a <nil>  0", "test t 1 k1 1 b <nil>  1"))
 }
 
-func (s *testTableSuite) TestSlowQuery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	// Prepare slow log file.
-	slowLogFileName := "tidb_slow.log"
+func prepareSlowLogfile(c *C, slowLogFileName string) {
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
-	defer os.Remove(slowLogFileName)
 	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
 # Txn_start_ts: 406315658548871171
 # User: root@127.0.0.1
@@ -486,6 +482,14 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 select * from t_slim;`))
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(err, IsNil)
+}
+
+func (s *testTableSuite) TestSlowQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Prepare slow log file.
+	slowLogFileName := "tidb_slow.log"
+	prepareSlowLogfile(c, slowLogFileName)
+	defer os.Remove(slowLogFileName)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
@@ -497,6 +501,8 @@ select * from t_slim;`))
 	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	c.Assert(err, IsNil)
 	_, err = f.Write([]byte(`
 # Time: 2019-02-13T19:33:56.571953+08:00
 `))
@@ -585,4 +591,15 @@ func (s *testTableSuite) TestReloadDropDatabase(c *C) {
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableNotExists, err), IsTrue)
 	_, ok := is.TableByID(t2.Meta().ID)
 	c.Assert(ok, IsFalse)
+}
+
+func (s *testTableSuite) TestSelectClusterMemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	slowLogFileName := "tidb-slow.log"
+	prepareSlowLogfile(c, slowLogFileName)
+	defer os.Remove(slowLogFileName)
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select count(*) from `SLOW_QUERY_CLUSTER`").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from `PROCESSLIST_CLUSTER`")
+	tk.MustQuery("select count(*) from performance_schema.events_statements_summary_by_digest_cluster")
 }

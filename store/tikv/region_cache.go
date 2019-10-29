@@ -937,7 +937,7 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 func (c *RegionCache) getAllStoreIDs() []uint64 {
 	storeID := make([]uint64, 0, len(c.storeMu.stores))
 	c.storeMu.Lock()
-	for id, _ := range c.storeMu.stores {
+	for id := range c.storeMu.stores {
 		storeID = append(storeID, id)
 	}
 	c.storeMu.Unlock()

@@ -222,8 +222,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	}
 
 	switch req.StoreType {
-	case kv.TiKVMem:
-		return buildTiKVMemCopTasks(bo, ranges, cache, req)
 	case kv.ClusterMem:
 		return buildTiDBMemCopTasks(ranges, req)
 	}
@@ -264,43 +262,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 			zap.Int("task len", len(tasks)))
 	}
 	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
-	return tasks, nil
-}
-
-func buildTiKVMemCopTasks(bo *Backoffer, ranges *copRanges, cache *RegionCache, req *kv.Request) ([]*copTask, error) {
-	cmdType := tikvrpc.CmdCop
-	if req.Streaming {
-		cmdType = tikvrpc.CmdCopStream
-	}
-	err := cache.loadAllStores(bo)
-	if err != nil {
-		return nil, err
-	}
-	storeIDs := cache.getAllStoreIDs()
-	tasks := make([]*copTask, 0, len(storeIDs))
-	for _, id := range storeIDs {
-		store := cache.getStoreByStoreID(id)
-		//region := cache.getAnyRegionInStore(id)
-		//if region == nil {
-		//	continue
-		//}
-		logutil.BgLogger().Warn("build mem tikv scan loop", zap.String("store addr", store.addr), zap.Uint64("id", id))
-		if len(store.addr) == 0 || id == 0 {
-			continue
-
-		}
-		tasks = append(tasks, &copTask{
-			ranges: ranges,
-			// Channel buffer is 2 for handling region split.
-			// In a common case, two region split tasks will not be blocked.
-			respChan:  make(chan *copResponse, 2),
-			cmdType:   cmdType,
-			storeType: req.StoreType,
-			storeAddr: store.addr,
-			storeID:   store.storeID,
-		})
-	}
-	logutil.BgLogger().Warn("build mem tikv scan", zap.Int("task num", len(tasks)), zap.Int("store num", len(storeIDs)))
 	return tasks, nil
 }
 
