@@ -355,6 +355,7 @@ import (
 	grants		"GRANTS"
 	hash		"HASH"
 	history		"HISTORY"
+	hosts		"HOSTS"
 	hour		"HOUR"
 	identified	"IDENTIFIED"
 	importKwd	"IMPORT"
@@ -376,6 +377,7 @@ import (
 	list		"LIST"
 	local		"LOCAL"
 	location	"LOCATION"
+	logs		"LOGS"
 	master		"MASTER"
 	microsecond	"MICROSECOND"
 	minute		"MINUTE"
@@ -4448,6 +4450,7 @@ UnReservedKeyword:
 | "WITHOUT" | "RTREE" | "EXCHANGE" | "COLUMN_FORMAT" | "REPAIR" | "IMPORT" | "DISCARD" | "TABLE_CHECKSUM" | "UNICODE"
 | "SQL_TSI_DAY" | "SQL_TSI_HOUR" | "SQL_TSI_MINUTE" | "SQL_TSI_MONTH" | "SQL_TSI_QUARTER" | "SQL_TSI_SECOND" |
 "SQL_TSI_WEEK" | "SQL_TSI_YEAR" | "INVISIBLE" | "VISIBLE" | "TYPE" | "NOWAIT" | "REPLICA" | "LOCATION" | "LABELS"
+| "LOGS" | "HOSTS"
 
 TiDBKeyword:
  "ADMIN" | "AGG_TO_COP" |"BUCKETS" | "BUILTINS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
@@ -8326,6 +8329,18 @@ FlushOption:
 		$$ = &ast.FlushStmt{
 			Tp: ast.FlushTiDBPlugin,
 			Plugins: $3.([]string),
+		}
+	}
+|	"HOSTS"
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushHosts,
+		}
+	}
+|	"LOGS"
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushLogs,
 		}
 	}
 |	TableOrTables TableNameListOpt WithReadLockOpt
