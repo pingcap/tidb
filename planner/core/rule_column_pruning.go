@@ -133,7 +133,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		}
 		la.AggFuncs = []*aggregation.AggFuncDesc{one}
 		col := &expression.Column{
-			ColName:  model.NewCIStr("dummy_agg"),
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 		}
