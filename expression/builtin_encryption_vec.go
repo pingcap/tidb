@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -302,7 +303,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendString("")
 		}
 
-		compressed, err := deflate([]byte(str))
+		compressed, err := deflate(hack.Slice(str))
 		if err != nil {
 			result.AppendNull()
 			continue
