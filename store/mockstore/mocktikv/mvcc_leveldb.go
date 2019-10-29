@@ -740,6 +740,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 			return nil
 		}
 		// Overwrite the pessimistic lock.
+		if ttl < dec.lock.ttl {
+			// Maybe ttlManager has already set the lock TTL, don't decrease it.
+			ttl = dec.lock.ttl
+		}
 	} else {
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
