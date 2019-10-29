@@ -80,7 +80,6 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	result.ReserveString(n)
 	nums := buf2.Int64s()
 	for i := 0; i < n; i++ {
-		// TODO: introduce vectorized null-bitmap to speed it up.
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -910,8 +909,9 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	result.ReserveString(n)
 	i64s1 := buf1.Int64s()
 	i64s2 := buf2.Int64s()
+	buf1.MergeNulls(buf2)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
@@ -1065,11 +1065,31 @@ func (b *builtinLocate2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinBitLengthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetBytes(i)
+		i64s[i] = int64(len(str) * 8)
+	}
+	return nil
 }
 
 func (b *builtinCharSig) vectorized() bool {
