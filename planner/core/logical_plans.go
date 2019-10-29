@@ -141,6 +141,7 @@ type LogicalJoin struct {
 	// redundantSchema contains columns which are eliminated in join.
 	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
 	redundantSchema *expression.Schema
+	redundantNames  types.NameSlice
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
@@ -544,7 +545,8 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.schema.Columns, path.index)
+	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.index)
+	path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
