@@ -224,7 +224,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
-		if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -232,7 +232,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
-			if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -251,7 +251,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -259,7 +259,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
-			if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -284,7 +284,7 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range e.OrderedList {
-		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ColName.L == model.ExtraHandleName.L {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
 			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 		}
 		idx := v.Col.Index
