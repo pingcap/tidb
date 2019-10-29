@@ -309,9 +309,9 @@ type PhysicalIndexMergeJoin struct {
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
-	// keepOuterOrder indicates whether keeping the output result order as the
+	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
-	keepOuterOrder bool
+	KeepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -404,6 +404,15 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
+func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
+	return agg
+}
+
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
@@ -468,8 +477,13 @@ type PhysicalTableDual struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 	return p.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // PhysicalWindow is the physical operator of window function.

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -437,17 +438,15 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *accessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	// TODO(xuhuaiyu): support keep outer order for indexHashJoin.
-	if !prop.IsEmpty() {
-		return nil
-	}
 	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
 		indexHashJoin := PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
-			keepOuterOrder:    false,
+			// Prop is empty means that the parent operator does not need the
+			// join operator to provide any promise of the output order.
+			KeepOuterOrder: !prop.IsEmpty(),
 		}.Init(p.ctx)
 		indexHashJoins = append(indexHashJoins, indexHashJoin)
 	}
@@ -515,7 +514,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.isTablePath && path.storeType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -680,7 +679,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
 	}
-	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -762,8 +761,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
-	rowSize := is.indexScanRowSize(path.index, ds)
+	is.initSchema(path.index, path.fullIdxCols, cop.tablePlan != nil)
+	rowSize := is.indexScanRowSize(path.index, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
@@ -1284,7 +1283,7 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 }
 
 func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
-	prop, canPass := getPropByOrderByItems(lt.ByItems)
+	prop, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
 	}
@@ -1300,8 +1299,8 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	return ret
 }
 
-// Check if this prop's columns can match by items totally.
-func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
+// MatchItems checks if this prop's columns can match by items totally.
+func MatchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 	if len(items) < len(p.Items) {
 		return false
 	}
@@ -1315,7 +1314,7 @@ func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 }
 
 func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if matchItems(prop, lt.ByItems) {
+	if MatchItems(prop, lt.ByItems) {
 		return append(lt.getPhysTopN(), lt.getPhysLimits()...)
 	}
 	return nil
@@ -1469,14 +1468,26 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
-		agg := basePhysicalAgg{
-			GroupByItems: la.GroupByItems,
-			AggFuncs:     la.AggFuncs,
-		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
 		agg.SetSchema(la.schema.Clone())
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs
+}
+
+// ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
+// and returns the two preferAggType hints.
+func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
+	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
+	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
+	if preferHash && preferStream {
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.aggHints.preferAggType = 0
+		preferHash, preferStream = false, false
+	}
+	return
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1489,15 +1500,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		}
 	}
 
-	preferHash := (la.aggHints.preferAggType & preferHashAgg) > 0
-	preferStream := (la.aggHints.preferAggType & preferStreamAgg) > 0
-	if preferHash && preferStream {
-		errMsg := "Optimizer aggregation hints are conflicted"
-		warning := ErrInternal.GenWithStack(errMsg)
-		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-		la.aggHints.preferAggType = 0
-		preferHash, preferStream = false, false
-	}
+	preferHash, preferStream := la.ResetHintIfConflicted()
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash {
@@ -1574,7 +1577,7 @@ func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *Physica
 }
 
 func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *NominalSort {
-	prop, canPass := getPropByOrderByItems(ls.ByItems)
+	prop, canPass := GetPropByOrderByItems(ls.ByItems)
 	if !canPass {
 		return nil
 	}
@@ -1584,7 +1587,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 }
 
 func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if matchItems(prop, ls.ByItems) {
+	if MatchItems(prop, ls.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
 		ret = append(ret, ls.getPhysicalSort(prop))
 		ns := ls.getNominalSort(prop)

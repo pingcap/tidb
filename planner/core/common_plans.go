@@ -35,6 +35,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -70,8 +71,8 @@ type CheckTable struct {
 	baseSchemaProducer
 
 	DBName             string
-	TblInfo            *model.TableInfo
-	Indices            []table.Index
+	Table              table.Table
+	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
@@ -266,6 +267,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
+		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			return err
@@ -275,7 +277,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		e.names = plan.OutputNames()
+		e.names = names
 		e.Plan = plan
 		sctx.GetSessionVars().StmtCtx.PointExec = true
 		return nil
@@ -303,7 +305,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
 	}
@@ -311,11 +313,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return err
 	}
-	e.names = p.OutputNames()
+	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, names))
 	}
 	return err
 }
@@ -325,12 +327,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	prepared *ast.Prepared, is infoschema.InfoSchema, p Plan) error {
 	var (
-		ok  bool
-		err error
+		ok    bool
+		err   error
+		names types.NameSlice
 	)
 	switch p.(type) {
 	case *PointGetPlan:
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		names = p.OutputNames()
 		if err != nil {
 			return err
 		}
@@ -342,12 +346,13 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if ok {
 			// make constant expression store paramMarker
 			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 		}
 	}
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
+		prepared.CachedNames = names
 	}
 	return err
 }
@@ -443,11 +448,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
-	if len(idxCols) == 0 {
+	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return nil, err
 	}
@@ -510,14 +514,16 @@ type InsertGeneratedColumns struct {
 type Insert struct {
 	baseSchemaProducer
 
-	Table       table.Table
-	tableSchema *expression.Schema
-	Columns     []*ast.ColumnName
-	Lists       [][]expression.Expression
-	SetList     []*expression.Assignment
+	Table         table.Table
+	tableSchema   *expression.Schema
+	tableColNames types.NameSlice
+	Columns       []*ast.ColumnName
+	Lists         [][]expression.Expression
+	SetList       []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema
+	names4OnDuplicate  types.NameSlice
 
 	IsReplace bool
 
@@ -669,11 +675,16 @@ func (e *Explain) prepareSchema() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(fieldNames))...)
-	for _, fieldName := range fieldNames {
-		schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	cwn := &columnsWithNames{
+		cols:  make([]*expression.Column, 0, len(fieldNames)),
+		names: make([]*types.FieldName, 0, len(fieldNames)),
 	}
-	e.SetSchema(schema)
+
+	for _, fieldName := range fieldNames {
+		cwn.Append(buildColumnWithName("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	}
+	e.SetSchema(cwn.col2Schema())
+	e.names = cwn.names
 	return nil
 }
 
@@ -807,23 +818,6 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 	e.Rows = append(e.Rows, row)
 }
 
-const (
-	// treeBody indicates the current operator sub-tree is not finished, still
-	// has child operators to be attached on.
-	treeBody = '│'
-	// treeMiddleNode indicates this operator is not the last child of the
-	// current sub-tree rooted by its parent.
-	treeMiddleNode = '├'
-	// treeLastNode indicates this operator is the last child of the current
-	// sub-tree rooted by its parent.
-	treeLastNode = '└'
-	// treeGap is used to represent the gap between the branches of the tree.
-	treeGap = ' '
-	// treeNodeIdentifier is used to replace the treeGap once we need to attach
-	// a node to a sub-tree.
-	treeNodeIdentifier = '─'
-)
-
 func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
 	if len(indent) == 0 {
 		return id
@@ -831,44 +825,44 @@ func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
 
 	indentBytes := []rune(indent)
 	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] != treeBody {
+		if indentBytes[i] != plancodec.TreeBody {
 			continue
 		}
 
 		// Here we attach a new node to the current sub-tree by changing
-		// the closest treeBody to a:
-		// 1. treeLastNode, if this operator is the last child.
-		// 2. treeMiddleNode, if this operator is not the last child..
+		// the closest TreeBody to a:
+		// 1. TreeLastNode, if this operator is the last child.
+		// 2. TreeMiddleNode, if this operator is not the last child..
 		if isLastChild {
-			indentBytes[i] = treeLastNode
+			indentBytes[i] = plancodec.TreeLastNode
 		} else {
-			indentBytes[i] = treeMiddleNode
+			indentBytes[i] = plancodec.TreeMiddleNode
 		}
 		break
 	}
 
-	// Replace the treeGap between the treeBody and the node to a
-	// treeNodeIdentifier.
-	indentBytes[len(indentBytes)-1] = treeNodeIdentifier
+	// Replace the TreeGap between the TreeBody and the node to a
+	// TreeNodeIdentifier.
+	indentBytes[len(indentBytes)-1] = plancodec.TreeNodeIdentifier
 	return string(indentBytes) + id
 }
 
 func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 	if !isLastChild {
-		return string(append([]rune(indent), treeBody, treeGap))
+		return string(append([]rune(indent), plancodec.TreeBody, plancodec.TreeGap))
 	}
 
 	// If the current node is the last node of the current operator tree, we
-	// need to end this sub-tree by changing the closest treeBody to a treeGap.
+	// need to end this sub-tree by changing the closest TreeBody to a TreeGap.
 	indentBytes := []rune(indent)
 	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] == treeBody {
-			indentBytes[i] = treeGap
+		if indentBytes[i] == plancodec.TreeBody {
+			indentBytes[i] = plancodec.TreeGap
 			break
 		}
 	}
 
-	return string(append(indentBytes, treeBody, treeGap))
+	return string(append(indentBytes, plancodec.TreeBody, plancodec.TreeGap))
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {

@@ -376,12 +376,12 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dbName:       v.DBName,
-		tblInfo:      v.TblInfo,
-		indices:      v.Indices,
+		table:        v.Table,
+		indexInfos:   v.IndexInfos,
 		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
-		retCh:        make(chan error, len(v.Indices)),
+		retCh:        make(chan error, len(readerExecs)),
 	}
 	return e
 }
@@ -865,8 +865,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// GetDirtyDB() is safe here. If this table has been modified in the transaction, non-nil DirtyTable
 		// can be found in DirtyDB now, so GetDirtyTable is safe; if this table has not been modified in the
 		// transaction, empty DirtyTable would be inserted into DirtyDB, it does not matter when multiple
-		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Thus we don't use lock
-		// to synchronize here.
+		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Although the DirtyDB looks
+		// safe for data race in all the cases, the map of golang will throw panic when it's accessed in parallel.
+		// So we lock it when getting dirty table.
 		physicalTableID := getPhysicalTableID(x.table)
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
@@ -875,8 +876,8 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
-			for i, col := range x.schema.Columns {
-				if col.ColName.L == ic.Name.L {
+			for i, col := range x.columns {
+				if col.Name.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
 				}
@@ -890,8 +891,8 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
-			for i, col := range x.schema.Columns {
-				if col.ColName.L == ic.Name.L {
+			for i, col := range x.columns {
+				if col.Name.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
 				}
@@ -1857,7 +1858,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 
 func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) Executor {
 	e := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin)).(*IndexLookUpJoin)
-	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+	idxHash := &IndexNestedLoopHashJoin{
+		IndexLookUpJoin: *e,
+		keepOuterOrder:  v.KeepOuterOrder,
+	}
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
@@ -1884,7 +1888,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
-	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
@@ -2227,7 +2232,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
-	err = e.Open(ctx)
+	err = e.open(ctx)
 
 	return e, err
 }

@@ -68,12 +68,7 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		// The else branch will be removed after we totally remove the *Name from expression.Column.
-		if len(a.stmt.OutputNames) > 0 {
-			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
-		} else {
-			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
-		}
+		a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
@@ -96,42 +91,6 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			Table:        &model.TableInfo{Name: names[i].OrigTblName},
 			TableAsName:  names[i].TblName,
 			DBName:       dbName,
-		}
-		// This is for compatibility.
-		// See issue https://github.com/pingcap/tidb/issues/10513 .
-		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
-			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
-		}
-		// Usually the length of O equals the length of L.
-		// Add this len judgement to avoid panic.
-		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
-			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
-		}
-		rfs = append(rfs, rf)
-	}
-	return rfs
-}
-
-func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
-	rfs = make([]*ast.ResultField, 0, schema.Len())
-	for _, col := range schema.Columns {
-		dbName := col.DBName.O
-		if dbName == "" && col.TblName.L != "" {
-			dbName = defaultDB
-		}
-		origColName := col.OrigColName
-		if origColName.L == "" {
-			origColName = col.ColName
-		}
-		rf := &ast.ResultField{
-			ColumnAsName: col.ColName,
-			TableAsName:  col.TblName,
-			DBName:       model.NewCIStr(dbName),
-			Table:        &model.TableInfo{Name: col.OrigTblName},
-			Column: &model.ColumnInfo{
-				FieldType: *col.RetType,
-				Name:      origColName,
-			},
 		}
 		// This is for compatibility.
 		// See issue https://github.com/pingcap/tidb/issues/10513 .
@@ -286,11 +245,11 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
-	a.OutputNames = p.OutputNames()
+	a.OutputNames = names
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }
@@ -557,7 +516,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, forUpdateTS, keys...)
+		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, keys...)
 		if err == nil {
 			return nil
 		}
@@ -786,6 +745,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
 		Succ:           succ,
+		Plan:           getPlanTree(a.Plan),
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -819,6 +779,35 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+// getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanTree(p plannercore.Plan) string {
+	cfg := config.GetGlobalConfig()
+	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
+		return ""
+	}
+	var selectPlan plannercore.PhysicalPlan
+	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
+		selectPlan = physicalPlan
+	} else {
+		switch x := p.(type) {
+		case *plannercore.Delete:
+			selectPlan = x.SelectPlan
+		case *plannercore.Update:
+			selectPlan = x.SelectPlan
+		case *plannercore.Insert:
+			selectPlan = x.SelectPlan
+		}
+	}
+	if selectPlan == nil {
+		return ""
+	}
+	planTree := plannercore.EncodePlan(selectPlan)
+	if len(planTree) == 0 {
+		return planTree
+	}
+	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
