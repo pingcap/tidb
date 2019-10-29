@@ -415,7 +415,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	dbt.mustExec("use tidb")
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/flash/replica"))
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -442,7 +442,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "")
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/flash/replica"))
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
