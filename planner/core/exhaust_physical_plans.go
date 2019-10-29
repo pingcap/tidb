@@ -363,7 +363,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	if path != nil {
 		join.IdxColLens = path.idxColLens
 	}
-	join.SetSchema(p.schema.Clone())
+	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
 

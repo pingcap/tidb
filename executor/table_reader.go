@@ -173,6 +173,8 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			if err != nil {
 				return err
 			}
+			// Because the expression might return different type from
+			// the generated column, we should wrap a CAST on the result.
 			castDatum, err := table.CastValue(e.ctx, datum, e.columns[idx])
 			if err != nil {
 				return err
@@ -237,9 +239,9 @@ func (e *TableReaderExecutor) buildVirtualColumnInfo() {
 			plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[j]].ID).Offset
 	})
 	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, 0)
-		for _, idx := range e.virtualColumnIndex {
-			e.virtualColumnRetFieldTypes = append(e.virtualColumnRetFieldTypes, e.schema.Columns[idx].RetType)
+		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		for i, idx := range e.virtualColumnIndex {
+			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
 		}
 	}
 }

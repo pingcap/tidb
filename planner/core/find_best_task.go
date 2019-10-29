@@ -750,10 +750,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 
 	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
-	if len(tableConds) == 0 {
-		// don't build an empty selection
-		tableConds = nil
-	}
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -768,7 +764,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
-	if tableConds != nil {
+	if tableConds != nil && len(tableConds) > 0 {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
