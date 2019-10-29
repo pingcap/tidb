@@ -115,11 +115,34 @@ func (b *builtinStringAnyValueSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinIsIPv6Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		// Note that even when the i-th input string is null, the output is
+		// 0 instead of null, therefore we do not set the null bit mask in
+		// result's corresponding row.
+		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
+		ipStr := buf.GetString(i)
+		if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
+			i64s[i] = 1
+		} else {
+			i64s[i] = 0
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstStringSig) vectorized() bool {
