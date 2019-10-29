@@ -116,3 +116,24 @@ func (s *testIntegrationSuite) TestSort(c *C) {
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testIntegrationSuite) TestAggregation(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 11), (4, 44), (2, 22), (3, 33)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}
