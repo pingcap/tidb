@@ -187,7 +187,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindMeta
+	var bindRecords []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		bindRecords = handle.GetAllBindRecord()
@@ -195,16 +195,18 @@ func (e *ShowExec) fetchShowBind() error {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
 	for _, bindData := range bindRecords {
-		e.appendRow([]interface{}{
-			bindData.OriginalSQL,
-			bindData.BindSQL,
-			bindData.Db,
-			bindData.Status,
-			bindData.CreateTime,
-			bindData.UpdateTime,
-			bindData.Charset,
-			bindData.Collation,
-		})
+		for _, hint := range bindData.Bindings {
+			e.appendRow([]interface{}{
+				bindData.OriginalSQL,
+				hint.BindSQL,
+				bindData.Db,
+				hint.Status,
+				hint.CreateTime,
+				hint.UpdateTime,
+				hint.Charset,
+				hint.Collation,
+			})
+		}
 	}
 	return nil
 }
@@ -1098,6 +1100,9 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	}
 
 	for _, n := range nodes {
+		if n.State == node.Offline {
+			continue
+		}
 		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
 	}
 
