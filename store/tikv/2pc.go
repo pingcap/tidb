@@ -865,13 +865,6 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 					zap.Uint64("txnStartTS", c.startTS))
 				return errors.Trace(err)
 			}
-			if commitTS < c.startTS || commitTS < rejected.MinCommitTs {
-				logutil.Logger(bo.ctx).Error("2PC retry commit failed",
-					zap.Uint64("txnStartTS", c.startTS),
-					zap.Uint64("commitTS", commitTS),
-					zap.Uint64("minCommitTS", rejected.MinCommitTs))
-				return errors.New("2PC retry commit failed")
-			}
 
 			c.mu.Lock()
 			c.commitTS = commitTS
