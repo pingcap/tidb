@@ -1289,8 +1289,8 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
-	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1);`)
-	result.Check(testkit.Rows("0 0 0"))
+	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
+	result.Check(testkit.Rows("0 0 0 0"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for from_days
