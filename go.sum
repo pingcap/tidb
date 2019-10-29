@@ -219,6 +219,10 @@ github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d h1:4J9HCZVpvDmj2t
 github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d/go.mod h1:Z4AUp2Km+PwemOoO/VB5AOx9XSsIItzFjoJlOSiYmn0=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
+github.com/tiancaiamao/parser v0.0.0-20191029081312-e84d791e3374 h1:uvdgeopLRY6r8OKEBj2F1HP6Hfz0m52ZeAq2yk1s1So=
+github.com/tiancaiamao/parser v0.0.0-20191029081312-e84d791e3374/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
+github.com/tiancaiamao/parser v0.0.0-20191029082203-a119d4b1a289 h1:VkIaNMd9Fj0QXFg6fZta/8DUhDphwDlOVkmqtyu0zHc=
+github.com/tiancaiamao/parser v0.0.0-20191029082203-a119d4b1a289/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6 h1:lYIiVDtZnyTWlNwiAxLj0bbpTcx1BWCFhXjfsvmPdNc=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
