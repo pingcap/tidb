@@ -56,10 +56,10 @@ Update_2	N/A	root	N/A
 └─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-Delete_3	N/A	root	N/A
-└─IndexLookUp_9	10.00	root	
-  ├─IndexScan_7	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-  └─TableScan_8	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+Delete_4	N/A	root	N/A
+└─IndexLookUp_11	10.00	root	
+  ├─IndexScan_9	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_10	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(Column#9)
@@ -90,7 +90,7 @@ TableReader_7	0.33	root	data:Selection_6
   └─TableScan_5	1.00	cop[tikv]	table:t1, range:[1,1], keep order:false, stats:pseudo
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(Column#11)
+StreamAgg_12	1.00	root	funcs:sum(Column#12)
 └─Projection_23	10000.00	root	cast(Column#8)
   └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(Column#1, Column#4)
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
@@ -197,14 +197,14 @@ StreamAgg_13	1.00	root	funcs:count(1)
 explain select 1 from (select count(c2), count(c3) from t1) k;
 id	count	task	operator info
 Projection_5	1.00	root	1
-└─StreamAgg_21	1.00	root	funcs:firstrow(Column#12)
+└─StreamAgg_21	1.00	root	funcs:firstrow(Column#15)
   └─IndexReader_22	1.00	root	index:StreamAgg_9
     └─StreamAgg_9	1.00	cop[tikv]	funcs:firstrow(1)
       └─IndexScan_20	10000.00	cop[tikv]	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	count	task	operator info
 StreamAgg_11	1.00	root	funcs:count(1)
-└─StreamAgg_27	1.00	root	funcs:firstrow(Column#12)
+└─StreamAgg_27	1.00	root	funcs:firstrow(Column#15)
   └─IndexReader_28	1.00	root	index:StreamAgg_15
     └─StreamAgg_15	1.00	cop[tikv]	funcs:firstrow(1)
       └─IndexScan_26	10000.00	cop[tikv]	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
@@ -217,7 +217,7 @@ StreamAgg_11	1.00	root	funcs:count(1)
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(Column#11)
+StreamAgg_12	1.00	root	funcs:sum(Column#12)
 └─Projection_23	10000.00	root	cast(Column#8)
   └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(Column#1, Column#4)
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
@@ -235,7 +235,7 @@ Projection_6	10000.00	root	Column#8
       └─TableScan_12	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(6 in (select c2 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(Column#11)
+StreamAgg_12	1.00	root	funcs:sum(Column#12)
 └─Projection_22	10000.00	root	cast(Column#8)
   └─HashLeftJoin_21	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_20
     ├─IndexReader_17	10000.00	root	index:IndexScan_16
