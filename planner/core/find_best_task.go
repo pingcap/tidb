@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/util/plancodec"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"

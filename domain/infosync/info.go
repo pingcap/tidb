@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/meta"
 	"strconv"
 	"time"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -43,8 +43,6 @@ const (
 	ServerInformationPath = "/tidb/server/info"
 	// ServerMinStartTSPath store the server min start timestamp.
 	ServerMinStartTSPath = "/tidb/server/minstartts"
-
-	ServerGenIDPath = "/tidb/server/id"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
@@ -86,7 +84,6 @@ type ServerVersionInfo struct {
 }
 
 var globalInfoSyncer *InfoSyncer
-var globalServerID int64
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client, store kv.Storage) (*InfoSyncer, error) {
@@ -173,19 +170,25 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	is.info.ServerID = id
-	globalServerID = id
-
 	infoBuf, err := json.Marshal(is.info)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
-	return err
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("[info-syncer] store server info to pd successful", zap.Int64("server id", int64(id)))
+	return nil
 }
 
 func GetGlobalServerID() int64 {
-	return globalServerID
+	info := GetServerInfo()
+	if info == nil {
+		return 0
+	}
+	return info.ServerID
 }
 
 func (is *InfoSyncer) GenGlobalServerID(ctx context.Context) (int64, error) {
@@ -196,7 +199,6 @@ func (is *InfoSyncer) GenGlobalServerID(ctx context.Context) (int64, error) {
 		id, err = t.GenGlobalServerID()
 		return errors.Trace(err)
 	})
-	logutil.BgLogger().Info("gen server id", zap.Int64("id", int64(id)), zap.Error(err))
 	return id, err
 }
 

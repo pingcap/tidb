@@ -660,81 +660,6 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var tableTiDBConfigCols = []columnInfo{
-	{"item", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"value", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
-var tableTiDBStatsInfoCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"CPU_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
-	{"MEM_USAGE", mysql.TypeDouble, 22, 0, 0, nil},
-}
-
-var tableTiDBNetworkInfoCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"BYTES_SENT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"BYTES_RECV", mysql.TypeLonglong, 21, 0, nil, nil},
-}
-
-var tableTidbNetworkLatencyCols = []columnInfo{
-	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
-	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
-	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
-}
-
-var tablePDServerInfoCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"CPU_VENDOR", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"CPU_MODE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"CPU_FREQUENT", mysql.TypeDouble, 22, 0, nil, nil},
-	{"CPU_THREAD", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"MEM_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
-var tablePDServerDiskInfoCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"DISK_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"DISK_SIZE", mysql.TypeLonglong, 64, 0, nil, nil},
-	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
-var tablePDServerNetcardCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NETCARD_DRIVER", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"MAC_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"SPEED", mysql.TypeLonglong, 64, 0, nil, nil},
-	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
-var tablePDServerStatsInfoCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"CPU_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
-	{"MEM_USAGE", mysql.TypeDouble, 22, 0, nil, nil},
-	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
-var tablePDServerNetStatsInfoCols = []columnInfo{
-	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NETCARD_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"BYTES_SENT", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"BYTES_RECV", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
-var tablePDServerNetworkLatencyCol = []columnInfo{
-	{"SOURCE", mysql.TypeVarchar, 30, 0, nil, nil},
-	{"TARGET", mysql.TypeVarchar, 30, 0, nil, nil},
-	{"LATENCY", mysql.TypeVarchar, 30, 0, 0, nil},
-	{"NODE_ID", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -2039,8 +1964,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForProcesslist(ctx)
 	case tableSlowLog:
 		fullRows, err = dataForSlowLog(ctx)
-	//case clusterTableSlowLog:
-	//	fullRows, err = dataForClusterSlowLog(ctx)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableTiKVStoreStatus:

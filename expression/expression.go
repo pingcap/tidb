@@ -503,7 +503,6 @@ type VarAssignment struct {
 	IsDefault   bool
 	IsGlobal    bool
 	IsSystem    bool
-	IsCluster   bool
 	ExtendValue *Constant
 }
 
