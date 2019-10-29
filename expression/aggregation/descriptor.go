@@ -19,7 +19,6 @@ import (
 	"strconv"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -83,12 +82,10 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 	case ast.AggFuncAvg:
 		args := make([]expression.Expression, 0, 2)
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[0])),
 			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		})
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[1])),
 			Index:   ordinal[1],
 			RetType: a.RetTp,
 		})
@@ -96,7 +93,6 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 	default:
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("%s_final_col_%d", a.Name, ordinal[0])),
 			Index:   ordinal[0],
 			RetType: a.RetTp,
 		})
