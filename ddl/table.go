@@ -717,6 +717,9 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.TiFlashReplica == nil || (tblInfo.TiFlashReplica.Available == available) {
+		return ver, nil
+	}
 
 	if tblInfo.TiFlashReplica != nil {
 		tblInfo.TiFlashReplica.Available = available
