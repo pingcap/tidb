@@ -274,13 +274,8 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task := e.task
-	if task != nil {
-		chkIdx, rowIdx := int(task.cursor.ChkIdx), int(task.cursor.RowIdx)
-		numChk := task.outerResult.NumChunks()
-		// cursor does not reach the last row of task.outerResult.
-		if chkIdx < numChk && rowIdx < task.outerResult.GetChunk(chkIdx).NumRows() {
-			return task, nil
-		}
+	if task != nil && int(task.cursor.ChkIdx) < task.outerResult.NumChunks() {
+		return task, nil
 	}
 
 	select {
@@ -398,6 +393,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 
 		task.outerResult.Add(chk)
+		task.outerResult.GetMemTracker().Consume(chk.MemoryUsage())
 	}
 	if task.outerResult.Len() == 0 {
 		return nil, nil
@@ -490,7 +486,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-			dLookUpKey, err := iw.constructDatumLookupKey(task, chk, chkIdx, rowIdx)
+			dLookUpKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				return nil, err
 			}
@@ -526,11 +522,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chk *chunk.Chunk, chkIdx, rowIdx int) ([]types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
 		return nil, nil
 	}
-	outerRow := chk.GetRow(rowIdx)
+	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
