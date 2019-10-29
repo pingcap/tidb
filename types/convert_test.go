@@ -654,12 +654,26 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
-	signedDeny(c, mysql.TypeYear, 123, "<nil>")
-	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
+	signedDeny(c, mysql.TypeYear, 123, "0")
+	signedDeny(c, mysql.TypeYear, 3000, "0")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
 	signedAccept(c, mysql.TypeYear, "abc", "0")
 	signedAccept(c, mysql.TypeYear, "00abc", "2000")
 	signedAccept(c, mysql.TypeYear, "0019", "2019")
+	signedAccept(c, mysql.TypeYear, 2155, "2155")
+	signedAccept(c, mysql.TypeYear, 2155.123, "2155")
+	signedDeny(c, mysql.TypeYear, 2156, "0")
+	signedDeny(c, mysql.TypeYear, 123.123, "0")
+	signedDeny(c, mysql.TypeYear, 1900, "0")
+	signedAccept(c, mysql.TypeYear, 1901, "1901")
+	signedAccept(c, mysql.TypeYear, 1900.567, "1901")
+	signedDeny(c, mysql.TypeYear, 1900.456, "0")
+	signedAccept(c, mysql.TypeYear, 1, "2001")
+	signedAccept(c, mysql.TypeYear, 69, "2069")
+	signedAccept(c, mysql.TypeYear, 70, "1970")
+	signedAccept(c, mysql.TypeYear, 99, "1999")
+	signedDeny(c, mysql.TypeYear, 100, "0")
+	signedDeny(c, mysql.TypeYear, "99999999999999999999999999999999999", "0")
 
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")

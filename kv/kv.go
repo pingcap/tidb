@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -60,6 +61,19 @@ const (
 	PriorityLow
 	PriorityHigh
 )
+
+// UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
+// This is used in the situation of the index key/value was unchanged when do update.
+// Usage:
+// 1. For non-unique index: normally, the index value is '0'.
+// Change the value to '1' indicate the index key/value is no need to commit.
+// 2. For unique index: normally, the index value is the record handle ID, 8 bytes.
+// Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
+const UnCommitIndexKVFlag byte = '1'
+
+// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
+// We use it to abort the transaction to guarantee GC worker will not influence it.
+const MaxTxnTimeUse = 24 * 60 * 60 * 1000
 
 // IsoLevel is the transaction's isolation level.
 type IsoLevel int
@@ -155,7 +169,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, forUpdateTS uint64, keys ...Key) error
+	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -173,6 +187,8 @@ type Transaction interface {
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	// Do not use len(value) == 0 or value == nil to represent non-exist.
+	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
 }
@@ -211,6 +227,16 @@ const (
 	ReqSubTypeAnalyzeCol = 10005
 )
 
+// StoreType represents the type of a store.
+type StoreType uint8
+
+const (
+	// TiKV means the type of a store is TiKV.
+	TiKV StoreType = iota
+	// TiFlash means the type of a store is TiFlash.
+	TiFlash
+)
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
@@ -242,6 +268,8 @@ type Request struct {
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead ReplicaReadType
+	// StoreType represents this request is sent to the which type of store.
+	StoreType StoreType
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -255,6 +283,8 @@ type ResultSubset interface {
 	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
+	// RespTime returns the response time for the request.
+	RespTime() time.Duration
 }
 
 // Response represents the response returned from KV layer.
@@ -332,7 +362,7 @@ type Iterator interface {
 
 // SplitableStore is the kv store which supports split regions.
 type SplitableStore interface {
-	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

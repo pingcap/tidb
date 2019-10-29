@@ -585,7 +585,7 @@ func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
 
 func (s *testChunkSuite) TestPreAllocInt64(c *check.C) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 128)
-	col.ResizeInt64(256)
+	col.ResizeInt64(256, true)
 	i64s := col.Int64s()
 	c.Assert(len(i64s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
@@ -601,7 +601,7 @@ func (s *testChunkSuite) TestPreAllocUint64(c *check.C) {
 	tll := types.NewFieldType(mysql.TypeLonglong)
 	tll.Flag |= mysql.UnsignedFlag
 	col := NewColumn(tll, 128)
-	col.ResizeUint64(256)
+	col.ResizeUint64(256, true)
 	u64s := col.Uint64s()
 	c.Assert(len(u64s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
@@ -615,7 +615,7 @@ func (s *testChunkSuite) TestPreAllocUint64(c *check.C) {
 
 func (s *testChunkSuite) TestPreAllocFloat32(c *check.C) {
 	col := newFixedLenColumn(sizeFloat32, 128)
-	col.ResizeFloat32(256)
+	col.ResizeFloat32(256, true)
 	f32s := col.Float32s()
 	c.Assert(len(f32s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
@@ -629,7 +629,7 @@ func (s *testChunkSuite) TestPreAllocFloat32(c *check.C) {
 
 func (s *testChunkSuite) TestPreAllocFloat64(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 128)
-	col.ResizeFloat64(256)
+	col.ResizeFloat64(256, true)
 	f64s := col.Float64s()
 	c.Assert(len(f64s), check.Equals, 256)
 	for i := 0; i < 256; i++ {
@@ -643,7 +643,7 @@ func (s *testChunkSuite) TestPreAllocFloat64(c *check.C) {
 
 func (s *testChunkSuite) TestPreAllocDecimal(c *check.C) {
 	col := newFixedLenColumn(sizeMyDecimal, 128)
-	col.ResizeDecimal(256)
+	col.ResizeDecimal(256, true)
 	ds := col.Decimals()
 	c.Assert(len(ds), check.Equals, 256)
 	for i := 0; i < 256; i++ {
@@ -656,7 +656,7 @@ func (s *testChunkSuite) TestPreAllocDecimal(c *check.C) {
 
 func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
 	col := newFixedLenColumn(sizeTime, 128)
-	col.ResizeTime(256)
+	col.ResizeTime(256, true)
 	ds := col.Times()
 	c.Assert(len(ds), check.Equals, 256)
 	for i := 0; i < 256; i++ {
@@ -669,7 +669,7 @@ func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
 
 func (s *testChunkSuite) TestNull(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 32)
-	col.ResizeFloat64(1024)
+	col.ResizeFloat64(1024, true)
 	c.Assert(col.nullCount(), check.Equals, 1024)
 
 	notNulls := make(map[int]struct{})
@@ -684,16 +684,16 @@ func (s *testChunkSuite) TestNull(c *check.C) {
 		c.Assert(col.IsNull(idx), check.Equals, false)
 	}
 
-	col.ResizeFloat64(8)
+	col.ResizeFloat64(8, true)
 	col.SetNulls(0, 8, true)
 	col.SetNull(7, false)
 	c.Assert(col.nullCount(), check.Equals, 7)
 
-	col.ResizeFloat64(8)
+	col.ResizeFloat64(8, true)
 	col.SetNulls(0, 8, true)
 	c.Assert(col.nullCount(), check.Equals, 8)
 
-	col.ResizeFloat64(9)
+	col.ResizeFloat64(9, true)
 	col.SetNulls(0, 9, true)
 	col.SetNull(8, false)
 	c.Assert(col.nullCount(), check.Equals, 8)
@@ -701,7 +701,7 @@ func (s *testChunkSuite) TestNull(c *check.C) {
 
 func (s *testChunkSuite) TestSetNulls(c *check.C) {
 	col := newFixedLenColumn(sizeFloat64, 32)
-	col.ResizeFloat64(1024)
+	col.ResizeFloat64(1024, true)
 	c.Assert(col.nullCount(), check.Equals, 1024)
 
 	col.SetNulls(0, 1024, false)
@@ -732,11 +732,11 @@ func (s *testChunkSuite) TestResizeReserve(c *check.C) {
 	c.Assert(cI64s.length, check.Equals, 0)
 	for i := 0; i < 100; i++ {
 		t := rand.Intn(1024)
-		cI64s.ResizeInt64(t)
+		cI64s.ResizeInt64(t, true)
 		c.Assert(cI64s.length, check.Equals, t)
 		c.Assert(len(cI64s.Int64s()), check.Equals, t)
 	}
-	cI64s.ResizeInt64(0)
+	cI64s.ResizeInt64(0, true)
 	c.Assert(cI64s.length, check.Equals, 0)
 	c.Assert(len(cI64s.Int64s()), check.Equals, 0)
 
@@ -757,12 +757,12 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 		col.AppendFloat32(float32(i))
 	}
 	it := NewIterator4Chunk(chk)
-	var i int64
+	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		f := float32(i)
 		b := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 		c.Assert(row.GetRaw(0), check.DeepEquals, b)
-		c.Assert(col.GetRaw(int(i)), check.DeepEquals, b)
+		c.Assert(col.GetRaw(i), check.DeepEquals, b)
 		i++
 	}
 
@@ -821,7 +821,7 @@ func BenchmarkDurationVec(b *testing.B) {
 
 	b.ResetTimer()
 	for k := 0; k < b.N; k++ {
-		result.ResizeDuration(1024)
+		result.ResizeGoDuration(1024, true)
 		for i := 0; i < 1024; i++ {
 			d1 := types.Duration{Duration: ds1[i]}
 			d2 := types.Duration{Duration: ds2[i]}
@@ -875,13 +875,63 @@ func BenchmarkTimeVec(b *testing.B) {
 
 	b.ResetTimer()
 	for k := 0; k < b.N; k++ {
-		result.ResizeTime(1024)
+		result.ResizeTime(1024, true)
 		for i := 0; i < 1024; i++ {
 			if r := ds1[i].Compare(ds2[i]); r > 0 {
 				rs[i] = ds1[i]
 			} else {
 				rs[i] = ds2[i]
 			}
+		}
+	}
+}
+
+func genNullCols(n int) []*Column {
+	cols := make([]*Column, n)
+	for i := range cols {
+		cols[i] = NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+		cols[i].ResizeInt64(1024, false)
+		for j := 0; j < 1024; j++ {
+			if rand.Intn(10) < 5 {
+				cols[i].SetNull(j, true)
+			}
+		}
+	}
+	return cols
+}
+
+func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
+	for i := 0; i < 256; i++ {
+		cols := genNullCols(4)
+		lCol, rCol := cols[0], cols[1]
+		vecResult, rowResult := cols[2], cols[3]
+		vecResult.SetNulls(0, 1024, false)
+		rowResult.SetNulls(0, 1024, false)
+		vecResult.MergeNulls(lCol, rCol)
+		for i := 0; i < 1024; i++ {
+			rowResult.SetNull(i, lCol.IsNull(i) || rCol.IsNull(i))
+		}
+
+		for i := 0; i < 1024; i++ {
+			c.Assert(rowResult.IsNull(i), check.Equals, vecResult.IsNull(i))
+		}
+	}
+}
+
+func BenchmarkMergeNullsVectorized(b *testing.B) {
+	cols := genNullCols(3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cols[0].MergeNulls(cols[1:]...)
+	}
+}
+
+func BenchmarkMergeNullsNonVectorized(b *testing.B) {
+	cols := genNullCols(3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < 1024; i++ {
+			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
 	}
 }

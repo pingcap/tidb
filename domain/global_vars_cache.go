@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 // GlobalVariableCache caches global variables.
@@ -41,6 +43,8 @@ func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultFie
 	gvc.rows = rows
 	gvc.fields = fields
 	gvc.Unlock()
+
+	checkEnableServerGlobalVar(rows)
 }
 
 // Get gets the global variables from cache.
@@ -61,6 +65,26 @@ func (gvc *GlobalVariableCache) Disable() {
 	defer gvc.Unlock()
 	gvc.disable = true
 	return
+}
+
+// checkEnableServerGlobalVar processes variables that acts in server and global level.
+func checkEnableServerGlobalVar(rows []chunk.Row) {
+	for _, row := range rows {
+		switch row.GetString(0) {
+		case variable.TiDBEnableStmtSummary:
+			sVal := ""
+			if !row.IsNull(1) {
+				sVal = row.GetString(1)
+			}
+			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+		case variable.TiDBCapturePlanBaseline:
+			sVal := ""
+			if !row.IsNull(1) {
+				sVal = row.GetString(1)
+			}
+			variable.CapturePlanBaseline.Set(sVal, false)
+		}
+	}
 }
 
 // GetGlobalVarsCache gets the global variable cache.

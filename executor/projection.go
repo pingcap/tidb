@@ -77,7 +77,10 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
 
+func (e *ProjectionExec) open(ctx context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
@@ -171,6 +174,9 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	err := Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return err
+	}
+	if e.childResult.NumRows() == 0 {
+		return nil
 	}
 	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
 	return err

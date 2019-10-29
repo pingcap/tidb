@@ -47,6 +47,7 @@ type SQLWarn struct {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	// Set the following variables before execution
+	StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
@@ -134,7 +135,23 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables []TableEntry
+	Tables    []TableEntry
+	PointExec bool // for point update cached execution, Constant expression need to set "paramMarker"
+}
+
+// StmtHints are SessionVars related sql hints.
+type StmtHints struct {
+	// Hint flags
+	HasAllowInSubqToJoinAndAggHint bool
+	HasEnableIndexMergeHint        bool
+	HasMemQuotaHint                bool
+	HasReplicaReadHint             bool
+
+	// Hint Information
+	AllowInSubqToJoinAndAgg bool
+	EnableIndexMerge        bool
+	MemQuotaQuery           int64
+	ReplicaRead             byte
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it

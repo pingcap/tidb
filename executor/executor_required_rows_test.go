@@ -777,23 +777,16 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.PhysicalMergeJoin{
-		JoinType:        joinType,
-		LeftConditions:  nil,
-		RightConditions: nil,
-		DefaultValues:   []types.Datum{types.NewDatum(1), types.NewDatum(1)},
-		LeftKeys:        outerCols,
-		RightKeys:       innerCols,
-	}.Init(ctx, nil)
+	j := plannercore.BuildMergeJoinPlan(ctx, joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
 	schema := expression.NewSchema(cols...)
 	j.SetSchema(schema)
 
-	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftKeys))
-	for i := range j.LeftKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftKeys[i], j.RightKeys[i]))
+	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
+	for i := range j.LeftJoinKeys {
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
 	b := newExecutorBuilder(ctx, nil)

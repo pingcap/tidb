@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
@@ -147,23 +148,16 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		a.v[i] = conn
 
 		if allowBatch {
-			// Initialize batch streaming clients.
-			tikvClient := tikvpb.NewTikvClient(conn)
-			streamClient, err := tikvClient.BatchCommands(context.TODO())
-			if err != nil {
-				a.Close()
-				return errors.Trace(err)
-			}
 			batchClient := &batchCommandsClient{
-				target:  a.target,
-				conn:    conn,
-				client:  streamClient,
-				batched: sync.Map{},
-				idAlloc: 0,
-				closed:  0,
+				target:        a.target,
+				conn:          conn,
+				batched:       sync.Map{},
+				idAlloc:       0,
+				closed:        0,
+				tikvClientCfg: cfg.TiKVClient,
+				tikvLoad:      &a.tikvTransportLayerLoad,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-			go batchClient.batchRecvLoop(cfg.TiKVClient, &a.tikvTransportLayerLoad)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout, done)
@@ -299,14 +293,19 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	}
 
+	clientConn := connArray.Get()
+	if state := clientConn.GetState(); state == connectivity.TransientFailure {
+		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+	}
+
 	if req.IsDebugReq() {
-		client := debugpb.NewDebugClient(connArray.Get())
+		client := debugpb.NewDebugClient(clientConn)
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return tikvrpc.CallDebugRPC(ctx1, client, req)
 	}
 
-	client := tikvpb.NewTikvClient(connArray.Get())
+	client := tikvpb.NewTikvClient(clientConn)
 
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)

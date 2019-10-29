@@ -22,12 +22,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
-	defer testleak.AfterTest(c)()
-
 	a := &Column{
 		UniqueID: 1,
 		TblName:  model.NewCIStr("fei"),
@@ -38,7 +35,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	sf := newFunction(ast.LT, a, One)
 	res, err := sf.MarshalJSON()
 	c.Assert(err, IsNil)
-	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x66, 0x65, 0x69, 0x2e, 0x68, 0x61, 0x6e, 0x2c, 0x20, 0x31, 0x29, 0x22})
+	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22})
 	c.Assert(sf.IsCorrelated(), IsFalse)
 	c.Assert(sf.ConstItem(), IsFalse)
 	c.Assert(sf.Decorrelate(nil).Equal(s.ctx, sf), IsTrue)
@@ -54,7 +51,6 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
-	defer testleak.AfterTest(c)()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),

@@ -73,7 +73,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 			idx := i
 			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
 		}
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs)
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs, stringutil.StringerStr("root_0"))
 	}
 
 	c.Assert(err, IsNil)
@@ -404,6 +404,9 @@ func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
 // MemSize implements kv.ResultSubset interface.
 func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 
+// RespTime implements kv.ResultSubset interface.
+func (r *mockResultSubset) RespTime() time.Duration { return 0 }
+
 func populateBuffer() []byte {
 	numCols := 4
 	numRows := 1024
@@ -476,6 +479,53 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		codec.DecodeToChunk(buffer, chk)
+	}
+}
+
+func BenchmarkReadRowsDataWithNewChunk(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	buffer := populateBuffer()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		chk := chunk.New(colTypes, numRows, numRows)
+		b.StartTimer()
+		mockReadRowsData(buffer, colTypes, chk)
+	}
+}
+
+func BenchmarkDecodeToChunkWithNewChunk(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	chk := chunk.New(colTypes, numRows, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendInt64(colOrdinal, 123)
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		chk := chunk.New(colTypes, numRows, numRows)
+		b.StartTimer()
 		codec.DecodeToChunk(buffer, chk)
 	}
 }

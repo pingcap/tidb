@@ -54,7 +54,7 @@ func (s *testMemoSuite) TearDownSuite(c *C) {
 func (s *testMemoSuite) TestNewGroup(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroup(expr)
+	g := NewGroupWithSchema(expr, nil)
 
 	c.Assert(g.Equivalents.Len(), Equals, 1)
 	c.Assert(g.Equivalents.Front().Value.(*GroupExpr), Equals, expr)
@@ -65,7 +65,7 @@ func (s *testMemoSuite) TestNewGroup(c *C) {
 func (s *testMemoSuite) TestGroupInsert(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroup(expr)
+	g := NewGroupWithSchema(expr, nil)
 	c.Assert(g.Insert(expr), IsFalse)
 	expr.selfFingerprint = "1"
 	c.Assert(g.Insert(expr), IsTrue)
@@ -74,7 +74,7 @@ func (s *testMemoSuite) TestGroupInsert(c *C) {
 func (s *testMemoSuite) TestGroupDelete(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroup(expr)
+	g := NewGroupWithSchema(expr, nil)
 	c.Assert(g.Equivalents.Len(), Equals, 1)
 
 	g.Delete(expr)
@@ -87,7 +87,7 @@ func (s *testMemoSuite) TestGroupDelete(c *C) {
 func (s *testMemoSuite) TestGroupExists(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroup(expr)
+	g := NewGroupWithSchema(expr, nil)
 	c.Assert(g.Exists(expr), IsTrue)
 
 	g.Delete(expr)
@@ -95,13 +95,13 @@ func (s *testMemoSuite) TestGroupExists(c *C) {
 }
 
 func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
-	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
-	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
-	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
-	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
-	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
 
-	g := NewGroup(expr0)
+	g := NewGroupWithSchema(expr0, nil)
 	g.Insert(expr1)
 	g.Insert(expr2)
 	g.Insert(expr3)
@@ -117,13 +117,13 @@ type fakeImpl struct {
 	plan plannercore.PhysicalPlan
 }
 
-func (impl *fakeImpl) CalcCost(float64, []float64, ...*Group) float64 { return 0 }
-func (impl *fakeImpl) SetCost(float64)                                {}
-func (impl *fakeImpl) GetCost() float64                               { return 0 }
-func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan              { return impl.plan }
-
+func (impl *fakeImpl) CalcCost(float64, ...Implementation) float64     { return 0 }
+func (impl *fakeImpl) SetCost(float64)                                 {}
+func (impl *fakeImpl) GetCost() float64                                { return 0 }
+func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan               { return impl.plan }
+func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return nil }
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
-	g := NewGroup(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
+	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), nil)
 	emptyProp := &property.PhysicalProperty{}
 	orderProp := &property.PhysicalProperty{Items: []property.Item{{Col: &expression.Column{}}}}
 
@@ -138,4 +138,26 @@ func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 
 	newImpl = g.GetImpl(orderProp)
 	c.Assert(newImpl, IsNil)
+}
+
+func (s *testMemoSuite) TestEngineTypeSet(c *C) {
+	c.Assert(EngineAll.Contains(EngineTiDB), IsTrue)
+	c.Assert(EngineAll.Contains(EngineTiKV), IsTrue)
+	c.Assert(EngineAll.Contains(EngineTiFlash), IsTrue)
+
+	c.Assert(EngineTiDBOnly.Contains(EngineTiDB), IsTrue)
+	c.Assert(EngineTiDBOnly.Contains(EngineTiKV), IsFalse)
+	c.Assert(EngineTiDBOnly.Contains(EngineTiFlash), IsFalse)
+
+	c.Assert(EngineTiKVOnly.Contains(EngineTiDB), IsFalse)
+	c.Assert(EngineTiKVOnly.Contains(EngineTiKV), IsTrue)
+	c.Assert(EngineTiKVOnly.Contains(EngineTiFlash), IsFalse)
+
+	c.Assert(EngineTiFlashOnly.Contains(EngineTiDB), IsFalse)
+	c.Assert(EngineTiFlashOnly.Contains(EngineTiKV), IsFalse)
+	c.Assert(EngineTiFlashOnly.Contains(EngineTiFlash), IsTrue)
+
+	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiDB), IsFalse)
+	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiKV), IsTrue)
+	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiFlash), IsTrue)
 }

@@ -16,8 +16,16 @@ package perfschema
 import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/stmtsummary"
+)
+
+const (
+	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -76,4 +84,45 @@ func (vt *perfSchemaTable) GetPhysicalID() int64 {
 // Meta implements table.Table Type interface.
 func (vt *perfSchemaTable) Meta() *model.TableInfo {
 	return vt.meta
+}
+
+func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
+	switch vt.meta.Name.O {
+	case tableNameEventsStatementsSummaryByDigest:
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
+	}
+	if len(cols) == len(vt.cols) {
+		return
+	}
+	rows := make([][]types.Datum, len(fullRows))
+	for i, fullRow := range fullRows {
+		row := make([]types.Datum, len(cols))
+		for j, col := range cols {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows, nil
+}
+
+// IterRecords implements table.Table IterRecords interface.
+func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+	fn table.RecordIterFunc) error {
+	if len(startKey) != 0 {
+		return table.ErrUnsupportedOp
+	}
+	rows, err := vt.getRows(ctx, cols)
+	if err != nil {
+		return err
+	}
+	for i, row := range rows {
+		more, err := fn(int64(i), row, cols)
+		if err != nil {
+			return err
+		}
+		if !more {
+			break
+		}
+	}
+	return nil
 }

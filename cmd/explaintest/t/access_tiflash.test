@@ -1,0 +1,18 @@
+drop table if exists t, tt;
+
+create table t(a int, b int, index ia(a));
+
+desc select avg(a) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t;
+
+desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t;
+
+create table tt(a int, b int, primary key(a));
+
+desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
+desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);

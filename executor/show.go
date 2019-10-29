@@ -663,8 +663,16 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset || col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
+			if col.Charset != tblCharset {
+				fmt.Fprintf(&buf, " CHARACTER SET %s", col.Charset)
+			}
+			if col.Collate != tblCollate {
+				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+			} else {
+				defcol, err := charset.GetDefaultCollation(col.Charset)
+				if err == nil && defcol != col.Collate {
+					fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+				}
 			}
 		}
 		if col.IsGenerated() {
@@ -1090,6 +1098,9 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	}
 
 	for _, n := range nodes {
+		if n.State == node.Offline {
+			continue
+		}
 		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
 	}
 

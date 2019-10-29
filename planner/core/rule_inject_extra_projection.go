@@ -49,9 +49,9 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	case *PhysicalStreamAgg:
 		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalSort:
-		plan = injectProjBelowSort(p, p.ByItems)
+		plan = InjectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
-		plan = injectProjBelowSort(p, p.ByItems)
+		plan = InjectProjBelowSort(p, p.ByItems)
 	}
 	return plan
 }
@@ -99,9 +99,10 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			}
 			projExprs = append(projExprs, arg)
 			newArg := &expression.Column{
-				RetType: arg.GetType(),
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
-				Index:   cursor,
+				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  arg.GetType(),
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
+				Index:    cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
 			f.Args[i] = newArg
@@ -130,7 +131,7 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(aggPlan.SCtx(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(aggPlan.SCtx(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), aggPlan.SelectBlockOffset(), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
 
@@ -138,14 +139,14 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	return aggPlan
 }
 
-// injectProjBelowSort extracts the ScalarFunctions of `orderByItems` into a
+// InjectProjBelowSort extracts the ScalarFunctions of `orderByItems` into a
 // PhysicalProjection and injects it below PhysicalTopN/PhysicalSort. The schema
 // of PhysicalSort and PhysicalTopN are the same as the schema of their
 // children. When a projection is injected as the child of PhysicalSort and
 // PhysicalTopN, some extra columns will be added into the schema of the
 // Projection, thus we need to add another Projection upon them to prune the
 // redundant columns.
-func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
+func InjectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
@@ -164,7 +165,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	topProj := PhysicalProjection{
 		Exprs:                topProjExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), p.statsInfo(), nil)
+	}.Init(p.SCtx(), p.statsInfo(), p.SelectBlockOffset(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
 
@@ -198,7 +199,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), childProp)
+	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
