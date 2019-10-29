@@ -398,7 +398,7 @@ const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
-// tableCpuProfile contains the columns name definitions for table events_cpu_profile_graph
+// tableTiDBCpuProfile contains the columns name definitions for table events_cpu_profile_graph
 const tableTiDBCpuProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBCpuProfile + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -407,7 +407,7 @@ const tableTiDBCpuProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBCpuProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableMemoryProfile contains the columns name definitions for table events_memory_profile_graph
+// tableTiDBMemoryProfile contains the columns name definitions for table events_memory_profile_graph
 const tableTiDBMemoryProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBMemoryProfile + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -416,7 +416,7 @@ const tableTiDBMemoryProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBMemo
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableMutexProfile contains the columns name definitions for table events_mutex_profile_graph
+// tableTiDBMutexProfile contains the columns name definitions for table events_mutex_profile_graph
 const tableTiDBMutexProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBMutexProfile + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -425,7 +425,7 @@ const tableTiDBMutexProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBMutex
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableAllocsProfile contains the columns name definitions for table events_allocs_profile_graph
+// tableTiDBAllocsProfile contains the columns name definitions for table events_allocs_profile_graph
 const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBAllocsProfile + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -434,7 +434,7 @@ const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBAllo
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableBlockProfile contains the columns name definitions for table events_block_profile_graph
+// tableTiDBBlockProfile contains the columns name definitions for table events_block_profile_graph
 const tableTiDBBlockProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBBlockProfile + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -443,7 +443,7 @@ const tableTiDBBlockProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBBlock
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableGoroutine contains the columns name definitions for table events_goroutine
+// tableTiDBGoroutine contains the columns name definitions for table events_goroutine
 const tableTiDBGoroutine = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBGoroutines + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"ID INT(8) NOT NULL," +
