@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
@@ -666,6 +667,62 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 			col.Charset = charset.CharsetBin
 			col.Collate = charset.CharsetBin
 		}
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaInfo ast.TiFlashReplicaSpec
+	if err := job.DecodeArgs(&replicaInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          replicaInfo.Count,
+			LocationLabels: replicaInfo.Labels,
+		}
+	} else {
+		tblInfo.TiFlashReplica = nil
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var available bool
+	if err := job.DecodeArgs(&available); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.TiFlashReplica == nil || (tblInfo.TiFlashReplica.Available == available) {
+		return ver, nil
+	}
+
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.Available = available
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
