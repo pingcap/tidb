@@ -572,9 +572,7 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 	matchedRows = make([]chunk.Row, 0, len(iw.matchedOuterPtrs))
 	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {
-		chkIdx, rowIdx := int(ptr.ChkIdx), int(ptr.RowIdx)
-		chk := task.outerResult.GetChunk(chkIdx)
-		outerRow := chk.GetRow(rowIdx)
+		outerRow := task.outerResult.GetRow(ptr)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.keyCols)
 		if err != nil {
 			return nil, nil, err
