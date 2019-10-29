@@ -171,6 +171,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
 	case *ast.TableSource:
+		var isTableName bool
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			p, err = b.buildSelect(ctx, v)
@@ -178,6 +179,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			p, err = b.buildUnion(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
+			isTableName = true
 		default:
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
@@ -190,7 +192,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				col.TblName = x.AsName
 			}
 		}
-		if b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
+		// `TableName` is not a select block, so we do not need to handle it.
+		if !isTableName && b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
 			b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.Schema().Columns[0].DBName, TableName: p.Schema().Columns[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -339,7 +342,7 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 // extractTableAlias returns table alias of the LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the logicalPlan match some optimizer hints, and hints are not expected to take effect in this case.
-func extractTableAlias(p Plan) *hintTableInfo {
+func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
 		firstCol := p.Schema().Columns[0]
 		for _, column := range p.Schema().Columns {
@@ -347,7 +350,13 @@ func extractTableAlias(p Plan) *hintTableInfo {
 				return nil
 			}
 		}
-		return &hintTableInfo{dbName: firstCol.DBName, tblName: firstCol.TblName, selectOffset: p.SelectBlockOffset()}
+		blockOffset := p.SelectBlockOffset()
+		blockAsNames := p.SCtx().GetSessionVars().PlannerSelectBlockAsName
+		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
+			blockOffset = parentOffset
+		}
+		return &hintTableInfo{dbName: firstCol.DBName, tblName: firstCol.TblName, selectOffset: blockOffset}
 	}
 	return nil
 }
@@ -357,8 +366,8 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0])
-	rhsAlias := extractTableAlias(p.children[1])
+	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
+	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 	}
@@ -2677,8 +2686,8 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	if b.TableHints() != nil {
-		outerAlias := extractTableAlias(outerPlan)
-		innerAlias := extractTableAlias(innerPlan)
+		outerAlias := extractTableAlias(outerPlan, joinPlan.blockOffset)
+		innerAlias := extractTableAlias(innerPlan, joinPlan.blockOffset)
 		if b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferMergeJoin
 		}
@@ -2990,7 +2999,7 @@ func (b *PlanBuilder) buildUpdateLists(
 func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*model.CIStr) {
 	switch x := p.(type) {
 	case *DataSource:
-		alias := extractTableAlias(p)
+		alias := extractTableAlias(p, p.SelectBlockOffset())
 		if alias != nil {
 			if _, ok := asNames[x.tableInfo]; !ok {
 				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
@@ -3013,7 +3022,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			return
 		}
 
-		alias := extractTableAlias(x)
+		alias := extractTableAlias(x, p.SelectBlockOffset())
 		if alias != nil {
 			if _, ok := asNames[ds.tableInfo]; !ok {
 				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
