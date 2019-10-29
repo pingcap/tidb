@@ -27,7 +27,7 @@ import (
 
 const (
 	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
-	tableNameTiDBProfileCpu                  = "tidb_profile_cpu"
+	tableNameTiDBProfileCPU                  = "tidb_profile_cpu"
 	tableNameTiDBProfileMemory               = "tidb_profile_memory"
 	tableNameTiDBProfileMutex                = "tidb_profile_mutex"
 	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
@@ -97,7 +97,7 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
 		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
-	case tableNameTiDBProfileCpu:
+	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("heap")

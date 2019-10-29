@@ -40,7 +40,7 @@ var perfSchemaTables = []string{
 	tableStagesHistory,
 	tableStagesHistoryLong,
 	tableEventsStatementsSummaryByDigest,
-	tableTiDBProfileCpu,
+	tableTiDBProfileCPU,
 	tableTiDBProfileMemory,
 	tableTiDBProfileMutex,
 	tableTiDBAllocsProfile,
@@ -398,8 +398,8 @@ const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
-// tableTiDBProfileCpu contains the columns name definitions for table events_cpu_profile_graph
-const tableTiDBProfileCpu = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCpu + " (" +
+// tableTiDBProfileCPU contains the columns name definitions for table events_cpu_profile_graph
+const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
 	"PERCENT_REL VARCHAR(8) NOT NULL," +
