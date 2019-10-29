@@ -679,7 +679,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, ds.tableInfo.PKIsHandle)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,

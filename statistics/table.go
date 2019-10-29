@@ -691,7 +691,7 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
-func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv.StoreType, pkIsHandle bool) (size float64) {
+func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
 	size = coll.GetAvgRowSize(cols, false)
 	switch storeType {
 	case kv.TiKV:
@@ -699,7 +699,7 @@ func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv
 		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
 		size -= 8
 	case kv.TiFlash:
-		if !pkIsHandle {
+		if !handleInCols {
 			size += 8 /* row_id length */
 		}
 	}
