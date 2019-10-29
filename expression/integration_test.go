@@ -5019,4 +5019,8 @@ func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	_, err = tk.Exec("SELECT yyy()")
 	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
 
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT timestampliteral(rand())")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.db_9_85b2e2.timestampliteral does not exist")
+
 }
