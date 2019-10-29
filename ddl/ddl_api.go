@@ -2992,15 +2992,25 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
-	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	tbReplicaInfo := tb.Meta().TiFlashReplica
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) &&
+		tbReplicaInfo.Available == false {
+		changed := false
+		for i, lable := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != lable {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return nil
+		}
 	}
 
 	job := &model.Job{
