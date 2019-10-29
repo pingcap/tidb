@@ -74,6 +74,28 @@ const (
 	TotalKeysStr = "Total_keys"
 	// ProcessKeysStr means the total processed keys.
 	ProcessKeysStr = "Process_keys"
+	// PreWriteTimeStr means the time of pre-write.
+	PreWriteTimeStr = "Prewrite_time"
+	// CommitTimeStr means the time of commit.
+	CommitTimeStr = "Commit_time"
+	// GetCommitTSTimeStr means the time of get commit ts.
+	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// CommitBackoffTimeStr means the time of commit backoff.
+	CommitBackoffTimeStr = "Commit_backoff_time"
+	// BackoffTypesStr means the backoff type.
+	BackoffTypesStr = "Backoff_types"
+	// ResolveLockTimeStr means the time of resolve lock.
+	ResolveLockTimeStr = "Resolve_lock_time"
+	// LocalLatchWaitTimeStr means the time of wait in local latch.
+	LocalLatchWaitTimeStr = "Local_latch_wait_time"
+	// WriteKeysStr means the count of keys in the transaction.
+	WriteKeysStr = "Write_keys"
+	// WriteSizeStr means the key/value size in the transaction.
+	WriteSizeStr = "Write_size"
+	// PrewriteRegionStr means the count of region when pre-write.
+	PrewriteRegionStr = "Prewrite_region"
+	// TxnRetryStr means the count of transaction retry.
+	TxnRetryStr = "Txn_retry"
 )
 
 // String implements the fmt.Stringer interface.
