@@ -405,12 +405,11 @@ type PhysicalHashAgg struct {
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
-func NewPhysicalHashAgg(la *LogicalAggregation, expectedCnt float64, prop *property.PhysicalProperty) *PhysicalHashAgg {
+func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	agg := basePhysicalAgg{
 		GroupByItems: la.GroupByItems,
 		AggFuncs:     la.AggFuncs,
-	}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(expectedCnt), la.blockOffset, prop)
-	agg.SetSchema(la.schema.Clone())
+	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
 	return agg
 }
 

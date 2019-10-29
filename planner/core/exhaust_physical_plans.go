@@ -1467,7 +1467,8 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
-		agg := NewPhysicalHashAgg(la, prop.ExpectedCnt, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+		agg.SetSchema(la.schema.Clone())
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs
