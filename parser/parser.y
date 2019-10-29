@@ -6571,6 +6571,10 @@ IndexNameList:
 	{
 		$$ = []model.CIStr{model.NewCIStr($1)}
 	}
+|	IndexNameList ',' "PRIMARY"
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
 
 IndexHintList:
 	IndexHint
