@@ -53,6 +53,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandSort: {
 		&ImplSort{},
 	},
+	memo.OperandAggregation: {
+		&ImplHashAgg{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -220,4 +223,28 @@ func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	return impl.NewSortImpl(ps), nil
+}
+
+// ImplHashAgg is the implementation rule which implements LogicalAggregation
+// to PhysicalHashAgg.
+type ImplHashAgg struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	// TODO: deal with the hints when we have implemented StreamAgg.
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	hashAgg := plannercore.NewPhysicalHashAgg(
+		la,
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
+	)
+	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
+	// TODO: Implement TiKVHashAgg
+	return impl.NewTiDBHashAggImpl(hashAgg), nil
 }

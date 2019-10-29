@@ -16,7 +16,6 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -276,7 +275,6 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}
 	p.schema.Append(col)
