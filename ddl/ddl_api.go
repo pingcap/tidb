@@ -886,6 +886,22 @@ func checkDuplicateColumn(colNames []model.CIStr) error {
 	return nil
 }
 
+func checkColumnsReserved(colNames []model.CIStr) error {
+	for _, colName := range colNames {
+		if err := checkColumnReserved(colName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkColumnReserved(colName model.CIStr) error {
+	if colName.L == "_tidb_rowid" {
+		return infoschema.ErrReservedColumnConflict.GenWithStackByArgs(colName.O)
+	}
+	return nil
+}
+
 func checkIsAutoIncrementColumn(colDefs *ast.ColumnDef) bool {
 	for _, option := range colDefs.Options {
 		if option.Tp == ast.ColumnOptionAutoIncrement {
@@ -1286,6 +1302,9 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if err := checkDuplicateColumn(colNames); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err := checkColumnsReserved(colNames); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if err := checkGeneratedColumn(colDefs); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1512,6 +1531,9 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		return err
 	}
 	if err = checkDuplicateColumn(colNames); err != nil {
+		return err
+	}
+	if err = checkColumnsReserved(colNames); err != nil {
 		return err
 	}
 
@@ -2110,6 +2132,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	if err = checkColumnReserved(specNewColumn.Name.Name); err != nil {
+		return errors.Trace(err)
+	}
+
 	colName := specNewColumn.Name.Name.O
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return errors.Trace(err)
@@ -2648,6 +2674,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
 	newColName := specNewColumn.Name.Name
+	if err = checkColumnReserved(newColName); err != nil {
+		return nil, errors.Trace(err)
+	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
