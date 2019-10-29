@@ -404,6 +404,15 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
+func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
+	return agg
+}
+
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
