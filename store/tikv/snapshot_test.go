@@ -183,4 +183,25 @@ func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
 		kv.TxnRetryableMark
 	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
+
+	conflict = &pb.WriteConflict{
+		StartTs:          399402937522847774,
+		ConflictTs:       399402937719455772,
+		ConflictCommitTs: 399402937719455773,
+		Key:              []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
+		Primary:          []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
+	}
+	expectedStr = "[kv:9007]Write conflict, " +
+		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
+		"key={metaKey=true, key=DB:56, field=TID:108} " +
+		"primary={metaKey=true, key=DB:56, field=TID:108} " +
+		kv.TxnRetryableMark
+	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
+}
+
+func (s *testSnapshotSuite) TestLockNotFoundPrint(c *C) {
+	msg := "Txn(Mvcc(TxnLockNotFound { start_ts: 408090278408224772, commit_ts: 408090279311835140, " +
+		"key: [116, 128, 0, 0, 0, 0, 0, 50, 137, 95, 105, 128, 0, 0, 0, 0,0 ,0, 1, 1, 67, 49, 57, 48, 57, 50, 57, 48, 255, 48, 48, 48, 48, 48, 52, 56, 54, 255, 50, 53, 53, 50, 51, 0, 0, 0, 252] }))"
+	key := prettyLockNotFoundKey(msg)
+	c.Assert(key, Equals, "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}")
 }
