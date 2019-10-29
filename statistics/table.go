@@ -696,9 +696,8 @@ func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv
 	switch storeType {
 	case kv.TiKV:
 		size += tablecodec.RecordRowKeyLen
-		if pkIsHandle {
-			size -= 8 /* value in tikv do NOT contain the primary key */
-		}
+		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
+		size -= 8
 	case kv.TiFlash:
 		if !pkIsHandle {
 			size += 8 /* row_id length */
