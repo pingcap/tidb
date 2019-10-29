@@ -673,6 +673,7 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 type tableFlashReplicaInfo struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
 	ID             int64    `json:"id"`
 	ReplicaCount   uint64   `json:"replica_count"`
 	LocationLabels []string `json:"location_labels"`
@@ -710,6 +711,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 }
 
 type tableFlashReplicaStatus struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
 	ID               int64  `json:"id"`
 	RegionCount      uint64 `json:"region_count"`
 	FlashRegionCount uint64 `json:"flash_region_count"`
