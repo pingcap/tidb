@@ -506,7 +506,7 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	c.Assert(txn.Set(key, key), IsNil)
 	txn.DelOption(kv.PresumeKeyNotExistsError)
 	txn.DelOption(kv.PresumeKeyNotExists)
-	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	err := txn.LockKeys(context.Background(), nil, txn.startTS, key)
 	c.Assert(err, NotNil)
 	c.Assert(txn.Delete(key), IsNil)
 	key2 := kv.Key("key2")
@@ -518,9 +518,9 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
-	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	err := txn.LockKeys(context.Background(), nil, 100, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	err = txn.LockKeys(context.Background(), nil, 100, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
 	c.Assert(txn.lockKeys, HasLen, 2)
 }
@@ -530,21 +530,21 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	time.Sleep(time.Millisecond * 100)
-	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	err := txn.LockKeys(context.Background(), nil, txn.startTS, key)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 100)
 	key2 := kv.Key("key2")
-	err = txn.LockKeys(context.Background(), txn.startTS, key2)
+	err = txn.LockKeys(context.Background(), nil, txn.startTS, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL
-	c.Assert(elapsedTTL, GreaterEqual, uint64(100))
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
+	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
 	lr := newLockResolver(s.store)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS)
 	c.Assert(err, IsNil)
-	c.Assert(status.ttl, Equals, lockInfo.LockTtl)
+	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
 	// Check primary lock TTL is auto increasing while the pessimistic txn is ongoing.
 	for i := 0; i < 50; i++ {

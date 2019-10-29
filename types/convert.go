@@ -166,14 +166,14 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 			return 0, overflow(val, tp)
 		}
 		return uint64(int64(val)), overflow(val, tp)
-	} else if val == float64(upperBound) {
-		// Because u64::MAX can not be represented precisely in iee754(64bit),
-		// so u64::MAX as f64 will make a num bigger than u64::MAX,
-		// which can not be represented by 64bit integer.
-		// So (u64::MAX as f64) as u64 is undefined behavior.
-		return upperBound, nil
-	} else if val > float64(upperBound) {
-		return upperBound, overflow(val, tp)
+	}
+
+	ubf := float64(upperBound)
+	if val == ubf {
+		return uint64(math.MaxInt64), nil
+	}
+	if val > ubf {
+		return uint64(math.MaxInt64), overflow(val, tp)
 	}
 	return uint64(val), nil
 }
