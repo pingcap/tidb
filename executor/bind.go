@@ -64,17 +64,20 @@ func (e *SQLBindExec) dropSQLBind() error {
 }
 
 func (e *SQLBindExec) createSQLBind() error {
+	bindInfo := bindinfo.Binding{
+		BindSQL:   e.bindSQL,
+		Charset:   e.charset,
+		Collation: e.collation,
+		Status:    bindinfo.Using,
+	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
-		BindSQL:     e.bindSQL,
 		Db:          e.ctx.GetSessionVars().CurrentDB,
-		Charset:     e.charset,
-		Collation:   e.collation,
-		Status:      bindinfo.Using,
+		Bindings:    []bindinfo.Binding{bindInfo},
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.AddBindRecord(record)
+		return handle.AddBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(record)
+	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 }
