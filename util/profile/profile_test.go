@@ -58,10 +58,10 @@ func (s *profileSuite) TestProfiles(c *C) {
 		profile.CPUProfileInterval = oldValue
 	}()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("select * from performance_schema.events_tidb_cpu_profile")
-	tk.MustExec("select * from performance_schema.events_tidb_memory_profile")
-	tk.MustExec("select * from performance_schema.events_tidb_allocs_profile")
-	tk.MustExec("select * from performance_schema.events_tidb_mutex_profile")
-	tk.MustExec("select * from performance_schema.events_tidb_block_profile")
-	tk.MustExec("select * from performance_schema.events_tidb_goroutines")
+	tk.MustExec("select * from performance_schema.tidb_profile_cpu")
+	tk.MustExec("select * from performance_schema.tidb_profile_memory")
+	tk.MustExec("select * from performance_schema.tidb_profile_allocs")
+	tk.MustExec("select * from performance_schema.tidb_profile_mutex")
+	tk.MustExec("select * from performance_schema.tidb_profile_block")
+	tk.MustExec("select * from performance_schema.tidb_goroutines")
 }
