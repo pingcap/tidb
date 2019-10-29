@@ -98,8 +98,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}
 	var err error
-	// cached point get execution, PointGetExecutor will be reused using "Init" function
-	// and snapshotTS is always max value
 	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	if err != nil {
 		return err
