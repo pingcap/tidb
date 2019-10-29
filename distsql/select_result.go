@@ -202,7 +202,8 @@ func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) erro
 		if r.respChunkDecoder.IsFinished() {
 			r.respChunkDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
 		}
-
+		// If the next chunk size is greater than required rows * 0.8, reuse the memory of the next chunk and return
+		// immediately. Otherwise, splice the data to one chunk and wait the next chunk.
 		if r.respChunkDecoder.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
 			if chk.NumRows() > 0 {
 				return nil
