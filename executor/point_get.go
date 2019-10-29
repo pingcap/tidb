@@ -42,11 +42,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	b.isSelectForUpdate = p.IsForUpdate
-	err = e.Init(p, startTS)
-	if err != nil {
-		b.err = err
-		return nil
-	}
+	e.Init(p, startTS)
 	return e
 }
 
@@ -65,7 +61,7 @@ type PointGetExecutor struct {
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) error {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
@@ -73,7 +69,6 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) err
 	e.startTS = startTs
 	e.done = false
 	e.lock = p.Lock
-	return nil
 }
 
 // Open implements the Executor interface.

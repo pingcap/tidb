@@ -243,13 +243,8 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
-			iErr := exec.Init(pointGetPlan, startTs)
-			if iErr != nil {
-				logutil.Logger(ctx).Error("invalid executor, init cached PointGetExecutor failed", zap.Error(iErr))
-				a.PsStmt.Executor = nil
-			} else {
-				a.PsStmt.Executor = exec
-			}
+			exec.Init(pointGetPlan, startTs)
+			a.PsStmt.Executor = exec
 		}
 	}
 	if a.PsStmt.Executor == nil {
