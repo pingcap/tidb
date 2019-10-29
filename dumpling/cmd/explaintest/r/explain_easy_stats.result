@@ -59,10 +59,10 @@ Update_2	N/A	root	N/A
 └─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-Delete_3	N/A	root	N/A
-└─IndexLookUp_9	0.00	root	
-  ├─IndexScan_7	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
-  └─TableScan_8	0.00	cop[tikv]	table:t1, keep order:false
+Delete_4	N/A	root	N/A
+└─IndexLookUp_11	0.00	root	
+  ├─IndexScan_9	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
+  └─TableScan_10	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(Column#9)
