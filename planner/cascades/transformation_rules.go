@@ -316,11 +316,10 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	newProjExpr.SetChildren(newBottomSelGroup)
 	if len(canNotBePushed) == 0 {
 		return []*memo.GroupExpr{newProjExpr}, true, false, nil
-	} else {
-		newProjGroup := memo.NewGroupWithSchema(newProjExpr, proj.Schema())
-		newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
-		newTopSelExpr := memo.NewGroupExpr(newTopSel)
-		newTopSelExpr.SetChildren(newProjGroup)
-		return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
 	}
+	newProjGroup := memo.NewGroupWithSchema(newProjExpr, proj.Schema())
+	newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newTopSelExpr := memo.NewGroupExpr(newTopSel)
+	newTopSelExpr.SetChildren(newProjGroup)
+	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
 }
