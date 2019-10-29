@@ -385,6 +385,16 @@ func Contains(exprs []Expression, e Expression) bool {
 	return false
 }
 
+// ContainsColumn tests if `exprs` contains the column `c`.
+func ContainsColumn(exprs []Expression, c *Column) bool {
+	for _, expr := range exprs {
+		if col, ok := expr.(*Column); ok && col.Equal(nil, c) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
 // The original DNF will be replaced by the remained part or just be deleted if remained part is nil.
 // And the extracted part will be appended to the end of the orignal slice.
