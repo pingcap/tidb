@@ -71,8 +71,8 @@ type CheckTable struct {
 	baseSchemaProducer
 
 	DBName             string
-	TblInfo            *model.TableInfo
-	Indices            []table.Index
+	Table              table.Table
+	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
@@ -267,6 +267,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
+		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			return err
@@ -276,7 +277,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		e.names = plan.OutputNames()
+		e.names = names
 		e.Plan = plan
 		sctx.GetSessionVars().StmtCtx.PointExec = true
 		return nil
@@ -304,7 +305,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
 	}
@@ -312,11 +313,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return err
 	}
-	e.names = p.OutputNames()
+	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, names))
 	}
 	return err
 }
@@ -326,12 +327,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	prepared *ast.Prepared, is infoschema.InfoSchema, p Plan) error {
 	var (
-		ok  bool
-		err error
+		ok    bool
+		err   error
+		names types.NameSlice
 	)
 	switch p.(type) {
 	case *PointGetPlan:
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		names = p.OutputNames()
 		if err != nil {
 			return err
 		}
@@ -343,12 +346,13 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if ok {
 			// make constant expression store paramMarker
 			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 		}
 	}
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
+		prepared.CachedNames = names
 	}
 	return err
 }
@@ -444,11 +448,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
-	if len(idxCols) == 0 {
+	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return nil, err
 	}
@@ -511,14 +514,16 @@ type InsertGeneratedColumns struct {
 type Insert struct {
 	baseSchemaProducer
 
-	Table       table.Table
-	tableSchema *expression.Schema
-	Columns     []*ast.ColumnName
-	Lists       [][]expression.Expression
-	SetList     []*expression.Assignment
+	Table         table.Table
+	tableSchema   *expression.Schema
+	tableColNames types.NameSlice
+	Columns       []*ast.ColumnName
+	Lists         [][]expression.Expression
+	SetList       []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema
+	names4OnDuplicate  types.NameSlice
 
 	IsReplace bool
 
@@ -670,11 +675,16 @@ func (e *Explain) prepareSchema() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(fieldNames))...)
-	for _, fieldName := range fieldNames {
-		schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	cwn := &columnsWithNames{
+		cols:  make([]*expression.Column, 0, len(fieldNames)),
+		names: make([]*types.FieldName, 0, len(fieldNames)),
 	}
-	e.SetSchema(schema)
+
+	for _, fieldName := range fieldNames {
+		cwn.Append(buildColumnWithName("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	}
+	e.SetSchema(cwn.col2Schema())
+	e.names = cwn.names
 	return nil
 }
 

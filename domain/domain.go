@@ -850,7 +850,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
 					continue
 				}
-				do.bindHandle.CaptureBaselines(do.InfoSchema())
+				do.bindHandle.CaptureBaselines()
 			}
 		}
 	}()
