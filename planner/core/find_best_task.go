@@ -525,7 +525,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	is.initSchema(idx, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
@@ -566,7 +566,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 }
 
 // TODO: refactor this part, we should not call Clone in fact.
-func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
+func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
