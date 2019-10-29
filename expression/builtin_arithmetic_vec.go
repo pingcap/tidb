@@ -186,62 +186,61 @@ func (b *builtinArithmeticMinusIntSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-  n := input.NumRows()
-  lh, err := b.bufAllocator.get(types.ETInt, n)
-  if err != nil {
-    return err
-  }
-  defer b.bufAllocator.put(lh)
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
 
-  if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
-    return err
-  }
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
 
-  if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
-    return err
-  }
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
 
-  result.MergeNulls(lh)
+	result.MergeNulls(lh)
 
-  rh := result
-  lhi64s := lh.Int64s()
-  rhi64s := rh.Int64s()
-  resulti64s := result.Int64s()
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
 
-  forceToSigned := b.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-  isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-  isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	forceToSigned := b.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 
-  if forceToSigned && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
-    for i := 0; i < len(lhi64s); i++ {
-      if result.IsNull(i) {
-        continue
-      }
-      lh := lhi64s[i]
+	if forceToSigned && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		for i := 0; i < len(lhi64s); i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			lh := lhi64s[i]
 
-      if lh < 0 || (lh > math.MaxInt64) {
-        return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-      }
-    }
-  }
+			if lh < 0 || (lh > math.MaxInt64) {
+				return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+			}
+		}
+	}
 
+	if forceToSigned && mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		for i := 0; i < len(rhi64s); i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			rh := rhi64s[i]
 
-  if forceToSigned && mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
-    for i := 0; i < len(rhi64s); i++ {
-      if result.IsNull(i) {
-        continue
-      }
-      rh := rhi64s[i]
+			if rh < 0 || (rh > math.MaxInt64) {
+				return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+			}
+		}
+	}
 
-      if rh < 0 || (rh > math.MaxInt64) {
-        return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-      }
-    }
-  }
-
-  switch {
-  case isLHSUnsigned && isRHSUnsigned:
-    err = b.minusUU(result, lhi64s, rhi64s, resulti64s)
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		err = b.minusUU(result, lhi64s, rhi64s, resulti64s)
 	case isLHSUnsigned && !isRHSUnsigned:
 		err = b.minusUS(result, lhi64s, rhi64s, resulti64s)
 	case !isLHSUnsigned && isRHSUnsigned:
@@ -249,7 +248,7 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 	case !isLHSUnsigned && !isRHSUnsigned:
 		err = b.minusSS(result, lhi64s, rhi64s, resulti64s)
 	}
-  return err
+	return err
 }
 func (b *builtinArithmeticMinusIntSig) minusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
