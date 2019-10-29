@@ -775,11 +775,91 @@ func (b *builtinPeriodAddSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinTimestampAddSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalTime(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	nums := buf2.Int64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		unit := buf.GetString(i)
+		v := nums[i]
+		arg := ds[i]
+
+		tm1, err := arg.Time.GoTime(time.Local)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+		var tb time.Time
+		fsp := types.DefaultFsp
+		switch unit {
+		case "MICROSECOND":
+			tb = tm1.Add(time.Duration(v) * time.Microsecond)
+			fsp = types.MaxFsp
+		case "SECOND":
+			tb = tm1.Add(time.Duration(v) * time.Second)
+		case "MINUTE":
+			tb = tm1.Add(time.Duration(v) * time.Minute)
+		case "HOUR":
+			tb = tm1.Add(time.Duration(v) * time.Hour)
+		case "DAY":
+			tb = tm1.AddDate(0, 0, int(v))
+		case "WEEK":
+			tb = tm1.AddDate(0, 0, 7*int(v))
+		case "MONTH":
+			tb = tm1.AddDate(0, int(v), 0)
+		case "QUARTER":
+			tb = tm1.AddDate(0, 3*int(v), 0)
+		case "YEAR":
+			tb = tm1.AddDate(int(v), 0, 0)
+		default:
+			result.AppendNull()
+			continue
+		}
+		r := types.Time{Time: types.FromGoTime(tb), Type: b.resolveType(arg.Type, unit), Fsp: fsp}
+		if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(r.String())
+	}
+
+	return nil
 }
 
 func (b *builtinToDaysSig) vectorized() bool {
