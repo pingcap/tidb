@@ -107,7 +107,7 @@ func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 		jsons[i] = make([]interface{}, 0, len(b.args))
 	}
 	for _, arg := range b.args {
-		j, err := b.bufAllocator.get(types.ETJson, nr);
+		j, err := b.bufAllocator.get(types.ETJson, nr)
 		if err != nil {
 			return err
 		}
@@ -115,10 +115,10 @@ func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 		if err = arg.VecEvalJSON(b.ctx, input, j); err != nil {
 			return err
 		}
-		for i := 0; i <nr; i++ {
+		for i := 0; i < nr; i++ {
 			if j.IsNull(i) {
 				jsons[i] = append(jsons[i], json.CreateBinary(nil))
-			}else {
+			} else {
 				jsons[i] = append(jsons[i], j.GetJSON(i))
 			}
 		}
