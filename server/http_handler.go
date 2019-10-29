@@ -696,7 +696,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		tables := schema.SchemaTables(db.Name)
 		for _, tbl := range tables {
 			tblInfo := tbl.Meta()
-			if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+			if tblInfo.TiFlashReplica == nil {
 				continue
 			}
 			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{

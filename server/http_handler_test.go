@@ -395,11 +395,11 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(data.Value.Info.Values, IsNil)
 }
 
-func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
+func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/flash/replica"))
+	resp, err := http.Get("http://127.0.0.1:10090/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 	var data []tableFlashReplicaInfo
@@ -425,7 +425,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
 	c.Assert(data[0].Available, Equals, false)
 
-	resp, err = http.Post("http://127.0.0.1:10090/flash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
 	body, err := ioutil.ReadAll(resp.Body)
@@ -435,7 +435,7 @@ func (ts *HTTPHandlerTestSuite) TestFlashReplica(c *C) {
 	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	c.Assert(err, IsNil)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, t.Meta().ID)
-	resp, err = http.Post("http://127.0.0.1:10090/flash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
 	body, err = ioutil.ReadAll(resp.Body)
