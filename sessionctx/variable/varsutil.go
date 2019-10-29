@@ -625,6 +625,37 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case IsolationReadLabels:
+		if value == "" {
+			return "", nil
+		}
+		labels := strings.Split(value, ",")
+		for _, label := range labels {
+			if len(strings.Split(label, ":")) != 2 {
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+		}
+		return value, nil
+	case IsolationReadEngines:
+		if value == "" {
+			return "", nil
+		}
+		engines := strings.Split(value, ",")
+		var formatVal string
+		for i, engine := range engines {
+			if i != 0 {
+				formatVal += ","
+			}
+			switch {
+			case strings.EqualFold(engine, "TiKV"):
+				formatVal += "TiKV"
+			case strings.EqualFold(engine, "TiFlash"):
+				formatVal += "TiFlash"
+			default:
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+		}
+		return formatVal, nil
 	}
 	return value, nil
 }

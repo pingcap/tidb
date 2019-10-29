@@ -2815,6 +2815,27 @@ func (s *testSessionSuite) TestReplicaRead(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 }
 
+func (s *testSessionSuite) TestIsolationRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 0)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadLabels()), Equals, 0)
+	tk.MustExec("set @@isolation_read_labels = 'idc:bj_idc_1,district:Shanghai';")
+	labels := tk.Se.GetSessionVars().GetIsolationReadLabels()
+	c.Assert(len(labels), Equals, 2)
+	c.Assert(labels[0].Key, Equals, "idc")
+	c.Assert(labels[0].Value, Equals, "bj_idc_1")
+	c.Assert(labels[1].Key, Equals, "district")
+	c.Assert(labels[1].Value, Equals, "Shanghai")
+	tk.MustExec("set @@isolation_read_engines = 'tikv,tiflash';")
+	engines := tk.Se.GetSessionVars().GetIsolationReadEngines()
+	c.Assert(len(engines), Equals, 2)
+	c.Assert(engines[0], Equals, kv.TiKV)
+	c.Assert(engines[1], Equals, kv.TiFlash)
+}
+
 func (s *testSessionSuite) TestStmtHints(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
