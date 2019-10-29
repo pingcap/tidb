@@ -59,6 +59,7 @@ func CompareString(x, y string) int {
 	return 1
 }
 
+// CompareDuration returns an integer comparing the duration x to y.
 func CompareDuration(x, y time.Duration) int {
 	if x < y {
 		return -1

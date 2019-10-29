@@ -84,13 +84,20 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
-		}{{ if eq .type.ETName "Json" }}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)){{ else if eq .type.ETName "Real" }}
-		val := types.CompareFloat64(arg0[i], arg1[i]){{ else if eq .type.ETName "String" }}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i)){{ else if eq .type.ETName "Duration" }}
-		val := types.CompareDuration(arg0[i], arg1[i]){{ else if eq .type.ETName "Datetime" }}
-		val := arg0[i].Compare(arg1[i]){{ else if eq .type.ETName "Decimal" }}
-		val := arg0[i].Compare(&arg1[i]){{ end }}
+		}
+{{ if eq .type.ETName "Json" }}
+		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+{{ else if eq .type.ETName "Real" }}
+		val := types.CompareFloat64(arg0[i], arg1[i])
+{{ else if eq .type.ETName "String" }}
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+{{ else if eq .type.ETName "Duration" }}
+		val := types.CompareDuration(arg0[i], arg1[i])
+{{ else if eq .type.ETName "Datetime" }}
+		val := arg0[i].Compare(arg1[i])
+{{ else if eq .type.ETName "Decimal" }}
+		val := arg0[i].Compare(&arg1[i])
+{{ end }}
 		if val {{ .compare.Operator }} 0 {
 			i64s[i] = 1
 		} else {
@@ -138,13 +145,20 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		case isNull0 && isNull1:
 			i64s[i] = 1
 		case isNull0 != isNull1:
-			i64s[i] = 0{{ if eq .type.ETName "Json" }}
-		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:{{ else if eq .type.ETName "Real" }}
-		case types.CompareFloat64(arg0[i], arg1[i]) == 0:{{ else if eq .type.ETName "String" }}
-		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:{{ else if eq .type.ETName "Duration" }}
-		case types.CompareDuration(arg0[i], arg1[i]) == 0:{{ else if eq .type.ETName "Datetime" }}
-		case arg0[i].Compare(arg1[i]) == 0:{{ else if eq .type.ETName "Decimal" }}
-		case arg0[i].Compare(&arg1[i]) == 0:{{ end }}
+			i64s[i] = 0
+{{ if eq .type.ETName "Json" }}
+		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
+{{ else if eq .type.ETName "Real" }}
+		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
+{{ else if eq .type.ETName "String" }}
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
+{{ else if eq .type.ETName "Duration" }}
+		case types.CompareDuration(arg0[i], arg1[i]) == 0:
+{{ else if eq .type.ETName "Datetime" }}
+		case arg0[i].Compare(arg1[i]) == 0:
+{{ else if eq .type.ETName "Decimal" }}
+		case arg0[i].Compare(&arg1[i]) == 0:
+{{ end }}
 			i64s[i] = 1
 		}
 	}
@@ -233,11 +247,6 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 			ctx["compare"] = compareCtx
 			ctx["type"] = typeCtx
 			if compareCtx.CompareName == "NullEQ" {
-				if typeCtx.ETName == "Real" ||
-					typeCtx.ETName == "Decimal" ||
-					typeCtx.ETName == "String" {
-					continue
-				}
 				err := builtinNullEQCompareVecTpl.Execute(w, ctx)
 				if err != nil {
 					return err
@@ -269,12 +278,6 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []TypeC
 			return err
 		}
 		for _, typeCtx := range types {
-			if compareCtx.CompareName == "NullEQ" &&
-				(typeCtx.ETName == "Real" ||
-					typeCtx.ETName == "Decimal" ||
-					typeCtx.ETName == "String") {
-				continue
-			}
 			err := builtinCompareVecTestCase.Execute(w, typeCtx)
 			if err != nil {
 				return err
