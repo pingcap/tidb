@@ -675,6 +675,7 @@ func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 // The `keepNull` controls what the istrue function will return when `arg` is null:
 // 1. keepNull is true and arg is null, the istrue function returns null.
 // 2. keepNull is false and arg is null, the istrue function returns 0.
+// TODO: remove this function. ScalarFunction should be newed in one place.
 func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
 		return arg, nil
@@ -684,9 +685,10 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 	if err != nil {
 		return nil, err
 	}
-	return &ScalarFunction{
+	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-	}, nil
+	}
+	return FoldConstant(sf), nil
 }
