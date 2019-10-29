@@ -264,7 +264,7 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 
 // VecEvalString evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	if col.RetType.Hybrid() {
+	if col.RetType.Hybrid() || ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		it := chunk.NewIterator4Chunk(input)
 		result.ReserveString(input.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
