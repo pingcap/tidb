@@ -49,6 +49,7 @@ const (
 	rulePushSelDownTableScan TransformationID = iota
 	rulePushSelDownTableGather
 	rulePushSelDownSort
+	rulePushSelDownProjection
 	ruleEnumeratePaths
 )
 
@@ -56,6 +57,7 @@ var transformationRuleList = []Transformation{
 	&PushSelDownTableScan{},
 	&PushSelDownTableGather{},
 	&PushSelDownSort{},
+	&PushSelDownProjection{},
 	&EnumeratePaths{},
 }
 
@@ -64,6 +66,7 @@ var defaultTransformationMap = map[memo.Operand][]TransformationID{
 		rulePushSelDownTableScan,
 		rulePushSelDownTableGather,
 		rulePushSelDownSort,
+		rulePushSelDownProjection,
 	},
 	memo.OperandDataSource: {
 		ruleEnumeratePaths,
@@ -259,4 +262,64 @@ func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newSortExpr := memo.NewGroupExpr(sort)
 	newSortExpr.Children = append(newSortExpr.Children, newSelGroup)
 	return []*memo.GroupExpr{newSortExpr}, true, false, nil
+}
+
+// PushSelDownProjection pushes the Selection down to the child of Projection.
+type PushSelDownProjection struct {
+}
+
+// GetPattern implements Transformation interface.
+func (r *PushSelDownProjection) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownProjection) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `selection -> projection -> x` to
+// 1. `projection -> selection -> x` or
+// 2. `selection -> projection -> selection -> x` or
+// 3. just keep unchanged.
+func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	for _, expr := range proj.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return nil, false, false, nil
+		}
+	}
+	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+	for _, cond := range sel.Conditions {
+		if !expression.HasGetSetVarFunc(cond) {
+			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, proj.Schema(), proj.Exprs))
+		} else {
+			canNotBePushed = append(canNotBePushed, cond)
+		}
+	}
+	if len(canBePushed) == 0 {
+		return nil, false, false, nil
+	}
+	newBottomSel := plannercore.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newBottomSelExpr := memo.NewGroupExpr(newBottomSel)
+	newBottomSelGroup := memo.NewGroupWithSchema(newBottomSelExpr, childGroup.Prop.Schema)
+	newProjExpr := memo.NewGroupExpr(proj)
+	newProjExpr.SetChildren(newBottomSelGroup)
+	if len(canNotBePushed) == 0 {
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	} else {
+		newProjGroup := memo.NewGroupWithSchema(newProjExpr, proj.Schema())
+		newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+		newTopSelExpr := memo.NewGroupExpr(newTopSel)
+		newTopSelExpr.SetChildren(newProjGroup)
+		return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
+	}
 }
