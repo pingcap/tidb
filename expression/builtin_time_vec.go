@@ -808,8 +808,8 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 	}
 
 	result.ReserveString(n)
-	nums := buf2.Int64s()
-	ds := buf.Times()
+	nums := buf1.Int64s()
+	ds := buf2.Times()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
