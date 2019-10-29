@@ -2999,8 +2999,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
-		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) &&
-		tbReplicaInfo.Available == false {
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
 		changed := false
 		for i, lable := range tbReplicaInfo.LocationLabels {
 			if replicaInfo.Labels[i] != lable {

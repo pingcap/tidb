@@ -451,6 +451,18 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
 	c.Assert(data[0].Available, Equals, true) // The status should be true now.
+
+	// Should not take effect.
+	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, true) // The status should be true now.
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
