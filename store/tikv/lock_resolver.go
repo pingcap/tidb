@@ -314,6 +314,10 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				return msBeforeTxnExpired.value(), err
 			}
 		} else {
+			logutil.BgLogger().Info("******** resolveLocks meets not expired txn",
+				zap.ByteString("key", l.Primary),
+				zap.Uint64("ttl", status.ttl),
+				zap.Uint64("callerStartTs", callerStartTS))
 			tikvLockResolverCountWithNotExpired.Inc()
 			// If the lock is valid, the txn may be a pessimistic transaction.
 			// Update the txn expire time.
