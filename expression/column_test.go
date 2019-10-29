@@ -119,36 +119,41 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
-	col0, col1 := &Column{ColName: model.NewCIStr("col0")}, &Column{ColName: model.NewCIStr("col1")}
+	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
-	colInfo := &model.ColumnInfo{Name: model.NewCIStr("col1")}
+	colInfo := &model.ColumnInfo{ID: 0}
 	res := ColInfo2Col(cols, colInfo)
 	c.Assert(res.Equal(nil, col1), IsTrue)
 
-	colInfo.Name = model.NewCIStr("col2")
+	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
 	c.Assert(res, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
-	col0 := &Column{UniqueID: 0, ID: 0, ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{UniqueID: 1, ID: 1, ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
+	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
-	resCols, lengths := IndexInfo2PrefixCols(cols, indexInfo)
+	colInfos := []*model.ColumnInfo{colInfo0}
+	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
-	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
+	colInfos = []*model.ColumnInfo{colInfo1}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 0)
 	c.Assert(len(lengths), Equals, 0)
 
 	cols = []*Column{col0, col1}
-	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
+	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
@@ -211,6 +216,30 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalString(ctx, row)
 		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetString(i))
+	}
+}
+
+func (s *testEvaluatorSuite) TestPadCharToFullLength(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.PadCharToFullLength = true
+
+	ft := types.NewFieldType(mysql.TypeString)
+	ft.Flen = 10
+	col := &Column{RetType: ft, Index: 0}
+	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	for i := 0; i < 1024; i++ {
+		input.AppendString(0, "xy")
+	}
+	result, err := newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
+
+	it := chunk.NewIterator4Chunk(input)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalString(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(len(v), Equals, ft.Flen)
 		c.Assert(v, Equals, result.GetString(i))
 	}
 }
