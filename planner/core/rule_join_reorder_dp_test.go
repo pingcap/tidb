@@ -153,9 +153,6 @@ func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPl
 	s.ctx.GetSessionVars().PlanColumnID++
 	ds.schema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().PlanColumnID,
-		ColName:  model.NewCIStr(fmt.Sprintf("%s_a", name)),
-		TblName:  model.NewCIStr(name),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	ds.stats = &property.StatsInfo{
