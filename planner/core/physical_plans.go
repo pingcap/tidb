@@ -477,8 +477,13 @@ type PhysicalTableDual struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 	return p.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // PhysicalWindow is the physical operator of window function.
