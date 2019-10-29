@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"math"
 	"net"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -90,11 +91,11 @@ func (b *builtinIsIPv4Sig) vectorized() bool {
 	return true
 }
 func (b *builtinJSONAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONAnyValueSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalJSON(b.ctx, input, result)
 }
 
 func (b *builtinRealAnyValueSig) vectorized() bool {
@@ -245,11 +246,74 @@ func (b *builtinNameConstJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinInet6AtonSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a builtinInet6AtonSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	var (
+		resv4 []byte
+		resv6 []byte
+		res   []byte
+	)
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		val := buf.GetString(i)
+		if len(val) == 0 {
+			result.AppendNull()
+			continue
+		}
+		ip := net.ParseIP(val)
+		if ip == nil {
+			result.AppendNull()
+			continue
+		}
+		var isMappedIpv6 bool
+		ipTo4 := ip.To4()
+		if ipTo4 != nil && strings.Contains(val, ":") {
+			//mapped ipv6 address.
+			isMappedIpv6 = true
+		}
+
+		if isMappedIpv6 || ipTo4 == nil {
+			if resv6 == nil {
+				resv6 = make([]byte, net.IPv6len)
+			}
+			res = resv6
+		} else {
+			if resv4 == nil {
+				resv4 = make([]byte, net.IPv4len)
+			}
+			res = resv4
+		}
+
+		if isMappedIpv6 {
+			copy(res[12:], ipTo4)
+			res[11] = 0xff
+			res[10] = 0xff
+		} else if ipTo4 == nil {
+			copy(res, ip.To16())
+		} else {
+			copy(res, ipTo4)
+		}
+		result.AppendBytes(res)
+	}
+	return nil
 }
 
 func (b *builtinTimeAnyValueSig) vectorized() bool {

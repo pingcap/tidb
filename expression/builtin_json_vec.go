@@ -15,17 +15,37 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (b *builtinJSONDepthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONDepthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	int64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		j := buf.GetJSON(i)
+		int64s[i] = int64(j.GetElemDepth())
+	}
+	return nil
 }
 
 func (b *builtinJSONKeysSig) vectorized() bool {
@@ -93,11 +113,29 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinJSONQuoteSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(buf.GetJSON(i).Quote())
+	}
+	return nil
 }
 
 func (b *builtinJSONSearchSig) vectorized() bool {
@@ -117,11 +155,77 @@ func (b *builtinJSONSetSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinJSONObjectSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nr := input.NumRows()
+	if len(b.args)&1 == 1 {
+		err := ErrIncorrectParameterCount.GenWithStackByArgs(ast.JSONObject)
+		return err
+	}
+
+	jsons := make([]map[string]interface{}, nr)
+	for i := 0; i < nr; i++ {
+		jsons[i] = make(map[string]interface{}, len(b.args)>>1)
+	}
+
+	argBuffers := make([]*chunk.Column, len(b.args))
+	var err error
+	for i := 0; i < len(b.args); i++ {
+		if i&1 == 0 {
+			if argBuffers[i], err = b.bufAllocator.get(types.ETString, nr); err != nil {
+				return err
+			}
+			defer func(buf *chunk.Column) {
+				b.bufAllocator.put(buf)
+			}(argBuffers[i])
+
+			if err = b.args[i].VecEvalString(b.ctx, input, argBuffers[i]); err != nil {
+				return err
+			}
+		} else {
+			if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+				return err
+			}
+			defer func(buf *chunk.Column) {
+				b.bufAllocator.put(buf)
+			}(argBuffers[i])
+
+			if err = b.args[i].VecEvalJSON(b.ctx, input, argBuffers[i]); err != nil {
+				return err
+			}
+		}
+	}
+
+	result.ReserveJSON(nr)
+	for i := 0; i < len(b.args); i++ {
+		if i&1 == 1 {
+			keyCol := argBuffers[i-1]
+			valueCol := argBuffers[i]
+
+			var key string
+			var value json.BinaryJSON
+			for j := 0; j < nr; j++ {
+				if keyCol.IsNull(j) {
+					err := errors.New("JSON documents may not contain NULL member names")
+					return err
+				}
+				key = keyCol.GetString(j)
+				if valueCol.IsNull(j) {
+					value = json.CreateBinary(nil)
+				} else {
+					value = valueCol.GetJSON(j)
+				}
+				jsons[j][key] = value
+			}
+		}
+	}
+
+	for i := 0; i < nr; i++ {
+		result.AppendJSON(json.CreateBinary(jsons[i]))
+	}
+	return nil
 }
 
 func (b *builtinJSONArrayInsertSig) vectorized() bool {
@@ -149,11 +253,29 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinJSONTypeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONTypeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(buf.GetJSON(i).Type())
+	}
+	return nil
 }
 
 func (b *builtinJSONExtractSig) vectorized() bool {
@@ -197,9 +319,31 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinJSONUnquoteSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, err := buf.GetJSON(i).Unquote()
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
