@@ -300,6 +300,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			obj, exists := jsonItem.Extract([]json.PathExpression{pathExpr})
 			if !exists {
 				result.SetNull(i, true)
+				continue
 			}
 			if obj.TypeCode != json.TypeCodeObject && obj.TypeCode != json.TypeCodeArray {
 				resI64s[i] = 1
