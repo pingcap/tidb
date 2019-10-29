@@ -3083,6 +3083,13 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rs.Close(), IsNil)
 	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
 	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
+	tk.MustExec(`create table tb5(a int(10));`)
+	tk.MustExec(`insert into tb5 (a) values (10);`)
+	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
+	c.Assert(e, NotNil)
+	// TODO, how to replace `Column#0` to `10`?
+	c.Assert(e.Error(), Equals, `other error: [types:1690]BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`)
+	tk.MustExec(`drop table tb5`)
 
 	// for multiply
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
