@@ -297,6 +297,11 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 			}
 		}
 	}
+	// Set all the redundant bits in the last slot of destCol.nullBitmap to 0.
+	numRedundantBits := uint(len(destCol.nullBitmap)*8 - destCol.length - requiredRows)
+	bitMask := byte(1<<(8-numRedundantBits)) - 1
+	destCol.nullBitmap[len(destCol.nullBitmap)-1] &= bitMask
+
 	srcCol.nullBitmap = srcCol.nullBitmap[numNullBitmapBytes:]
 	destCol.length += requiredRows
 
