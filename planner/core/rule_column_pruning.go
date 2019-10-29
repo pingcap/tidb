@@ -260,7 +260,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 			ds.schema.Append(handleCol)
 		}
 	}
-
 	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
 		ds.handleCol = nil
 	}

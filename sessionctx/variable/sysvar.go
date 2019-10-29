@@ -1000,19 +1000,6 @@ type GlobalVarAccessor interface {
 	SetGlobalSysVar(name string, value string) error
 }
 
-var ServerVariableMap map[string]struct{} = map[string]struct{}{
-	TiDBGeneralLog:          {},
-	TiDBSlowLogThreshold:    {},
-	TiDBRecordPlanInSlowLog: {},
-	TiDBDDLSlowOprThreshold: {},
-	TiDBQueryLogMaxLen:      {},
-}
-
-func IsServerVariable(name string) bool {
-	_, ok := ServerVariableMap[name]
-	return ok
-}
-
 func SetServerVar(name string, val string) error {
 	switch name {
 	case TiDBGeneralLog:

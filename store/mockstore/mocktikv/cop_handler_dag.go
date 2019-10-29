@@ -167,8 +167,6 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
 	case tipb.ExecType_TypeMemTableScan:
 		currExec, err = h.buildMemTableScan(ctx, curr)
-	case tipb.ExecType_TypeSetServerVar:
-		currExec, err = h.buildSetServerVarExec(ctx, curr)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
@@ -208,15 +206,6 @@ func (h *rpcHandler) buildMemTableScan(ctx *dagContext, executor *tipb.Executor)
 	return &memTableScanExec{
 		tableName:  memTblScan.TableName,
 		columnIDs:  ids,
-		execDetail: new(execDetail),
-	}, nil
-}
-
-func (h *rpcHandler) buildSetServerVarExec(ctx *dagContext, executor *tipb.Executor) (*setServerVarExec, error) {
-	setExec := executor.SetServerVar
-	return &setServerVarExec{
-		name:       setExec.VariableName,
-		value:      setExec.VariableValue,
 		execDetail: new(execDetail),
 	}, nil
 }
@@ -366,7 +355,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
 	}
 
-	e := &streamAggExec{
+	return &streamAggExec{
 		evalCtx:           ctx.evalCtx,
 		aggExprs:          aggs,
 		aggCtxs:           aggCtxs,
@@ -375,8 +364,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
 		execDetail:        new(execDetail),
-	}
-	return e, nil
+	}, nil
 }
 
 func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {

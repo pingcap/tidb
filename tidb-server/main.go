@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/util/mock"
 	"os"
 	"runtime"
 	"strconv"
@@ -30,7 +29,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -554,7 +553,6 @@ func printInfo() {
 }
 
 func createServer() {
-	mock.Globalstorage = storage
 	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)

@@ -146,6 +146,7 @@ type rpcHandler struct {
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
+	// For memory table scan, the region Id will be 0.
 	if ctx.GetRegionId() == 0 {
 		return nil
 	}

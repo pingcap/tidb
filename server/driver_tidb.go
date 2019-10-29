@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/util/mock"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +46,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 	driver := &TiDBDriver{
 		store: store,
 	}
+	mock.Globalstorage = store
 	return driver
 }
 

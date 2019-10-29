@@ -463,9 +463,9 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 		}
 		assign := &expression.VarAssignment{
-			Name:      vars.Name,
-			IsGlobal:  vars.IsGlobal,
-			IsSystem:  vars.IsSystem,
+			Name:     vars.Name,
+			IsGlobal: vars.IsGlobal,
+			IsSystem: vars.IsSystem,
 		}
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
 			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
