@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -148,6 +149,28 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		key = remain
 	}
 	return
+}
+
+// DecodeMetaKey decodes the key and get the meta key and meta field.
+func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
+	var tp uint64
+	prefix := []byte("m")
+	if !bytes.HasPrefix(ek, prefix) {
+		return nil, nil, errors.New("invalid encoded hash data key prefix")
+	}
+	ek = ek[len(prefix):]
+	ek, key, err = codec.DecodeBytes(ek, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	ek, tp, err = codec.DecodeUint(ek)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	} else if structure.TypeFlag(tp) != structure.HashData {
+		return nil, nil, errors.Errorf("invalid encoded hash data key flag %c", byte(tp))
+	}
+	_, field, err = codec.DecodeBytes(ek, nil)
+	return key, field, errors.Trace(err)
 }
 
 // DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
