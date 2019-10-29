@@ -2337,7 +2337,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}

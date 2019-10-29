@@ -330,6 +330,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
+			if candidates[i].path.storeType == kv.TiFlash {
+				continue
+			}
 			result := compareCandidates(candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
@@ -534,7 +537,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize(idx, ds)
+	rowSize := is.indexScanRowSize(idx, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	task = cop
@@ -562,7 +565,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource) float64 {
+func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
@@ -573,6 +576,9 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 		}
 	} else {
 		scanCols = is.schema.Columns
+	}
+	if isForScan {
+		return ds.tableStats.HistColl.GetIndexAvgRowSize(scanCols, is.Index.Unique)
 	}
 	return ds.tableStats.HistColl.GetAvgRowSize(scanCols, true)
 }
@@ -876,7 +882,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.TblCols, false)
+	var rowSize float64
+	if ts.StoreType == kv.TiKV {
+		rowSize = ds.tableStats.HistColl.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+	} else {
+		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
+		// This logic can be ensured in column pruning.
+		rowSize = ds.tableStats.HistColl.GetTableAvgRowSize(ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
+	}
 	sessVars := ds.ctx.GetSessionVars()
 	copTask.cst = rowCount * rowSize * sessVars.ScanFactor
 	if candidate.isMatchProp {

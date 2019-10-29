@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -398,7 +399,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.isTablePath && path.storeType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -518,7 +519,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
 	}
-	rowSize := ds.tableStats.HistColl.GetAvgRowSize(ds.TblCols, false)
+	rowSize := ds.tableStats.HistColl.GetTableAvgRowSize(ds.TblCols, ts.StoreType, false)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -596,7 +597,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(ds *DataSource, idx *model.Ind
 		cop.tablePlan = ts
 	}
 	is.initSchema(idx, cop.tablePlan != nil)
-	rowSize := is.indexScanRowSize(idx, ds)
+	rowSize := is.indexScanRowSize(idx, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)

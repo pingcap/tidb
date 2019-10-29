@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -491,9 +492,12 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
-	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
-	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
+	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiKV})
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			publicPaths = append(publicPaths, &accessPath{index: index})
