@@ -146,15 +146,14 @@ func addHintForSelect(ctx sessionctx.Context, stmt ast.StmtNode, normdOrigSQL, h
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord != nil {
-		if bindRecord.Status == bindinfo.Invalid {
+		binding := bindRecord.FirstUsingBinding()
+		if binding == nil {
 			return nil
 		}
-		if bindRecord.Status == bindinfo.Using {
-			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
-			oriHint := bindinfo.CollectHint(stmt)
-			bindinfo.BindHint(stmt, bindRecord.HintsSet)
-			return oriHint
-		}
+		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
+		oriHint := bindinfo.CollectHint(stmt)
+		bindinfo.BindHint(stmt, binding.Hint)
+		return oriHint
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
 	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, ctx.GetSessionVars().CurrentDB)
@@ -164,7 +163,7 @@ func addHintForSelect(ctx sessionctx.Context, stmt ast.StmtNode, normdOrigSQL, h
 	if bindRecord != nil {
 		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
 		oriHint := bindinfo.CollectHint(stmt)
-		bindinfo.BindHint(stmt, bindRecord.HintsSet)
+		bindinfo.BindHint(stmt, bindRecord.FirstUsingBinding().Hint)
 		return oriHint
 	}
 	return nil
@@ -176,36 +175,36 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtN
 		return
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindMeta := sessionHandle.GetBindRecord(normdOrigSQL, sctx.GetSessionVars().CurrentDB)
-	if bindMeta != nil {
-		bindMeta.Status = bindinfo.Invalid
+	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, sctx.GetSessionVars().CurrentDB)
+	if bindRecord != nil {
+		bindRecord.FirstUsingBinding().Status = bindinfo.Invalid
 		return
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, sctx.GetSessionVars().CurrentDB)
-	if bindMeta == nil {
-		bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
+	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, sctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
 	}
-	if bindMeta != nil {
+	if bindRecord != nil {
+		binding := *bindRecord.FirstUsingBinding()
+		binding.Status = bindinfo.Invalid
 		record := &bindinfo.BindRecord{
-			OriginalSQL: bindMeta.OriginalSQL,
-			BindSQL:     bindMeta.BindSQL,
+			OriginalSQL: bindRecord.OriginalSQL,
 			Db:          sctx.GetSessionVars().CurrentDB,
-			Charset:     bindMeta.Charset,
-			Collation:   bindMeta.Collation,
-			Status:      bindinfo.Invalid,
+			Bindings:    []bindinfo.Binding{binding},
 		}
 
-		err := sessionHandle.AddBindRecord(record)
+		err := sessionHandle.AddBindRecord(nil, nil, record)
 		if err != nil {
 			logutil.Logger(ctx).Warn("handleInvalidBindRecord failed", zap.Error(err))
 		}
 
 		globalHandle := domain.GetDomain(sctx).BindHandle()
 		dropBindRecord := &bindinfo.BindRecord{
-			OriginalSQL: bindMeta.OriginalSQL,
-			Db:          bindMeta.Db,
+			OriginalSQL: bindRecord.OriginalSQL,
+			Db:          bindRecord.Db,
+			Bindings:    []bindinfo.Binding{binding},
 		}
 		globalHandle.AddDropInvalidBindTask(dropBindRecord)
 	}
@@ -248,7 +247,11 @@ func GenHintsFromSQL(ctx context.Context, sctx sessionctx.Context, node ast.Node
 	if err != nil {
 		return "", err
 	}
+	oldValue := sctx.GetSessionVars().UsePlanBaselines
+	// Disable baseline to avoid binding hints.
+	sctx.GetSessionVars().UsePlanBaselines = false
 	p, err := Optimize(ctx, sctx, node, is)
+	sctx.GetSessionVars().UsePlanBaselines = oldValue
 	if err != nil {
 		return "", err
 	}
