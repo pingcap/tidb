@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"math"
 	"sync"
 	"time"
@@ -315,7 +316,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			}
 		} else {
 			logutil.BgLogger().Info("******** resolveLocks meets not expired txn",
-				zap.ByteString("key", l.Primary),
+				zap.Stringer("key", kv.Key(l.Primary)),
 				zap.Uint64("ttl", status.ttl),
 				zap.Uint64("callerStartTs", callerStartTS))
 			tikvLockResolverCountWithNotExpired.Inc()
