@@ -436,7 +436,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.ConcurrencyFactor
-	// Cost of traveling the hash table when building the hash table from the outer table
+	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
 	if p.UseOuterToBuild {
 		cpuCost += innerCnt * sessVars.CPUFactor / float64(p.Concurrency)
 	}

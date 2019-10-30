@@ -239,6 +239,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 
 	buffer.WriteString(p.JoinType.String())
 	var InnerChildIdx = p.InnerChildIdx
+	// TODO: update the explain info in issue #12985
 	if p.UseOuterToBuild && ((p.JoinType == LeftOuterJoin && InnerChildIdx == 1) || (p.JoinType == RightOuterJoin && InnerChildIdx == 0)) {
 		InnerChildIdx = 1 - InnerChildIdx
 	}
