@@ -131,6 +131,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -342,7 +343,9 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		DB:      "information_schema",
 		Command: byte(1),
 		State:   1,
-		Info:    "do something"}
+		Info:    "do something",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
@@ -350,11 +353,25 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		DB:      "test",
 		Command: byte(2),
 		State:   2,
-		Info:    "do something"}
+		Info:    strings.Repeat("x", 101),
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	tk.Se.SetSessionManager(sm)
-	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
-		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
-			"2 user-2 localhost test Init DB 9223372036 2 do something"))
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
 	sm.processInfoMap[1] = &util.ProcessInfo{
@@ -380,8 +397,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -395,11 +412,11 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "<nil>"),
 		))
 }
 
@@ -458,6 +475,7 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
 # Succ: true
+# Plan: abcd
 # Prev_stmt: update t set i = 2;
 select * from t_slim;`))
 	c.Assert(f.Sync(), IsNil)
@@ -467,10 +485,10 @@ select * from t_slim;`))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	_, err = f.Write([]byte(`
