@@ -41,10 +41,22 @@ type testRegionRequestSuite struct {
 	bo                  *Backoffer
 	regionRequestSender *RegionRequestSender
 	mvccStore           mocktikv.MVCCStore
-	storeLimit          *StoreLimit
+}
+
+type testStoreLimitSuite struct {
+	cluster             *mocktikv.Cluster
+	storeIDs            []uint64
+	peerIDs             []uint64
+	regionID            uint64
+	leaderPeer          uint64
+	cache               *RegionCache
+	bo                  *Backoffer
+	regionRequestSender *RegionRequestSender
+	mvccStore           mocktikv.MVCCStore
 }
 
 var _ = Suite(&testRegionRequestSuite{})
+var _ = Suite(&testStoreLimitSuite{})
 
 func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
@@ -53,13 +65,39 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	s.storeLimit = &StoreLimit{}
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
-	s.regionRequestSender = NewRegionRequestSender(s.cache, client, s.storeLimit)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
+}
+
+func (s *testStoreLimitSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster()
+	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	s.cache = NewRegionCache(pdCli)
+	s.bo = NewNoopBackoff(context.Background())
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
 func (s *testRegionRequestSuite) TearDownTest(c *C) {
 	s.cache.Close()
+}
+
+func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{}, kvrpcpb.Context{})
+	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	oldStoreLimit := config.GetGlobalConfig().StoreLimit
+	config.GetGlobalConfig().StoreLimit = 500
+	s.cache.getStoreByStoreID(s.storeIDs[0]).storeLimit = 0
+	// cause there is only one region in this cluster, regionID maps this leader.
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
+	c.Assert(err, NotNil)
+	c.Assert(resp, IsNil)
+	c.Assert(err.Error(), Equals, "store token is up to the limit")
+	config.GetGlobalConfig().StoreLimit = oldStoreLimit
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -337,7 +375,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	}()
 
 	client := newRPCClient(config.Security{})
-	sender := NewRegionRequestSender(s.cache, client, s.storeLimit)
+	sender := NewRegionRequestSender(s.cache, client)
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
 		Value: []byte("value"),
@@ -356,7 +394,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 		Client:       newRPCClient(config.Security{}),
 		redirectAddr: addr,
 	}
-	sender = NewRegionRequestSender(s.cache, client1, s.storeLimit)
+	sender = NewRegionRequestSender(s.cache, client1)
 	sender.SendReq(s.bo, req, region.Region, 3*time.Second)
 
 	// cleanup

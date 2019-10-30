@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"sort"
 	"sync"
@@ -639,8 +640,9 @@ func (r *Region) incVersion() {
 
 // Store is the Store's meta data.
 type Store struct {
-	meta   *metapb.Store
-	cancel bool // return context.Cancelled error when cancel is true.
+	meta       *metapb.Store
+	cancel     bool // return context.Cancelled error when cancel is true.
+	storeLimit uint32
 }
 
 func newStore(storeID uint64, addr string) *Store {
@@ -649,5 +651,6 @@ func newStore(storeID uint64, addr string) *Store {
 			Id:      storeID,
 			Address: addr,
 		},
+		storeLimit: config.GetGlobalConfig().StoreLimit,
 	}
 }

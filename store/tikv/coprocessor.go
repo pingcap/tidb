@@ -677,7 +677,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	})
 
-	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client, &worker.store.storeLimit)
+	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
 		Tp:     worker.req.Tp,
 		Data:   worker.req.Data,

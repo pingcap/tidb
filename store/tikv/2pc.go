@@ -856,7 +856,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		CommitVersion: c.commitTS,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
-	sender := NewRegionRequestSender(c.store.regionCache, c.store.client, &c.store.storeLimit)
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
 	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
 
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this

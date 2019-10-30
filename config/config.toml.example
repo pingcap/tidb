@@ -34,8 +34,8 @@ token-limit = 1000
 # store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
 # It is useful when some stores are broken and block any request sent to it, which will finally
 # cause all token limits are occupied by this store, consequently leading QPS to decrease sharply.
-# [token-limit/stores, token-limit/2]
-store-limit = 500
+# [token-limit/stores, token-limit/2] recommended, 0 means shutting off store limit.
+store-limit = 0
 
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368

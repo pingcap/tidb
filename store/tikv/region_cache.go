@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -920,7 +921,7 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 		c.storeMu.Unlock()
 		return
 	}
-	store = &Store{storeID: storeID}
+	store = &Store{storeID: storeID, storeLimit: config.GetGlobalConfig().StoreLimit}
 	c.storeMu.stores[storeID] = store
 	c.storeMu.Unlock()
 	return
@@ -1173,6 +1174,7 @@ type Store struct {
 	resolveMutex sync.Mutex   // protect pd from concurrent init requests
 	fail         uint32       // store fail count, see RegionStore.storeFails
 	storeType    kv.StoreType // type of the store
+	storeLimit   uint32       // store token limit
 }
 
 type resolveState uint64
@@ -1274,7 +1276,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType, storeLimit: config.GetGlobalConfig().StoreLimit}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore

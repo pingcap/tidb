@@ -149,13 +149,6 @@ type tikvStore struct {
 	closed    chan struct{} // this is used to nofity when the store is closed
 
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
-	storeLimit      StoreLimit
-}
-
-// StoreLimit will record store limit for each store in store cluster.
-type StoreLimit struct {
-	sync.Mutex
-	limit map[uint64]uint32
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -386,7 +379,7 @@ func (s *tikvStore) SupportDeleteRange() (supported bool) {
 }
 
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.client, &s.storeLimit)
+	sender := NewRegionRequestSender(s.regionCache, s.client)
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 

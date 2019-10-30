@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	"github.com/pingcap/tidb/config"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -59,15 +59,13 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
-	storeLimit   *StoreLimit
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client Client, limit *StoreLimit) *RegionRequestSender {
+func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
 		regionCache: regionCache,
 		client:      client,
-		storeLimit:  limit,
 	}
 }
 
@@ -170,12 +168,17 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	storeID := req.Context.GetPeer().GetStoreId()
-	if err := s.getStoreToken(storeID); err != nil {
-		return nil, false, errors.Trace(err)
+	// judge the store limit switch.
+	if atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit) != 0 {
+		if err := s.getStoreToken(ctx.Store); err != nil {
+			logutil.BgLogger().Warn("get store limit token failed", zap.Error(err))
+			return nil, false, errors.Trace(err)
+		}
+		resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+		s.releaseStoreToken(ctx.Store)
+	} else {
+		resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	}
-	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
-	s.releaseStoreToken(storeID)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
@@ -186,29 +189,21 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	return
 }
 
-func (s *RegionRequestSender) getStoreToken(storeID uint64) error {
-	s.storeLimit.Lock()
-	if s.storeLimit.limit == nil {
-		s.storeLimit.limit = make(map[uint64]uint32)
+func (s *RegionRequestSender) getStoreToken(store *Store) error {
+	for {
+		limit := atomic.LoadUint32(&store.storeLimit)
+		if limit > 0 {
+			if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit-1) {
+				return nil
+			}
+		} else {
+			return errors.New("store token is up to the limit")
+		}
 	}
-	limit, ok := s.storeLimit.limit[storeID]
-	if !ok {
-		// initial token limit for new store is 500
-		limit = atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit)
-	}
-	if limit > 0 {
-		s.storeLimit.limit[storeID] = limit - 1
-		s.storeLimit.Unlock()
-		return nil
-	}
-	s.storeLimit.Unlock()
-	return errors.New("store token is up to the limit")
 }
 
-func (s *RegionRequestSender) releaseStoreToken(storeID uint64) {
-	s.storeLimit.Lock()
-	s.storeLimit.limit[storeID]++
-	s.storeLimit.Unlock()
+func (s *RegionRequestSender) releaseStoreToken(store *Store) {
+	atomic.AddUint32(&store.storeLimit, 1)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
