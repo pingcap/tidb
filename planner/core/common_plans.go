@@ -232,6 +232,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
+		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
