@@ -38,6 +38,16 @@ func (impl *SortImpl) CalcCost(outCount float64, children ...memo.Implementation
 	return impl.cost
 }
 
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *SortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	sort := impl.plan.(*plannercore.PhysicalSort)
+	sort.SetChildren(children[0].GetPlan())
+	// When the Sort orderByItems contain ScalarFunction, we need
+	// to inject two Projections below and above the Sort.
+	impl.plan = plannercore.InjectProjBelowSort(sort, sort.ByItems)
+	return impl
+}
+
 // NominalSortImpl is the implementation of NominalSort.
 type NominalSortImpl struct {
 	baseImpl
