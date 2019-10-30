@@ -115,7 +115,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	if funcName == ast.Cast {
+	if funcName == ast.Cast || funcName == ast.DayName {
 		return BuildCastFunction(ctx, args[0], retType), nil
 	}
 	fc, ok := funcs[funcName]
