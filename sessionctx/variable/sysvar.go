@@ -730,7 +730,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
-	{ScopeGlobal | ScopeSession, TiDBIsolationReadLabels, ""},
 	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, ""},
 }
 

@@ -25,7 +25,6 @@ import (
 
 	"github.com/klauspost/cpuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -444,9 +443,6 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
-	// isolationReadLabels is used to isolation read, tidb only read from the stores have a label in the labels.
-	isolationReadLabels []*metapb.StoreLabel
-
 	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	isolationReadEngines []kv.StoreType
 
@@ -621,11 +617,6 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 // GetSplitRegionTimeout gets split region timeout.
 func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
-}
-
-// GetIsolationReadLabels gets isolation read labels.
-func (s *SessionVars) GetIsolationReadLabels() []*metapb.StoreLabel {
-	return s.isolationReadLabels
 }
 
 // GetIsolationReadEngines gets isolation read engines.
@@ -973,18 +964,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
-	case TiDBIsolationReadLabels:
-		s.isolationReadLabels = make([]*metapb.StoreLabel, 0, 2)
-		if len(val) == 0 {
-			break
-		}
-		for _, label := range strings.Split(val, ",") {
-			labelPair := strings.Split(label, ":")
-			s.isolationReadLabels = append(s.isolationReadLabels, &metapb.StoreLabel{
-				Key:   labelPair[0],
-				Value: labelPair[1],
-			})
-		}
 	case TiDBIsolationReadEngines:
 		s.isolationReadEngines = make([]kv.StoreType, 0, 2)
 		if len(val) == 0 {

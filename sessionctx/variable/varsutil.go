@@ -625,17 +625,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBIsolationReadLabels:
-		if value == "" {
-			return "", nil
-		}
-		labels := strings.Split(value, ",")
-		for _, label := range labels {
-			if len(strings.Split(label, ":")) != 2 {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-		}
-		return value, nil
 	case TiDBIsolationReadEngines:
 		if value == "" {
 			return "", nil

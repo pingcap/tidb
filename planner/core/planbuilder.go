@@ -662,6 +662,27 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	return available, nil
 }
 
+func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) []*accessPath {
+	// TODO: filter paths with isolation read locations.
+	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
+	if len(isolationReadEngines) == 0 {
+		return paths
+	}
+	for i := len(paths)-1; i >= 0; i-- {
+		matchEngineType := false
+		for _, engine := range isolationReadEngines {
+			if engine == paths[i].storeType {
+				matchEngineType = true
+				break
+			}
+		}
+		if !matchEngineType {
+			paths = append(paths[:i], paths[i+1:]...)
+		}
+	}
+	return paths
+}
+
 func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
