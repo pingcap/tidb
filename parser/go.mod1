@@ -13,4 +13,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
 	github.com/sirupsen/logrus v1.3.0
 	golang.org/x/text v0.3.1-0.20180807135948-17ff2d5776d2
+	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 )
+
+go 1.13
