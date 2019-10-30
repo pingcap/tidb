@@ -335,7 +335,7 @@ const (
 	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
 
 	// TiDBIsolationReadLabels indicates the tidb only read from the stores having at least one label in IsolationReadLabels.
-	TiDBIsolationReadLabels  = "tidb_isolation_read_labels"
+	TiDBIsolationReadLabels = "tidb_isolation_read_labels"
 
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
