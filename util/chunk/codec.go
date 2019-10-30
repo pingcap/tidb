@@ -245,16 +245,19 @@ func (c *Decoder) RemainedRows() int {
 	return c.remainedRows
 }
 
-// ReuseIntermChk reuse Decoder.intermChk.
+// ReuseIntermChk swaps `Decoder.intermChk` with `chk` directly when `Decoder.intermChk.NumRows()` is no less
+// than `chk.requiredRows * factor` where `factor` is 0.8 now. This can avoid the overhead of appending the
+// data from `Decoder.intermChk` to `chk`. Moreover, the column.offsets needs to be further adjusted
+// according to column.offset[0].
 func (c *Decoder) ReuseIntermChk(chk *Chunk) {
-	for i := 0; i < c.intermChk.NumCols(); i++ {
-		c.intermChk.columns[i].length = c.remainedRows
+	for i, col := range c.intermChk.columns {
+		col.length = c.remainedRows
 		elemLen := getFixedLen(c.codec.colTypes[i])
 		if elemLen == varElemLen {
 			// For var-length types, we need to adjust the offsets before reuse.
-			if deltaOffset := c.intermChk.columns[i].offsets[0]; deltaOffset != 0 {
-				for j := 0; j < len(c.intermChk.columns[i].offsets); j++ {
-					c.intermChk.columns[i].offsets[j] -= deltaOffset
+			if deltaOffset := col.offsets[0]; deltaOffset != 0 {
+				for j := 0; j < len(col.offsets); j++ {
+					col.offsets[j] -= deltaOffset
 				}
 			}
 		}
