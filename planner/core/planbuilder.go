@@ -668,7 +668,7 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) []*accessPa
 	if len(isolationReadEngines) == 0 {
 		return paths
 	}
-	for i := len(paths)-1; i >= 0; i-- {
+	for i := len(paths) - 1; i >= 0; i-- {
 		matchEngineType := false
 		for _, engine := range isolationReadEngines {
 			if engine == paths[i].storeType {

@@ -335,6 +335,7 @@ const (
 	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
 
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
+	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
 )
 
