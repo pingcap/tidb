@@ -764,7 +764,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
-	if tableConds != nil && len(tableConds) > 0 {
+	if len(tableConds) > 0 {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
