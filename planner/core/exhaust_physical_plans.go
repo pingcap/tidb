@@ -761,7 +761,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, path.index, path.fullIdxCols, cop.tablePlan != nil)
+	is.initSchema(path.index, path.fullIdxCols, cop.tablePlan != nil)
 	rowSize := is.indexScanRowSize(path.index, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = rowCount * rowSize * sessVars.ScanFactor
