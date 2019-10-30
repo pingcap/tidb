@@ -19,11 +19,24 @@ import (
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinDatabaseSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	currentDB := b.ctx.GetSessionVars().CurrentDB
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if currentDB == "" {
+			result.AppendNull()
+		} else {
+			result.AppendString(currentDB)
+		}
+	}
+	return nil
 }
 
 func (b *builtinConnectionIDSig) vectorized() bool {
