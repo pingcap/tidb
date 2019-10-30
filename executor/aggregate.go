@@ -810,6 +810,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
 	remainGroup := false
+	var remainGroupKey string
 	e.groupRows = e.groupRows[:0]
 	for !e.executed {
 		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
@@ -827,9 +828,9 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 		numGroups := len(e.groupChecker.groupRowsIndex)
 		begin := 0
 		for k := 0; k < numGroups; k++ {
-			if k == 0 && remainGroup {
+			if k == 0 && remainGroup && e.groupChecker.groupRowsKey != nil {
 				var equal bool
-				// do something to comapre the remain group and the first group
+				equal = remainGroupKey == string(e.groupChecker.groupRowsKey[0])
 				if !equal {
 					err = e.appendResult2Chunk(chk)
 					if err != nil {
@@ -854,6 +855,9 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				}
 				e.groupRows = e.groupRows[:0]
 			} else {
+				if e.groupChecker.groupRowsKey != nil {
+					remainGroupKey = string(e.groupChecker.groupRowsKey[k])
+				}
 				remainGroup = true
 			}
 		}
@@ -925,6 +929,7 @@ type groupChecker struct {
 	StmtCtx        *stmtctx.StatementContext
 	GroupByItems   []expression.Expression
 	groupRowsIndex []int
+	groupRowsKey   [][]byte
 	groupKey       []*chunk.Column
 	isFixedType    []bool
 }
@@ -947,6 +952,7 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 	numRows := chk.NumRows()
 	numItems := len(e.GroupByItems)
 	e.groupRowsIndex = e.groupRowsIndex[:0]
+	e.groupRowsKey = e.groupRowsKey[:0]
 	if len(e.GroupByItems) == 0 {
 		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
 		return nil
@@ -995,6 +1001,15 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 				break
 			}
 		}
+		var groupKeyByte []byte
+		for k := 0; k < numItems; k++ {
+			if !e.isFixedType[k] {
+				groupKeyByte = append(groupKeyByte, e.groupKey[k].GetBytes(j-1)...)
+			} else {
+				groupKeyByte = append(groupKeyByte, e.groupKey[k].GetFixedTypeBytes(j-1)...)
+			}
+		}
+		e.groupRowsKey = append(e.groupRowsKey, groupKeyByte)
 		e.groupRowsIndex = append(e.groupRowsIndex, j)
 		i = j
 	}
