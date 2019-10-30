@@ -266,14 +266,10 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
-		if len(p.EqualConditions) > 0 {
-			joins = append(joins, p.getHashJoin(prop, 1, true))
-		}
+		joins = append(joins, p.getHashJoin(prop, 1, true))
 	case RightOuterJoin:
 		joins = append(joins, p.getHashJoin(prop, 0, false))
-		if len(p.EqualConditions) > 0 {
-			joins = append(joins, p.getHashJoin(prop, 0, true))
-		}
+		joins = append(joins, p.getHashJoin(prop, 0, true))
 	case InnerJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		joins = append(joins, p.getHashJoin(prop, 0, false))
