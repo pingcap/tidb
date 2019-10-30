@@ -61,15 +61,14 @@ type BindRecord struct {
 	Bindings []Binding
 }
 
-// FirstUsingBinding returns the first binding that has status 'using'.
-// TODO: Remove it when we support using all bindings to adjust the plan.
-func (br *BindRecord) FirstUsingBinding() *Binding {
+// HasUsingBinding checks if there are any using bindings in bind record.
+func (br *BindRecord) HasUsingBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.Status == Using {
-			return &binding
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 func (br *BindRecord) prepareHintsForUsing(sctx sessionctx.Context, is infoschema.InfoSchema) error {
