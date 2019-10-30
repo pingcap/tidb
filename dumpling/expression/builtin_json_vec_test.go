@@ -30,8 +30,12 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONExtract:      {},
 	ast.JSONLength:       {},
 	ast.JSONType:         {{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}}},
-	ast.JSONArray:        {},
-	ast.JSONArrayInsert:  {},
+	ast.JSONArray: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson}},
+	},
+	ast.JSONArrayInsert: {},
 	ast.JSONContains: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETString}, geners: []dataGenerator{nil, nil, &constStrGener{"$.abc"}}},
