@@ -72,7 +72,7 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 	for i, sql := range input {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil)
-		p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		logic, ok := p.(plannercore.LogicalPlan)
 		c.Assert(ok, IsTrue)
