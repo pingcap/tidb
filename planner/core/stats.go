@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
@@ -148,7 +149,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
+		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
 	}
 	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
@@ -198,11 +199,22 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo) (_ *property.
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(nil, expr, false)
+		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
 	}
 	ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
-	ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
+	if ts.Handle != nil {
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	} else {
+		isUnsigned := false
+		if ts.Source.tableInfo.PKIsHandle {
+			if pkColInfo := ts.Source.tableInfo.GetPkColInfo(); pkColInfo != nil {
+				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			}
+		}
+		ts.Ranges = ranger.FullIntRange(isUnsigned)
+	}
 	if err != nil {
 		return nil, err
 	}
