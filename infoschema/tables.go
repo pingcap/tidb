@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -657,6 +658,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"LEASE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"BINLOG_ENABLED", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1822,6 +1824,7 @@ func dataForServersInfo() ([][]types.Datum, error) {
 			info.Lease,           // LEASE
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
+			strconv.FormatBool(info.BinlogEnabled),   // BINLOG_ENABLED
 		)
 		rows = append(rows, row)
 	}
