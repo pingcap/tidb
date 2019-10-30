@@ -376,12 +376,12 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dbName:       v.DBName,
-		tblInfo:      v.TblInfo,
-		indices:      v.Indices,
+		table:        v.Table,
+		indexInfos:   v.IndexInfos,
 		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
-		retCh:        make(chan error, len(v.Indices)),
+		retCh:        make(chan error, len(readerExecs)),
 	}
 	return e
 }
@@ -876,8 +876,8 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
-			for i, col := range x.schema.Columns {
-				if col.ColName.L == ic.Name.L {
+			for i, col := range x.columns {
+				if col.Name.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
 				}
@@ -891,8 +891,8 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
-			for i, col := range x.schema.Columns {
-				if col.ColName.L == ic.Name.L {
+			for i, col := range x.columns {
+				if col.Name.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
 				}
@@ -1888,7 +1888,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
-	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
