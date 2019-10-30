@@ -24,11 +24,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
 	tests := []struct {
 		exprStr string
@@ -72,18 +70,16 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		// since converting "aaaa" to an int will cause DataTruncate error.
 		{"'aaaa'=a", "eq(cast(aaaa), cast(Column#1))"},
 	}
-	cols := ColumnInfos2ColumnsWithDBName(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
-		f, err := ParseSimpleExprsWithSchema(s.ctx, t.exprStr, schema)
+		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
 		c.Assert(err, IsNil)
 		c.Assert(f[0].String(), Equals, t.result)
 	}
 }
 
 func (s *testEvaluatorSuite) TestCompare(c *C) {
-	defer testleak.AfterTest(c)()
-
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
 	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
@@ -167,8 +163,6 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected interface{}
@@ -212,7 +206,6 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
-	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -255,8 +248,6 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true

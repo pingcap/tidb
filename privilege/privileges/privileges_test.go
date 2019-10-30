@@ -264,6 +264,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
 
+	// All privileges with grant option
+	mustExec(c, se, `GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost' WITH GRANT OPTION`)
+
+	// Revoke grant option
+	mustExec(c, se, `REVOKE GRANT OPTION ON *.* FROM 'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+
 	// Add db scope privileges
 	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
@@ -492,6 +506,14 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "CREATE USER 'usesuper'")
 	mustExec(c, se, "CREATE USER 'usenobody'")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	//without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
+	c.Assert(e, NotNil)
+	//with grant option
+	se = newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "use mysql")
 	// low privileged user
@@ -538,7 +560,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tcd1, tcd2`)
-	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2 WITH GRANT OPTION`)
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -581,7 +603,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// high privileged user
 	mustExec(c, se, "CREATE USER 'asuper'")
 	mustExec(c, se, "CREATE USER 'anobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper' WITH GRANT OPTION")
 	mustExec(c, se, "CREATE DATABASE atest")
 	mustExec(c, se, "use atest")
 	mustExec(c, se, "CREATE TABLE t1 (a int)")
@@ -621,6 +643,12 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -675,18 +703,19 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustExec("create user superadmin")
 	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
 
 	var buf bytes.Buffer
 	var res bytes.Buffer
 	buf.WriteString("select ")
 	i := 0
-	for _, priv := range mysql.Priv2UserCol {
+	for _, priv := range mysql.AllGlobalPrivs {
 		if i != 0 {
 			buf.WriteString(", ")
 			res.WriteString(" ")
 		}
-		buf.WriteString(priv)
+		buf.WriteString(mysql.Priv2UserCol[priv])
 		res.WriteString("Y")
 		i++
 	}

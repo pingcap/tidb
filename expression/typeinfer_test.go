@@ -27,11 +27,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
-var _ = Suite(&testInferTypeSuite{})
+var _ = SerialSuites(&testInferTypeSuite{})
 
 type typeInferTestCase struct {
 	sql     string
@@ -47,12 +46,10 @@ type testInferTypeSuite struct {
 }
 
 func (s *testInferTypeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 }
 
 func (s *testInferTypeSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
 }
 
 func (s *testInferTypeSuite) TestInferType(c *C) {
@@ -141,7 +138,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
