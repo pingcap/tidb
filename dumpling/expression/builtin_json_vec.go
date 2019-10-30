@@ -349,11 +349,86 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinJSONLengthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nr := input.NumRows()
+
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
+	if len(b.args) == 2 {
+		pathBuf, err := b.bufAllocator.get(types.ETString, nr)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(pathBuf)
+		if err := b.args[1].VecEvalString(b.ctx, input, pathBuf); err != nil {
+			return err
+		}
+
+		result.MergeNulls(jsonBuf)
+		for i := 0; i < nr; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			jsonItem := jsonBuf.GetJSON(i)
+
+			if jsonItem.TypeCode != json.TypeCodeObject && jsonItem.TypeCode != json.TypeCodeArray {
+				resI64s[i] = 1
+				continue
+			}
+
+			if pathBuf.IsNull(i) {
+				result.SetNull(i, true)
+				continue
+			}
+
+			pathExpr, err := json.ParseJSONPathExpr(pathBuf.GetString(i))
+			if err != nil {
+				return err
+			}
+			if pathExpr.ContainsAnyAsterisk() {
+				return json.ErrInvalidJSONPathWildcard
+			}
+
+			obj, exists := jsonItem.Extract([]json.PathExpression{pathExpr})
+			if !exists {
+				result.SetNull(i, true)
+				continue
+			}
+			if obj.TypeCode != json.TypeCodeObject && obj.TypeCode != json.TypeCodeArray {
+				resI64s[i] = 1
+				continue
+			}
+			resI64s[i] = int64(obj.GetElemCount())
+		}
+	} else {
+		result.MergeNulls(jsonBuf)
+		for i := 0; i < nr; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+
+			jsonItem := jsonBuf.GetJSON(i)
+			if jsonItem.TypeCode != json.TypeCodeObject && jsonItem.TypeCode != json.TypeCodeArray {
+				resI64s[i] = 1
+				continue
+			}
+			resI64s[i] = int64(jsonItem.GetElemCount())
+		}
+	}
+
+	return nil
 }
 
 func (b *builtinJSONTypeSig) vectorized() bool {
