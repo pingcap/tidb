@@ -254,6 +254,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if err != nil {
 			return false, nil, err
 		}
+		if diff.Type == model.ActionUpdateTiFlashReplicaStatus || diff.Type == model.ActionSetTiFlashReplica {
+			continue
+		}
 		tblIDs = append(tblIDs, ids...)
 	}
 	builder.Build()
