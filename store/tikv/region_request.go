@@ -169,13 +169,15 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	if atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit) != 0 {
+	if atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit) > 0 {
 		if err := s.getStoreToken(ctx.Store); err != nil {
-			logutil.BgLogger().Warn("get store limit token failed", zap.Error(err))
+			logutil.BgLogger().Warn("get store token failed", zap.Error(err))
 			return nil, false, errors.Trace(err)
 		}
 		resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
-		s.releaseStoreToken(ctx.Store)
+		if err := s.releaseStoreToken(ctx.Store); err != nil {
+			logutil.BgLogger().Warn("release store token failed", zap.Error(err))
+		}
 	} else {
 		resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	}
@@ -197,16 +199,20 @@ func (s *RegionRequestSender) getStoreToken(store *Store) error {
 				return nil
 			}
 		} else {
-			return errors.New("store token is up to the limit")
+			return ErrTokenLimit.GenWithStackByArgs("can't get store token, pool is up to the limit")
 		}
 	}
 }
 
-func (s *RegionRequestSender) releaseStoreToken(store *Store) {
+func (s *RegionRequestSender) releaseStoreToken(store *Store) error {
 	for {
 		limit := atomic.LoadUint32(&store.storeLimit)
-		if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit-1) {
-			return
+		if limit != 0 {
+			if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit-1) {
+				return nil
+			}
+		} else {
+			return ErrTokenLimit.GenWithStackByArgs("can't release store token, pool is full")
 		}
 	}
 }
