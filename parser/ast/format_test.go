@@ -39,9 +39,9 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`x''`, "x''"},
 		{`x'0035'`, "x'0035'"}, // Shouldn't trim leading zero.
 		{`b'00111111'`, `b'111111'`},
-		{`time'10:10:10.123'`, `timeliteral("10:10:10.123")`},
-		{`timestamp'1999-01-01 10:0:0.123'`, `timestampliteral("1999-01-01 10:0:0.123")`},
-		{`date '1700-01-01'`, `dateliteral("1700-01-01")`},
+		{`time'10:10:10.123'`, ast.TimeLiteral + `("10:10:10.123")`},
+		{`timestamp'1999-01-01 10:0:0.123'`, ast.TimestampLiteral + `("1999-01-01 10:0:0.123")`},
+		{`date '1700-01-01'`, ast.DateLiteral + `("1700-01-01")`},
 
 		// Expressions.
 		{`f between 30 and 50`, "`f` BETWEEN 30 AND 50"},

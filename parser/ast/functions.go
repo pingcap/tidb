@@ -120,7 +120,7 @@ const (
 	CurrentTimestamp = "current_timestamp"
 	Curtime          = "curtime"
 	Date             = "date"
-	DateLiteral      = "dateliteral"
+	DateLiteral      = "'tidb`.(dateliteral"
 	DateAdd          = "date_add"
 	DateFormat       = "date_format"
 	DateSub          = "date_sub"
@@ -154,12 +154,12 @@ const (
 	SubTime          = "subtime"
 	Sysdate          = "sysdate"
 	Time             = "time"
-	TimeLiteral      = "timeliteral"
+	TimeLiteral      = "'tidb`.(timeliteral"
 	TimeFormat       = "time_format"
 	TimeToSec        = "time_to_sec"
 	TimeDiff         = "timediff"
 	Timestamp        = "timestamp"
-	TimestampLiteral = "timestampliteral"
+	TimestampLiteral = "'tidb`.(timestampliteral"
 	TimestampAdd     = "timestampadd"
 	TimestampDiff    = "timestampdiff"
 	ToDays           = "to_days"
@@ -338,6 +338,23 @@ type FuncCallExpr struct {
 
 // Restore implements Node interface.
 func (n *FuncCallExpr) Restore(ctx *RestoreCtx) error {
+	var specialLiteral string
+	switch n.FnName.L {
+	case DateLiteral:
+		specialLiteral = "DATE "
+	case TimeLiteral:
+		specialLiteral = "TIME "
+	case TimestampLiteral:
+		specialLiteral = "TIMESTAMP "
+	}
+	if specialLiteral != "" {
+		ctx.WritePlain(specialLiteral)
+		if err := n.Args[0].Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
+		}
+		return nil
+	}
+
 	ctx.WriteKeyWord(n.FnName.O)
 	ctx.WritePlain("(")
 	switch n.FnName.L {

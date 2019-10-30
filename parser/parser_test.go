@@ -1082,13 +1082,13 @@ func (s *testParserSuite) TestExpression(c *C) {
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true, "SELECT 1<=>0,1<=>NULL,1=NULL"},
 		// for date literal
-		{"select date'1989-09-10'", true, "SELECT DATELITERAL('1989-09-10')"},
+		{"select date'1989-09-10'", true, "SELECT DATE '1989-09-10'"},
 		{"select date 19890910", false, ""},
 		// for time literal
-		{"select time '00:00:00.111'", true, "SELECT TIMELITERAL('00:00:00.111')"},
+		{"select time '00:00:00.111'", true, "SELECT TIME '00:00:00.111'"},
 		{"select time 19890910", false, ""},
 		// for timestamp literal
-		{"select timestamp '1989-09-10 11:11:11'", true, "SELECT TIMESTAMPLITERAL('1989-09-10 11:11:11')"},
+		{"select timestamp '1989-09-10 11:11:11'", true, "SELECT TIMESTAMP '1989-09-10 11:11:11'"},
 		{"select timestamp 19890910", false, ""},
 
 		// The ODBC syntax for time/date/timestamp literal.
