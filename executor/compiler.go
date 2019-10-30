@@ -59,7 +59,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
-		OutputNames:   finalPlan.OutputNames(),
+		OutputNames:   names,
 	}, nil
 }
 

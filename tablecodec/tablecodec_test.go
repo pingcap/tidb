@@ -390,7 +390,7 @@ func (s *testTableCodecSuite) TestPrefix(c *C) {
 	prefixKey := GenTableIndexPrefix(tableID)
 	c.Assert(DecodeTableID(prefixKey), Equals, tableID)
 
-	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, recordRowKeyLen)
+	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, RecordRowKeyLen)
 	c.Assert(TruncateToRowKeyLen(key), HasLen, len(key))
 }
 
@@ -475,6 +475,14 @@ func (s *testTableCodecSuite) TestRange(c *C) {
 	c.Assert([]byte(s1), Less, []byte(e1))
 	c.Assert([]byte(e1), Less, []byte(s2))
 	c.Assert([]byte(s2), Less, []byte(e2))
+}
+
+func (s *testTableCodecSuite) TestDecodeAutoIDMeta(c *C) {
+	keyBytes := []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe}
+	key, field, err := DecodeMetaKey(kv.Key(keyBytes))
+	c.Assert(err, IsNil)
+	c.Assert(string(key), Equals, "DB:56")
+	c.Assert(string(field), Equals, "TID:108")
 }
 
 func BenchmarkHasTablePrefix(b *testing.B) {
