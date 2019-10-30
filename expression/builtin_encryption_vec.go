@@ -18,14 +18,17 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/binary"
 	"fmt"
 	"hash"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -248,11 +251,86 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinCompressSig) vectorized() bool {
-	return false
+	return true
 }
 
+var (
+	defaultByteSliceSize = 1024
+	bytePool             = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, defaultByteSliceSize)
+		},
+	}
+)
+
+func allocByteSlice(n int) []byte {
+	if n > defaultByteSliceSize {
+		return make([]byte, n)
+	}
+	return bytePool.Get().([]byte)
+}
+
+func deallocateByteSlice(b []byte) {
+	if cap(b) <= defaultByteSliceSize {
+		bytePool.Put(b)
+	}
+}
+
+// evalString evals COMPRESS(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+
+		// According to doc: Empty strings are stored as empty strings.
+		if len(str) == 0 {
+			result.AppendString("")
+		}
+
+		compressed, err := deflate(hack.Slice(str))
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
+		resultLength := 4 + len(compressed)
+
+		// append "." if ends with space
+		shouldAppendSuffix := compressed[len(compressed)-1] == 32
+		if shouldAppendSuffix {
+			resultLength++
+		}
+
+		buffer := allocByteSlice(resultLength)
+		defer deallocateByteSlice(buffer)
+		buffer = buffer[:resultLength]
+
+		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		copy(buffer[4:], compressed)
+
+		if shouldAppendSuffix {
+			buffer[len(buffer)-1] = '.'
+		}
+
+		result.AppendBytes(buffer)
+	}
+	return nil
 }
 
 func (b *builtinAesEncryptSig) vectorized() bool {
