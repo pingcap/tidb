@@ -223,6 +223,12 @@ github.com/tiancaiamao/parser v0.0.0-20191029081312-e84d791e3374 h1:uvdgeopLRY6r
 github.com/tiancaiamao/parser v0.0.0-20191029081312-e84d791e3374/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tiancaiamao/parser v0.0.0-20191029082203-a119d4b1a289 h1:VkIaNMd9Fj0QXFg6fZta/8DUhDphwDlOVkmqtyu0zHc=
 github.com/tiancaiamao/parser v0.0.0-20191029082203-a119d4b1a289/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
+github.com/tiancaiamao/parser v0.0.0-20191029120031-ecd54fa8b6aa h1:1XvOmMG5IpcR73iFB5D55RZCJmjRcHv+8lTkXMTiQHs=
+github.com/tiancaiamao/parser v0.0.0-20191029120031-ecd54fa8b6aa/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
+github.com/tiancaiamao/parser v0.0.0-20191030053257-0cc2845c2f02 h1:2wuIidokva+gMjadZVSQHJJuk9qrpUb8x3QlsihQfss=
+github.com/tiancaiamao/parser v0.0.0-20191030053257-0cc2845c2f02/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
+github.com/tiancaiamao/parser v0.0.0-20191030060849-c02bf3f82d26 h1:OBoiDcItseN8EeBkZTHrUO40nh1Sli65purgJIpHWhY=
+github.com/tiancaiamao/parser v0.0.0-20191030060849-c02bf3f82d26/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6 h1:lYIiVDtZnyTWlNwiAxLj0bbpTcx1BWCFhXjfsvmPdNc=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
