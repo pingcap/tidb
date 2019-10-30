@@ -274,7 +274,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-		row := pi.ToRow(e.Full)
+		row := pi.ToRowForShow(e.Full)
 		e.appendRow(row)
 	}
 	return nil

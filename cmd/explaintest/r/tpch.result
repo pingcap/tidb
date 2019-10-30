@@ -201,7 +201,7 @@ Projection_37	100.00	root	tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.na
     │ └─TableReader_74	155496.00	root	data:Selection_73
     │   └─Selection_73	155496.00	cop	eq(tpch.part.p_size, 30), like(tpch.part.p_type, "%STEEL", 92)
     │     └─TableScan_72	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
-    └─Selection_75	6524008.35	root	not(isnull(min(ps_supplycost)))
+    └─Selection_75	6524008.35	root	not(isnull(19_col_0))
       └─HashAgg_78	8155010.44	root	group by:tpch.partsupp.ps_partkey, funcs:min(tpch.partsupp.ps_supplycost), firstrow(tpch.partsupp.ps_partkey)
         └─HashRightJoin_82	8155010.44	root	inner join, inner:HashRightJoin_84, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
           ├─HashRightJoin_84	100000.00	root	inner join, inner:HashRightJoin_90, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
@@ -1223,7 +1223,7 @@ id	count	task	operator info
 Projection_25	1.00	root	tpch.supplier.s_name, 17_col_0
 └─TopN_28	1.00	root	17_col_0:desc, tpch.supplier.s_name:asc, offset:0, count:100
   └─HashAgg_34	1.00	root	group by:tpch.supplier.s_name, funcs:count(1), firstrow(tpch.supplier.s_name)
-    └─IndexJoin_40	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:tpch.l1.l_orderkey, inner key:tpch.l3.l_orderkey, other cond:ne(tpch.l3.l_suppkey, tpch.l1.l_suppkey), ne(tpch.l3.l_suppkey, tpch.supplier.s_suppkey)
+    └─IndexJoin_40	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:tpch.l1.l_orderkey, inner key:tpch.l3.l_orderkey, other cond:ne(tpch.l3.l_suppkey, tpch.l1.l_suppkey)
       ├─IndexJoin_56	9786202.08	root	semi join, inner:IndexLookUp_55, outer key:tpch.l1.l_orderkey, inner key:tpch.l2.l_orderkey, other cond:ne(tpch.l2.l_suppkey, tpch.l1.l_suppkey), ne(tpch.l2.l_suppkey, tpch.supplier.s_suppkey)
       │ ├─IndexJoin_62	12232752.60	root	inner join, inner:TableReader_61, outer key:tpch.l1.l_orderkey, inner key:tpch.orders.o_orderkey
       │ │ ├─HashRightJoin_66	12232752.60	root	inner join, inner:HashRightJoin_72, equal:[eq(tpch.supplier.s_suppkey, tpch.l1.l_suppkey)]
