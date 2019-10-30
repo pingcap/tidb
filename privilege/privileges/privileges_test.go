@@ -521,20 +521,20 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 
 func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
 	se := newSession(c, s.store, s.dbName)
-	mustExec(c, se, "CREATE USER 'usesuper'")
-	mustExec(c, se, "CREATE USER 'usenobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'usenobody'")
+	mustExec(c, se, "CREATE USER 'hasgrant'")
+	mustExec(c, se, "CREATE USER 'withoutgrant'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant'")
+	mustExec(c, se, "GRANT ALL ON mysql.* TO 'withoutgrant'")
 	// Without grant option
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'usenobody'")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
 	c.Assert(e, NotNil)
 	// With grant option
 	se = newSession(c, s.store, s.dbName)
-	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
-	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'usenobody'")
-	mustExec(c, se, "REVOKE ALL ON *.* FROM usenobody")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
