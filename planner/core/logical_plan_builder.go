@@ -2438,7 +2438,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths := b.filterPathByIsolationRead(possiblePaths)
+	possiblePaths = b.filterPathByIsolationRead(possiblePaths)
 
 	var columns []*table.Column
 	if b.inUpdateStmt {
