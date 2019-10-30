@@ -22,23 +22,7 @@ import (
 
 	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
-)
-
-const (
-	// TreeBody indicates the current operator sub-tree is not finished, still
-	// has child operators to be attached on.
-	TreeBody = '│'
-	// TreeMiddleNode indicates this operator is not the last child of the
-	// current sub-tree rooted by its parent.
-	TreeMiddleNode = '├'
-	// TreeLastNode indicates this operator is the last child of the current
-	// sub-tree rooted by its parent.
-	TreeLastNode = '└'
-	// TreeGap is used to represent the gap between the branches of the tree.
-	TreeGap = ' '
-	// TreeNodeIdentifier is used to replace the TreeGap once we need to attach
-	// a node to a sub-tree.
-	TreeNodeIdentifier = '─'
+	"github.com/pingcap/tidb/util/texttree"
 )
 
 const (
@@ -147,8 +131,8 @@ func (pd *planDecoder) initPlanTreeIndents() {
 		for i := 0; i < len(indent)-2; i++ {
 			indent[i] = ' '
 		}
-		indent[len(indent)-2] = TreeLastNode
-		indent[len(indent)-1] = TreeNodeIdentifier
+		indent[len(indent)-2] = texttree.TreeLastNode
+		indent[len(indent)-1] = texttree.TreeNodeIdentifier
 	}
 }
 
@@ -167,11 +151,11 @@ func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 	}
 	idx := depth*2 - 2
 	for i := childIndex - 1; i > parentIndex; i-- {
-		if pd.indents[i][idx] == TreeLastNode {
-			pd.indents[i][idx] = TreeMiddleNode
+		if pd.indents[i][idx] == texttree.TreeLastNode {
+			pd.indents[i][idx] = texttree.TreeMiddleNode
 			break
 		}
-		pd.indents[i][idx] = TreeBody
+		pd.indents[i][idx] = texttree.TreeBody
 	}
 }
 
