@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/timeutil"
 )
