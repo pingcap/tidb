@@ -1420,7 +1420,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 }
 
 func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
-	// To use GRANT, you must have the GRANT OPTION privilege,
+	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
