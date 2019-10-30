@@ -2232,6 +2232,13 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	c.Assert(last, Equals, "bigint")
 	tk.MustExec(`drop table tb5;`)
 
+	tk.MustExec(`create table tb5(a double(64));`)
+	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
+	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
+	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
+	result.Check(testkit.Rows("9223372036854775807", "9223372036854775807"))
+	tk.MustExec(`drop table tb5`)
+
 	// test builtinCastIntAsDecimalSig
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
 	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
@@ -4130,12 +4137,12 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
