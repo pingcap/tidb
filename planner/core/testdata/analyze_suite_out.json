@@ -158,13 +158,13 @@
         ],
         "Plan": [
           "Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
-          "└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
-          "  ├─IndexReader_15 0.00 root index:Selection_14",
-          "  │ └─Selection_14 0.00 cop[tikv] isnull(Column#5), not(isnull(Column#5))",
-          "  │   └─IndexScan_13 10000.00 cop[tikv] table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-          "  └─IndexReader_21 9990.00 root index:Selection_20",
-          "    └─Selection_20 9990.00 cop[tikv] not(isnull(Column#2))",
-          "      └─IndexScan_19 10000.00 cop[tikv] table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo"
+          "└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(Column#5, Column#2)]",
+          "  ├─TableReader_12 0.00 root data:Selection_11",
+          "  │ └─Selection_11 0.00 cop[tikv] isnull(Column#5), not(isnull(Column#5))",
+          "  │   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_18 9990.00 root data:Selection_17",
+          "    └─Selection_17 9990.00 cop[tikv] not(isnull(Column#2))",
+          "      └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]

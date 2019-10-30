@@ -32,13 +32,19 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},
-	ast.Minute:      {},
-	ast.Second:      {},
+	ast.Minute: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.Second: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
 	ast.MicroSecond: {},
 	ast.Now:         {},
-	ast.DayOfWeek:   {},
-	ast.DayOfYear:   {},
-	ast.Day:         {},
+	ast.DayOfWeek: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.DayOfYear: {},
+	ast.Day:       {},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.

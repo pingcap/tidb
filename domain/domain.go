@@ -421,7 +421,7 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
-	ticker := time.NewTicker(time.Second * time.Duration(infosync.InfoSessionTTL) / 2)
+	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -850,7 +850,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
 					continue
 				}
-				do.bindHandle.CaptureBaselines(do.InfoSchema())
+				do.bindHandle.CaptureBaselines()
 			}
 		}
 	}()
