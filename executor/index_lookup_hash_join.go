@@ -103,7 +103,7 @@ type indexHashJoinTask struct {
 	// matchedInnerRowPtrs is only valid when the outer order needs to be
 	// promised. Otherwise, it will be nil.
 	// len(matchedInnerRowPtrs) equals to
-	// len(lookUpJoinTask.outerResult.NumChunks()), and the elements of every
+	// lookUpJoinTask.outerResult.NumChunks(), and the elements of every
 	// matchedInnerRowPtrs[chkIdx][rowIdx] indicates the matched inner row ptrs
 	// of the corresponding outer row.
 	matchedInnerRowPtrs [][][]chunk.RowPtr
