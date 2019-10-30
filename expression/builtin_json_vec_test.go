@@ -33,6 +33,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONArray: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson}},
 	},
 	ast.JSONArrayInsert: {},
 	ast.JSONContains: {
