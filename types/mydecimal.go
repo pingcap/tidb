@@ -260,21 +260,6 @@ func (d *MyDecimal) SetPrecision(precision int8) {
 	d.resultFrac = precision
 }
 
-// Copy copies a new *MyDecimal from itself.
-func (d *MyDecimal) Copy() *MyDecimal {
-	if d == nil {
-		return nil
-	}
-	dst := &MyDecimal{
-		digitsInt:  d.digitsInt,
-		digitsFrac: d.digitsFrac,
-		resultFrac: d.resultFrac,
-		negative:   d.negative,
-	}
-	copy(dst.wordBuf[:], d.wordBuf[:])
-	return dst
-}
-
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d

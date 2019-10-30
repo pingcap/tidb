@@ -473,7 +473,7 @@ func vectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext,
 			d64s[i].SetPrecision(0)
 		}
 	}
-	return codec.VectorizedEncodeValue(sc, groupKey, buf, tp)
+	return codec.VectorizedEncodeValue(sc, groupKey, buf, eType)
 }
 
 func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
