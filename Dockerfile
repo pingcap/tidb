@@ -1,5 +1,5 @@
 # Builder image
-FROM golang:1.12-alpine as builder
+FROM golang:1.13-alpine as builder
 
 RUN apk add --no-cache \
     wget \
