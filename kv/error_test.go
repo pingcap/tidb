@@ -34,4 +34,3 @@ func (s testErrorSuite) TestError(c *C) {
 	c.Assert(ErrWriteConflict.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
 	c.Assert(ErrWriteConflictInTiDB.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
 }
-
