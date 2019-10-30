@@ -16,6 +16,7 @@ package kv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
 type testErrorSuite struct{}
@@ -23,14 +24,19 @@ type testErrorSuite struct{}
 var _ = Suite(testErrorSuite{})
 
 func (s testErrorSuite) TestError(c *C) {
-	c.Assert(ErrNotExist.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrTxnRetryable.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrCannotSetNilValue.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrInvalidTxn.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrTxnTooLarge.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrEntryTooLarge.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrKeyExists.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrNotImplemented.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrWriteConflict.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
-	c.Assert(ErrWriteConflictInTiDB.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
+	kvErrs := []*terror.Error{
+		ErrNotExist,
+		ErrTxnRetryable,
+		ErrCannotSetNilValue,
+		ErrInvalidTxn,
+		ErrTxnTooLarge,
+		ErrEntryTooLarge,
+		ErrKeyExists,
+		ErrNotImplemented,
+		ErrWriteConflict,
+		ErrWriteConflictInTiDB,
+	}
+	for _, err := range kvErrs {
+		c.Assert(err.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
+	}
 }
