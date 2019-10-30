@@ -85,7 +85,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
 	s.lease = 100 * time.Millisecond
-	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
