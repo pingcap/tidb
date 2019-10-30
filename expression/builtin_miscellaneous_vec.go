@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"net"
@@ -249,11 +250,36 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			ipAddress := []byte(buf.GetString(i))
+			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
+				//Not an IPv6 address, return false
+				i64s[i] = 0
+			} else {
+				i64s[i] = 1
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstDecimalSig) vectorized() bool {
