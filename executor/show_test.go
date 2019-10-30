@@ -649,6 +649,47 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
+func (s *testSuite2) TestShowCreateUser(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Create a new user.
+	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
+	tk.MustQuery("show create user 'test_show_create_user'@'%'").
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+
+	tk.MustExec(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED BY 'test';`)
+	tk.MustQuery("show create user 'test_show_create_user'@'localhost';").
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+
+	// Case: the user exists but the host portion doesn't match
+	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
+	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'test_show_create_user'@'asdf'").Error())
+
+	// Case: a user that doesn't exist
+	err = tk.QueryToErr("show create user 'aaa'@'localhost';")
+	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error())
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
+	rows := tk.MustQuery("show create user current_user")
+	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	rows = tk.MustQuery("show create user current_user()")
+	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	tk.MustExec("create user 'check_priv'")
+
+	// "show create user" for other user requires the SELECT privilege on mysql database.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use mysql")
+	succ := tk1.Se.Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil)
+	c.Assert(succ, IsTrue)
+	err = tk1.QueryToErr("show create user 'root'@'%'")
+	c.Assert(err, NotNil)
+
+	// "show create user" for current user doesn't check privileges.
+	rows = tk1.MustQuery("show create user current_user")
+	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+}
+
 func (s *testSuite) TestCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
