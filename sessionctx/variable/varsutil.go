@@ -16,7 +16,6 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"math"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
