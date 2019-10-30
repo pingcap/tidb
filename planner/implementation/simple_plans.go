@@ -96,3 +96,21 @@ func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo
 func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
 	return &TiDBHashAggImpl{baseImpl{plan: agg}}
 }
+
+// TiKVHashAggImpl is the implementation of PhysicalHashAgg in TiKV layer.
+type TiKVHashAggImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false)
+	agg.cost = selfCost + children[0].GetCost()
+	return agg.cost
+}
+
+// NewTiDBHashAggImpl creates a new TiDBHashAggImpl.
+func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
+	return &TiKVHashAggImpl{baseImpl{plan: agg}}
+}

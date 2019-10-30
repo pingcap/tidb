@@ -268,6 +268,16 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
+// CopyAggHints copies the aggHints from another LogicalAggregation.
+func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
+	// TODO: Copy the hint may make the un-applicable hint throw the
+	// same warning message more than once. We'd better add a flag for
+	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
+	// partialAgg (in cascades planner) should share the same hint, instead
+	// of a copy.
+	la.aggHints = agg.aggHints
+}
+
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range la.GroupByItems {
