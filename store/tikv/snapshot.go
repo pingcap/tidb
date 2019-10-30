@@ -291,6 +291,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
 		panic("cache miss")
 	})
+
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,

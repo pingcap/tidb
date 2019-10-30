@@ -192,8 +192,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 func (s *RegionRequestSender) getStoreToken(store *Store) error {
 	for {
 		limit := atomic.LoadUint32(&store.storeLimit)
-		if limit > 0 {
-			if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit-1) {
+		if limit < atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit) {
+			if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit+1) {
 				return nil
 			}
 		} else {
@@ -203,7 +203,12 @@ func (s *RegionRequestSender) getStoreToken(store *Store) error {
 }
 
 func (s *RegionRequestSender) releaseStoreToken(store *Store) {
-	atomic.AddUint32(&store.storeLimit, 1)
+	for {
+		limit := atomic.LoadUint32(&store.storeLimit)
+		if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit-1) {
+			return
+		}
+	}
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
