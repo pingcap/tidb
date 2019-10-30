@@ -16,6 +16,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"math"
 	"strconv"
 	"strings"
@@ -626,9 +627,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBIsolationReadEngines:
-		if value == "" {
-			return "", nil
-		}
 		engines := strings.Split(value, ",")
 		var formatVal string
 		for i, engine := range engines {
@@ -636,10 +634,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 				formatVal += ","
 			}
 			switch {
-			case strings.EqualFold(engine, "TiKV"):
-				formatVal += "TiKV"
-			case strings.EqualFold(engine, "TiFlash"):
-				formatVal += "TiFlash"
+			case strings.EqualFold(engine, kv.TiKV.Name()):
+				formatVal += kv.TiKV.Name()
+			case strings.EqualFold(engine, kv.TiFlash.Name()):
+				formatVal += kv.TiFlash.Name()
 			default:
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}

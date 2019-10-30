@@ -665,18 +665,8 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) []*accessPath {
 	// TODO: filter paths with isolation read locations.
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
-	if len(isolationReadEngines) == 0 {
-		return paths
-	}
 	for i := len(paths) - 1; i >= 0; i-- {
-		matchEngineType := false
-		for _, engine := range isolationReadEngines {
-			if engine == paths[i].storeType {
-				matchEngineType = true
-				break
-			}
-		}
-		if !matchEngineType {
+		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}

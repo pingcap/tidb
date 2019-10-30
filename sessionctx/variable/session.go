@@ -444,7 +444,7 @@ type SessionVars struct {
 	replicaRead kv.ReplicaReadType
 
 	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
-	isolationReadEngines []kv.StoreType
+	isolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
 }
@@ -523,6 +523,7 @@ func NewSessionVars() *SessionVars {
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -620,7 +621,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 }
 
 // GetIsolationReadEngines gets isolation read engines.
-func (s *SessionVars) GetIsolationReadEngines() []kv.StoreType {
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
 	return s.isolationReadEngines
 }
 
@@ -965,16 +966,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
-		s.isolationReadEngines = make([]kv.StoreType, 0, 2)
-		if len(val) == 0 {
-			break
-		}
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
-			case "TiFlash":
-				s.isolationReadEngines = append(s.isolationReadEngines, kv.TiFlash)
-			case "TiKV":
-				s.isolationReadEngines = append(s.isolationReadEngines, kv.TiKV)
+			case kv.TiKV.Name():
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
+			case kv.TiFlash.Name():
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
 			}
 		}
 	}
