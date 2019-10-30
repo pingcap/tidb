@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -50,18 +49,23 @@ func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
+//func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
+//	s.optimizer.ResetTransformationRules(defaultTransformationMap)
+//
+//}
+
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
-		memo.OperandSelection: {
-			rulePushSelDownTableScan,
-			rulePushSelDownTableGather,
-			rulePushSelDownSort,
-			rulePushSelDownProjection,
-		},
-		memo.OperandDataSource: {
-			ruleEnumeratePaths,
-		},
-	})
+	//s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+	//	memo.OperandSelection: {
+	//		rulePushSelDownTableScan,
+	//		rulePushSelDownTableGather,
+	//		rulePushSelDownSort,
+	//		rulePushSelDownProjection,
+	//	},
+	//	memo.OperandDataSource: {
+	//		ruleEnumeratePaths,
+	//	},
+	//})
 	defer func() {
 		s.optimizer.ResetTransformationRules(defaultTransformationMap)
 	}()

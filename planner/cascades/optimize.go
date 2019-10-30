@@ -162,21 +162,22 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 	if g.Explored {
 		return nil
 	}
-
 	g.Explored = true
+
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
 		if curExpr.Explored {
 			continue
 		}
+		curExpr.Explored = true
 
 		// Explore child groups firstly.
-		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
-			if err := opt.exploreGroup(childGroup); err != nil {
-				return err
+			for !childGroup.Explored {
+				if err := opt.exploreGroup(childGroup); err != nil {
+					return err
+				}
 			}
-			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
 		eraseCur, err := opt.findMoreEquiv(g, elem)
@@ -186,8 +187,6 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 		if eraseCur {
 			g.Delete(curExpr)
 		}
-
-		g.Explored = g.Explored && curExpr.Explored
 	}
 	return nil
 }
@@ -220,10 +219,8 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 					continue
 				}
 				// If the new Group expression is successfully inserted into the
-				// current Group, we mark the Group expression and the Group as
-				// unexplored to enable the exploration on the new Group expression
-				// and all the antecedent groups.
-				e.Explored = false
+				// current Group, the Group as unexplored to enable the exploration
+				// on the new Group expression and all the antecedent groups.
 				g.Explored = false
 			}
 		}

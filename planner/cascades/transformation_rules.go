@@ -300,11 +300,11 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 		AggFuncs:     finalAggFuncs,
 		GroupByItems: finalGbyItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
-	partialAgg.CopyAggHints(agg)
+	finalAgg.CopyAggHints(agg)
 
 	partialAggExpr := memo.NewGroupExpr(partialAgg)
 	partialAggExpr.SetChildren(childGroup)
-	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialSchema)
+	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialSchema).SetEngineType(childGroup.EngineType)
 	gatherExpr := memo.NewGroupExpr(gather)
 	gatherExpr.SetChildren(partialAggGroup)
 	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialSchema)
