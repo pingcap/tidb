@@ -662,7 +662,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	return available, nil
 }
 
-func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) []*accessPath {
+func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	for i := len(paths) - 1; i >= 0; i-- {
@@ -670,7 +670,11 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) []*accessPa
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
-	return paths
+	var err error
+	if len(paths) == 0 {
+		err = ErrInternal.GenWithStackByArgs("None access path for table reader after isolation read filter")
+	}
+	return paths, err
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {

@@ -253,5 +253,5 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : None access path for table reader after isolation read filter")
 }

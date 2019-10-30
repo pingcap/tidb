@@ -630,6 +630,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		engines := strings.Split(value, ",")
 		var formatVal string
 		for i, engine := range engines {
+			engine = strings.TrimLeft(engine, " \t")
+			engine = strings.TrimRight(engine, " \t")
 			if i != 0 {
 				formatVal += ","
 			}
