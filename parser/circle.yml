@@ -3,7 +3,7 @@ version: 2
 jobs:
   build-ut:
     docker:
-      - image: golang:1.11
+      - image: golang:1.13
     working_directory: /go/src/github.com/pingcap/parser
     steps:
       - checkout
@@ -24,7 +24,7 @@ jobs:
           command: bash <(curl -s https://codecov.io/bash)
   build-integration:
     docker:
-    - image: golang:1.11
+    - image: golang:1.13
     working_directory: /go/src/github.com/pingcap/parser
     steps:
     - checkout
