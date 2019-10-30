@@ -134,9 +134,9 @@ func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		// Note that even when the i-th input string is null, the output is
 		// 0 instead of null, therefore we do not set the null bit mask in
 		// result's corresponding row.
-		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
+		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 		ipStr := buf.GetString(i)
-		if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
+		if ip := net.ParseIP(ipStr); !buf.IsNull(i) && ip != nil && !isIPv4(ipStr) {
 			i64s[i] = 1
 		} else {
 			i64s[i] = 0
