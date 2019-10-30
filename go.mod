@@ -29,6 +29,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.6 // indirect
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
+	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
@@ -42,10 +43,10 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190910074005-0e61b6f435c1
 	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
-	github.com/pingcap/parser v0.0.0-20191025082927-f8adf1670b97
+	github.com/pingcap/parser v0.0.0-20191030075336-d8fa9d7074cb
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
-	github.com/pingcap/tipb v0.0.0-20191022094114-a2e8c3fa634b
+	github.com/pingcap/tipb v0.0.0-20191030045153-07a0962bbc64
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
@@ -54,7 +55,7 @@ require (
 	github.com/shirou/gopsutil v2.18.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
-	github.com/sirupsen/logrus v1.2.0
+	github.com/sirupsen/logrus v1.4.2
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -66,9 +67,9 @@ require (
 	go.uber.org/atomic v1.4.0
 	go.uber.org/multierr v1.2.0 // indirect
 	go.uber.org/zap v1.10.0
-	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7 // indirect
+	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20191010194322-b09406accb47
+	golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	golang.org/x/tools v0.0.0-20190911022129-16c5e0f7d110
@@ -83,5 +84,3 @@ require (
 replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-04dfd648ce8d
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/tiancaiamao/parser v0.0.0-20191030060849-c02bf3f82d26
