@@ -40,27 +40,57 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-var defaultTransformationMap = map[memo.Operand][]Transformation{
+// TransformationID is the handle of a Transformation. When we want to add
+// a new Transformation rule, we should first add its ID here, and create
+// the rule in the transformationRuleList below with the same order.
+type TransformationID int
+
+const (
+	rulePushSelDownTableScan TransformationID = iota
+	rulePushSelDownTableGather
+	rulePushSelDownSort
+	rulePushSelDownProjection
+	ruleEnumeratePaths
+)
+
+var transformationRuleList = []Transformation{
+	&PushSelDownTableScan{},
+	&PushSelDownTableGather{},
+	&PushSelDownSort{},
+	&PushSelDownProjection{},
+	&EnumeratePaths{},
+}
+
+var defaultTransformationMap = map[memo.Operand][]TransformationID{
 	memo.OperandSelection: {
-		&PushSelDownTableScan{},
-		&PushSelDownTableGather{},
+		rulePushSelDownTableScan,
+		rulePushSelDownTableGather,
+		rulePushSelDownSort,
+		rulePushSelDownProjection,
 	},
 	memo.OperandDataSource: {
-		&EnumeratePaths{},
+		ruleEnumeratePaths,
 	},
 }
 
-var patternMap = make(map[Transformation]*memo.Pattern)
+var patternMap []*memo.Pattern
 
-// GetPattern returns the Pattern of the given Transformation rule.
-// It returns the cached Pattern if possible. Otherwise, generate a new Pattern.
-func GetPattern(r Transformation) *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
+// init initializes the patternMap when initializing the cascade package.
+func init() {
+	patternMap = make([]*memo.Pattern, len(transformationRuleList))
+	for id, rule := range transformationRuleList {
+		patternMap[id] = rule.GetPattern()
 	}
-	p := r.GetPattern()
-	patternMap[r] = p
-	return p
+}
+
+// GetTransformationRule returns the Transformation rule by its ID.
+func GetTransformationRule(id TransformationID) Transformation {
+	return transformationRuleList[id]
+}
+
+// GetPattern returns the Pattern of the given TransformationID.
+func GetPattern(id TransformationID) *memo.Pattern {
+	return patternMap[id]
 }
 
 // PushSelDownTableScan pushes the selection down to TableScan.
@@ -197,4 +227,99 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil
+}
+
+// PushSelDownSort pushes the Selection down to the child of Sort.
+type PushSelDownSort struct {
+}
+
+// GetPattern implements Transformation interface. The pattern of this rule
+// is `Selection -> Sort`.
+func (r *PushSelDownSort) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownSort) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `sel->sort->x` to `sort->sel->x`.
+func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	newSelExpr := memo.NewGroupExpr(sel)
+	newSelExpr.Children = append(newSelExpr.Children, childGroup)
+	newSelGroup := memo.NewGroupWithSchema(newSelExpr, childGroup.Prop.Schema)
+
+	newSortExpr := memo.NewGroupExpr(sort)
+	newSortExpr.Children = append(newSortExpr.Children, newSelGroup)
+	return []*memo.GroupExpr{newSortExpr}, true, false, nil
+}
+
+// PushSelDownProjection pushes the Selection down to the child of Projection.
+type PushSelDownProjection struct {
+}
+
+// GetPattern implements Transformation interface.
+func (r *PushSelDownProjection) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownProjection) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `selection -> projection -> x` to
+// 1. `projection -> selection -> x` or
+// 2. `selection -> projection -> selection -> x` or
+// 3. just keep unchanged.
+func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	for _, expr := range proj.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return nil, false, false, nil
+		}
+	}
+	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+	for _, cond := range sel.Conditions {
+		if !expression.HasGetSetVarFunc(cond) {
+			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, proj.Schema(), proj.Exprs))
+		} else {
+			canNotBePushed = append(canNotBePushed, cond)
+		}
+	}
+	if len(canBePushed) == 0 {
+		return nil, false, false, nil
+	}
+	newBottomSel := plannercore.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newBottomSelExpr := memo.NewGroupExpr(newBottomSel)
+	newBottomSelExpr.SetChildren(childGroup)
+	newBottomSelGroup := memo.NewGroupWithSchema(newBottomSelExpr, childGroup.Prop.Schema)
+	newProjExpr := memo.NewGroupExpr(proj)
+	newProjExpr.SetChildren(newBottomSelGroup)
+	if len(canNotBePushed) == 0 {
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	}
+	newProjGroup := memo.NewGroupWithSchema(newProjExpr, proj.Schema())
+	newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newTopSelExpr := memo.NewGroupExpr(newTopSel)
+	newTopSelExpr.SetChildren(newProjGroup)
+	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
 }
