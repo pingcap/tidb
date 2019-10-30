@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -1112,18 +1113,12 @@ func recoverInDomain(funcName string, quit bool) {
 	}
 }
 
-// Domain error codes.
-const (
-	codeInfoSchemaExpired terror.ErrCode = 1
-	codeInfoSchemaChanged terror.ErrCode = 2
-)
-
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
+	ErrInfoSchemaExpired = terror.ClassDomain.New(mysql.ErrInfoSchemaExpired, mysql.MySQLErrName[mysql.ErrInfoSchemaExpired])
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged,
-		"Information schema is changed. "+kv.TxnRetryableMark)
+	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
+		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged] + ". " +kv.TxnRetryableMark)
 )
 
 func init() {
