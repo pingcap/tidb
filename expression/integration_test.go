@@ -2785,6 +2785,9 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
 	c.Assert(err, NotNil)
+
+	result = tk.MustQuery(`select 1 / '2007' div 1;`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
