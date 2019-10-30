@@ -154,6 +154,6 @@ func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 		Primary:    []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
 	}
 
-	expectedStr := `WriteConflict: txnStartTS=399402937522847774, conflictTS=399402937719455772, key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}`
-	c.Assert(conflictToString(conflict), Equals, expectedStr)
+	expectedStr := `[kv:9007]Write conflict, txnStartTS=399402937522847774, conflictTS=399402937719455772, key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} [try again later]`
+	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
 }
