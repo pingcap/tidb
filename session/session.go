@@ -1792,8 +1792,6 @@ var builtinGlobalVariable = []string{
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
-	variable.IsolationReadLabels,
-	variable.IsolationReadEngines,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -1839,6 +1837,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
+	variable.TiDBIsolationReadLabels,
+	variable.TiDBIsolationReadEngines,
 }
 
 var (

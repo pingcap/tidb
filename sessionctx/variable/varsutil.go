@@ -625,7 +625,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case IsolationReadLabels:
+	case TiDBIsolationReadLabels:
 		if value == "" {
 			return "", nil
 		}
@@ -636,7 +636,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			}
 		}
 		return value, nil
-	case IsolationReadEngines:
+	case TiDBIsolationReadEngines:
 		if value == "" {
 			return "", nil
 		}

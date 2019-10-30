@@ -973,7 +973,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
-	case IsolationReadLabels:
+	case TiDBIsolationReadLabels:
 		s.isolationReadLabels = make([]*metapb.StoreLabel, 0, 2)
 		if len(val) == 0 {
 			break
@@ -985,7 +985,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				Value: labelPair[1],
 			})
 		}
-	case IsolationReadEngines:
+	case TiDBIsolationReadEngines:
 		s.isolationReadEngines = make([]kv.StoreType, 0, 2)
 		if len(val) == 0 {
 			break
@@ -1039,8 +1039,6 @@ const (
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 	MaxExecutionTime     = "max_execution_time"
-	IsolationReadLabels  = "isolation_read_labels"
-	IsolationReadEngines = "isolation_read_engines"
 )
 
 // these variables are useless for TiDB, but still need to validate their values for some compatible issues.
