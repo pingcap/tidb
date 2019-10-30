@@ -393,7 +393,6 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 
 		task.outerResult.Add(chk)
-		task.outerResult.GetMemTracker().Consume(chk.MemoryUsage())
 	}
 	if task.outerResult.Len() == 0 {
 		return nil, nil
