@@ -145,7 +145,6 @@ func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 				i64s[i] = 0
 			}
 		}
-
 	}
 	return nil
 }
