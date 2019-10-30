@@ -778,6 +778,8 @@ func (b *builtinTimestampAddSig) vectorized() bool {
 	return true
 }
 
+// evalString evals a builtinTimestampAddSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
