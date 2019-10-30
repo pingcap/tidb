@@ -44,9 +44,8 @@ var clusterTableMap = map[string]struct{}{
 	clusterTableNameEventsStatementsSummaryByDigest: {},
 }
 
-var clusterTableCols = columnInfo{"NODE_ID", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil}
-
 func init() {
+	var clusterTableCols = columnInfo{"NODE_ID", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil}
 	for tableName := range clusterTableMap {
 		memTableName := tableName[:len(tableName)-len(clusterTableSuffix)]
 		memTableCols := tableNameToColumns[memTableName]
@@ -58,8 +57,7 @@ func init() {
 		cols = append(cols, clusterTableCols)
 		tableNameToColumns[tableName] = cols
 	}
-	// Use for memTableReader in mpp.
-	// This is used for avoid circle import.
+	// This is used for avoid circle import, use for memTableReader in mpp.
 	mocktikv.GetClusterMemTableRows = GetClusterMemTableRows
 	mocktikv.IsClusterTable = IsClusterTable
 }
@@ -74,31 +72,16 @@ func GetClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 	tableName = strings.ToUpper(tableName)
 	switch tableName {
 	case clusterTableSlowLog:
-		rows, err = dataForClusterSlowLog(ctx)
+		rows, err = dataForSlowLog(ctx)
 	case clusterTableProcesslist:
-		rows, err = dataForClusterProcesslist(ctx)
+		rows = dataForProcesslist(ctx)
 	case clusterTableNameEventsStatementsSummaryByDigest:
-		rows = dataForClusterTableNameEventsStatementsSummaryByDigest()
+		rows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
 	}
-	return rows, err
-}
-
-func dataForClusterSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	rows, err := dataForSlowLog(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return appendClusterColumnsToRows(rows), nil
-}
-
-func dataForClusterProcesslist(ctx sessionctx.Context) ([][]types.Datum, error) {
-	rows := dataForProcesslist(ctx)
-	return appendClusterColumnsToRows(rows), nil
-}
-
-func dataForClusterTableNameEventsStatementsSummaryByDigest() [][]types.Datum {
-	rows := stmtsummary.StmtSummaryByDigestMap.ToDatum()
-	return appendClusterColumnsToRows(rows)
 }
 
 func appendClusterColumnsToRows(rows [][]types.Datum) [][]types.Datum {

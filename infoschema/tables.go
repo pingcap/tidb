@@ -1816,7 +1816,7 @@ func dataForServersInfo() ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
 		row := types.MakeDatums(
-			int(info.ServerID),
+			int(info.ServerID),   // Server_ID
 			info.ID,              // DDL_ID
 			info.IP,              // IP
 			int(info.Port),       // PORT

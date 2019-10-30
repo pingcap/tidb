@@ -686,13 +686,7 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 		return nil, err
 	}
 	if store == nil {
-		if len(c.clusterMemStoreAddr) == 0 {
-			serverInfo := infosync.GetServerInfo()
-			if serverInfo != nil {
-				c.clusterMemStoreAddr = serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
-			}
-		}
-		if c.clusterMemStoreAddr == addr {
+		if c.isClusterMemStore(addr) {
 			return nil, nil
 		}
 		return nil, errors.New("connect fail")
@@ -702,6 +696,16 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 		return nil, errors.New("connection refused")
 	}
 	return store, nil
+}
+
+func (c *RPCClient) isClusterMemStore(addr string) bool {
+	if len(c.clusterMemStoreAddr) == 0 {
+		serverInfo := infosync.GetServerInfo()
+		if serverInfo != nil {
+			c.clusterMemStoreAddr = serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
+		}
+	}
+	return c.clusterMemStoreAddr == addr
 }
 
 func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, error) {

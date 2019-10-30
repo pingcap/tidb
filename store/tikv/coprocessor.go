@@ -91,7 +91,6 @@ type copTask struct {
 
 	respChan  chan *copResponse
 	storeAddr string
-	storeID   uint64
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
 }
@@ -221,8 +220,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 		cmdType = tikvrpc.CmdCopStream
 	}
 
-	switch req.StoreType {
-	case kv.ClusterMem:
+	if req.StoreType == kv.TiDBMem {
 		return buildTiDBMemCopTasks(ranges, req)
 	}
 
@@ -278,9 +276,7 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	for _, ser := range servers {
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
-			ranges: ranges,
-			// Channel buffer is 2 for handling region split.
-			// In a common case, two region split tasks will not be blocked.
+			ranges:    ranges,
 			respChan:  make(chan *copResponse, 2),
 			cmdType:   cmdType,
 			storeType: req.StoreType,
@@ -689,9 +685,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		HandleTime:     true,
 		ScanDetail:     true,
 	})
-	if len(task.storeAddr) > 0 || task.storeID > 0 {
+	if len(task.storeAddr) > 0 {
 		sender.storeAddr = task.storeAddr
-		sender.storeID = task.storeID
 	}
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)

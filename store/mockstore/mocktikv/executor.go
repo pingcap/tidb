@@ -71,16 +71,13 @@ type executor interface {
 }
 
 type memTableScanExec struct {
-	tableName string
-	columnIDs []int64
-	sctx      *mock.Context
-
-	execDetail *execDetail
+	tableName  string
+	columnIDs  []int64
+	sctx       *mock.Context
 	src        executor
-
-	rows   [][]types.Datum
-	cursor int
-	counts []int64
+	execDetail *execDetail
+	rows       [][]types.Datum
+	cursor     int
 }
 
 func (e *memTableScanExec) SetSrcExec(exec executor) {
@@ -103,10 +100,7 @@ func (e *memTableScanExec) ResetCounts() {
 }
 
 func (e *memTableScanExec) Counts() []int64 {
-	if e.counts == nil {
-		return nil
-	}
-	return []int64{int64(e.cursor)}
+	return nil
 }
 
 func (e *memTableScanExec) Cursor() ([]byte, bool) {

@@ -118,7 +118,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
-		case kv.ClusterMem:
+		case kv.TiDBMem:
 			rpcCtx = &RPCContext{
 				Addr: s.storeAddr,
 			}
