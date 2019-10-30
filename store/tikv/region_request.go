@@ -207,7 +207,7 @@ func (s *RegionRequestSender) getStoreToken(store *Store) error {
 func (s *RegionRequestSender) releaseStoreToken(store *Store) error {
 	for {
 		limit := atomic.LoadUint32(&store.storeLimit)
-		if limit != 0 {
+		if limit > 0 {
 			if atomic.CompareAndSwapUint32(&store.storeLimit, limit, limit-1) {
 				return nil
 			}
