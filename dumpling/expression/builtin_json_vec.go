@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (b *builtinJSONDepthSig) vectorized() bool {
@@ -398,11 +399,67 @@ func (b *builtinJSONRemoveSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinJSONMergeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONMergeSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nr := input.NumRows()
+	argBuffers := make([]*chunk.Column, len(b.args))
+	var err error
+	for i, arg := range b.args {
+		if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+			return err
+		}
+		defer func(buf *chunk.Column) {
+			b.bufAllocator.put(buf)
+		}(argBuffers[i])
+
+		if err := arg.VecEvalJSON(b.ctx, input, argBuffers[i]); err != nil {
+			return err
+		}
+	}
+
+	jsonValues := make([][]json.BinaryJSON, nr)
+
+	for i := 0; i < nr; i++ {
+		isNullFlag := false
+		for j := 0; j < len(b.args); j++ {
+			isNullFlag = isNullFlag || argBuffers[j].IsNull(i)
+		}
+		if isNullFlag {
+			jsonValues[i] = nil
+		} else {
+			jsonValues[i] = make([]json.BinaryJSON, 0, len(b.args))
+		}
+	}
+	for i := 0; i < len(b.args); i++ {
+		for j := 0; j < nr; j++ {
+			if jsonValues[j] == nil {
+				continue
+			}
+			jsonValues[j] = append(jsonValues[j], argBuffers[i].GetJSON(j))
+		}
+	}
+
+	result.ReserveJSON(nr)
+	for i := 0; i < nr; i++ {
+		if jsonValues[i] == nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendJSON(json.MergeBinary(jsonValues[i]))
+	}
+
+	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {
+		for i := 0; i < nr; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("JSON_MERGE"))
+		}
+	}
+
+	return nil
 }
 
 func (b *builtinJSONContainsPathSig) vectorized() bool {
