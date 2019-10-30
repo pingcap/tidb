@@ -249,6 +249,173 @@ func (b *{{.SigName}}) vectorized() bool {
 {{ end }}{{/* range */}}
 `))
 
+var timeDiff = template.Must(template.New("").Parse(`
+
+{{ define "BufAllocator0" }}
+	buf0, err := b.bufAllocator.get(types.ET{{.TypeA.ETName}}, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+{{ end }}
+{{ define "BufAllocator1" }}
+	buf1, err := b.bufAllocator.get(types.ET{{.TypeB.ETName}}, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+{{ end }}
+
+{{ range . }}
+{{ $AIsString := (eq .TypeA.TypeName "String") }}
+{{ $BIsString := (eq .TypeB.TypeName "String") }}
+{{ $AIsTime := (eq .TypeA.TypeName "Time") }}
+{{ $BIsTime := (eq .TypeB.TypeName "Time") }}
+{{ $AIsDuration := (eq .TypeA.TypeName "Duration") }}
+{{ $BIsDuration := (eq .TypeB.TypeName "Duration") }}
+{{ $MaybeDuration := (or (or $AIsDuration $BIsDuration) (and $AIsString $AIsString)) }}
+{{ $reuseA := (eq .TypeA.TypeName "Duration") }}
+{{ $reuseB := (eq .TypeB.TypeName "Duration") }}
+{{ $reuse  := (or $reuseA $reuseB ) }}
+{{ $noNull := (ne .SigName "builtinNullTimeDiffSig") }}
+func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	{{ if $noNull }}
+		r64s := result.GoDurations()
+		{{- if $reuse }}
+			{{- if $reuseA }}
+				buf0 := result
+				{{- template "BufAllocator1" . }}
+			{{- else if $reuseB }}
+				buf1 := result
+				{{- template "BufAllocator0" . }}
+			{{- end }}
+		{{- else }}
+			{{- template "BufAllocator0" . }}
+			{{- template "BufAllocator1" . }}
+		{{- end }}
+		
+		if err := b.args[0].VecEval{{ .TypeA.TypeName }}(b.ctx, input, buf0); err != nil {
+			return err
+		}
+		if err := b.args[1].VecEval{{ .TypeB.TypeName }}(b.ctx, input, buf1); err != nil {
+			return err
+		}
+
+		{{- if .TypeA.Fixed }} 
+			result.MergeNulls(buf0)
+			arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
+		{{- end }}
+		{{- if .TypeB.Fixed }} 
+			result.MergeNulls(buf1)
+			arg1 := buf1.{{.TypeB.TypeNameInColumn}}s()
+		{{- end }}
+
+		{{- if (or $AIsDuration $BIsDuration) }} 
+			var (
+				lhs    types.Duration
+				rhs    types.Duration
+			)
+		{{- end }}
+	for i:=0; i<n ; i++{
+		{{- if and .TypeA.Fixed .TypeB.Fixed }} 
+			if result.IsNull(i) {
+		{{- else if .TypeA.Fixed }} 
+			if result.IsNull(i) || buf1.IsNull(i) {
+		{{- else if .TypeB.Fixed }} 
+			if result.IsNull(i) || buf0.IsNull(i) {
+		{{- else }} 
+			if buf1.IsNull(i) || buf0.IsNull(i) {
+		{{- end }}
+			continue
+		}
+		
+		{{- if $AIsString }}
+			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
+			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
+			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
+			{{- end }}  err := convertStringToDuration(b.ctx.GetSessionVars().StmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+			if err != nil  {
+				return err
+			}
+			{{- if $BIsDuration }}
+			if !lhsIsDuration {
+				continue
+			}
+			lhs = lhsDur
+			{{- else if $BIsTime }}
+			if lhsIsDuration {
+				continue
+			}
+			{{- end }}
+		{{- else if $AIsTime }} 
+			lhsTime := arg0[i]
+		{{- else }} 
+			lhs.Duration = arg0[i]
+		{{- end }}
+
+		{{- if $BIsString }}
+			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
+			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
+			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
+			{{- end}}  err := convertStringToDuration(b.ctx.GetSessionVars().StmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+			if err != nil  {
+				return err
+			}
+			{{- if $AIsDuration }}
+			if !rhsIsDuration {
+				continue
+			}
+			rhs = rhsDur
+			{{- else if $AIsTime }}
+			if rhsIsDuration {
+				continue
+			}
+			{{- end }}
+		{{- else if $BIsTime }} 
+			rhsTime := arg1[i]
+		{{- else }} 
+			rhs.Duration = arg1[i]
+		{{- end }}
+
+		{{- if and $AIsString $BIsString }}
+			if lhsIsDuration != rhsIsDuration {
+				continue
+			}
+			var (
+				d types.Duration
+				isNull bool
+			)
+			if lhsIsDuration {
+				d, isNull, err = calculateDurationTimeDiff(b.ctx, lhsDur, rhsDur)
+			} else {
+				d, isNull, err = calculateTimeDiff(b.ctx.GetSessionVars().StmtCtx, lhsTime, rhsTime)
+			}
+		{{- else if or $AIsDuration $BIsDuration }}
+			d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
+		{{- else if or $AIsTime $BIsTime }}
+			d, isNull, err := calculateTimeDiff(b.ctx.GetSessionVars().StmtCtx, lhsTime, rhsTime)
+		{{- end }}
+		if err != nil {
+			return err
+		}
+		if !isNull {
+			r64s[i] = d.Duration
+		}
+	}
+
+	
+	{{ end }} {{/* if $noNull */}}
+	return nil
+}
+
+func (b *{{.SigName}}) vectorized() bool {
+	return true
+}
+{{ end }}{{/* range */}}
+`))
+
 var testFile = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -347,6 +514,17 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddTimeDurationNullSig", TypeA: TypeDuration, TypeB: TypeDatetime, Output: TypeDuration, AllNull: true},
 }
 
+var timeDiffSigsTmpl = []sig{
+	{SigName: "builtinNullTimeDiffSig", Output: TypeDuration},
+	{SigName: "builtinTimeStringTimeDiffSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDuration},
+	{SigName: "builtinDurationStringTimeDiffSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
+	{SigName: "builtinDurationDurationTimeDiffSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeDuration},
+	{SigName: "builtinStringTimeTimeDiffSig", TypeA: TypeString, TypeB: TypeDatetime, Output: TypeDuration},
+	{SigName: "builtinStringDurationTimeDiffSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeDuration},
+	{SigName: "builtinStringStringTimeDiffSig", TypeA: TypeString, TypeB: TypeString, Output: TypeDuration},
+	{SigName: "builtinTimeTimeTimeDiffSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDuration},
+}
+
 type sig struct {
 	SigName                string
 	TypeA, TypeB, Output   TypeContext
@@ -366,12 +544,17 @@ var tmplVal = struct {
 	Category: "Time",
 	Functions: []function{
 		{FuncName: "AddTime", Sigs: addTimeSigsTmpl},
+		{FuncName: "TimeDiff", Sigs: timeDiffSigsTmpl},
 	},
 }
 
 func generateDotGo(fileName string) error {
 	w := new(bytes.Buffer)
 	err := addTime.Execute(w, addTimeSigsTmpl)
+	if err != nil {
+		return err
+	}
+	err = timeDiff.Execute(w, timeDiffSigsTmpl)
 	if err != nil {
 		return err
 	}
@@ -404,7 +587,7 @@ func generateOneFile(fileNamePrefix string) (err error) {
 	if err != nil {
 		return
 	}
-	err = generateTestDotGo(fileNamePrefix + "_test.go")
+	//err = generateTestDotGo(fileNamePrefix + "_test.go")
 	return
 }
 
