@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = check.Suite(&testUtilSuite{})
@@ -254,7 +253,6 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &One.Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
@@ -280,7 +278,6 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
@@ -293,7 +290,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
-	ret := PushDownNot(ctx, notFunc, false)
+	ret := PushDownNot(ctx, notFunc)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 }
