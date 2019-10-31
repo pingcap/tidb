@@ -358,7 +358,7 @@ func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		payload := buf.GetString(i)
 
 		if len(payload) == 0 {
-			result.AppendNull()
+			result.AppendString("")
 			continue
 		}
 		if len(payload) <= 4 {
