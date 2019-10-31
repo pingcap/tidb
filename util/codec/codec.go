@@ -171,11 +171,6 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
 func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
 	t := d.GetMysqlTime()
-	return EncodeTime(sc, t, tp, b)
-}
-
-// EncodeTime encodes types.Time to []byte.
-func EncodeTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []byte) (_ []byte, err error) {
 	// Encoding timestamp need to consider timezone. If it's not in UTC, transform to UTC first.
 	// This is compatible with `PBToExpr > convertTime`, and coprocessor assumes the passed timestamp is in UTC as well.
 	if tp == mysql.TypeUnspecified {
