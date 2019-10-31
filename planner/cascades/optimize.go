@@ -15,13 +15,12 @@ package cascades
 
 import (
 	"container/list"
-	"math"
-
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"math"
 )
 
 // DefaultOptimizer is the optimizer which contains all of the default
@@ -302,7 +301,7 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 			cumCost = 0.0
 			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
-				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
+				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), impl.ScaleCostLimit(costLimit)-cumCost)
 				if err != nil {
 					return nil, err
 				}

@@ -285,9 +285,11 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 		newAggFunc.Args = newArgs
 		partialAggFuncs[i] = newAggFunc
 	}
+	partialGbyItems := make([]expression.Expression, len(agg.GroupByItems))
+	copy(partialGbyItems, agg.GroupByItems)
 	partialAgg := plannercore.LogicalAggregation{
 		AggFuncs:     partialAggFuncs,
-		GroupByItems: agg.GroupByItems,
+		GroupByItems: partialGbyItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	partialAgg.CopyAggHints(agg)
 

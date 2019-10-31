@@ -51,3 +51,7 @@ func (impl *baseImpl) AttachChildren(children ...memo.Implementation) memo.Imple
 	impl.plan.SetChildren(childrenPlan...)
 	return impl
 }
+
+func (impl *baseImpl) ScaleCostLimit(costLimit float64) float64 {
+	return costLimit
+}

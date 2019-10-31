@@ -15,6 +15,7 @@ package implementation
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
@@ -66,6 +67,14 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	return impl.cost
 }
 
+// ScaleCostLimit implement Implementation interface.
+func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	sessVars := reader.SCtx().GetSessionVars()
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	return costLimit * copIterWorkers
+}
+
 // TableScanImpl implementation of PhysicalTableScan.
 type TableScanImpl struct {
 	baseImpl
@@ -87,7 +96,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
-	width := impl.tblColHists.GetAvgRowSize(impl.tblCols, false)
+	width := impl.tblColHists.GetTableAvgRowSize(impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.ScanFactor * width
 	if ts.Desc {
