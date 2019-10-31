@@ -39,10 +39,7 @@ type ConcurrentBitmap struct {
 // NewConcurrentBitmap initializes a ConcurrentBitmap which can store
 // bitLen of bits.
 func NewConcurrentBitmap(bitLen int) *ConcurrentBitmap {
-	segmentLen := bitLen / segmentWidth
-	if bitLen%segmentWidth > 0 {
-		segmentLen++
-	}
+	segmentLen := (bitLen + segmentWidth - 1) >> segmentWidthPower
 	return &ConcurrentBitmap{
 		segments: make([]uint32, segmentLen),
 		bitLen:   bitLen,
@@ -58,14 +55,14 @@ func (cb *ConcurrentBitmap) BytesConsumed() int64 {
 // isSetter indicates whether the function call this time triggers the bit from 0 to 1.
 // bitIndex bigger than bitLen initialized will be ignored.
 func (cb *ConcurrentBitmap) Set(bitIndex int) (isSetter bool) {
-	if bitIndex >= cb.bitLen {
+	if bitIndex < 0 || bitIndex >= cb.bitLen {
 		return
 	}
 
 	var oldValue, newValue uint32
 	segmentPointer := &(cb.segments[bitIndex>>segmentWidthPower])
 	mask := bitMask >> uint32(bitIndex%segmentWidth)
-	// Repeately observe whether bit is already set, and try to set
+	// Repeatedly observe whether bit is already set, and try to set
 	// it based on observation.
 	for {
 		// Observe.
@@ -87,7 +84,7 @@ func (cb *ConcurrentBitmap) Set(bitIndex int) (isSetter bool) {
 // bitIndex bigger than bitLen initialized will return false.
 // This method is not thread-safe as it does not use atomic load.
 func (cb *ConcurrentBitmap) UnsafeIsSet(bitIndex int) (isSet bool) {
-	if bitIndex >= cb.bitLen {
+	if bitIndex < 0 || bitIndex >= cb.bitLen {
 		return
 	}
 
