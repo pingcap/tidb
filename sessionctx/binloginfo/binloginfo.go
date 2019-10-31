@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -49,6 +50,27 @@ var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
 type BinlogInfo struct {
 	Data   *binlog.Binlog
 	Client *pumpcli.PumpsClient
+}
+
+type BinlogStatus int
+
+const (
+	BinlogStatusUnknown BinlogStatus = iota
+	BinlogStatusOn
+	BinlogStatusOff
+	BinlogStatusSkipping
+)
+
+func (s BinlogStatus) String() string {
+	switch s {
+	case BinlogStatusOn:
+		return "On"
+	case BinlogStatusOff:
+		return "Off"
+	case BinlogStatusSkipping:
+		return "Skipping"
+	}
+	return "Unknown"
 }
 
 // GetPumpsClient gets the pumps client instance.
@@ -80,6 +102,7 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 
 var skipBinlog uint32
 var ignoreError uint32
+var statusListener func(BinlogStatus) error
 
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
@@ -95,6 +118,22 @@ func SetIgnoreError(on bool) {
 	} else {
 		atomic.StoreUint32(&ignoreError, 0)
 	}
+}
+
+func GetStatus() BinlogStatus {
+	conf := config.GetGlobalConfig()
+	if !conf.Binlog.Enable {
+		return BinlogStatusOff
+	}
+	skip := atomic.LoadUint32(&skipBinlog)
+	if skip > 0 {
+		return BinlogStatusSkipping
+	}
+	return BinlogStatusOn
+}
+
+func StatusOnChange(listener func(BinlogStatus) error) {
+	statusListener = listener
 }
 
 // WriteBinlog writes a binlog to Pump.
@@ -117,7 +156,12 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 			logutil.BgLogger().Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
-			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
+			swapped := atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
+			if swapped {
+				if err := statusListener(BinlogStatusSkipping); err != nil {
+					logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
+				}
+			}
 			return nil
 		}
 

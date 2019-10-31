@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -658,7 +657,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"LEASE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"BINLOG_ENABLED", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1817,14 +1816,14 @@ func dataForServersInfo() ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
 		row := types.MakeDatums(
-			info.ID,                                // DDL_ID
-			info.IP,                                // IP
-			int(info.Port),                         // PORT
-			int(info.StatusPort),                   // STATUS_PORT
-			info.Lease,                             // LEASE
-			info.Version,                           // VERSION
-			info.GitHash,                           // GIT_HASH
-			strconv.FormatBool(info.BinlogEnabled), // BINLOG_ENABLED
+			info.ID,              // DDL_ID
+			info.IP,              // IP
+			int(info.Port),       // PORT
+			int(info.StatusPort), // STATUS_PORT
+			info.Lease,           // LEASE
+			info.Version,         // VERSION
+			info.GitHash,         // GIT_HASH
+			info.BinlogStatus,    // BINLOG_STATUS
 		)
 		rows = append(rows, row)
 	}
