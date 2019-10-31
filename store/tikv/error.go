@@ -42,7 +42,6 @@ var (
 	ErrLockAcquireFailAndNoWaitSet = terror.ClassTiKV.New(mysql.ErrLockAcquireFailAndNoWaitSet, mysql.MySQLErrName[mysql.ErrLockAcquireFailAndNoWaitSet])
 	ErrLockWaitTimeout             = terror.ClassTiKV.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrLockWaitTimeout])
 	ErrTokenLimit                  = terror.ClassTiKV.New(codeErrorTokenLimit, "store limit error, because %s")
-
 )
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.

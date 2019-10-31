@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"sort"
 	"sync"
@@ -25,6 +24,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
