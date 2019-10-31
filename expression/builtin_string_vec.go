@@ -664,9 +664,14 @@ func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	result.ReserveString(n)
 	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
 		reversed := reverseBytes([]byte(buf.GetString(i)))
-		result.SetRaw(i, []byte(string(reversed)))
+		result.AppendString(string(reversed))
 	}
 	return nil
 }
