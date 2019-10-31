@@ -1377,6 +1377,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 	}
+	updateExec.Init(v)
 	return updateExec
 }
 

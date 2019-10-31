@@ -56,16 +56,12 @@ type UpdateExec struct {
 // with prepare statement cached execution
 func (e *UpdateExec) Init(v *plannercore.Update) {
 	e.OrderedList = v.OrderedList
-
 	e.updatedRowKeys = nil
-
 	e.rows = nil
 	e.newRowsData = nil
-
 	e.fetched = false
 	e.cursor = 0
 	e.matched = 0
-
 	e.tblColPosInfos = v.TblColPosInfos
 	e.allAssignmentsAreConstant = v.AllAssignmentsAreConstant
 }
