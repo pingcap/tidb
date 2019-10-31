@@ -52,6 +52,7 @@ type BinlogInfo struct {
 	Client *pumpcli.PumpsClient
 }
 
+// BinlogStatus defines the status of binlog
 type BinlogStatus int
 
 const (
@@ -61,6 +62,7 @@ const (
 	BinlogStatusSkipping
 )
 
+// String implements String function in fmt.Stringer
 func (s BinlogStatus) String() string {
 	switch s {
 	case BinlogStatusOn:
@@ -120,6 +122,7 @@ func SetIgnoreError(on bool) {
 	}
 }
 
+// GetStatus gets the status of binlog
 func GetStatus() BinlogStatus {
 	conf := config.GetGlobalConfig()
 	if !conf.Binlog.Enable {
@@ -132,6 +135,7 @@ func GetStatus() BinlogStatus {
 	return BinlogStatusOn
 }
 
+// StatusOnChange registers a listener function to watch binlog status
 func StatusOnChange(listener func(BinlogStatus) error) {
 	statusListener = listener
 }
