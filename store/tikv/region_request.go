@@ -56,7 +56,6 @@ type RegionRequestSender struct {
 	regionCache  *RegionCache
 	client       Client
 	storeAddr    string
-	storeID      uint64
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
 }

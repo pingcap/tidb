@@ -195,14 +195,12 @@ func (h *rpcHandler) buildMemTableScan(ctx *dagContext, executor *tipb.Executor)
 	if IsClusterTable != nil && !IsClusterTable(memTblScan.TableName) {
 		return nil, errors.Errorf("table %s is not a tidb memory table", memTblScan.TableName)
 	}
-
 	columns := memTblScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	ids := make([]int64, len(columns))
 	for i, col := range columns {
 		ids[i] = col.ColumnId
 	}
-
 	return &memTableScanExec{
 		tableName:  memTblScan.TableName,
 		columnIDs:  ids,

@@ -105,11 +105,9 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
 func (p *PhysicalTableScan) toMemTableScanPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := p.Columns
-	id := uint64(0)
 	tsExec := &tipb.MemTableScan{
 		TableName: p.Table.Name.L,
 		Columns:   model.ColumnsToProto(columns, p.Table.PKIsHandle),
-		StoreId:   &id,
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeMemTableScan, MemTblScan: tsExec}, err

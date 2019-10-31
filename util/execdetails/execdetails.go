@@ -74,18 +74,6 @@ const (
 	TotalKeysStr = "Total_keys"
 	// ProcessKeysStr means the total processed keys.
 	ProcessKeysStr = "Process_keys"
-
-	PreWriteTimeStr       = "Prewrite_time"
-	CommitTimeStr         = "Commit_time"
-	GetCommitTSTimeStr    = "Get_commit_ts_time"
-	CommitBackoffTimeStr  = "Commit_backoff_time"
-	BackoffTypesStr       = "Backoff_types"
-	ResolveLockTimeStr    = "Resolve_lock_time"
-	LocalLatchWaitTimeStr = "Local_latch_wait_time"
-	WriteKeysStr          = "Write_keys"
-	WriteSizeStr          = "Write_size"
-	PrewriteRegionStr     = "Prewrite_region"
-	TxnRetryStr           = "Txn_retry"
 )
 
 // String implements the fmt.Stringer interface.

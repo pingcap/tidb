@@ -27,8 +27,8 @@ github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142/go.mod h1:F5haX7
 github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f h1:lBNOc5arjvs8E5mO2tbpBpLoyyu8B6e44T7hJy6potg=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
-github.com/crazycs520/tipb v0.0.0-20191030120256-368b60507127 h1:pPhX4poX426JIDSjA/Kz5y4uwUBISjcz/EtvVscWEPU=
-github.com/crazycs520/tipb v0.0.0-20191030120256-368b60507127/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
+github.com/crazycs520/tipb v0.0.0-20191031141509-bed2cea03630 h1:gxuo4k8k4CKV4I7AU7sZ8+5fjpuBQcVr6qQTW372NAc=
+github.com/crazycs520/tipb v0.0.0-20191031141509-bed2cea03630/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 h1:iwZdTE0PVqJCos1vaoKsclOGD3ADKpshg3SRtYBbwso=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548/go.mod h1:e6NPNENfs9mPDVNRekM7lKScauxd5kXTr1Mfyig6TDM=
 github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65 h1:hxuZop6tSoOi0sxFzoGGYdRqNrPubyaIf9KoBG9tPiE=

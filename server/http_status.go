@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -260,16 +261,13 @@ func (s *Server) startHTTPServer() {
 }
 
 func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	// Create the main listener.
+	// Create the status port listener.
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
 	}
-
-	// Create a cmux.
 	m := cmux.New(l)
-
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
 	httpL := m.Match(cmux.HTTP1Fast())
@@ -280,16 +278,26 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 	s.grpcServer = mocktikv.CreateRPCServer()
 
 	// Use the muxed listeners for your servers.
-	go s.grpcServer.Serve(grpcL)
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		go s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		go s.statusServer.Serve(httpL)
-	}
-	//go s.statusServer.Serve(httpL)
+	go util.WithRecovery(func() {
+		err := s.grpcServer.Serve(grpcL)
+		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+	}, nil)
 
-	// Start serving!
-	m.Serve()
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		go util.WithRecovery(func() {
+			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	} else {
+		go util.WithRecovery(func() {
+			err := s.statusServer.Serve(httpL)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	}
+	err = m.Serve()
+	if err != nil {
+		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+	}
 }
 
 // status of TiDB.

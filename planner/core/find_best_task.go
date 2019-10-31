@@ -1040,12 +1040,10 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	} else {
 		ts.StoreType = kv.TiKV
 	}
-	if infoschema.IsMemoryDB(ds.DBName.L) {
-		if infoschema.IsClusterTable(ds.tableInfo.Name.O) {
-			ts.StoreType = kv.TiDBMem
-			ts.Init(ds.ctx, ds.blockOffset)
-			ts.tp = plancodec.TypeMemTableScan
-		}
+	if infoschema.IsMemoryDB(ds.DBName.L) && infoschema.IsClusterTable(ds.tableInfo.Name.O) {
+		ts.StoreType = kv.TiDBMem
+		ts.Init(ds.ctx, ds.blockOffset)
+		ts.tp = plancodec.TypeMemTableScan
 	}
 
 	ts.SetSchema(ds.schema)

@@ -42,29 +42,6 @@ func (c *mppServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (*
 
 func (s *mppServer) CoprocessorStream(r *coprocessor.Request, copStream tikvpb.Tikv_CoprocessorStreamServer) error {
 	return errors.New("unreachable")
-	//ctx1, cancel := context.WithCancel(context.Background())
-	//handler := &rpcHandler{}
-	//copStream, err := handler.handleCopStream(ctx1, r)
-	//if err != nil {
-	//	cancel()
-	//	return nil, errors.Trace(err)
-	//}
-	//
-	//streamResp := &tikvrpc.CopStreamResponse{
-	//	Tikv_CoprocessorStreamClient: copStream,
-	//}
-	//streamResp.Lease.Cancel = cancel
-	//streamResp.Timeout = timeout
-	//c.streamTimeout <- &streamResp.Lease
-	//
-	//first, err := streamResp.Recv()
-	//if err != nil {
-	//	return nil, errors.Trace(err)
-	//}
-	//streamResp.Response = first
-	//
-	//resp.Resp = streamResp
-
 }
 
 func (c *mppServer) KvGet(ctx context.Context, in *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
