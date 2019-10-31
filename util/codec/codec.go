@@ -287,12 +287,6 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false)
 }
 
-// VectorizedEncodeValue appends a column of the encoded values to corresponding byte slice b[i], returning the appended
-// slice. It does not guarantee the order for comparison.
-func VectorizedEncodeValue(b [][]byte, buf *chunk.Column, eType types.EvalType) error {
-	return buf.EncodeTo(b, eType)
-}
-
 func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
 	if row.IsNull(idx) {
 		flag = NilFlag
