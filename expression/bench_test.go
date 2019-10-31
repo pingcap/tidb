@@ -1459,7 +1459,7 @@ func vectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext,
 			d64s[i].SetPrecision(0)
 		}
 	}
-	return codec.VectorizedEncodeValue(groupKey, buf, eType)
+	return buf.EncodeTo(groupKey, eType)
 }
 
 // getGroupKeyByRow evaluates the group items by rows. Using the getGroupKeyByRow to test the TestVectorizedEncodeValue

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -417,7 +416,7 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, input *
 		}
 		defer expression.PutColumn(buf)
 
-		err = vectorizedGetGroupKey(w.ctx, sc, w.groupKey, item, tp, input, buf)
+		err = vectorizedGetGroupKey(w.ctx, w.groupKey, item, tp, input, buf)
 		if err != nil {
 			return err
 		}
@@ -426,7 +425,7 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, input *
 }
 
 // vectorizedGetGroupKey evaluates the group items vectorized.
-func vectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item expression.Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
+func vectorizedGetGroupKey(ctx sessionctx.Context, groupKey [][]byte, item expression.Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
 	eType := tp.EvalType()
 	switch eType {
 	case types.ETInt:
@@ -473,7 +472,7 @@ func vectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext,
 			d64s[i].SetPrecision(0)
 		}
 	}
-	return codec.VectorizedEncodeValue(groupKey, buf, eType)
+	return buf.EncodeTo(groupKey, eType)
 }
 
 func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
@@ -821,7 +820,7 @@ func (e *HashAggExec) getGroupKey(input *chunk.Chunk) (err error) {
 		}
 		defer expression.PutColumn(buf)
 
-		err = vectorizedGetGroupKey(e.ctx, e.sc, e.groupKeyBuffer, item, tp, input, buf)
+		err = vectorizedGetGroupKey(e.ctx, e.groupKeyBuffer, item, tp, input, buf)
 		if err != nil {
 			return err
 		}
