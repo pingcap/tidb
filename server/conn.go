@@ -41,20 +41,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
-	"net/http"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-
-	qiniuAuth "github.com/qiniu/api.v7/v7/auth"
-	"github.com/qiniu/api.v7/v7/auth/qbox"
-	"github.com/qiniu/api.v7/v7/client"
-	. "github.com/qiniu/api.v7/v7/storage"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -1391,7 +1384,6 @@ func (cc *clientConn) writeChunksToVars(ctx context.Context, rs ResultSet, into 
 
 }
 
-//本地文件接口
 type DumpFile struct {
 	file *os.File
 }
@@ -1401,7 +1393,7 @@ func (f *DumpFile) Open(filename string) error {
 		return errors.Errorf("The TiDB server is running with the %s option so it cannot execute this statement", "--secure-file-priv")
 	}
 
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0666)
 	if err != nil {
 		return err
 	}
@@ -1421,55 +1413,11 @@ func (f *DumpFile) Close() error {
 	return err
 }
 
-func (f *DumpFile) Abort() error {
-	return nil
-}
-
 var (
-	testAK                  = "h19uEKgGG0hEfSQOMYXEv_YSTEJ1fuFh4s6sF5bT"
-	testSK                  = "wdP7n73IAzYF-SUEhvQyc-OVDmmhzYBkf-fbeVi3"
-	testBucket              = "ti3"
-	testBucketPrivate       = os.Getenv("QINIU_TEST_BUCKET_PRIVATE")
-	testBucketPrivateDomain = os.Getenv("QINIU_TEST_DOMAIN_PRIVATE")
-	testPipeline            = os.Getenv("QINIU_TEST_PIPELINE")
-	testDebug               = os.Getenv("QINIU_SDK_DEBUG")
-
-	testKey      = "outfile.txt"
-	testFetchUrl = "http://devtools.qiniu.com/qiniu.png"
-	testSiteUrl  = "http://devtools.qiniu.com"
-
 	dumpBufferSize = 1024 * 1024
 )
 
-var (
-	mac              *qbox.Mac
-	bucketManager    *BucketManager
-	operationManager *OperationManager
-	formUploader     *FormUploader
-	resumeUploader   *ResumeUploader
-	base64Uploader   *Base64Uploader
-	clt              client.Client
-)
-
-func qiniuInit() {
-	client.TurnOnDebug()
-	clt = client.Client{
-		Client: &http.Client{
-			Timeout: time.Minute * 10,
-		},
-	}
-	mac = qiniuAuth.New(testAK, testSK)
-	cfg := Config{}
-	cfg.Zone = &Zone_z2
-	cfg.UseCdnDomains = true
-	bucketManager = NewBucketManagerEx(mac, &cfg, &clt)
-	operationManager = NewOperationManagerEx(mac, &cfg, &clt)
-	formUploader = NewFormUploaderEx(&cfg, &clt)
-	resumeUploader = NewResumeUploaderEx(&cfg, &clt)
-	base64Uploader = NewBase64UploaderEx(&cfg, &clt)
-	rand.Seed(time.Now().Unix())
-}
-
+// for io.reader interface
 type ResultSetReader struct {
 	cc   *clientConn
 	ctx  context.Context
@@ -1487,7 +1435,7 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 	fieldData := cc.alloc.AllocWithLen(0, 1024)
 
 	req := rs.NewChunk()
-	binary := into.Tp == ast.SelectIntoDumpfile
+	is_dumpfile := into.Tp == ast.SelectIntoDumpfile
 
 	var lineTerm []byte
 	var lineStart []byte
@@ -1497,7 +1445,7 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 	var fieldEnclose byte
 	var encloseOptFlag bool
 
-	if binary {
+	if is_dumpfile {
 		fieldTerm = nil
 	} else {
 		lineTerm = []byte(into.LinesInfo.Terminated)
@@ -1542,19 +1490,19 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 		for i := 0; i < rowCount; i++ {
 			fieldData = fieldData[:0]
 
-			fieldData, err = dumpTextRowOnly(fieldData, rs.Columns(), req.GetRow(i), binary,
+			fieldData, err = dumpTextRowOnly(fieldData, rs.Columns(), req.GetRow(i), is_dumpfile,
 				fieldTerm, fieldEscape, fieldEnclose, encloseOptFlag)
 			if err != nil {
 				return 0, err
 			}
 
-			if !binary {
+			if !is_dumpfile {
 				r.data = append(r.data, lineStart...)
 			}
 
 			r.data = append(r.data, fieldData...)
 
-			if !binary {
+			if !is_dumpfile {
 				r.data = append(r.data, lineTerm...)
 			}
 
@@ -1564,57 +1512,6 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 	}
 	return 0, io.EOF
 
-}
-
-func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into *ast.SelectInto) error {
-	r := &ResultSetReader{
-		cc:   cc,
-		ctx:  ctx,
-		rs:   rs,
-		into: into,
-		data: cc.alloc.AllocWithLen(0, 1024),
-	}
-
-	filename := into.FileName
-
-	// qiniu://<filename>
-	splits := strings.Split(filename, "://")
-
-	switch splits[0] {
-	case "qiniu":
-		return dumpToQiniuStorage(r, splits[1])
-	default:
-		return dumpToLocalStorage(r, filename)
-	}
-
-	return nil
-}
-
-func dumpToQiniuStorage(r io.Reader, filename string) error {
-	qiniuInit()
-
-	var putRet PutRet
-	putPolicy := PutPolicy{
-		Scope:           "ti3",
-		DeleteAfterDays: 7,
-	}
-	upToken := putPolicy.UploadToken(mac)
-	testKey := filename
-
-	rds := []io.Reader{
-		r,
-	}
-
-	for _, rd := range rds {
-
-		err := resumeUploader.PutWithoutSize(context.Background(), &putRet, upToken, testKey, rd, nil)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Key: %s, Hash:%s", putRet.Key, putRet.Hash)
-	}
-
-	return nil
 }
 
 func dumpToLocalStorage(reader io.Reader, filename string) error {
@@ -1645,6 +1542,19 @@ func dumpToLocalStorage(reader io.Reader, filename string) error {
 	}
 
 	return f.Close()
+}
+
+func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into *ast.SelectInto) error {
+	r := &ResultSetReader{
+		cc:   cc,
+		ctx:  ctx,
+		rs:   rs,
+		into: into,
+		data: cc.alloc.AllocWithLen(0, 1024),
+	}
+
+	filename := into.FileName
+	return dumpToLocalStorage(r, filename)
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
