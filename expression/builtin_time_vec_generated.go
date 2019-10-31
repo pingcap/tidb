@@ -665,7 +665,6 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 
@@ -718,7 +717,6 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 
@@ -743,9 +741,8 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf0)
+	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.GoDurations()
-	result.MergeNulls(buf1)
 	arg1 := buf1.GoDurations()
 	var (
 		lhs types.Duration
@@ -765,7 +762,6 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 
@@ -818,7 +814,6 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 
@@ -871,7 +866,6 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 
@@ -934,7 +928,6 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 
@@ -964,9 +957,8 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 	if err := b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf0)
+	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.Times()
-	result.MergeNulls(buf1)
 	arg1 := buf1.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -982,7 +974,6 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 			r64s[i] = d.Duration
 		}
 	}
-
 	return nil
 }
 

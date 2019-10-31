@@ -283,7 +283,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 	{{- if not $noNull }}
 	result.ResizeGoDuration(n, true)
 	{{- else }}
-	result.ResizeGoDuration(n, false)
+		result.ResizeGoDuration(n, false)
 		r64s := result.GoDurations()
 		{{- if $reuse }}
 			{{- if $reuseA }}
@@ -305,13 +305,19 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			return err
 		}
 
-		{{- if .TypeA.Fixed }} 
-			result.MergeNulls(buf0)
+		{{- if and .TypeA.Fixed .TypeB.Fixed }}
+			result.MergeNulls(buf0, buf1)
 			arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
-		{{- end }}
-		{{- if .TypeB.Fixed }} 
-			result.MergeNulls(buf1)
 			arg1 := buf1.{{.TypeB.TypeNameInColumn}}s()
+		{{- else }}
+			{{- if .TypeA.Fixed }} 
+				result.MergeNulls(buf0)
+				arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
+			{{- end }}
+			{{- if .TypeB.Fixed }} 
+				result.MergeNulls(buf1)
+				arg1 := buf1.{{.TypeB.TypeNameInColumn}}s()
+			{{- end }}
 		{{- end }}
 
 		{{- if (or $AIsDuration $BIsDuration) }} 
@@ -344,13 +350,13 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			}
 			{{- if $BIsDuration }}
 			if !lhsIsDuration {
-			result.SetNull(i, true)
+				result.SetNull(i, true)
 				continue
 			}
 			lhs = lhsDur
 			{{- else if $BIsTime }}
 			if lhsIsDuration {
-			result.SetNull(i, true)
+				result.SetNull(i, true)
 				continue
 			}
 			{{- end }}
@@ -370,13 +376,13 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			}
 			{{- if $AIsDuration }}
 			if !rhsIsDuration {
-			result.SetNull(i, true)
+				result.SetNull(i, true)
 				continue
 			}
 			rhs = rhsDur
 			{{- else if $AIsTime }}
 			if rhsIsDuration {
-			result.SetNull(i, true)
+				result.SetNull(i, true)
 				continue
 			}
 			{{- end }}
@@ -412,9 +418,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			r64s[i] = d.Duration
 		}
 	}
-
-	
-	{{ end }} {{/* if $noNull */}}
+	{{- end }} {{/* if $noNull */}}
 	return nil
 }
 
