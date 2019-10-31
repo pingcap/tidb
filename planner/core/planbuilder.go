@@ -672,7 +672,7 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessP
 	}
 	var err error
 	if len(paths) == 0 {
-		err = ErrInternal.GenWithStackByArgs("None access path for table reader after isolation read filter")
+		err = ErrInternal.GenWithStackByArgs("No access path for table reader after isolation read filter")
 	}
 	return paths, err
 }
