@@ -16,3 +16,4 @@ tools/bin/
 vendor
 /_tools/
 .DS_Store
+.vscode
