@@ -425,7 +425,7 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        "45s",
 	TokenLimit:                   1000,
-	StoreLimit:                   0,
+	StoreLimit:                   500,
 	OOMUseTmpStorage:             true,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
