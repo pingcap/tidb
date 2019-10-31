@@ -102,9 +102,12 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
-	config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
+	conf := config.GetGlobalConfig()
+	conf.CheckMb4ValueInUTF8 = false
+	config.StoreGlobalConfig(conf)
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
-	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
+	conf.CheckMb4ValueInUTF8 = true
+	config.StoreGlobalConfig(conf)
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	c.Assert(err, NotNil)
 }
