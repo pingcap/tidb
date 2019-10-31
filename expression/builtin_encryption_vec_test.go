@@ -25,7 +25,9 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.AesEncrypt: {},
 	ast.Uncompress: {},
 	ast.AesDecrypt: {},
-	ast.Compress:   {},
+	ast.Compress: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.MD5: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
