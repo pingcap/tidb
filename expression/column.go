@@ -207,6 +207,49 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
+// VecEval evaluates this expression in a vectorized manner.
+func (col *Column) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (err error) {
+	eType := col.RetType.EvalType()
+	switch eType {
+	case types.ETInt:
+		err = col.VecEvalInt(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETReal:
+		err = col.VecEvalReal(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETDuration:
+		err = col.VecEvalDuration(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		err = col.VecEvalTime(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETString:
+		err = col.VecEvalString(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETJson:
+		err = col.VecEvalJSON(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	case types.ETDecimal:
+		err = col.VecEvalDecimal(ctx, input, result)
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {

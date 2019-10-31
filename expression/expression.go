@@ -46,6 +46,9 @@ type VecExpr interface {
 	// Vectorized returns if this expression supports vectorized evaluation.
 	Vectorized() bool
 
+	// VecEval evaluates this expression in a vectorized manner.
+	VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
 	// VecEvalInt evaluates this expression in a vectorized manner.
 	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 
