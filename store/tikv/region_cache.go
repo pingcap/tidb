@@ -921,7 +921,7 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 		c.storeMu.Unlock()
 		return
 	}
-	store = &Store{storeID: storeID, storeLimit: config.GetGlobalConfig().StoreLimit}
+	store = &Store{storeID: storeID}
 	c.storeMu.stores[storeID] = store
 	c.storeMu.Unlock()
 	return
@@ -1276,7 +1276,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType, storeLimit: config.GetGlobalConfig().StoreLimit}
+		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore

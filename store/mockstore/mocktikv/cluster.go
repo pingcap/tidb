@@ -651,6 +651,5 @@ func newStore(storeID uint64, addr string) *Store {
 			Id:      storeID,
 			Address: addr,
 		},
-		storeLimit: config.GetGlobalConfig().StoreLimit,
 	}
 }
