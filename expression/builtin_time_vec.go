@@ -850,13 +850,11 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		case "YEAR":
 			tb = tm1.AddDate(int(v), 0, 0)
 		default:
-			result.AppendNull()
-			continue
+			return types.ErrInvalidTimeFormat.GenWithStackByArgs(unit)
 		}
 		r := types.Time{Time: types.FromGoTime(tb), Type: b.resolveType(arg.Type, unit), Fsp: fsp}
 		if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
-			result.AppendNull()
-			continue
+			return handleInvalidTimeError(b.ctx, err)
 		}
 		result.AppendString(r.String())
 	}
