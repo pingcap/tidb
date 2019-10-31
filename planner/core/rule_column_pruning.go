@@ -248,9 +248,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 			if handleCol == nil {
 				handleCol = ds.newExtraHandleSchemaCol()
 				handleColInfo = model.NewExtraHandleColInfo()
-				ds.Columns = append(ds.Columns, handleColInfo)
-				ds.schema.Append(handleCol)
 			}
+			ds.Columns = append(ds.Columns, handleColInfo)
+			ds.schema.Append(handleCol)
 		} else if infoschema.IsClusterTable(ds.tableInfo.Name.O) && len(originColumns) > 0 {
 			// use the first line.
 			handleCol = originSchemaColumns[0]
