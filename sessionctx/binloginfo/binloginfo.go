@@ -167,7 +167,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			swapped := atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
-			if swapped {
+			if swapped && skip == 0 {
 				if err := statusListener(BinlogStatusSkipping); err != nil {
 					logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
 				}
