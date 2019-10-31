@@ -288,7 +288,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -460,7 +460,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	c.Assert(stmts, HasLen, 1)
 	err = plannercore.Preprocess(sctx, stmts[0], is)
 	c.Assert(err, IsNil, comment)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, err := os.Create("cpu.profile")
