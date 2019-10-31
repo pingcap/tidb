@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"math"
 
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
@@ -241,15 +242,17 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 	elem := g.Equivalents.Front()
 	expr := elem.Value.(*memo.GroupExpr)
 	childStats := make([]*property.StatsInfo, len(expr.Children))
+	childSchema := make([]*expression.Schema, len(expr.Children))
 	for i, childGroup := range expr.Children {
 		err = opt.fillGroupStats(childGroup)
 		if err != nil {
 			return err
 		}
 		childStats[i] = childGroup.Prop.Stats
+		childSchema[i] = childGroup.Prop.Schema
 	}
 	planNode := expr.ExprNode
-	g.Prop.Stats, err = planNode.DeriveStats(childStats)
+	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema)
 	return err
 }
 
