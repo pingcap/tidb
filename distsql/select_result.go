@@ -230,18 +230,18 @@ func (r *selectResult) recoverReadRow(decoder *codec.Decoder, rowsData []byte) (
 	defer func() {
 		if err := recover(); err != nil {
 			logutil.Logger(context.Background()).Error("read data error", zap.Reflect("err", err))
-		}
-		// trim the first column
-		remainData, err = decoder.DecodeOne(dataBak, 0, r.fieldTypes[0])
-		if err != nil {
-			return
-		}
-		// restore the chunk data
-		decoder.SetChunk(chkBak)
-		for i := 0; i < r.rowLen; i++ {
-			remainData, err = decoder.DecodeOne(remainData, i, r.fieldTypes[i])
+			// trim the first column
+			remainData, err = decoder.DecodeOne(dataBak, 0, r.fieldTypes[0])
 			if err != nil {
 				return
+			}
+			// restore the chunk data
+			decoder.SetChunk(chkBak)
+			for i := 0; i < r.rowLen; i++ {
+				remainData, err = decoder.DecodeOne(remainData, i, r.fieldTypes[i])
+				if err != nil {
+					return
+				}
 			}
 		}
 	}()
