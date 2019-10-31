@@ -14,8 +14,8 @@
 package types
 
 import (
-  "math"
-  "time"
+	"math"
+	"time"
 )
 
 // CompareInt64 returns an integer comparing the int64 x to y.
