@@ -769,42 +769,9 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 // VectorizedGetGroupKey evaluates the group items vectorized.
 func VectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
 	eType := tp.EvalType()
-	switch eType {
-	case types.ETInt:
-		err = item.VecEvalInt(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETReal:
-		err = item.VecEvalReal(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDuration:
-		err = item.VecEvalDuration(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		err = item.VecEvalTime(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETString:
-		err = item.VecEvalString(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETJson:
-		err = item.VecEvalJSON(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDecimal:
-		err = item.VecEvalDecimal(ctx, input, buf)
-		if err != nil {
-			return err
-		}
+	err = item.VecEval(ctx, input, buf)
+	if err != nil {
+		return err
 	}
 	// This check is used to avoid error during the execution of `EncodeDecimal`.
 	if item.GetType().Tp == mysql.TypeNewDecimal {
