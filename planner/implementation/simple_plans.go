@@ -110,7 +110,7 @@ func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implemen
 	return agg.cost
 }
 
-// NewTiDBHashAggImpl creates a new TiDBHashAggImpl.
+// NewTiKVHashAggImpl creates a new TiKVHashAggImpl.
 func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
 	return &TiKVHashAggImpl{baseImpl{plan: agg}}
 }
