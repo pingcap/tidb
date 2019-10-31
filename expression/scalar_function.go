@@ -115,7 +115,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	if funcName == ast.Cast || funcName == ast.DayName {
+	if funcName == ast.Cast {
 		return BuildCastFunction(ctx, args[0], retType), nil
 	}
 	fc, ok := funcs[funcName]
@@ -138,7 +138,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if err != nil {
 		return nil, err
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified || retType.Tp == mysql.TypeString {
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
