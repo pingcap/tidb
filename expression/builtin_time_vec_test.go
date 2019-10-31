@@ -27,8 +27,41 @@ import (
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
 	ast.DateDiff:    {},
-	ast.TimeDiff:    {},
-	ast.DateFormat:  {},
+	ast.TimeDiff: {
+		// builtinNullTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETTimestamp}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDuration}},
+		// builtinDurationDurationTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
+		// builtinDurationStringTimeDiffSig f
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &timeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dataTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dataTimeStrGener{Year: 2019, Month: 10, Fsp: 4}}},
+		// builtinTimeTimeTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETTimestamp}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETTimestamp}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDatetime}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		// builtinTimeStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &timeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &dataTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &timeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dataTimeGener{Year: 2019, Month: 10}, &dataTimeStrGener{Year: 2019, Month: 10}}},
+		// builtinStringDurationTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, nil}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dataTimeStrGener{Year: 2019, Month: 10}, nil}},
+		// builtinStringTimeTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dataTimeStrGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dataTimeStrGener{Year: 2019, Month: 10}, &dataTimeGener{Year: 2019, Month: 10}}},
+		// builtinStringStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, &dataTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dataTimeStrGener{Year: 2019, Month: 10}, &timeStrGener{Year: 2019, Month: 10}}},
+	},
+	ast.DateFormat: {},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},

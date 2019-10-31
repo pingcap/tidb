@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -44,127 +45,123 @@ func (g gener) gen() interface{} {
 
 var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 
-	//ast.AddTime: {
-	//	// builtinAddDatetimeAndDurationSig
-	//	{
-	//		retEvalType:   types.ETDatetime,
-	//		childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddDatetimeAndStringSig
-	//	{
-	//		retEvalType:   types.ETDatetime,
-	//		childrenTypes: []types.EvalType{types.ETDatetime, types.ETString},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddDurationAndDurationSig
-	//	{
-	//		retEvalType:   types.ETDuration,
-	//		childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddDurationAndStringSig
-	//	{
-	//		retEvalType:   types.ETDuration,
-	//		childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddStringAndDurationSig
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddStringAndStringSig
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETString, types.ETString},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddDateAndDurationSig
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
-	//
-	//		childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddDateAndStringSig
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
-	//
-	//		childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddTimeDateTimeNullSig
-	//	{
-	//		retEvalType:   types.ETDatetime,
-	//		childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddTimeStringNullSig
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-	//
-	//		childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//		},
-	//	},
-	//	// builtinAddTimeDurationNullSig
-	//	{
-	//		retEvalType:   types.ETDuration,
-	//		childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime},
-	//
-	//		geners: []dataGenerator{
-	//			gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-	//			gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-	//		},
-	//	},
-	//},
+	ast.AddTime: {
+		// builtinAddDatetimeAndDurationSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration},
 
-	ast.TimeDiff: {
-		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinAddDatetimeAndStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinAddDurationAndDurationSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinAddDurationAndStringSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinAddStringAndDurationSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinAddStringAndStringSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinAddDateAndDurationSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
+
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinAddDateAndStringSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
+
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinAddTimeDateTimeNullSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+		// builtinAddTimeStringNullSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+		// builtinAddTimeDurationNullSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
 	},
 }
 

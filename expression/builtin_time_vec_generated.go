@@ -612,8 +612,7 @@ func (b *builtinAddTimeDurationNullSig) vectorized() bool {
 
 func (b *builtinNullTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ResizeGoDuration(n, false)
-
+	result.ResizeGoDuration(n, true)
 	return nil
 }
 
@@ -624,7 +623,6 @@ func (b *builtinNullTimeDiffSig) vectorized() bool {
 func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
@@ -656,6 +654,7 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 			return err
 		}
 		if rhsIsDuration {
+			result.SetNull(i, true)
 			continue
 		}
 		d, isNull, err := calculateTimeDiff(b.ctx.GetSessionVars().StmtCtx, lhsTime, rhsTime)
@@ -677,7 +676,6 @@ func (b *builtinTimeStringTimeDiffSig) vectorized() bool {
 func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf0 := result
 	buf1, err := b.bufAllocator.get(types.ETString, n)
@@ -708,6 +706,7 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 			return err
 		}
 		if !rhsIsDuration {
+			result.SetNull(i, true)
 			continue
 		}
 		rhs = rhsDur
@@ -730,7 +729,6 @@ func (b *builtinDurationStringTimeDiffSig) vectorized() bool {
 func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf0 := result
 	buf1, err := b.bufAllocator.get(types.ETDuration, n)
@@ -778,7 +776,6 @@ func (b *builtinDurationDurationTimeDiffSig) vectorized() bool {
 func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf0, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -809,6 +806,7 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 			return err
 		}
 		if lhsIsDuration {
+			result.SetNull(i, true)
 			continue
 		}
 		rhsTime := arg1[i]
@@ -831,7 +829,6 @@ func (b *builtinStringTimeTimeDiffSig) vectorized() bool {
 func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf1 := result
 	buf0, err := b.bufAllocator.get(types.ETString, n)
@@ -861,6 +858,7 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 			return err
 		}
 		if !lhsIsDuration {
+			result.SetNull(i, true)
 			continue
 		}
 		lhs = lhsDur
@@ -884,7 +882,6 @@ func (b *builtinStringDurationTimeDiffSig) vectorized() bool {
 func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf0, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -906,6 +903,7 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 	}
 	for i := 0; i < n; i++ {
 		if buf1.IsNull(i) || buf0.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(b.ctx.GetSessionVars().StmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
@@ -917,6 +915,7 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 			return err
 		}
 		if lhsIsDuration != rhsIsDuration {
+			result.SetNull(i, true)
 			continue
 		}
 		var (
@@ -946,7 +945,6 @@ func (b *builtinStringStringTimeDiffSig) vectorized() bool {
 func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
-
 	r64s := result.GoDurations()
 	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {

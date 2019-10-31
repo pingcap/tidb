@@ -280,8 +280,10 @@ var timeDiff = template.Must(template.New("").Parse(`
 {{ $noNull := (ne .SigName "builtinNullTimeDiffSig") }}
 func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	{{- if not $noNull }}
+	result.ResizeGoDuration(n, true)
+	{{- else }}
 	result.ResizeGoDuration(n, false)
-	{{ if $noNull }}
 		r64s := result.GoDurations()
 		{{- if $reuse }}
 			{{- if $reuseA }}
@@ -327,6 +329,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			if result.IsNull(i) || buf0.IsNull(i) {
 		{{- else }} 
 			if buf1.IsNull(i) || buf0.IsNull(i) {
+			result.SetNull(i, true)
 		{{- end }}
 			continue
 		}
@@ -341,11 +344,13 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			}
 			{{- if $BIsDuration }}
 			if !lhsIsDuration {
+			result.SetNull(i, true)
 				continue
 			}
 			lhs = lhsDur
 			{{- else if $BIsTime }}
 			if lhsIsDuration {
+			result.SetNull(i, true)
 				continue
 			}
 			{{- end }}
@@ -365,11 +370,13 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			}
 			{{- if $AIsDuration }}
 			if !rhsIsDuration {
+			result.SetNull(i, true)
 				continue
 			}
 			rhs = rhsDur
 			{{- else if $AIsTime }}
 			if rhsIsDuration {
+			result.SetNull(i, true)
 				continue
 			}
 			{{- end }}
@@ -381,6 +388,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 
 		{{- if and $AIsString $BIsString }}
 			if lhsIsDuration != rhsIsDuration {
+				result.SetNull(i, true)
 				continue
 			}
 			var (
@@ -544,7 +552,6 @@ var tmplVal = struct {
 	Category: "Time",
 	Functions: []function{
 		{FuncName: "AddTime", Sigs: addTimeSigsTmpl},
-		{FuncName: "TimeDiff", Sigs: timeDiffSigsTmpl},
 	},
 }
 
@@ -587,7 +594,7 @@ func generateOneFile(fileNamePrefix string) (err error) {
 	if err != nil {
 		return
 	}
-	//err = generateTestDotGo(fileNamePrefix + "_test.go")
+	err = generateTestDotGo(fileNamePrefix + "_test.go")
 	return
 }
 
