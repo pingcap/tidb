@@ -16,6 +16,9 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -26,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"sync"
-	"sync/atomic"
 )
 
 var (
@@ -72,7 +73,7 @@ type HashJoinExec struct {
 	isOuterJoin bool
 
 	outerMatchedStatus []*bitmap.ConcurrentBitmap
-	outerHashJoin      bool
+	useOuterToBuild    bool
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -179,7 +180,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		}
 		if !hasWaitedForInner {
 			if outerResult.NumRows() == 0 {
-				if !e.outerHashJoin {
+				if !e.useOuterToBuild {
 					e.finished.Store(true)
 					return
 				}
@@ -319,19 +320,13 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 }
 
 func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
-	var step = e.rowContainer.records.NumChunks() / int(e.concurrency)
-	var start = step * int(workerID)
-	var end = start + step
-	// The last worker handles all remaining chunks
-	if workerID+1 == e.concurrency {
-		end = e.rowContainer.records.NumChunks()
-	}
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
 	}
 
-	for i := start; i < end; i++ {
+	numChks := e.rowContainer.records.NumChunks()
+	for i := int(workerID); i < numChks; i += int(e.concurrency) {
 		chk := e.rowContainer.records.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
@@ -356,7 +351,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	// Concurrently handling unmatched rows from hash table at the tail
-	if e.outerHashJoin {
+	if e.useOuterToBuild {
 		for i := uint(0); i < e.concurrency; i++ {
 			var workID = i
 			e.joinWorkerWaitGroup.Add(1)
@@ -397,7 +392,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 		if !ok {
 			break
 		}
-		if e.outerHashJoin {
+		if e.useOuterToBuild {
 			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, outerResult, hCtx, joinResult)
 		} else {
 			ok, joinResult = e.join2Chunk(workerID, outerResult, hCtx, joinResult, selected)
@@ -420,7 +415,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, outerKeyColIdx []int) {
 
 func (e *HashJoinExec) joinMatchedOuterRow2ChunkForOuterHashJoin(workerID uint, innerRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	outerRows, rowsIds, err := e.rowContainer.GetMatchedRowsAndIds(innerRow, hCtx)
+	outerRows, rowsIds, err := e.rowContainer.GetMatchedRowsAndPtrs(innerRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -452,7 +447,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2ChunkForOuterHashJoin(workerID uint, 
 }
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	innerRows, _, err := e.rowContainer.GetMatchedRowsAndIds(outerRow, hCtx)
+	innerRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(outerRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -622,7 +617,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh <-chan *chunk.Chunk) 
 		if e.finished.Load().(bool) {
 			return nil
 		}
-		if e.outerHashJoin {
+		if e.useOuterToBuild {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())

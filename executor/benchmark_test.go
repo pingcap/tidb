@@ -606,16 +606,16 @@ func prepare4OuterJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor
 		joinKeys = append(joinKeys, cols0[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor:  newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
-		concurrency:   uint(testCase.concurrency),
-		joinType:      2, // 1 for LeftOutersJoin, 2 for RightOuterJoin
-		isOuterJoin:   true,
-		innerKeys:     joinKeys,
-		outerKeys:     joinKeys,
-		innerExec:     innerExec,
-		outerExec:     outerExec,
-		innerEstCount: float64(testCase.rows),
-		outerHashJoin: true,
+		baseExecutor:    newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
+		concurrency:     uint(testCase.concurrency),
+		joinType:        2, // 1 for LeftOutersJoin, 2 for RightOuterJoin
+		isOuterJoin:     true,
+		innerKeys:       joinKeys,
+		outerKeys:       joinKeys,
+		innerExec:       innerExec,
+		outerExec:       outerExec,
+		innerEstCount:   float64(testCase.rows),
+		useOuterToBuild: true,
 	}
 
 	defaultValues := make([]types.Datum, e.innerExec.Schema().Len())

@@ -997,15 +997,15 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		concurrency:   v.Concurrency,
-		joinType:      v.JoinType,
-		isOuterJoin:   v.JoinType.IsOuterJoin(),
-		innerEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
-		outerHashJoin: v.OuterHashJoin,
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		concurrency:     v.Concurrency,
+		joinType:        v.JoinType,
+		isOuterJoin:     v.JoinType.IsOuterJoin(),
+		innerEstCount:   v.Children()[v.InnerChildIdx].StatsCount(),
+		useOuterToBuild: v.OuterHashJoin,
 	}
 	// reverse the inner and the outer
-	if e.outerHashJoin {
+	if e.useOuterToBuild {
 		v.InnerChildIdx = 1 - v.InnerChildIdx
 		v.LeftConditions, v.RightConditions = v.RightConditions, v.LeftConditions
 	}
@@ -1034,7 +1034,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.outerKeys = v.LeftJoinKeys
 	}
 	if defaultValues == nil {
-		if e.outerHashJoin {
+		if e.useOuterToBuild {
 			defaultValues = make([]types.Datum, e.outerExec.Schema().Len())
 		} else {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
@@ -1042,7 +1042,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(b.ctx, v.JoinType, (v.InnerChildIdx == 0 && !e.outerHashJoin) || (v.InnerChildIdx == 1 && e.outerHashJoin), defaultValues,
+		e.joiners[i] = newJoiner(b.ctx, v.JoinType, (v.InnerChildIdx == 0 && !e.useOuterToBuild) || (v.InnerChildIdx == 1 && e.useOuterToBuild), defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	executorCountHashJoinExec.Inc()

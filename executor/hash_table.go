@@ -130,10 +130,10 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	return c
 }
 
-// GetMatchedRowsAndIds get matched rows and IDs from probeRow. It can be called
+// GetMatchedRowsAndPtrs get matched rows and IDs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndIds(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedIds []chunk.RowPtr, err error) {
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
 	if err != nil || hasNull {
 		return
@@ -144,7 +144,7 @@ func (c *hashRowContainer) GetMatchedRowsAndIds(probeRow chunk.Row, hCtx *hashCo
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
-	matchedIds = make([]chunk.RowPtr, 0, len(innerPtrs))
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		if c.alreadySpilled() {
 			matchedRow, err = c.recordsInDisk.GetRow(ptr)
@@ -163,7 +163,7 @@ func (c *hashRowContainer) GetMatchedRowsAndIds(probeRow chunk.Row, hCtx *hashCo
 			continue
 		}
 		matched = append(matched, matchedRow)
-		matchedIds = append(matchedIds, ptr)
+		matchedPtrs = append(matchedPtrs, ptr)
 	}
 	return
 }

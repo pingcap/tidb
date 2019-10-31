@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,10 +14,11 @@
 package bitmap
 
 import (
-	. "github.com/pingcap/check"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	. "github.com/pingcap/check"
 )
 
 func TestT(t *testing.T) {
