@@ -228,8 +228,8 @@ func (r *selectResult) recoverReadRow(decoder *codec.Decoder, rowsData []byte) (
 	dataBak := make([]byte, len(rowsData))
 	copy(dataBak, rowsData)
 	defer func() {
-		if err := recover(); err != nil {
-			logutil.Logger(context.Background()).Error("read data error", zap.Reflect("err", err))
+		if re := recover(); re != nil {
+			logutil.Logger(context.Background()).Error("read data error", zap.Reflect("err", re))
 			// trim the first column
 			remainData, err = decoder.DecodeOne(dataBak, 0, r.fieldTypes[0])
 			if err != nil {
@@ -237,16 +237,18 @@ func (r *selectResult) recoverReadRow(decoder *codec.Decoder, rowsData []byte) (
 			}
 			// restore the chunk data
 			decoder.SetChunk(chkBak)
-			for i := 0; i < r.rowLen; i++ {
+			for i := 0; i < (r.rowLen-1) && len(remainData) > 0; i++ {
 				remainData, err = decoder.DecodeOne(remainData, i, r.fieldTypes[i])
 				if err != nil {
 					return
 				}
 			}
+			// Last column was lost, use null instead.
+			chkBak.AppendNull(r.rowLen - 1)
 		}
 	}()
 
-	for i := 0; i < r.rowLen; i++ {
+	for i := 0; i < r.rowLen && len(rowsData) > 0; i++ {
 		rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 		if err != nil {
 			return rowsData, err
@@ -257,11 +259,17 @@ func (r *selectResult) recoverReadRow(decoder *codec.Decoder, rowsData []byte) (
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
+	tmpChk := chk.CopyConstruct()
+	tmpChk.Reset()
+	decoder := codec.NewDecoder(tmpChk, r.ctx.GetSessionVars().Location())
 	for !chk.IsFull() && len(rowsData) > 0 {
 		rowsData, err = r.recoverReadRow(decoder, rowsData)
 		if err != nil {
 			return err
+		}
+		if decoder.Chunk().NumRows() > 0 {
+			chk.AppendRow(decoder.Chunk().GetRow(0))
+			decoder.Chunk().Reset()
 		}
 	}
 	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
