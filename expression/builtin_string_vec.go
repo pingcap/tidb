@@ -655,23 +655,15 @@ func (b *builtinReverseBinarySig) vectorized() bool {
 }
 
 func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return err
-	}
-	result.ReserveString(n)
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.AppendNull()
+	for i := 0; i < input.NumRows(); i++ {
+		if result.IsNull(i) {
 			continue
 		}
-		reversed := reverseBytes([]byte(buf.GetString(i)))
-		result.AppendString(string(reversed))
+		reversed := reverseBytes(result.GetBytes(i))
+		result.SetRaw(i, []byte(string(reversed)))
 	}
 	return nil
 }
