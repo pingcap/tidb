@@ -558,10 +558,12 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 	}
 }
 
+// Chunk returns the current chunk
 func (decoder *Decoder) Chunk() *chunk.Chunk {
 	return decoder.chk
 }
 
+// Chunk replaces the current chunk
 func (decoder *Decoder) SetChunk(chk *chunk.Chunk) {
 	decoder.chk = chk
 }
