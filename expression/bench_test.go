@@ -1411,57 +1411,6 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
 }
 
-// vectorizedGetGroupKey evaluates the group items vectorized. Using the vectorizedGetGroupKey to test the TestVectorizedEncodeValue
-func vectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
-	eType := tp.EvalType()
-	switch eType {
-	case types.ETInt:
-		err = item.VecEvalInt(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETReal:
-		err = item.VecEvalReal(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDuration:
-		err = item.VecEvalDuration(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		err = item.VecEvalTime(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETString:
-		err = item.VecEvalString(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETJson:
-		err = item.VecEvalJSON(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDecimal:
-		err = item.VecEvalDecimal(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	}
-	// This check is used to avoid error during the execution of `EncodeDecimal`.
-	if item.GetType().Tp == mysql.TypeNewDecimal {
-		numRows := input.NumRows()
-		d64s := buf.Decimals()
-		for i := 0; i < numRows; i++ {
-			d64s[i].SetPrecision(0)
-		}
-	}
-	return buf.EncodeTo(groupKey, eType)
-}
-
 // getGroupKeyByRow evaluates the group items by rows. Using the getGroupKeyByRow to test the TestVectorizedEncodeValue
 func getGroupKeyByRow(sc *stmtctx.StatementContext, row chunk.Row, groupByItems []Expression, valDatums []types.Datum, groupKey []byte) ([]byte, error) {
 	valDatums = valDatums[:0]
@@ -1524,7 +1473,7 @@ func BenchmarkVectorizedEncodeValue(b *testing.B) {
 						}
 						for j, item := range exprs {
 							tp := item.GetType()
-							err = vectorizedGetGroupKey(ctx, sc, groupKeys0, item, tp, input, bufs[j])
+							err = VectorizedGetGroupKey(ctx, sc, groupKeys0, item, tp, input, bufs[j])
 							if err != nil {
 								b.Fatal(err)
 							}

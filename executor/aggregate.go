@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -416,63 +415,12 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, input *
 		}
 		defer expression.PutColumn(buf)
 
-		err = vectorizedGetGroupKey(w.ctx, w.groupKey, item, tp, input, buf)
+		err = expression.VectorizedGetGroupKey(w.ctx, sc, w.groupKey, item, tp, input, buf)
 		if err != nil {
 			return err
 		}
 	}
 	return err
-}
-
-// vectorizedGetGroupKey evaluates the group items vectorized.
-func vectorizedGetGroupKey(ctx sessionctx.Context, groupKey [][]byte, item expression.Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
-	eType := tp.EvalType()
-	switch eType {
-	case types.ETInt:
-		err = item.VecEvalInt(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETReal:
-		err = item.VecEvalReal(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDuration:
-		err = item.VecEvalDuration(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		err = item.VecEvalTime(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETString:
-		err = item.VecEvalString(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETJson:
-		err = item.VecEvalJSON(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	case types.ETDecimal:
-		err = item.VecEvalDecimal(ctx, input, buf)
-		if err != nil {
-			return err
-		}
-	}
-	// This check is used to avoid error during the execution of `EncodeDecimal`.
-	if item.GetType().Tp == mysql.TypeNewDecimal {
-		numRows := input.NumRows()
-		d64s := buf.Decimals()
-		for i := 0; i < numRows; i++ {
-			d64s[i].SetPrecision(0)
-		}
-	}
-	return buf.EncodeTo(groupKey, eType)
 }
 
 func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
@@ -820,7 +768,7 @@ func (e *HashAggExec) getGroupKey(input *chunk.Chunk) (err error) {
 		}
 		defer expression.PutColumn(buf)
 
-		err = vectorizedGetGroupKey(e.ctx, e.groupKeyBuffer, item, tp, input, buf)
+		err = expression.VectorizedGetGroupKey(e.ctx, e.sc, e.groupKeyBuffer, item, tp, input, buf)
 		if err != nil {
 			return err
 		}
