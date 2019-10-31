@@ -58,11 +58,11 @@ type BinlogStatus int
 const (
 	//BinlogStatusUnknown stands for unknown binlog status
 	BinlogStatusUnknown BinlogStatus = iota
-	//BinlogStatusUnknown stands for the binlog is enabled
+	//BinlogStatusOn stands for the binlog is enabled
 	BinlogStatusOn
-	//BinlogStatusUnknown stands for the binlog is disabled
+	//BinlogStatusOff stands for the binlog is disabled
 	BinlogStatusOff
-	//BinlogStatusUnknown stands for the binlog status
+	//BinlogStatusSkipping stands for the binlog status
 	BinlogStatusSkipping
 )
 
