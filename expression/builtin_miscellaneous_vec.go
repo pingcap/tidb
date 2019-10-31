@@ -238,7 +238,7 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		if buf.IsNull(i) {
 			i64s[i] = 0
 		} else {
-			ipAddress := []byte(buf.GetString(i))
+			ipAddress := buf.GetBytes(i)
 			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
 				//Not an IPv6 address, return false
 				i64s[i] = 0
