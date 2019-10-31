@@ -1743,6 +1743,10 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
 		argTp = types.ETReal
 	}
+	// MySQL compatibility
+	if argTp == types.ETJson {
+		argTp = types.ETInt
+	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp, types.ETInt)
 
@@ -1762,6 +1766,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinTruncateRealSig{bf}
 	case types.ETDecimal:
 		sig = &builtinTruncateDecimalSig{bf}
+	default:
+		return nil, errIncorrectArgs.GenWithStackByArgs("truncate")
 	}
 
 	return sig, nil

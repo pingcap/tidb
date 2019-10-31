@@ -519,6 +519,9 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result = tk.MustQuery(`select truncate(d, -1), truncate(d, 1), truncate(d, -2), truncate(d, 2) from t;`)
 	result.Check(testkit.Rows("10 12.3 0 12.34"))
 
+	result = tk.MustQuery(`select truncate(json_array(), -1), truncate("cascasc", 1);`)
+	result.Check(testkit.Rows("0 0"))
+
 	// for pow
 	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
 	result.Check(testkit.Rows("144 144 144"))
