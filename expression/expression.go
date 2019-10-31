@@ -46,9 +46,6 @@ type VecExpr interface {
 	// Vectorized returns if this expression supports vectorized evaluation.
 	Vectorized() bool
 
-	// VecEval evaluates this expression in a vectorized manner.
-	VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
 	// VecEvalInt evaluates this expression in a vectorized manner.
 	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 
@@ -439,7 +436,7 @@ func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result
 	case types.ETDecimal:
 		err = expr.VecEvalDecimal(ctx, input, result)
 	}
-	return
+	return errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.

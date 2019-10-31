@@ -769,7 +769,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 // VectorizedGetGroupKey evaluates the group items vectorized.
 func VectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
 	eType := tp.EvalType()
-	err = item.VecEval(ctx, input, buf)
+	err = vecEval(ctx, item, input, buf)
 	if err != nil {
 		return err
 	}

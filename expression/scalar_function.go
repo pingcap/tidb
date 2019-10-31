@@ -41,49 +41,6 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (err error) {
-	eType := sf.RetType.EvalType()
-	switch eType {
-	case types.ETInt:
-		err = sf.Function.vecEvalInt(input, result)
-		if err != nil {
-			return err
-		}
-	case types.ETReal:
-		err = sf.Function.vecEvalReal(input, result)
-		if err != nil {
-			return err
-		}
-	case types.ETDuration:
-		err = sf.Function.vecEvalDuration(input, result)
-		if err != nil {
-			return err
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		err = sf.Function.vecEvalTime(input, result)
-		if err != nil {
-			return err
-		}
-	case types.ETString:
-		err = sf.Function.vecEvalString(input, result)
-		if err != nil {
-			return err
-		}
-	case types.ETJson:
-		err = sf.Function.vecEvalJSON(input, result)
-		if err != nil {
-			return err
-		}
-	case types.ETDecimal:
-		err = sf.Function.vecEvalDecimal(input, result)
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return sf.Function.vecEvalInt(input, result)

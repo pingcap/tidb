@@ -390,9 +390,6 @@ type MockExpr struct {
 	i   interface{}
 }
 
-func (m *MockExpr) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return nil
-}
 func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
