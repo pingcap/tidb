@@ -250,7 +250,6 @@ func (b *{{.SigName}}) vectorized() bool {
 `))
 
 var timeDiff = template.Must(template.New("").Parse(`
-
 {{ define "BufAllocator0" }}
 	buf0, err := b.bufAllocator.get(types.ET{{.TypeA.ETName}}, n)
 	if err != nil {

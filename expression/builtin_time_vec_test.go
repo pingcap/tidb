@@ -35,7 +35,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDuration}},
 		// builtinDurationDurationTimeDiffSig
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
-		// builtinDurationStringTimeDiffSig f
+		// builtinDurationStringTimeDiffSig
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &timeStrGener{Year: 2019, Month: 10}}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dataTimeStrGener{Year: 2019, Month: 10}}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dataTimeStrGener{Year: 2019, Month: 10, Fsp: 4}}},
