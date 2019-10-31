@@ -445,7 +445,7 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 	case *tikvpb.BatchCommandsResponse_Response_CheckTxnStatus:
 		return &Response{Resp: res.CheckTxnStatus}
 	}
-	return nil
+	return &Response{}
 }
 
 // CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
