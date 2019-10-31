@@ -14,13 +14,16 @@
 package expression
 
 import (
+	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
 	"hash"
+	"io"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -134,11 +137,40 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinRandomBytesSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	var dst bytes.Buffer
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		byteLen := i64s[i]
+		if byteLen < 1 || byteLen > 1024 {
+			return types.ErrOverflow.GenWithStackByArgs("length", "random_bytes")
+		}
+		if n, err := io.CopyN(&dst, rand.Reader, byteLen); err != nil {
+			return err
+		} else if n != byteLen {
+			return errors.New("fail to generate random bytes")
+		}
+		result.AppendBytes(dst.Bytes())
+		dst.Reset()
+	}
+	return nil
 }
 
 func (b *builtinMD5Sig) vectorized() bool {
