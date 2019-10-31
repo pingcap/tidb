@@ -581,11 +581,38 @@ func (b *builtinSubTimeDateTimeNullSig) vecEvalTime(input *chunk.Chunk, result *
 }
 
 func (b *builtinToSecondsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals a builtinToSecondsSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		arg := ds[i]
+		ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
+		if ret == 0 {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String())); err != nil {
+				return err
+			}
+			i64s[i] = 0
+			continue
+		}
+		i64s[i] = ret
+	}
+	return nil
 }
 
 func (b *builtinSubDurationAndStringSig) vectorized() bool {
