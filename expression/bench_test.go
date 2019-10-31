@@ -397,10 +397,10 @@ func (g *ipv4ByteGener) gen() interface{} {
 }
 
 // ipv4Compat is used to generate ipv4 compatible ipv6 strings
-type ipv4CompatStrGener struct {
+type ipv4CompatByteGener struct {
 }
 
-func (g *ipv4CompatStrGener) gen() interface{} {
+func (g *ipv4CompatByteGener) gen() interface{} {
 	var ip = make([]byte, net.IPv6len)
 	for i := range ip {
 		if i < 12 {

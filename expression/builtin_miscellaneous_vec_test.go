@@ -34,7 +34,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.InetAton:     {},
 	ast.IsIPv4Mapped: {},
 	ast.IsIPv4Compat: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4CompatStrGener{}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4CompatByteGener{}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4ByteGener{}}},
 	},
