@@ -601,13 +601,16 @@ func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	i64s := result.Int64s()
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		arg := ds[i]
 		ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
 		if ret == 0 {
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String())); err != nil {
 				return err
 			}
-			i64s[i] = 0
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = ret
