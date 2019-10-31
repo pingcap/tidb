@@ -96,7 +96,7 @@ func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
-	c.Assert(err.Error(), Equals, "store token is up to the limit")
+	c.Assert(err.Error(), Equals, "[tikv:1]store token error, can't get store token, pool is up to the limit")
 	config.GetGlobalConfig().StoreLimit = oldStoreLimit
 }
 
