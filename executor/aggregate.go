@@ -239,12 +239,10 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-var defaultChunkSize = 1024
-
 func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet = set.NewStringSet()
 	e.partialResultMap = make(aggPartialResultMapper)
-	e.groupKeyBuffer = make([][]byte, 0, defaultChunkSize)
+	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 }
 
@@ -281,7 +279,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
 			chk:               newFirstChunk(e.children[0]),
-			groupKey:          make([][]byte, 0, defaultChunkSize),
+			groupKey:          make([][]byte, 0, 8),
 		}
 
 		e.partialWorkers[i] = w
@@ -302,7 +300,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			finalResultHolderCh: e.finalInputCh,
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
-			groupKeysForByte:    make([][]byte, 0, defaultChunkSize),
+			groupKeysForByte:    make([][]byte, 0, 8),
 		}
 	}
 }
@@ -363,9 +361,9 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 
 	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
 	numRows := chk.NumRows()
-	for j := 0; j < numRows; j++ {
-		for i, af := range w.aggFuncs {
-			if err = af.UpdatePartialResult(ctx, []chunk.Row{chk.GetRow(j)}, partialResults[j][i]); err != nil {
+	for i := 0; i < numRows; i++ {
+		for j, af := range w.aggFuncs {
+			if err = af.UpdatePartialResult(ctx, []chunk.Row{chk.GetRow(i)}, partialResults[i][j]); err != nil {
 				return err
 			}
 		}
@@ -484,7 +482,6 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 					w.groupSet.Insert(groupKey)
 				}
 				prs := intermDataBuffer[i]
-
 				for j, af := range w.aggFuncs {
 					if err = af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j]); err != nil {
 						return err
@@ -505,9 +502,9 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		w.groupKeysForByte = append(w.groupKeysForByte, []byte(groupKey))
 	}
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeysForByte, w.partialResultMap)
-	for j := 0; j < len(w.groupSet); j++ {
-		for i, af := range w.aggFuncs {
-			if err := af.AppendFinalResult2Chunk(sctx, partialResults[j][i], result); err != nil {
+	for i := 0; i < len(w.groupSet); i++ {
+		for j, af := range w.aggFuncs {
+			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
