@@ -1211,9 +1211,31 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinCastDurationAsJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveJSON(n)
+	var dur types.Duration
+	dur.Fsp = types.MaxFsp
+	ds := buf.GoDurations()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		dur.Duration = ds[i]
+		result.AppendJSON(json.CreateBinary(dur.String()))
+	}
+	return nil
 }
