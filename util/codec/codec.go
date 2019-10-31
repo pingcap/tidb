@@ -563,7 +563,7 @@ func (decoder *Decoder) Chunk() *chunk.Chunk {
 	return decoder.chk
 }
 
-// Chunk replaces the current chunk
+// SetChunk replaces the current chunk
 func (decoder *Decoder) SetChunk(chk *chunk.Chunk) {
 	decoder.chk = chk
 }
