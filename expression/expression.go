@@ -435,8 +435,10 @@ func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result
 		err = expr.VecEvalJSON(ctx, input, result)
 	case types.ETDecimal:
 		err = expr.VecEvalDecimal(ctx, input, result)
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
 	}
-	return errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+	return
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.

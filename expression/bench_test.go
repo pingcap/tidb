@@ -1411,98 +1411,48 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
 }
 
-// getGroupKeyByRow evaluates the group items by rows. Using the getGroupKeyByRow to test the TestVectorizedEncodeValue
-func getGroupKeyByRow(sc *stmtctx.StatementContext, row chunk.Row, groupByItems []Expression, valDatums []types.Datum, groupKey []byte) ([]byte, error) {
-	valDatums = valDatums[:0]
-	for _, item := range groupByItems {
-		v, err := item.Eval(row)
-		if err != nil {
-			return nil, err
-		}
-		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().Tp == mysql.TypeNewDecimal {
-			v.SetLength(0)
-		}
-		valDatums = append(valDatums, v)
-	}
-	var err error
-	groupKey, err = codec.EncodeValue(sc, groupKey[:0], valDatums...)
-	return groupKey, err
-}
-
 func BenchmarkVectorizedEncodeValue(b *testing.B) {
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	var err error
-	groupKeys0 := make([][]byte, 1024)
-	groupKeys1 := make([][]byte, 1024)
-	valDatums := make([]types.Datum, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for numCols := 1; numCols <= 1; numCols++ {
-		typeCombination := make([]types.EvalType, numCols)
-		var combFunc func(nCols int)
-		combFunc = func(nCols int) {
-			if nCols == 0 {
-				name := ""
-				for _, t := range typeCombination {
-					for i := range eTypes {
-						if t == eTypes[i] {
-							name += tNames[t] + "/"
-						}
-					}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		if eTypes[i] == types.ETDecimal {
+			ft.Flen = 0
+		}
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		b.Run("vec-"+tNames[i], func(b *testing.B) {
+			bufs := make([][]byte, 1024)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for i := 0; i < 1024; i++ {
+					bufs[i] = bufs[i][:0]
 				}
-				exprs, input := genVecEvalBool(numCols, typeCombination, eTypes)
-				inputIter := chunk.NewIterator4Chunk(input)
-				bufs := make([]*chunk.Column, numCols)
-				for i, item := range exprs {
-					tp := item.GetType()
-					bufs[i], err = globalColumnAllocator.get(tp.EvalType(), 1024)
+				if err := VectorizedGetGroupKey(ctx, sc, bufs, colExpr, colExpr.GetType(), input, colBuf); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run("row-"+tNames[i], func(b *testing.B) {
+			it := chunk.NewIterator4Chunk(input)
+			var buf []byte
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for row := it.Begin(); row != it.End(); row = it.Next() {
+					d, err := colExpr.Eval(row)
+					if err != nil {
+						b.Fatal(err)
+					}
+					buf, err = codec.EncodeValue(sc, buf[:0], d)
 					if err != nil {
 						b.Fatal(err)
 					}
 				}
-				for i := 0; i < 1024; i++ {
-					groupKeys0[i] = make([]byte, 0, 9*numCols)
-				}
-				b.Run("Vec-"+name, func(b *testing.B) {
-					b.ResetTimer()
-					for i := 0; i < b.N; i++ {
-						for i := 0; i < 1024; i++ {
-							groupKeys0[i] = groupKeys0[i][:0]
-						}
-						for j, item := range exprs {
-							tp := item.GetType()
-							err = VectorizedGetGroupKey(ctx, sc, groupKeys0, item, tp, input, bufs[j])
-							if err != nil {
-								b.Fatal(err)
-							}
-						}
-					}
-				})
-				b.Run("Row-"+name, func(b *testing.B) {
-					b.ResetTimer()
-					for i := 0; i < b.N; i++ {
-						j := 0
-						for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
-							groupKeys1[j], err = getGroupKeyByRow(sc, row, exprs, valDatums, groupKeys1[j])
-							if err != nil {
-								b.Fatal(err)
-							}
-							j++
-						}
-					}
-				})
-				for i := 0; i < numCols; i++ {
-					globalColumnAllocator.put(bufs[i])
-				}
-				return
 			}
-			for _, eType := range eTypes {
-				typeCombination[nCols-1] = eType
-				combFunc(nCols - 1)
-			}
-		}
-		combFunc(numCols)
+		})
 	}
 }
