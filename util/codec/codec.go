@@ -558,6 +558,14 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 	}
 }
 
+func (decoder *Decoder) Chunk() *chunk.Chunk {
+	return decoder.chk
+}
+
+func (decoder *Decoder) SetChunk(chk *chunk.Chunk) {
+	decoder.chk = chk
+}
+
 // DecodeOne decodes one value to chunk and returns the remained bytes.
 func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {

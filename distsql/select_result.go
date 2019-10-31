@@ -222,15 +222,46 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 	}
 }
 
+func (r *selectResult) recoverReadRow(decoder *codec.Decoder, rowsData []byte) (remainData []byte, err error) {
+	// backup original chunk and rowsData
+	chkBak := decoder.Chunk().CopyConstruct()
+	dataBak := make([]byte, len(rowsData))
+	copy(dataBak, rowsData)
+	defer func() {
+		if err := recover(); err != nil {
+			logutil.Logger(context.Background()).Error("read data error", zap.Reflect("err", err))
+		}
+		// trim the first column
+		remainData, err = decoder.DecodeOne(dataBak, 0, r.fieldTypes[0])
+		if err != nil {
+			return
+		}
+		// restore the chunk data
+		decoder.SetChunk(chkBak)
+		for i := 0; i < r.rowLen; i++ {
+			remainData, err = decoder.DecodeOne(remainData, i, r.fieldTypes[i])
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	for i := 0; i < r.rowLen; i++ {
+		rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
+		if err != nil {
+			return rowsData, err
+		}
+	}
+	return rowsData, nil
+}
+
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
 	for !chk.IsFull() && len(rowsData) > 0 {
-		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
-			if err != nil {
-				return err
-			}
+		rowsData, err = r.recoverReadRow(decoder, rowsData)
+		if err != nil {
+			return err
 		}
 	}
 	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
