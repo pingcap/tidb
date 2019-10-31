@@ -321,7 +321,7 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	i64s := result.Int64s()
 	var duration types.Duration
 	ds := buf.GoDurations()
-	fsp := int8(b.getRetTp().Decimal)
+	fsp := int8(b.args[0].GetType().Decimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
