@@ -854,7 +854,11 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		r := types.Time{Time: types.FromGoTime(tb), Type: b.resolveType(arg.Type, unit), Fsp: fsp}
 		if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
-			return handleInvalidTimeError(b.ctx, err)
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return err
+			}
+			result.AppendNull()
+			continue
 		}
 		result.AppendString(r.String())
 	}
