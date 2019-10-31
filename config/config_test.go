@@ -39,6 +39,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
 	conf.TiKVClient.CommitTimeout = "10s"
+	conf.TiKVClient.RegionCacheTTL = 600
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
@@ -65,6 +66,7 @@ split-region-max-num=10000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
+region-cache-ttl=6000
 [stmt-summary]
 max-stmt-count=1000
 max-sql-length=1024
@@ -81,6 +83,7 @@ max-sql-length=1024
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
+	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
