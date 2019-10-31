@@ -374,6 +374,7 @@ func (g *ipv6StrGener) gen() interface{} {
 	return ip.String()
 }
 
+// ipv6ByteGener is used to generate ipv6 address in 16 bytes string.
 type ipv6ByteGener struct {
 }
 
@@ -385,6 +386,7 @@ func (g *ipv6ByteGener) gen() interface{} {
 	return string(ip[:net.IPv6len])
 }
 
+// ipv4ByteGener is used to generate ipv4 address in 4 bytes string.
 type ipv4ByteGener struct {
 }
 
