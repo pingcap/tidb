@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -139,8 +140,13 @@ func (p *PointGetPlan) ResolveIndices() error {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PointGetPlan) OutputNames() []*types.FieldName {
+func (p *PointGetPlan) OutputNames() types.NameSlice {
 	return p.outputNames
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
+	p.outputNames = names
 }
 
 // BatchPointGetPlan represents a physical plan which contains a bunch of
@@ -216,8 +222,13 @@ func (p *BatchPointGetPlan) ResolveIndices() error {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *BatchPointGetPlan) OutputNames() []*types.FieldName {
+func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 	return p.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
@@ -599,7 +610,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:    newBasePlan(ctx, "Point_Get", 0),
+		basePlan:    newBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:      dbName,
 		schema:      schema,
 		TblInfo:     tbl,
@@ -852,6 +863,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(ctx)
+	updatePlan.names = fastSelect.outputNames
 	return updatePlan
 }
 
@@ -860,13 +872,14 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
 	for _, assign := range list {
-		idx, err := expression.FindColName(fastSelect.outputNames, assign.Column)
+		idx, err := expression.FindFieldName(fastSelect.outputNames, assign.Column)
 		if idx == -1 || err != nil {
 			return nil, true
 		}
 		col := fastSelect.schema.Columns[idx]
 		newAssign := &expression.Assignment{
-			Col: col,
+			Col:     col,
+			ColName: fastSelect.OutputNames()[idx].ColName,
 		}
 		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, fastSelect.schema, fastSelect.outputNames)
 		if err != nil {

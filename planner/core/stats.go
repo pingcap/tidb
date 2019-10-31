@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -31,10 +32,10 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	profile := &property.StatsInfo{
 		RowCount:    float64(p.RowCount),
-		Cardinality: make([]float64, p.Schema().Len()),
+		Cardinality: make([]float64, selfSchema.Len()),
 	}
 	for i := range profile.Cardinality {
 		profile.Cardinality[i] = float64(p.RowCount)
@@ -44,9 +45,9 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo) (*prope
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	// A fake count, just to avoid panic now.
-	p.stats = getFakeStats(p.Schema().Len())
+	p.stats = getFakeStats(selfSchema.Len())
 	return p.stats, nil
 }
 
@@ -62,9 +63,9 @@ func getFakeStats(length int) *property.StatsInfo {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	// A fake count, just to avoid panic now.
-	p.stats = getFakeStats(p.Schema().Len())
+	p.stats = getFakeStats(selfSchema.Len())
 	return p.stats, nil
 }
 
@@ -73,18 +74,20 @@ func (p *baseLogicalPlan) recursiveDeriveStats() (*property.StatsInfo, error) {
 		return p.stats, nil
 	}
 	childStats := make([]*property.StatsInfo, len(p.children))
+	childSchema := make([]*expression.Schema, len(p.children))
 	for i, child := range p.children {
 		childProfile, err := child.recursiveDeriveStats()
 		if err != nil {
 			return nil, err
 		}
 		childStats[i] = childProfile
+		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats)
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	if len(childStats) == 1 {
 		p.stats = childStats[0]
 		return p.stats, nil
@@ -95,7 +98,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	}
 	profile := &property.StatsInfo{
 		RowCount:    float64(1),
-		Cardinality: make([]float64, p.self.Schema().Len()),
+		Cardinality: make([]float64, selfSchema.Len()),
 	}
 	for i := range profile.Cardinality {
 		profile.Cardinality[i] = float64(1)
@@ -147,11 +150,11 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	ds.initStats()
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
+		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath {
@@ -202,16 +205,27 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo) (_ *property.StatsInfo, err error) {
+func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(nil, expr, false)
+		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
 	}
 	ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
-	ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
+	if ts.Handle != nil {
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	} else {
+		isUnsigned := false
+		if ts.Source.tableInfo.PKIsHandle {
+			if pkColInfo := ts.Source.tableInfo.GetPkColInfo(); pkColInfo != nil {
+				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			}
+		}
+		ts.Ranges = ranger.FullIntRange(isUnsigned)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -329,15 +343,15 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	p.stats = childStats[0].Scale(selectionFactor)
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	p.stats = &property.StatsInfo{
-		Cardinality: make([]float64, p.Schema().Len()),
+		Cardinality: make([]float64, selfSchema.Len()),
 	}
 	for _, childProfile := range childStats {
 		p.stats.RowCount += childProfile.RowCount
@@ -360,13 +374,13 @@ func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	p.stats = deriveLimitStats(childStats[0], float64(p.Count))
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	lt.stats = deriveLimitStats(childStats[0], float64(lt.Count))
 	return lt.stats, nil
 }
@@ -388,7 +402,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
 		RowCount:    childProfile.RowCount,
@@ -396,23 +410,23 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo) (*prop
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.stats.Cardinality[i] = getCardinality(cols, p.children[0].Schema(), childProfile)
+		p.stats.Cardinality[i] = getCardinality(cols, childSchema[0], childProfile)
 	}
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	cardinality := getCardinality(gbyCols, la.children[0].Schema(), childProfile)
+	cardinality := getCardinality(gbyCols, childSchema[0], childProfile)
 	la.stats = &property.StatsInfo{
 		RowCount:    cardinality,
-		Cardinality: make([]float64, la.schema.Len()),
+		Cardinality: make([]float64, selfSchema.Len()),
 	}
 	// We cannot estimate the Cardinality for every output, so we use a conservative strategy.
 	for i := range la.stats.Cardinality {
@@ -429,7 +443,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo) (*pr
 // N(s) stands for the number of rows in relation s. V(s.key) means the Cardinality of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	helper := &fullJoinRowCountHelper{
 		cartesian:     0 == len(p.EqualConditions),
@@ -437,8 +451,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		rightProfile:  rightProfile,
 		leftJoinKeys:  p.LeftJoinKeys,
 		rightJoinKeys: p.RightJoinKeys,
-		leftSchema:    p.children[0].Schema(),
-		rightSchema:   p.children[1].Schema(),
+		leftSchema:    childSchema[0],
+		rightSchema:   childSchema[1],
 	}
 	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
@@ -454,7 +468,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.stats = &property.StatsInfo{
 			RowCount:    leftProfile.RowCount,
-			Cardinality: make([]float64, p.schema.Len()),
+			Cardinality: make([]float64, selfSchema.Len()),
 		}
 		copy(p.stats.Cardinality, leftProfile.Cardinality)
 		p.stats.Cardinality[len(p.stats.Cardinality)-1] = 2.0
@@ -466,7 +480,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	} else if p.JoinType == RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
 	}
-	cardinality := make([]float64, 0, p.schema.Len())
+	cardinality := make([]float64, 0, selfSchema.Len())
 	cardinality = append(cardinality, leftProfile.Cardinality...)
 	cardinality = append(cardinality, rightProfile.Cardinality...)
 	for i := range cardinality {
@@ -500,17 +514,17 @@ func (h *fullJoinRowCountHelper) estimate() float64 {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile := childStats[0]
 	la.stats = &property.StatsInfo{
 		RowCount:    leftProfile.RowCount,
-		Cardinality: make([]float64, la.schema.Len()),
+		Cardinality: make([]float64, selfSchema.Len()),
 	}
 	copy(la.stats.Cardinality, leftProfile.Cardinality)
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
 		la.stats.Cardinality[len(la.stats.Cardinality)-1] = 2.0
 	} else {
-		for i := la.children[0].Schema().Len(); i < la.schema.Len(); i++ {
+		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
 			la.stats.Cardinality[i] = leftProfile.RowCount
 		}
 	}
@@ -530,24 +544,24 @@ func getSingletonStats(len int) *property.StatsInfo {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
-	p.stats = getSingletonStats(p.Schema().Len())
+func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	p.stats = getSingletonStats(selfSchema.Len())
 	return p.stats, nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
 		RowCount:    childProfile.RowCount,
-		Cardinality: make([]float64, p.schema.Len()),
+		Cardinality: make([]float64, selfSchema.Len()),
 	}
-	childLen := p.schema.Len() - len(p.WindowFuncDescs)
+	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
 	for i := 0; i < childLen; i++ {
-		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
+		colIdx := childSchema[0].ColumnIndex(selfSchema.Columns[i])
 		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
 	}
-	for i := childLen; i < p.schema.Len(); i++ {
+	for i := childLen; i < selfSchema.Len(); i++ {
 		p.stats.Cardinality[i] = childProfile.RowCount
 	}
 	return p.stats, nil

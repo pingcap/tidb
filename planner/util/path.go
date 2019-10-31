@@ -4,6 +4,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -35,6 +36,8 @@ type AccessPath struct {
 	PartialIndexPaths []*AccessPath
 
 	IsDNFCond bool
+
+	StoreType kv.StoreType
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
