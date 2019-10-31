@@ -52,13 +52,17 @@ type BinlogInfo struct {
 	Client *pumpcli.PumpsClient
 }
 
-// BinlogStatus defines the status of binlog
+// BinlogStatus is the status of binlog
 type BinlogStatus int
 
 const (
+	//BinlogStatusUnknown stands for unknown binlog status
 	BinlogStatusUnknown BinlogStatus = iota
+	//BinlogStatusUnknown stands for the binlog is enabled
 	BinlogStatusOn
+	//BinlogStatusUnknown stands for the binlog is disabled
 	BinlogStatusOff
+	//BinlogStatusUnknown stands for the binlog status
 	BinlogStatusSkipping
 )
 
@@ -104,7 +108,9 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 
 var skipBinlog uint32
 var ignoreError uint32
-var statusListener func(BinlogStatus) error
+var statusListener = func(_ BinlogStatus) error {
+	return nil
+}
 
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
