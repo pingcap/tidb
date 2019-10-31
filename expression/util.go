@@ -767,11 +767,9 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 }
 
 // VectorizedGetGroupKey evaluates the group items vectorized.
-func VectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) (err error) {
-	eType := tp.EvalType()
-	err = vecEval(ctx, item, input, buf)
-	if err != nil {
-		return err
+func VectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) ([][]byte, error) {
+	if err := vecEval(ctx, item, input, buf); err != nil {
+		return groupKey, err
 	}
 	// This check is used to avoid error during the execution of `EncodeDecimal`.
 	if item.GetType().Tp == mysql.TypeNewDecimal {
@@ -781,5 +779,5 @@ func VectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext,
 			d64s[i].SetPrecision(0)
 		}
 	}
-	return buf.EncodeTo(groupKey, eType)
+	return buf.EncodeTo(groupKey, tp.EvalType())
 }

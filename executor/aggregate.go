@@ -415,8 +415,7 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, input *
 		}
 		defer expression.PutColumn(buf)
 
-		err = expression.VectorizedGetGroupKey(w.ctx, sc, w.groupKey, item, tp, input, buf)
-		if err != nil {
+		if w.groupKey, err = expression.VectorizedGetGroupKey(w.ctx, sc, w.groupKey, item, tp, input, buf); err != nil {
 			return err
 		}
 	}
@@ -768,8 +767,7 @@ func (e *HashAggExec) getGroupKey(input *chunk.Chunk) (err error) {
 		}
 		defer expression.PutColumn(buf)
 
-		err = expression.VectorizedGetGroupKey(e.ctx, e.sc, e.groupKeyBuffer, item, tp, input, buf)
-		if err != nil {
+		if e.groupKeyBuffer, err = expression.VectorizedGetGroupKey(e.ctx, e.sc, e.groupKeyBuffer, item, tp, input, buf); err != nil {
 			return err
 		}
 	}

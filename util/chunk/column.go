@@ -80,11 +80,6 @@ func newColumn(typeSize, cap int) *Column {
 	return col
 }
 
-// GetPhysicLength returns the physic length of the column
-func (c *Column) GetPhysicLength() int {
-	return c.length
-}
-
 func (c *Column) typeSize() int {
 	if len(c.elemBuf) > 0 {
 		return len(c.elemBuf)
@@ -496,8 +491,12 @@ func (c *Column) GetDecimal(rowID int) *types.MyDecimal {
 }
 
 // EncodeTo appends the column data slice to the buf
-func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) error {
-	ColLen := c.GetPhysicLength()
+func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) ([][]byte, error) {
+	n := c.length
+	for len(buf) < n {
+		buf = append(buf, nil)
+	}
+
 	var fixedTypeSize int
 	switch eType {
 	case types.ETInt, types.ETReal:
@@ -513,7 +512,7 @@ func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) error {
 	}
 	var NilFlag byte = 0
 	if fixedTypeSize != 0 {
-		for i := 0; i < ColLen; i++ {
+		for i := 0; i < n; i++ {
 			if c.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -521,7 +520,7 @@ func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) error {
 			}
 		}
 	} else {
-		for i := 0; i < ColLen; i++ {
+		for i := 0; i < n; i++ {
 			if c.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -529,7 +528,7 @@ func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) error {
 			}
 		}
 	}
-	return nil
+	return buf, nil
 }
 
 // GetString returns the string in the specific row.
