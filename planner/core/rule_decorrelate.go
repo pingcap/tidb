@@ -198,6 +198,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					sel.Conditions = remainedExpr
 					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
+					groupByCols := expression.NewSchema(agg.groupByCols...)
 					if len(apply.corCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
@@ -214,8 +215,9 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
 							}
 							// If group by cols don't contain the join key, add it into this.
-							if !expression.ContainsColumn(agg.GroupByItems, clonedCol) {
+							if !groupByCols.Contains(clonedCol) {
 								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+								groupByCols.Append(clonedCol)
 							}
 						}
 						agg.collectGroupByColumns()
