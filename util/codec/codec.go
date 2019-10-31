@@ -136,37 +136,6 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 	return b, errors.Trace(err)
 }
 
-// vectorizedEncode will encode a column of data and append it to a corresponding byte slice.
-// If comparable is true, the encoded bytes can be sorted as it's original order.
-func vectorizedEncode(sc *stmtctx.StatementContext, b [][]byte, buf *chunk.Column, eType types.EvalType, comparable bool) error {
-	numRows := buf.GetPhysicLength()
-	var isFixed bool
-	switch eType {
-	case types.ETString, types.ETJson:
-		isFixed = false
-	default:
-		isFixed = true
-	}
-	if isFixed {
-		for i := 0; i < numRows; i++ {
-			if buf.IsNull(i) {
-				b[i] = append(b[i], NilFlag)
-			} else {
-				b[i] = append(b[i], buf.GetFixedTypeBytes(i)...)
-			}
-		}
-	} else {
-		for i := 0; i < numRows; i++ {
-			if buf.IsNull(i) {
-				b[i] = append(b[i], NilFlag)
-			} else {
-				b[i] = append(b[i], buf.GetBytes(i)...)
-			}
-		}
-	}
-	return nil
-}
-
 // EstimateValueSize uses to estimate the value  size of the encoded values.
 func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, error) {
 	l := 0
@@ -320,8 +289,8 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 
 // VectorizedEncodeValue appends a column of the encoded values to corresponding byte slice b[i], returning the appended
 // slice. It does not guarantee the order for comparison.
-func VectorizedEncodeValue(sc *stmtctx.StatementContext, b [][]byte, buf *chunk.Column, eType types.EvalType) error {
-	return vectorizedEncode(sc, b, buf, eType, false)
+func VectorizedEncodeValue(b [][]byte, buf *chunk.Column, eType types.EvalType) error {
+	return buf.EncodeTo(b, eType)
 }
 
 func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {

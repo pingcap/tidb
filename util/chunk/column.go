@@ -495,9 +495,41 @@ func (c *Column) GetDecimal(rowID int) *types.MyDecimal {
 	return (*types.MyDecimal)(unsafe.Pointer(&c.data[rowID*types.MyDecimalStructSize]))
 }
 
-// GetFixedTypeBytes returns the byte slice in the specific row for fixed size type
-func (c *Column) GetFixedTypeBytes(rowID int) []byte {
-	return c.data[rowID*8 : (rowID+1)*8]
+// EncodeTo appends the column data slice to the buf
+func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) error {
+	ColLen := c.GetPhysicLength()
+	var fixedTypeSize int
+	switch eType {
+	case types.ETInt, types.ETReal:
+		fixedTypeSize = 8
+	case types.ETDecimal:
+		fixedTypeSize = sizeMyDecimal
+	case types.ETDatetime:
+		fixedTypeSize = sizeTime
+	case types.ETDuration:
+		fixedTypeSize = sizeGoDuration
+	default:
+		fixedTypeSize = 0
+	}
+	var NilFlag byte = 0
+	if fixedTypeSize != 0 {
+		for i := 0; i < ColLen; i++ {
+			if c.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], c.data[i*fixedTypeSize:(i+1)*fixedTypeSize]...)
+			}
+		}
+	} else {
+		for i := 0; i < ColLen; i++ {
+			if c.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], c.data[c.offsets[i]:c.offsets[i+1]]...)
+			}
+		}
+	}
+	return nil
 }
 
 // GetString returns the string in the specific row.
