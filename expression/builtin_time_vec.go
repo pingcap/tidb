@@ -699,11 +699,40 @@ func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinWeekOfYearSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinWeekOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		if err = handleInvalidTimeError(b.ctx, err); err != nil {
+			return err
+		}
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if ds[i].IsZero(){
+			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		week := ds[i].Time.Week(3)
+		i64s[i] = int64(week)
+	}
+	return nil
 }
 
 func (b *builtinUTCTimestampWithArgSig) vectorized() bool {
