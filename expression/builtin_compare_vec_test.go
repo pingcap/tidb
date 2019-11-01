@@ -18,14 +18,32 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.NE:       {},
-	ast.IsNull:   {},
-	ast.LE:       {},
-	ast.LT:       {},
+	ast.NE:     {},
+	ast.IsNull: {},
+	ast.LE:     {},
+	ast.LT: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong},
+			},
+		},
+	},
 	ast.Coalesce: {},
 	ast.NullEQ:   {},
 	ast.GT:       {},
