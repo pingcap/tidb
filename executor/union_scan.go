@@ -15,8 +15,8 @@ package executor
 
 import (
 	"sort"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
