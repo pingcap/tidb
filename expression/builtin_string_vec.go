@@ -668,7 +668,7 @@ func (b *builtinLeftBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	left := buf2.Int64s()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if buf.IsNull(i) || buf2.IsNull(i) {
 			continue
 		}
 		leftLength, str := int(left[i]), buf.GetString(i)
