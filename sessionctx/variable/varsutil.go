@@ -498,6 +498,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptNetworkFactor,
 		TiDBOptScanFactor,
 		TiDBOptDescScanFactor,
+		TiDBOptSeekFactor,
 		TiDBOptMemoryFactor,
 		TiDBOptConcurrencyFactor:
 		v, err := strconv.ParseFloat(value, 64)

@@ -263,7 +263,7 @@ LOOP:
 		select {
 		case err := <-done:
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[kv:1062]Duplicate for key c3_index", Commentf("err:%v", err))
+			c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '' for key 'c3_index'", Commentf("err:%v", err))
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
@@ -3134,6 +3134,27 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+}
+
+func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t_flash;")
+	s.tk.MustExec("create table t_flash(a int, b int)")
+	defer s.mustExec(c, "drop table t_flash;")
+
+	t := s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica, IsNil)
+
+	s.tk.MustExec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica, NotNil)
+	c.Assert(t.Meta().TiFlashReplica.Count, Equals, uint64(2))
+	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
+
+	s.tk.MustExec("alter table t_flash set tiflash replica 0")
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica, IsNil)
 }
 
 func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
