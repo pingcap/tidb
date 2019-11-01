@@ -1173,7 +1173,7 @@ type Store struct {
 	resolveMutex sync.Mutex   // protect pd from concurrent init requests
 	fail         uint32       // store fail count, see RegionStore.storeFails
 	storeType    kv.StoreType // type of the store
-	storeLimit   uint32       // store token limit
+	tokenCount   uint32       // store token limit
 }
 
 type resolveState uint64
