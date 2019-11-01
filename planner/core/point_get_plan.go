@@ -55,7 +55,7 @@ type PointGetPlan struct {
 	Lock             bool
 	IsForUpdate      bool
 	outputNames      []*types.FieldName
-	LockWaitTime     uint64
+	LockWaitTime     int64
 }
 
 type nameValuePair struct {

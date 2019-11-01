@@ -48,7 +48,7 @@ type actionCommit struct{}
 type actionCleanup struct{}
 type actionPessimisticLock struct {
 	killed       *uint32
-	lockWaitTime uint64
+	lockWaitTime int64
 }
 type actionPessimisticRollback struct{}
 
@@ -975,7 +975,7 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime uint64,
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
 	keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
 }
