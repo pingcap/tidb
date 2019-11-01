@@ -463,6 +463,10 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBStmtSummaryRefreshInterval, "", false},
 		{TiDBStmtSummaryHistorySize, "a", true},
 		{TiDBStmtSummaryHistorySize, "", false},
+		{TiDBIsolationReadEngines, "", true},
+		{TiDBIsolationReadEngines, "tikv", false},
+		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
 	}
 
 	for _, t := range tests {

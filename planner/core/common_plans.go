@@ -620,9 +620,9 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 		var storeType string
 		switch copPlan.StoreType {
 		case kv.TiKV:
-			storeType = "tikv"
+			storeType = kv.TiKV.Name()
 		case kv.TiFlash:
-			storeType = "tiflash"
+			storeType = kv.TiFlash.Name()
 		default:
 			err = errors.Errorf("the store type %v is unknown", copPlan.StoreType)
 			return
