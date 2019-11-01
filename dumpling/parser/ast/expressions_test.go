@@ -379,3 +379,19 @@ func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestMatchAgainstExpr(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{`MATCH(content, title) AGAINST ('search for')`, "MATCH (`content`,`title`) AGAINST ('search for')"},
+		{`MATCH(content) AGAINST ('search for' IN BOOLEAN MODE)`, "MATCH (`content`) AGAINST ('search for' IN BOOLEAN MODE)"},
+		{`MATCH(content, title) AGAINST ('search for' WITH QUERY EXPANSION)`, "MATCH (`content`,`title`) AGAINST ('search for' WITH QUERY EXPANSION)"},
+		{`MATCH(content) AGAINST ('search for' IN NATURAL LANGUAGE MODE WITH QUERY EXPANSION)`, "MATCH (`content`) AGAINST ('search for' WITH QUERY EXPANSION)"},
+		{`MATCH(content) AGAINST ('search') AND id = 1`, "MATCH (`content`) AGAINST ('search') AND `id`=1"},
+		{`MATCH(content) AGAINST ('search') OR id = 1`, "MATCH (`content`) AGAINST ('search') OR `id`=1"},
+		{`MATCH(content) AGAINST (X'40404040' | X'01020304') OR id = 1`, "MATCH (`content`) AGAINST (x'40404040'|x'01020304') OR `id`=1"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Where
+	}
+	RunNodeRestoreTest(c, testCases, "SELECT * FROM t WHERE %s", extractNodeFunc)
+}

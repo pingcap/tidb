@@ -45,6 +45,7 @@ var (
 	_ ExprNode = &UnaryOperationExpr{}
 	_ ExprNode = &ValuesExpr{}
 	_ ExprNode = &VariableExpr{}
+	_ ExprNode = &MatchAgainst{}
 
 	_ Node = &ColumnName{}
 	_ Node = &WhenClause{}
@@ -1271,5 +1272,84 @@ func (n *MaxValueExpr) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
+	return v.Leave(n)
+}
+
+// MatchAgainst is the expression for matching against fulltext index.
+type MatchAgainst struct {
+	exprNode
+	// ColumnNames are the columns to match.
+	ColumnNames []*ColumnName
+	// Against
+	Against ExprNode
+	// Modifier
+	Modifier FulltextSearchModifier
+}
+
+func (n *MatchAgainst) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("MATCH")
+	ctx.WritePlain(" (")
+	for i, v := range n.ColumnNames {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore MatchAgainst.ColumnNames[%d]", i)
+		}
+	}
+	ctx.WritePlain(") ")
+	ctx.WriteKeyWord("AGAINST")
+	ctx.WritePlain(" (")
+	if err := n.Against.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore MatchAgainst.Against")
+	}
+	if n.Modifier.IsBooleanMode() {
+		ctx.WritePlain(" IN BOOLEAN MODE")
+		if n.Modifier.WithQueryExpansion() {
+			return errors.New("BOOLEAN MODE doesn't support QUERY EXPANSION")
+		}
+	} else if n.Modifier.WithQueryExpansion() {
+		ctx.WritePlain(" WITH QUERY EXPANSION")
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+func (n *MatchAgainst) Format(w io.Writer) {
+	fmt.Fprint(w, "MATCH(")
+	for i, v := range n.ColumnNames {
+		if i != 0 {
+			fmt.Fprintf(w, ",%s", v.String())
+		} else {
+			fmt.Fprint(w, v.String())
+		}
+	}
+	fmt.Fprint(w, ") AGAINST(")
+	n.Against.Format(w)
+	if n.Modifier.IsBooleanMode() {
+		fmt.Fprint(w, " IN BOOLEAN MODE")
+	} else if n.Modifier.WithQueryExpansion() {
+		fmt.Fprint(w, " WITH QUERY EXPANSION")
+	}
+	fmt.Fprint(w, ")")
+}
+
+func (n *MatchAgainst) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	for i, colName := range n.ColumnNames {
+		newColName, ok := colName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnNames[i] = newColName.(*ColumnName)
+	}
+	newAgainst, ok := n.Against.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Against = newAgainst.(ExprNode)
 	return v.Leave(n)
 }
