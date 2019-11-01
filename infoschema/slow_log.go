@@ -285,7 +285,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.sql = value
 	}
 	if err != nil {
-		return errors.Wrap(err, "parse slow log on line "+strconv.FormatInt(int64(lineNum), 10)+" failed `"+field+"` error")
+		return errors.Wrap(err, "parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed `"+field+"` error")
 	}
 	return nil
 }
