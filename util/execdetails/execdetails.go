@@ -82,9 +82,9 @@ const (
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
 	BackoffTypesStr = "Backoff_types"
-	// ResolveLockTimeStr means the time of resolve lock.
+	// ResolveLockTimeStr means the time of resolving lock.
 	ResolveLockTimeStr = "Resolve_lock_time"
-	// LocalLatchWaitTimeStr means the time of wait in local latch.
+	// LocalLatchWaitTimeStr means the time of waiting in local latch.
 	LocalLatchWaitTimeStr = "Local_latch_wait_time"
 	// WriteKeysStr means the count of keys in the transaction.
 	WriteKeysStr = "Write_keys"
