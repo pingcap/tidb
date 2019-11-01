@@ -26,28 +26,31 @@ import (
 )
 
 const (
-	clusterTableSuffix                            = "_CLUSTER"
+	clusterTablePrefix                            = "TIDB_CLUSTER_"
 	tableNameEventsStatementsSummaryByDigestUpper = "EVENTS_STATEMENTS_SUMMARY_BY_DIGEST"
 )
 
 // Cluster table list.
 const (
-	clusterTableSlowLog                             = tableSlowLog + clusterTableSuffix
-	clusterTableProcesslist                         = tableProcesslist + clusterTableSuffix
-	clusterTableNameEventsStatementsSummaryByDigest = tableNameEventsStatementsSummaryByDigestUpper + clusterTableSuffix
+	clusterTableSlowLog                             = clusterTablePrefix + tableSlowLog
+	clusterTableProcesslist                         = clusterTablePrefix + tableProcesslist
+	clusterTableNameEventsStatementsSummaryByDigest = clusterTablePrefix + tableNameEventsStatementsSummaryByDigestUpper
 )
 
-// register for cluster memory tables;
-var clusterTableMap = map[string]struct{}{
-	clusterTableSlowLog:                             {},
-	clusterTableProcesslist:                         {},
-	clusterTableNameEventsStatementsSummaryByDigest: {},
+// memTableToClusterTableMap means add memory table to cluster table.
+var memTableToClusterTableMap = map[string]struct{}{
+	tableSlowLog:     {},
+	tableProcesslist: {},
+	tableNameEventsStatementsSummaryByDigestUpper: {},
 }
+
+// clusterTableMap is the cluster table map.
+// This map will initialize in init function.
+var clusterTableMap = map[string]struct{}{}
 
 func init() {
 	var clusterTableCols = columnInfo{"NODE_ID", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil}
-	for tableName := range clusterTableMap {
-		memTableName := tableName[:len(tableName)-len(clusterTableSuffix)]
+	for memTableName := range memTableToClusterTableMap {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
 			continue
@@ -55,7 +58,9 @@ func init() {
 		cols := make([]columnInfo, 0, len(memTableCols)+1)
 		cols = append(cols, memTableCols...)
 		cols = append(cols, clusterTableCols)
-		tableNameToColumns[tableName] = cols
+		clusterTableName := strings.ToUpper(clusterTablePrefix + memTableName)
+		tableNameToColumns[clusterTableName] = cols
+		clusterTableMap[clusterTableName] = struct{}{}
 	}
 	// This is used for avoid circle import, use for memTableReader in mpp.
 	mocktikv.GetClusterMemTableRows = getClusterMemTableRows

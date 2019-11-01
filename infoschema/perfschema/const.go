@@ -452,7 +452,7 @@ const tableTiDBGoroutine = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBGoroutin
 	"LOCATION VARCHAR(512));"
 
 // tableClusterEventsStatementsSummaryByDigest contains the all TiDB statementSummary table.
-const tableClusterEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest_cluster (" +
+const tableClusterEventsStatementsSummaryByDigest = "CREATE TABLE if not exists tidb_cluster_events_statements_summary_by_digest (" +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
 	"DIGEST VARCHAR(64) DEFAULT NULL," +
 	"DIGEST_TEXT LONGTEXT DEFAULT NULL," +
