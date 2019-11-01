@@ -167,7 +167,8 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
-var Globalstorage kv.Storage
+// GlobalStorage is the global storage in TiDB server.
+var GlobalStorage kv.Storage
 
 // GetStore gets the store of session.
 func (c *Context) GetStore() kv.Storage {
@@ -263,7 +264,7 @@ func NewContext() *Context {
 		ctx:         ctx,
 		cancel:      cancel,
 		sm:          util.GetglobalSessionManager(),
-		Store:       Globalstorage,
+		Store:       GlobalStorage,
 	}
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32

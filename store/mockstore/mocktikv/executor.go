@@ -107,6 +107,7 @@ func (e *memTableScanExec) Cursor() ([]byte, bool) {
 	return nil, false
 }
 
+// GetClusterMemTableRows used to get the cluster memory table data.
 var GetClusterMemTableRows func(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error)
 
 func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error) {

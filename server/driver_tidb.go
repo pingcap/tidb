@@ -46,7 +46,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 	driver := &TiDBDriver{
 		store: store,
 	}
-	mock.Globalstorage = store
+	mock.GlobalStorage = store
 	return driver
 }
 

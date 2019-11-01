@@ -188,6 +188,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	return src, nil
 }
 
+// IsClusterTable used to check whether the table is a cluster memory table.
 var IsClusterTable func(tableName string) bool
 
 func (h *rpcHandler) buildMemTableScan(ctx *dagContext, executor *tipb.Executor) (*memTableScanExec, error) {

@@ -27,14 +27,14 @@ import (
 
 const (
 	clusterTableSuffix                            = "_CLUSTER"
-	TableNameEventsStatementsSummaryByDigestUpper = "EVENTS_STATEMENTS_SUMMARY_BY_DIGEST"
+	tableNameEventsStatementsSummaryByDigestUpper = "EVENTS_STATEMENTS_SUMMARY_BY_DIGEST"
 )
 
 // Cluster table list.
 const (
 	clusterTableSlowLog                             = tableSlowLog + clusterTableSuffix
 	clusterTableProcesslist                         = tableProcesslist + clusterTableSuffix
-	clusterTableNameEventsStatementsSummaryByDigest = TableNameEventsStatementsSummaryByDigestUpper + clusterTableSuffix
+	clusterTableNameEventsStatementsSummaryByDigest = tableNameEventsStatementsSummaryByDigestUpper + clusterTableSuffix
 )
 
 // register for cluster memory tables;
@@ -58,17 +58,18 @@ func init() {
 		tableNameToColumns[tableName] = cols
 	}
 	// This is used for avoid circle import, use for memTableReader in mpp.
-	mocktikv.GetClusterMemTableRows = GetClusterMemTableRows
+	mocktikv.GetClusterMemTableRows = getClusterMemTableRows
 	mocktikv.IsClusterTable = IsClusterTable
 }
 
+// IsClusterTable used to check whether the table is a cluster memory table.
 func IsClusterTable(tableName string) bool {
 	tableName = strings.ToUpper(tableName)
 	_, ok := clusterTableMap[tableName]
 	return ok
 }
 
-func GetClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
+func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
 	tableName = strings.ToUpper(tableName)
 	switch tableName {
 	case clusterTableSlowLog:

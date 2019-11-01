@@ -98,10 +98,12 @@ type SessionManager interface {
 
 var globalSessionManager SessionManager
 
+// SetglobalSessionManager sets the global session manager.
 func SetglobalSessionManager(sm SessionManager) {
 	globalSessionManager = sm
 }
 
+// GetglobalSessionManager gets the global session manager.
 func GetglobalSessionManager() SessionManager {
 	return globalSessionManager
 }
