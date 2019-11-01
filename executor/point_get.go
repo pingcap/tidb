@@ -70,7 +70,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.startTS = startTs
 	e.done = false
 	e.lock = p.Lock
-  e.lockWaitTime = p.LockWaitTime
+	e.lockWaitTime = p.LockWaitTime
 }
 
 // Open implements the Executor interface.
