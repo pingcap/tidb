@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/mysql"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -27,6 +28,9 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.LE:     {},
 	ast.LT: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{&types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+		},
 	},
 	ast.Coalesce: {},
 	ast.NullEQ:   {},
