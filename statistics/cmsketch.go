@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"

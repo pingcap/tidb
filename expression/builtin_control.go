@@ -14,7 +14,7 @@
 package expression
 
 import (
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"

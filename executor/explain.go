@@ -16,7 +16,7 @@ package executor
 import (
 	"context"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )

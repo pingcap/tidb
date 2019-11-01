@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
