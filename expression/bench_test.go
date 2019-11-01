@@ -419,15 +419,15 @@ func (g *randHexStrGener) gen() interface{} {
 	return string(buf)
 }
 
-// dataTimeGener is used to generate a dataTime
-type dataTimeGener struct {
+// dateTimeGener is used to generate a dataTime
+type dateTimeGener struct {
 	Fsp   int
 	Year  int
 	Month int
 	Day   int
 }
 
-func (g *dataTimeGener) gen() interface{} {
+func (g *dateTimeGener) gen() interface{} {
 	if g.Year == 0 {
 		g.Year = 1970 + rand.Intn(100)
 	}
@@ -442,15 +442,15 @@ func (g *dataTimeGener) gen() interface{} {
 	return t
 }
 
-// dataTimeStrGener is used to generate strings which are dataTime format
-type dataTimeStrGener struct {
+// dateTimeStrGener is used to generate strings which are dataTime format
+type dateTimeStrGener struct {
 	Fsp   int
 	Year  int
 	Month int
 	Day   int
 }
 
-func (g *dataTimeStrGener) gen() interface{} {
+func (g *dateTimeStrGener) gen() interface{} {
 	if g.Year == 0 {
 		g.Year = 1970 + rand.Intn(100)
 	}
