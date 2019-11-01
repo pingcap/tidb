@@ -76,7 +76,7 @@ const (
 	PreWriteTimeStr = "Prewrite_time"
 	// CommitTimeStr means the time of commit.
 	CommitTimeStr = "Commit_time"
-	// GetCommitTSTimeStr means the time of get commit ts.
+	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
 	// CommitBackoffTimeStr means the time of commit backoff.
 	CommitBackoffTimeStr = "Commit_backoff_time"
