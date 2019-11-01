@@ -39,7 +39,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/plugin"
 	"io"
 	"net"
 	"runtime"
@@ -47,6 +46,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/plugin"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -947,21 +948,23 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	rs, err := cc.ctx.Execute(ctx, sql)
+	rss, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
-		killConn(cc)
-		return errors.New("killed by another connection")
+	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
+		for _, rs := range rss {
+			terror.Call(rs.Close)
+		}
+		return executor.ErrQueryInterrupted
 	}
-	if rs != nil {
-		if len(rs) == 1 {
-			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
+	if rss != nil {
+		if len(rss) == 1 {
+			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
-			err = cc.writeMultiResultset(ctx, rs, false)
+			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
