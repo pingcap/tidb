@@ -14,18 +14,24 @@
 package expression
 
 import (
+	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/binary"
 	"fmt"
 	"hash"
+	"io"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -131,11 +137,40 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinRandomBytesSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	var dst bytes.Buffer
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		byteLen := i64s[i]
+		if byteLen < 1 || byteLen > 1024 {
+			return types.ErrOverflow.GenWithStackByArgs("length", "random_bytes")
+		}
+		if n, err := io.CopyN(&dst, rand.Reader, byteLen); err != nil {
+			return err
+		} else if n != byteLen {
+			return errors.New("fail to generate random bytes")
+		}
+		result.AppendBytes(dst.Bytes())
+		dst.Reset()
+	}
+	return nil
 }
 
 func (b *builtinMD5Sig) vectorized() bool {
@@ -248,11 +283,86 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinCompressSig) vectorized() bool {
-	return false
+	return true
 }
 
+var (
+	defaultByteSliceSize = 1024
+	bytePool             = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, defaultByteSliceSize)
+		},
+	}
+)
+
+func allocByteSlice(n int) []byte {
+	if n > defaultByteSliceSize {
+		return make([]byte, n)
+	}
+	return bytePool.Get().([]byte)
+}
+
+func deallocateByteSlice(b []byte) {
+	if cap(b) <= defaultByteSliceSize {
+		bytePool.Put(b)
+	}
+}
+
+// evalString evals COMPRESS(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+
+		// According to doc: Empty strings are stored as empty strings.
+		if len(str) == 0 {
+			result.AppendString("")
+		}
+
+		compressed, err := deflate(hack.Slice(str))
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
+		resultLength := 4 + len(compressed)
+
+		// append "." if ends with space
+		shouldAppendSuffix := compressed[len(compressed)-1] == 32
+		if shouldAppendSuffix {
+			resultLength++
+		}
+
+		buffer := allocByteSlice(resultLength)
+		defer deallocateByteSlice(buffer)
+		buffer = buffer[:resultLength]
+
+		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		copy(buffer[4:], compressed)
+
+		if shouldAppendSuffix {
+			buffer[len(buffer)-1] = '.'
+		}
+
+		result.AppendBytes(buffer)
+	}
+	return nil
 }
 
 func (b *builtinAesEncryptSig) vectorized() bool {
@@ -330,11 +440,59 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinUncompressSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals UNCOMPRESS(compressed_string).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		payload := buf.GetString(i)
+
+		if len(payload) == 0 {
+			result.AppendString("")
+			continue
+		}
+		if len(payload) <= 4 {
+			// corrupted
+			sc.AppendWarning(errZlibZData)
+			result.AppendNull()
+			continue
+		}
+		length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
+		bytes, err := inflate([]byte(payload[4:]))
+		if err != nil {
+			sc.AppendWarning(errZlibZData)
+			result.AppendNull()
+			continue
+		}
+		if length < uint32(len(bytes)) {
+			sc.AppendWarning(errZlibZBuf)
+			result.AppendNull()
+			continue
+		}
+
+		result.AppendBytes(bytes)
+	}
+
+	return nil
 }
 
 func (b *builtinUncompressedLengthSig) vectorized() bool {
