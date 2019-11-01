@@ -280,12 +280,13 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *c
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	result.ResizeGoDuration(n, false)
 	d64s := result.GoDurations()
+	i64s := buf.Int64s()
 	result.MergeNulls(buf)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		fsp := buf.GetInt64(i)
+		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
 			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v.", fsp, types.MaxFsp)
 		}
@@ -761,12 +762,13 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 	}
 	result.ResizeTime(n, false)
 	t64s := result.Times()
+	i64s := buf.Int64s()
 	result.MergeNulls(buf)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		fsp := buf.GetInt64(i)
+		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
 			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v.", fsp, types.MaxFsp)
 		}
