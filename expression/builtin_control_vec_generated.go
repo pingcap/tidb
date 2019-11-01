@@ -70,7 +70,6 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		eLse = bufElse
 		eLseSlice = bufElse.Int64s()
 	}
-
 	result.ResizeInt64(n, false)
 	resultSlice := result.Int64s()
 ROW:
@@ -79,7 +78,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
 			continue ROW
@@ -146,7 +144,6 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 		eLse = bufElse
 		eLseSlice = bufElse.Float64s()
 	}
-
 	result.ResizeFloat64(n, false)
 	resultSlice := result.Float64s()
 ROW:
@@ -155,7 +152,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
 			continue ROW
@@ -222,7 +218,6 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 		eLse = bufElse
 		eLseSlice = bufElse.Decimals()
 	}
-
 	result.ResizeDecimal(n, false)
 	resultSlice := result.Decimals()
 ROW:
@@ -231,7 +226,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
 			continue ROW
@@ -294,7 +288,6 @@ func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		}
 		eLse = bufElse
 	}
-
 	result.ReserveString(n)
 ROW:
 	for i := 0; i < n; i++ {
@@ -302,7 +295,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			if thens[j].IsNull(i) {
 				result.AppendNull()
 			} else {
@@ -375,7 +367,6 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		eLse = bufElse
 		eLseSlice = bufElse.Times()
 	}
-
 	result.ResizeTime(n, false)
 	resultSlice := result.Times()
 ROW:
@@ -384,7 +375,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
 			continue ROW
@@ -451,7 +441,6 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 		eLse = bufElse
 		eLseSlice = bufElse.GoDurations()
 	}
-
 	result.ResizeGoDuration(n, false)
 	resultSlice := result.GoDurations()
 ROW:
@@ -460,7 +449,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
 			continue ROW
@@ -523,7 +511,6 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 		}
 		eLse = bufElse
 	}
-
 	result.ReserveJSON(n)
 ROW:
 	for i := 0; i < n; i++ {
@@ -531,7 +518,6 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-
 			if thens[j].IsNull(i) {
 				result.AppendNull()
 			} else {

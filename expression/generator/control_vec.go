@@ -108,7 +108,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 		{{- end }}
 	}
 	
-	{{ if .Fixed }}
+	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
 	resultSlice := result.{{ .TypeNameInColumn }}s()
 	{{- else }}
@@ -120,7 +120,7 @@ ROW:
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-			{{ if .Fixed }}
+			{{- if .Fixed }}
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
 			{{- else }}
