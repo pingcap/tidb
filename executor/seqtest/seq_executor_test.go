@@ -845,6 +845,13 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
+	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
+	tk.MustExec("set @@session.tidb_batch_insert=1;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustExec("set @@session.tidb_batch_insert=0;")
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
