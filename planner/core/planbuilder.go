@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -665,14 +666,25 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
+	availableEngine := map[kv.StoreType]struct{}{}
+	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
+		if _, ok := availableEngine[paths[i].storeType]; !ok {
+			availableEngine[paths[i].storeType] = struct{}{}
+			if availableEngineStr != "" {
+				availableEngineStr += ", "
+			}
+			availableEngineStr += paths[i].storeType.Name()
+		}
 		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
 	var err error
 	if len(paths) == 0 {
-		err = ErrInternal.GenWithStackByArgs("No access path for table reader after isolation read filter")
+		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
 	}
 	return paths, err
 }
