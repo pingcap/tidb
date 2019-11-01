@@ -263,7 +263,7 @@ LOOP:
 		select {
 		case err := <-done:
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[kv:1062]Duplicate for key c3_index", Commentf("err:%v", err))
+			c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '' for key 'c3_index'", Commentf("err:%v", err))
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
