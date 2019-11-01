@@ -14,11 +14,11 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
