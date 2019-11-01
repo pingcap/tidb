@@ -389,6 +389,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinRealIsTrueSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
 		f = &builtinDecimalIsTrueSig{base, false}
+	case tipb.ScalarFuncSig_ModInt:
+		f = &builtinArithmeticModIntSig{base}
+	case tipb.ScalarFuncSig_ModReal:
+		f = &builtinArithmeticModRealSig{base}
+	case tipb.ScalarFuncSig_ModDecimal:
+		f = &builtinArithmeticModDecimalSig{base}
 
 	case tipb.ScalarFuncSig_IfNullReal:
 		f = &builtinIfNullRealSig{base}
