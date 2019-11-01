@@ -182,6 +182,6 @@ select * from t;`)
 	scanner = bufio.NewReader(slowLog)
 	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "parse slow log on line 2 failed `Txn_start_ts` error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
+	c.Assert(err.Error(), Equals, "parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
 
 }
