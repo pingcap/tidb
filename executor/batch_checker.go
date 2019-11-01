@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -118,7 +119,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				key:   t.RecordKey(handle),
 				value: newRowValue,
 			},
-			dupErr: kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", handle),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(strconv.FormatInt(handle, 10), "PRIMARY"),
 		}
 	}
 
@@ -150,8 +151,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			newKV: keyValue{
 				key: key,
 			},
-			dupErr: kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'",
-				colValStr, v.Meta().Name),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
 		})
 	}
 	result = append(result, toBeCheckedRow{
