@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -38,7 +39,7 @@ type partialResult4SumDistinctFloat64 struct {
 
 type partialResult4SumDistinctDecimal struct {
 	partialResult4SumDecimal
-	valSet set.DecimalSet
+	valSet set.StringSet
 }
 
 type baseSumAggFunc struct {
@@ -222,14 +223,14 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet = set.NewDecimalSet()
+	p.valSet = set.NewStringSet()
 	return PartialResult(p)
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet = set.NewDecimalSet()
+	p.valSet = set.NewStringSet()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -239,10 +240,18 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.Exist(input) {
+		if isNull {
 			continue
 		}
-		p.valSet.Insert(input)
+		hash, err := input.ToHashKey()
+		if err != nil {
+			return err
+		}
+		decStr := string(hack.String(hash))
+		if p.valSet.Exist(decStr) {
+			continue
+		}
+		p.valSet.Insert(decStr)
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
