@@ -238,3 +238,20 @@ func (s *testIntegrationSuite) TestSimplifyOuterJoinWithCast(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+
+	_, err := tk.Exec("select * from t")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	_, err = tk.Exec("select * from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+}
