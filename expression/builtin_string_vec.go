@@ -663,7 +663,7 @@ func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chun
 			continue
 		}
 		reversed := reverseBytes(result.GetBytes(i))
-		result.SetRaw(i, []byte(string(reversed)))
+		result.SetRaw(i, reversed)
 	}
 	return nil
 }
