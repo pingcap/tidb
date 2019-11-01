@@ -598,6 +598,7 @@ func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
