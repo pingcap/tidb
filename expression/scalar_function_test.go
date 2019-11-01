@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -27,8 +26,6 @@ import (
 func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	a := &Column{
 		UniqueID: 1,
-		TblName:  model.NewCIStr("fei"),
-		ColName:  model.NewCIStr("han"),
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}

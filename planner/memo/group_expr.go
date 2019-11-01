@@ -52,3 +52,8 @@ func (e *GroupExpr) FingerPrint() string {
 	}
 	return e.selfFingerprint
 }
+
+// SetChildren sets Children of the GroupExpr.
+func (e *GroupExpr) SetChildren(children ...*Group) {
+	e.Children = children
+}

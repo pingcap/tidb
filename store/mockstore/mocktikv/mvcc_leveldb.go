@@ -719,6 +719,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 			return nil
 		}
 		// Overwrite the pessimistic lock.
+		if ttl < dec.lock.ttl {
+			// Maybe ttlManager has already set the lock TTL, don't decrease it.
+			ttl = dec.lock.ttl
+		}
 	} else {
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
@@ -800,6 +804,16 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 			return nil
 		}
 		return ErrRetryable("txn not found")
+	}
+	// Reject the commit request whose commitTS is less than minCommiTS.
+	if dec.lock.minCommitTS > commitTS {
+		return &ErrCommitTSExpired{
+			kvrpcpb.CommitTsExpired{
+				StartTs:           startTS,
+				AttemptedCommitTs: commitTS,
+				Key:               key,
+				MinCommitTs:       dec.lock.minCommitTS,
+			}}
 	}
 
 	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
