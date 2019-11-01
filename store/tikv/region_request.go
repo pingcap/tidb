@@ -189,9 +189,9 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 func (s *RegionRequestSender) getStoreToken(store *Store) error {
 	for {
-		limit := atomic.LoadUint32(&store.tokenCount)
-		if limit < atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit) {
-			if atomic.CompareAndSwapUint32(&store.tokenCount, limit, limit+1) {
+		count := atomic.LoadUint32(&store.tokenCount)
+		if count < atomic.LoadUint32(&config.GetGlobalConfig().StoreLimit) {
+			if atomic.CompareAndSwapUint32(&store.tokenCount, count, count+1) {
 				return nil
 			}
 		} else {
