@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"

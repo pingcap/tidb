@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type datum struct {
