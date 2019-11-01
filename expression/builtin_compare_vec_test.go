@@ -18,27 +18,38 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
-	ast.NE:       {},
-	ast.IsNull:   {},
-	ast.LE:       {},
-	ast.LT:       {},
-	ast.Coalesce: {},
-	ast.NullEQ: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{0, 20}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{
-			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-			gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-		}},
+	ast.NE:     {},
+	ast.IsNull: {},
+	ast.LE:     {},
+	ast.LT: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong},
+			},
+		},
 	},
-	ast.GT:   {},
-	ast.EQ:   {},
-	ast.GE:   {},
-	ast.Date: {},
+	ast.Coalesce: {},
+	ast.NullEQ:   {},
+	ast.GT:       {},
+	ast.EQ:       {},
+	ast.GE:       {},
+	ast.Date:     {},
 	ast.Greatest: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}},
