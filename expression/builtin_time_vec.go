@@ -824,8 +824,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 		tm1, err := arg.Time.GoTime(time.Local)
 		if err != nil {
-			result.AppendNull()
-			continue
+			return err
 		}
 		var tb time.Time
 		fsp := types.DefaultFsp
@@ -862,7 +861,6 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		result.AppendString(r.String())
 	}
-
 	return nil
 }
 
