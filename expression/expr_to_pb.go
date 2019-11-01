@@ -348,6 +348,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONInsert,
 		ast.JSONReplace,
 		ast.JSONRemove,
+		ast.JSONLength,
 
 		// date functions.
 		ast.DateFormat:
