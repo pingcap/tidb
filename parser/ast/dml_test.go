@@ -396,3 +396,9 @@ func (ts *testDMLSuite) TestWindowSpecRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select rank() over %s from t window w as (order by a)", extractNodeFunc)
 }
+
+func (ts *testDMLSuite) TestFulltextSearchModifier(c *C) {
+	c.Assert(FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode(), IsFalse)
+	c.Assert(FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode(), IsTrue)
+	c.Assert(FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).WithQueryExpansion(), IsFalse)
+}
