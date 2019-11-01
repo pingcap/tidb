@@ -323,3 +323,68 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	newTopSelExpr.SetChildren(newProjGroup)
 	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
 }
+
+// PushProjectionDownSort pushes Projection down to the child the Sort.
+type PushProjectionDownSort struct {
+}
+
+// GetPattern implements Transformation interface. The pattern of this rule
+// is `Projection -> Sort`.
+func (r *PushProjectionDownSort) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushProjectionDownSort) Match(expr *memo.ExprIter) bool {
+	// The Exprs of Projection must contain all of the order by columns.
+	proj := expr.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	sort := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	projColumnSet := make(map[int64]struct{})
+	for _, expr := range proj.Exprs {
+		if col, ok := expr.(*expression.Column); ok {
+			projColumnSet[col.UniqueID] = struct{}{}
+		}
+	}
+	for _, item := range sort.ByItems {
+		cols := expression.ExtractColumns(item.Expr)
+		for _, col := range cols {
+			if _, ok := projColumnSet[col.UniqueID]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Projection -> Sort -> x` to `Sort -> Projection -> x`.
+func (r *PushProjectionDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	projSchema := old.GetExpr().Group.Prop.Schema
+	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	oldColumns := make([]*expression.Column, 0, len(proj.Exprs))
+	newColumns := make([]expression.Expression, 0, len(proj.Exprs))
+	for i, expr := range proj.Exprs {
+		if col, ok := expr.(*expression.Column); ok {
+			oldColumns = append(oldColumns, col)
+			newColumns = append(newColumns, projSchema.Columns[i])
+		}
+	}
+	orderByItems := make([]*plannercore.ByItems, len(sort.ByItems))
+	for i, byItem := range sort.ByItems {
+		newExpr := expression.ColumnSubstitute(byItem.Expr, expression.NewSchema(oldColumns...), newColumns)
+		orderByItems[i] = &plannercore.ByItems{Expr: newExpr, Desc: byItem.Desc}
+	}
+	newProjExpr := memo.NewGroupExpr(proj)
+	newProjExpr.SetChildren(childGroup)
+	newProjGroup := memo.NewGroupWithSchema(newProjExpr, projSchema)
+	newSort := plannercore.LogicalSort{ByItems: orderByItems}.Init(sort.SCtx(), sort.SelectBlockOffset())
+	newSortExpr := memo.NewGroupExpr(newSort)
+	newSortExpr.SetChildren(newProjGroup)
+	return []*memo.GroupExpr{newSortExpr}, true, false, nil
+}
