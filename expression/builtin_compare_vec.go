@@ -275,11 +275,35 @@ func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinGTIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfGT(result.Int64s())
+	return nil
 }
 
 func (b *builtinCoalesceDurationSig) vectorized() bool {
@@ -425,6 +449,17 @@ func vecResOfLT(res []int64) {
 	n := len(res)
 	for i := 0; i < n; i++ {
 		if res[i] < 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
+}
+
+func vecResOfGT(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] > 0 {
 			res[i] = 1
 		} else {
 			res[i] = 0
