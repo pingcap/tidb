@@ -459,6 +459,10 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 			zap.String("target", cli.target),
 			zap.Error(err),
 		)
+		for _, entry := range entries {
+			entry.err = errors.New("init create stream fail")
+			close(entry.res)
+		}
 		return
 	}
 
