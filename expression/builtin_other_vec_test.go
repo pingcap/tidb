@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/types"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -22,9 +21,6 @@ import (
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-	ast.In: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETInt}},
-	},
 	ast.SetVar:   {},
 	ast.GetVar:   {},
 	ast.BitCount: {},

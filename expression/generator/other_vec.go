@@ -47,6 +47,7 @@ package expression
 const newLine = "\n"
 
 const builtinOtherImports = `import (
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -78,19 +79,37 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	return nil
 {{ end }}
 {{ define "Compare" }}
-	{{ if eq .Input.TypeName "Decimal" -}}
-		arg0 == arg1
+	{{ if eq .Input.TypeName "Int" -}}
+		compareResult = 1
+		switch {
+			case (isUnsigned0 && isUnsigned), (!isUnsigned0 && !isUnsigned):
+				if arg1 == arg0 {
+					compareResult = 0
+				}
+			case !isUnsigned0 && isUnsigned:
+				if arg0 >= 0 && arg1 == arg0 {
+					compareResult = 0
+				}
+			case isUnsigned0 && !isUnsigned:
+				if arg1 >= 0 && arg1 == arg0 {
+					compareResult = 0
+				}
+		}
+	{{- else if eq .Input.TypeName "Decimal" -}}
+		compareResult = 1
+		if arg0 == arg1 {
+			compareResult = 0
+		}
 	{{- else if eq .Input.TypeName "Time" -}}
-		arg0.Compare(arg1) == 0
+		compareResult = arg0.Compare(arg1) 
 	{{- else if eq .Input.TypeName "Duration" -}}
-		types.CompareDuration(arg0, arg1) == 0
+		compareResult = types.CompareDuration(arg0, arg1)
 	{{- else if eq .Input.TypeName "JSON" -}}
-		json.CompareBinary(arg0, arg1) == 0
+		compareResult = json.CompareBinary(arg0, arg1)
 	{{- else -}}
-		types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1) == 0
+		compareResult = types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1)
 	{{- end -}}
 {{ end }}
-
 
 {{ range . }}
 {{ $InputInt := (eq .Input.TypeName "Int") }}
@@ -107,38 +126,45 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	r64s := result.Int64s()
 	hasNull := make([]bool, n)
 	{{- if $InputInt }}
-	{{- else }}
-		for j := 1; j < len(b.args); j++ {
-			if err := b.args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
-				return err
-			}
-			{{- if $InputFixed }}
-				args1 := buf1.{{.Input.TypeNameInColumn}}s()
-				buf1.MergeNulls(buf0)
-			{{- end }}
-			for i := 0; i < n; i++ {
+		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	{{- end }}
+	var compareResult int
+
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
+			return err
+		}
+		{{- if $InputInt }}
+			isUnsigned := mysql.HasUnsignedFlag(b.args[j].GetType().Flag)
+		{{- end }}
+		{{- if $InputFixed }}
+			args1 := buf1.{{.Input.TypeNameInColumn}}s()
+			buf1.MergeNulls(buf0)
+		{{- end }}
+		for i := 0; i < n; i++ {
 {{- /* if is null */}}
-				if buf1.IsNull(i) {{- if not $InputFixed -}} || buf0.IsNull(i) {{- end -}} {
-					hasNull[i] = true
-					continue
-				}
-
-{{- /* get args */}}
-				{{- if $InputFixed }}
-					arg0 := args0[i]
-					arg1 := args1[i]
-				{{- else }}
-					arg0 := buf0.Get{{ .Input.TypeName }}(i)
-					arg1 := buf1.Get{{ .Input.TypeName }}(i)
-				{{- end }}
-
-{{- /* compare */}}
-				if {{- template "Compare" .}} {
-					result.SetNull(i, false)
-					r64s[i] = 1
-				}
+			if buf1.IsNull(i) {{- if not $InputFixed -}} || buf0.IsNull(i) {{- end -}} {
+				hasNull[i] = true
+				continue
 			}
-	{{- end }}}
+	
+{{- /* get args */}}
+			{{- if $InputFixed }}
+				arg0 := args0[i]
+				arg1 := args1[i]
+			{{- else }}
+				arg0 := buf0.Get{{ .Input.TypeName }}(i)
+				arg1 := buf1.Get{{ .Input.TypeName }}(i)
+			{{- end }}
+	
+{{- /* compare */}}
+			{{- template "Compare" . }}
+			if compareResult == 0 {
+				result.SetNull(i, false)
+				r64s[i] = 1
+			}
+		} // for i
+	} // for j
 	{{- template "SetHasNull" . -}}
 }
 
@@ -166,52 +192,87 @@ var testFile = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, 
 package expression
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
-type gener struct {
+type inGener struct {
 	defaultGener
 }
 
-func (g gener) gen() interface{} {
-	result := g.defaultGener.gen()
-	if _, ok := result.(string); ok {
-		dg := &defaultGener{eType: types.ETDuration, nullRation: 0}
-		d := dg.gen().(types.Duration)
-		if int8(d.Duration)%2 == 0 {
-			d.Fsp = 0
-		} else {
-			d.Fsp = 1
-		}
-		result = d.String()
+func (g inGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
 	}
-	return result
+	randNum := rand.Int63n(10)
+	switch g.eType {
+	case types.ETInt:
+		if rand.Float64() < 0.5 {
+			return -randNum
+		}
+		return randNum
+	case types.ETReal:
+		if rand.Float64() < 0.5 {
+			return -float64(randNum)
+		}
+		return float64(randNum)
+	case types.ETDecimal:
+		d := new(types.MyDecimal)
+		f := float64(randNum * 100000)
+		if err := d.FromFloat64(f); err != nil {
+			panic(err)
+		}
+		return d
+	case types.ETDatetime, types.ETTimestamp:
+		gt := types.FromDate(2019, 11, 2, 22, 00, int(randNum), rand.Intn(1000000))
+		t := types.Time{Time: gt, Type: convertETType(g.eType)}
+		return t
+	case types.ETDuration:
+		return types.Duration{ Duration: time.Duration(randNum) }
+	case types.ETJson:
+		j := new(json.BinaryJSON)
+		jsonStr := fmt.Sprintf("{\"key\":%v}", randNum)
+		if err := j.UnmarshalJSON([]byte(jsonStr)); err != nil {
+			panic(err)
+		}
+		return *j
+	case types.ETString:
+		return fmt.Sprint(randNum)
+	}
+	return randNum
 }
 
 {{/* Add more test cases here if we have more functions in this file */}}
-var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
-{{ range .Functions }}
-	ast.{{.FuncName}}: {
-	{{ range .Sigs }} // {{ .SigName }}
+var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
+{{- range $.Functions }}
+	ast.{{ .FuncName }}: {
+	{{- range .Sigs }} 
+		// {{ .SigName }}
 		{
 			retEvalType: types.ET{{ .Output.ETName }}, 
-			childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}},
-			{{ if ne .FieldTypeA "" }}
-			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
-			{{ end }}
-			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ET{{.TypeA.ETName}}, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+			childrenTypes: []types.EvalType{
+				types.ET{{ .Input.ETName }}, 
+				types.ET{{ .Input.ETName }},
+				types.ET{{ .Input.ETName }},
+				types.ET{{ .Input.ETName }},
 			},
-		},
-	{{ end }}
-{{ end }}
-	},
+			geners: []dataGenerator{
+				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
+				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
+				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
+				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
+			},
+		}, 
+	{{- end }}
+{{- end }}
+	}, 
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
@@ -237,7 +298,7 @@ type sig struct {
 }
 
 var inSigsTmpl = []sig{
-	//{SigName: "builtinInIntSig", Input: TypeInt, Output: TypeInt},
+	{SigName: "builtinInIntSig", Input: TypeInt, Output: TypeInt},
 	{SigName: "builtinInStringSig", Input: TypeString, Output: TypeInt},
 	{SigName: "builtinInDecimalSig", Input: TypeDecimal, Output: TypeInt},
 	{SigName: "builtinInRealSig", Input: TypeReal, Output: TypeInt},
@@ -298,7 +359,7 @@ func generateOneFile(fileNamePrefix string) (err error) {
 	if err != nil {
 		return
 	}
-	//err = generateTestDotGo(fileNamePrefix + "_test.go")
+	err = generateTestDotGo(fileNamePrefix + "_test.go")
 	return
 }
 
