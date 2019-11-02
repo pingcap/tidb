@@ -29,10 +29,12 @@ func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 
 	currentDB := b.ctx.GetSessionVars().CurrentDB
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
-		if currentDB == "" {
+	if currentDB == "" {
+		for i := 0; i < n; i++ {
 			result.AppendNull()
-		} else {
+		}
+	} else {
+		for i := 0; i < n; i++ {
 			result.AppendString(currentDB)
 		}
 	}
