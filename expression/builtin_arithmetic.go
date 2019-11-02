@@ -145,7 +145,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
-	retTp.Decimal = types.UnspecifiedLength
+	retTp.Decimal = mysql.NotFixedDec
 	retTp.Flen = mysql.MaxRealWidth
 }
 
@@ -412,25 +412,22 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
 		if uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%d - %d)", a, b))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case isLHSUnsigned && !isRHSUnsigned:
 		if b >= 0 && uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%d - %d)", a, b))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 		if b < 0 && uint64(a) > math.MaxUint64-uint64(-b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%d - %d)", a, b))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case !isLHSUnsigned && isRHSUnsigned:
-		if (a < 0) || (uint64(a) < uint64(b)) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%d - %d)", a, b))
+		if uint64(a-math.MinInt64) < uint64(b) {
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case !isLHSUnsigned && !isRHSUnsigned:
-		// Because -(math.MinInt64) == math.MinInt64, we need `(a >= 0 && b == math.MinInt64)`
-		// If a<0 && b<=0, then no matter whether b==math.MinInt64, a-b will not overflow.
-		// If a<0 && b>0, then a-b<0, so we need `math.MinInt64<=a-b`, then `-b >= math.MinInt64 -a`, no matte whether a==math.MinInt64.
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%d - %d)", a, b))
+		if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	}
 	return a - b, false, nil
@@ -464,7 +461,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 			bf.tp.Flag |= mysql.UnsignedFlag
 			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 			sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
+			sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 			return sig, nil
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
