@@ -771,7 +771,6 @@ func (b *builtinSubstringBinary2ArgsSig) vecEvalString(input *chunk.Chunk, resul
 
 		str := buf.GetString(i)
 		pos := nums[i]
-
 		length := int64(len(str))
 		if pos < 0 {
 			pos += length
@@ -781,10 +780,8 @@ func (b *builtinSubstringBinary2ArgsSig) vecEvalString(input *chunk.Chunk, resul
 		if pos > length || pos < 0 {
 			pos = length
 		}
-
 		result.AppendString(str[pos:])
 	}
-
 	return nil
 }
 
