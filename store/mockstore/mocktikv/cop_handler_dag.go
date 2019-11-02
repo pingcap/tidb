@@ -85,9 +85,11 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	selResp := h.initSelectResponse(err, dagCtx.evalCtx.sc.GetWarnings(), e.Counts())
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
-		return buildResp(selResp, execDetails, err)
 	}
-	return buildResp(selResp, execDetails, nil)
+	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
+	//  Such err should only be marshal in the data but not in OtherError.
+	//  However, we can not distinguish such err now.
+	return buildResp(selResp, execDetails, err)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
