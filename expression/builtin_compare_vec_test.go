@@ -25,7 +25,24 @@ import (
 var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.NE:     {},
 	ast.IsNull: {},
-	ast.LE:     {},
+	ast.LE: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong},
+			},
+		},
+	},
 	ast.LT: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -46,8 +63,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 	},
 	ast.Coalesce: {},
 	ast.NullEQ:   {},
-	ast.GT:       {},
-	ast.EQ: {
+	ast.GT: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
@@ -65,6 +81,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 			},
 		},
 	},
+	ast.EQ:   {},
 	ast.GE:   {},
 	ast.Date: {},
 	ast.Greatest: {
