@@ -52,9 +52,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
 	},
-	ast.MakeDate:   {},
-	ast.MakeTime:   {},
-	ast.PeriodAdd:  {},
+	ast.MakeDate: {},
+	ast.MakeTime: {},
+	ast.PeriodAdd: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{1, 13}, &rangeInt64Gener{1, 20}}},
+	},
 	ast.PeriodDiff: {},
 	ast.Quarter:    {},
 	ast.TimeFormat: {
