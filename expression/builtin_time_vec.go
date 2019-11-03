@@ -820,7 +820,7 @@ func (b *builtinPeriodAddSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		}
 
 		if !validPeriod(periods[i]) {
-			if err := errIncorrectArgs.GenWithStackByArgs("period_diff"); err != nil {
+			if err := errIncorrectArgs.GenWithStackByArgs("period_add"); err != nil {
 				return err
 			}
 			i64s[i] = 0
