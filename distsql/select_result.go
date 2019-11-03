@@ -38,6 +38,7 @@ var (
 	_ SelectResult = (*streamResult)(nil)
 )
 
+
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Fetch fetches partial results from client.
@@ -54,6 +55,7 @@ type resultWithErr struct {
 	result kv.ResultSubset
 	err    error
 }
+
 
 type selectResult struct {
 	label string
@@ -85,73 +87,53 @@ type selectResult struct {
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
-	go r.fetch(ctx)
 }
 
-func (r *selectResult) fetch(ctx context.Context) {
-	startTime := time.Now()
-	defer func() {
-		if c := recover(); c != nil {
-			err := fmt.Errorf("%v", c)
-			logutil.Logger(ctx).Error("OOM", zap.Error(err))
-			r.results <- resultWithErr{err: err}
-		}
-
-		close(r.results)
-		duration := time.Since(startTime)
-		// TODO: Add a label to distinguish between success or failure.
-		// https://github.com/pingcap/tidb/issues/11397
-		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
-	}()
-	for {
-		var result resultWithErr
-		resultSubset, err := r.resp.Next(ctx)
-		if err != nil {
-			result.err = err
-		} else if resultSubset == nil {
-			// If the result is drained, the resultSubset would be nil
-			return
-		} else {
-			result.result = resultSubset
-			r.memConsume(int64(resultSubset.MemSize()))
-		}
-
-		select {
-		case r.results <- result:
-		case <-r.closed:
-			// If selectResult called Close() already, make fetch goroutine exit.
-			if resultSubset != nil {
-				r.memConsume(-int64(resultSubset.MemSize()))
-			}
-			return
-		case <-ctx.Done():
-			if resultSubset != nil {
-				r.memConsume(-int64(resultSubset.MemSize()))
-			}
-			return
-		}
+func (r *selectResult) fetchResp(ctx context.Context) error {
+	r.respChkIdx = 0
+	resultSubset, err := r.resp.Next(ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
-}
-
-// NextRaw returns the next raw partial result.
-func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
-	re := <-r.results
+	if resultSubset == nil {
+		r.selectResp = nil
+		return nil
+	}
+	//r.memConsume(int64(resultSubset.MemSize()))
+	r.selectResp = new(tipb.SelectResponse)
+	err = r.selectResp.Unmarshal(resultSubset.GetData())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	r.selectRespSize = r.selectResp.Size()
+	//r.memConsume(int64(r.selectRespSize))
+	if err := r.selectResp.Error; err != nil {
+		return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+	}
+	sc := r.ctx.GetSessionVars().StmtCtx
+	for _, warning := range r.selectResp.Warnings {
+		sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+	}
+	r.updateCopRuntimeStats(resultSubset.GetExecDetails().CalleeAddress, resultSubset.RespTime())
+	r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 	r.partialCount++
-	r.feedback.Invalidate()
-	if re.result != nil && re.err == nil {
-		data = re.result.GetData()
+	sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
+	if len(r.selectResp.Chunks) == 0 {
+		// TODO(Zhifeng Hu): Under what occasion will this branch be activated? Would this results in infinite recursion?
+		return r.fetchResp(ctx)
 	}
-	return data, re.err
+	return nil
 }
 
-// Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	// Check the returned data is default/chunk format.
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-		err := r.getSelectResp()
-		if err != nil || r.selectResp == nil {
+		err := r.fetchResp(ctx)
+		if err != nil {
 			return err
+		}
+		if r.selectResp == nil {
+			return nil
 		}
 	}
 	// TODO(Shenghui Wu): add metrics
@@ -164,10 +146,21 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Errorf("unsupported encode type:%v", r.encodeType)
 }
 
+func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
+	resultSubset, err := r.resp.Next(ctx)
+	r.partialCount++
+	r.feedback.Invalidate()
+	if resultSubset != nil && err == nil {
+		//r.memConsume(int64(resultSubset.MemSize()))
+		data = resultSubset.GetData()
+	}
+	return data, err
+}
+
 func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
 		if r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.getSelectResp()
+			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
@@ -193,7 +186,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 
 	for !chk.IsFull() {
 		if r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.getSelectResp()
+			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
@@ -218,46 +211,6 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 		}
 	}
 	return nil
-}
-
-func (r *selectResult) getSelectResp() error {
-	r.respChkIdx = 0
-	for {
-		re := <-r.results
-		if re.err != nil {
-			return errors.Trace(re.err)
-		}
-		if r.selectResp != nil {
-			r.memConsume(-int64(r.selectRespSize))
-		}
-		if re.result == nil {
-			r.selectResp = nil
-			return nil
-		}
-		r.memConsume(-int64(re.result.MemSize()))
-		r.selectResp = new(tipb.SelectResponse)
-		err := r.selectResp.Unmarshal(re.result.GetData())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		r.selectRespSize = r.selectResp.Size()
-		r.memConsume(int64(r.selectRespSize))
-		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
-		}
-		sc := r.ctx.GetSessionVars().StmtCtx
-		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
-		}
-		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress, re.result.RespTime())
-		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
-		r.partialCount++
-		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
-		if len(r.selectResp.Chunks) == 0 {
-			continue
-		}
-		return nil
-	}
 }
 
 func (r *selectResult) updateCopRuntimeStats(callee string, respTime time.Duration) {
@@ -311,14 +264,14 @@ func (r *selectResult) Close() error {
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	// Close this channel to tell the fetch goroutine to exit.
-	close(r.closed)
-	for re := range r.results {
-		if re.result != nil {
-			r.memConsume(-int64(re.result.MemSize()))
-		}
-	}
-	if r.selectResp != nil {
-		r.memConsume(-int64(r.selectRespSize))
-	}
+	//close(r.closed)
+	//for re := range r.results {
+	//	if re.result != nil {
+	//		r.memConsume(-int64(re.result.MemSize()))
+	//	}
+	//}
+	//if r.selectResp != nil {
+	//	r.memConsume(-int64(r.selectRespSize))
+	//}
 	return r.resp.Close()
 }
