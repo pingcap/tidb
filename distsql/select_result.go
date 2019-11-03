@@ -38,7 +38,6 @@ var (
 	_ SelectResult = (*streamResult)(nil)
 )
 
-
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Fetch fetches partial results from client.
@@ -55,7 +54,6 @@ type resultWithErr struct {
 	result kv.ResultSubset
 	err    error
 }
-
 
 type selectResult struct {
 	label string
