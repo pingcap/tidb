@@ -398,12 +398,17 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 // getGroupKey evaluates the group items and args of aggregate functions.
 func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
-	for i := 0; i < numRows; i++ {
-		groupKey[i] = groupKey[i][:0]
-	}
 	if len(groupKey) < numRows {
-		for i := len(groupKey); i < numRows; i++ {
+		groupKeyLen := len(groupKey)
+		for i := 0; i < groupKeyLen; i++ {
+			groupKey[i] = groupKey[i][:0]
+		}
+		for i := groupKeyLen; i < numRows; i++ {
 			groupKey = append(groupKey, make([]byte, 0, 10*len(groupByItems)))
+		}
+	} else {
+		for i := 0; i < numRows; i++ {
+			groupKey[i] = groupKey[i][:0]
 		}
 	}
 
