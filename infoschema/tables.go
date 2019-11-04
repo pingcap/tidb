@@ -1877,9 +1877,14 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	for i, addr := range etcd.EtcdAddrs() {
 		addr = strings.TrimSpace(addr)
 
-		// get pd version
+		// Get PD version
 		url := fmt.Sprintf("http://%s%s", addr, pdapi.ClusterVersion)
-		resp, err := http.Get(url)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1892,7 +1897,12 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 
 		// Get PD git_hash
 		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
-		resp, err = http.Get(url)
+		req, err = http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err = http.DefaultClient.Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
