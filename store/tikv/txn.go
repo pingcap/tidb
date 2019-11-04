@@ -382,7 +382,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 }
 
 // lockWaitTime in ms, except that 0 means always wait lock, 1 means nowait lock
-func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime uint64, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()

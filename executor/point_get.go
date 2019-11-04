@@ -58,7 +58,7 @@ type PointGetExecutor struct {
 	snapshot     kv.Snapshot
 	done         bool
 	lock         bool
-	lockWaitTime int64
+	lockWaitTime uint64
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
