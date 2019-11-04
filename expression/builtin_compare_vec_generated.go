@@ -87,7 +87,6 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -95,9 +94,7 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareFloat64(arg0[i], arg1[i])
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -132,7 +129,6 @@ func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -140,9 +136,7 @@ func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(&arg1[i])
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -182,9 +176,7 @@ func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -219,7 +211,6 @@ func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -227,9 +218,7 @@ func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(arg1[i])
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -264,7 +253,6 @@ func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -272,9 +260,7 @@ func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareDuration(arg0[i], arg1[i])
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -314,9 +300,7 @@ func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -396,7 +380,6 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -404,9 +387,7 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareFloat64(arg0[i], arg1[i])
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -441,7 +422,6 @@ func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -449,9 +429,7 @@ func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(&arg1[i])
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -491,9 +469,7 @@ func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -528,7 +504,6 @@ func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -536,9 +511,7 @@ func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(arg1[i])
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -573,7 +546,6 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -581,9 +553,7 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareDuration(arg0[i], arg1[i])
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -623,9 +593,7 @@ func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -705,7 +673,6 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -713,9 +680,7 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareFloat64(arg0[i], arg1[i])
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -750,7 +715,6 @@ func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -758,9 +722,7 @@ func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(&arg1[i])
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -800,9 +762,7 @@ func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -837,7 +797,6 @@ func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -845,9 +804,7 @@ func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(arg1[i])
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -882,7 +839,6 @@ func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -890,9 +846,7 @@ func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareDuration(arg0[i], arg1[i])
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -932,9 +886,7 @@ func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -1014,7 +966,6 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1022,9 +973,7 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareFloat64(arg0[i], arg1[i])
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1059,7 +1008,6 @@ func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1067,9 +1015,7 @@ func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(&arg1[i])
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1109,9 +1055,7 @@ func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1146,7 +1090,6 @@ func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1154,9 +1097,7 @@ func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(arg1[i])
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1191,7 +1132,6 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1199,9 +1139,7 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareDuration(arg0[i], arg1[i])
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1241,9 +1179,7 @@ func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1323,7 +1259,6 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1331,9 +1266,7 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareFloat64(arg0[i], arg1[i])
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1368,7 +1301,6 @@ func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1376,9 +1308,7 @@ func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(&arg1[i])
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1418,9 +1348,7 @@ func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1455,7 +1383,6 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1463,9 +1390,7 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(arg1[i])
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1500,7 +1425,6 @@ func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1508,9 +1432,7 @@ func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareDuration(arg0[i], arg1[i])
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1550,9 +1472,7 @@ func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1632,7 +1552,6 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1640,9 +1559,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareFloat64(arg0[i], arg1[i])
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1677,7 +1594,6 @@ func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1685,9 +1601,7 @@ func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(&arg1[i])
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1727,9 +1641,7 @@ func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1764,7 +1676,6 @@ func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1772,9 +1683,7 @@ func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := arg0[i].Compare(arg1[i])
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1809,7 +1718,6 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -1817,9 +1725,7 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := types.CompareDuration(arg0[i], arg1[i])
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1859,9 +1765,7 @@ func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1941,7 +1845,6 @@ func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.Float64s()
 	arg1 := buf1.Float64s()
-
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
@@ -1952,9 +1855,7 @@ func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
-
 			i64s[i] = 1
 		}
 	}
@@ -1986,7 +1887,6 @@ func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 
 	arg0 := buf0.Decimals()
 	arg1 := buf1.Decimals()
-
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
@@ -1997,9 +1897,7 @@ func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case arg0[i].Compare(&arg1[i]) == 0:
-
 			i64s[i] = 1
 		}
 	}
@@ -2039,9 +1937,7 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
-
 			i64s[i] = 1
 		}
 	}
@@ -2073,7 +1969,6 @@ func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
@@ -2084,9 +1979,7 @@ func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case arg0[i].Compare(arg1[i]) == 0:
-
 			i64s[i] = 1
 		}
 	}
@@ -2118,7 +2011,6 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
-
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
@@ -2129,9 +2021,7 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case types.CompareDuration(arg0[i], arg1[i]) == 0:
-
 			i64s[i] = 1
 		}
 	}
@@ -2171,9 +2061,7 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-
 		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
-
 			i64s[i] = 1
 		}
 	}
