@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -418,29 +419,29 @@ func (m *BindMeta) isSame(other *BindMeta) bool {
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
 	return fmt.Sprintf(
-		"DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
-		normdOrigSQL,
-		db,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+		expression.Quote(normdOrigSQL),
+		expression.Quote(db),
 	)
 }
 
 func (h *BindHandle) insertBindInfoSQL(record *BindRecord) string {
-	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		record.OriginalSQL,
-		record.BindSQL,
-		record.Db,
-		record.Status,
-		record.CreateTime,
-		record.UpdateTime,
-		record.Charset,
-		record.Collation,
+	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s,%s, %s)`,
+		expression.Quote(record.OriginalSQL),
+		expression.Quote(record.BindSQL),
+		expression.Quote(record.Db),
+		expression.Quote(record.Status),
+		expression.Quote(record.CreateTime.String()),
+		expression.Quote(record.UpdateTime.String()),
+		expression.Quote(record.Charset),
+		expression.Quote(record.Collation),
 	)
 }
 
 func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs types.Time) string {
-	return fmt.Sprintf(`UPDATE mysql.bind_info SET status='%s',update_time='%s' WHERE original_sql='%s' and default_db='%s'`,
-		deleted,
-		updateTs,
-		normdOrigSQL,
-		db)
+	return fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
+		expression.Quote(deleted),
+		expression.Quote(updateTs.String()),
+		expression.Quote(normdOrigSQL),
+		expression.Quote(db))
 }
