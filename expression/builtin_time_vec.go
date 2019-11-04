@@ -319,6 +319,10 @@ func (b *builtinPeriodDiffSig) vectorized() bool {
 // evalInt evals PERIOD_DIFF(P1,P2).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -328,32 +332,22 @@ func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
 
-	period1s := buf.Int64s()
-	period2s := buf1.Int64s()
-	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
+	periods := buf.Int64s()
+	result.MergeNulls(buf)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
-		if !validPeriod(period1s[i]) || !validPeriod(period2s[i]) {
+		if !validPeriod(i64s[i]) || !validPeriod(periods[i]) {
 			if err := errIncorrectArgs.GenWithStackByArgs("period_diff"); err != nil {
 				return err
 			}
 			i64s[i] = 0
 			continue
 		}
-		i64s[i] = int64(period2Month(uint64(period1s[i])) - period2Month(uint64(period2s[i])))
+		i64s[i] = int64(period2Month(uint64(i64s[i])) - period2Month(uint64(periods[i])))
 	}
 	return nil
 }
