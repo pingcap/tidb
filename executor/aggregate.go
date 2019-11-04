@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -354,7 +355,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
-	err = w.getGroupKey(sc, chk)
+	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	if err != nil {
 		return err
 	}
@@ -395,29 +396,30 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 }
 
 // getGroupKey evaluates the group items and args of aggregate functions.
-func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, input *chunk.Chunk) (err error) {
+func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
-	if len(w.groupKey) < numRows {
-		for i := len(w.groupKey); i < numRows; i++ {
-			w.groupKey = append(w.groupKey, make([]byte, 10*len(w.groupByItems)))
+	for i := 0; i < numRows; i++ {
+		groupKey[i] = groupKey[i][:0]
+	}
+	if len(groupKey) < numRows {
+		for i := len(groupKey); i < numRows; i++ {
+			groupKey = append(groupKey, make([]byte, 0, 10*len(groupByItems)))
 		}
 	}
-	for i := 0; i < numRows; i++ {
-		w.groupKey[i] = w.groupKey[i][:0]
-	}
-	for _, item := range w.groupByItems {
+
+	for _, item := range groupByItems {
 		tp := item.GetType()
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer expression.PutColumn(buf)
 
-		if w.groupKey, err = expression.VectorizedGetGroupKey(w.ctx, sc, w.groupKey, item, tp, input, buf); err != nil {
-			return err
+		if groupKey, err = expression.VectorizedGetGroupKey(ctx, groupKey, item, tp, input, buf); err != nil {
+			return nil, err
 		}
+		expression.PutColumn(buf)
 	}
-	return err
+	return groupKey, nil
 }
 
 func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
@@ -425,18 +427,20 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 	partialResults := make([][]aggfuncs.PartialResult, numRows)
 	for i := 0; i < numRows; i++ {
 		var ok bool
-		partialResults[i], ok = mapper[string(groupKey[i])]
-		if !ok {
-			if cap(partialResults[i]) < len(w.aggFuncs) {
-				partialResults[i] = make([]aggfuncs.PartialResult, 0, len(w.aggFuncs))
-			} else {
-				partialResults[i] = partialResults[i][:0]
-			}
-			for _, af := range w.aggFuncs {
-				partialResults[i] = append(partialResults[i], af.AllocPartialResult())
-			}
-			mapper[string(groupKey[i])] = partialResults[i]
+		partialResults[i], ok = mapper[string(hack.String(groupKey[i]))]
+		if ok {
+			continue
 		}
+
+		if cap(partialResults[i]) < len(w.aggFuncs) {
+			partialResults[i] = make([]aggfuncs.PartialResult, 0, len(w.aggFuncs))
+		} else {
+			partialResults[i] = partialResults[i][:0]
+		}
+		for _, af := range w.aggFuncs {
+			partialResults[i] = append(partialResults[i], af.AllocPartialResult())
+		}
+		mapper[string(hack.String(groupKey[i]))] = partialResults[i]
 	}
 	return partialResults
 }
@@ -724,7 +728,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return nil
 		}
 
-		err = e.getGroupKey(e.childResult)
+		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
 		if err != nil {
 			return err
 		}
@@ -744,31 +748,6 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
-}
-
-func (e *HashAggExec) getGroupKey(input *chunk.Chunk) (err error) {
-	numRows := input.NumRows()
-	if len(e.groupKeyBuffer) < numRows {
-		for i := len(e.groupKeyBuffer); i < numRows; i++ {
-			e.groupKeyBuffer = append(e.groupKeyBuffer, make([]byte, 10*len(e.GroupByItems)))
-		}
-	}
-	for i := 0; i < numRows; i++ {
-		e.groupKeyBuffer[i] = e.groupKeyBuffer[i][:0]
-	}
-	for _, item := range e.GroupByItems {
-		tp := item.GetType()
-		buf, err := expression.GetColumn(tp.EvalType(), numRows)
-		if err != nil {
-			return err
-		}
-		defer expression.PutColumn(buf)
-
-		if e.groupKeyBuffer, err = expression.VectorizedGetGroupKey(e.ctx, e.sc, e.groupKeyBuffer, item, tp, input, buf); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {

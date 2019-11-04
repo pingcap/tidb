@@ -1433,7 +1433,7 @@ func BenchmarkVectorizedEncodeValue(b *testing.B) {
 					bufs[i] = bufs[i][:0]
 				}
 				var err error
-				if bufs, err = VectorizedGetGroupKey(ctx, sc, bufs, colExpr, colExpr.GetType(), input, colBuf); err != nil {
+				if bufs, err = VectorizedGetGroupKey(ctx, bufs, colExpr, colExpr.GetType(), input, colBuf); err != nil {
 					b.Fatal(err)
 				}
 			}

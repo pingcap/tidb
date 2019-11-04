@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -766,10 +765,10 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	return 0, false, false
 }
 
-// VectorizedGetGroupKey evaluates the group items vectorized.
-func VectorizedGetGroupKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) ([][]byte, error) {
+// VectorizedGetGroupKey evaluates the group items vectorially.
+func VectorizedGetGroupKey(ctx sessionctx.Context, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) ([][]byte, error) {
 	if err := vecEval(ctx, item, input, buf); err != nil {
-		return groupKey, err
+		return nil, err
 	}
 	// This check is used to avoid error during the execution of `EncodeDecimal`.
 	if item.GetType().Tp == mysql.TypeNewDecimal {
