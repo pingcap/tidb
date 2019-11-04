@@ -300,7 +300,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
-		return kv.ErrTxnTooLarge
+		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
 	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
@@ -719,15 +719,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			}
 			locks = append(locks, lock)
 		}
-		var expire int64
-		expire, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		// Because we already waited on tikv, no need to Backoff here.
+		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		if err1 := bo.BackoffWithMaxSleep(BoTxnLock, int(expire), errors.New(locks[0].String())); err1 != nil {
-			return err1
-		}
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
@@ -859,6 +856,26 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		c.setUndeterminedErr(nil)
 	}
 	if keyErr := commitResp.GetError(); keyErr != nil {
+		if rejected := keyErr.GetCommitTsExpired(); rejected != nil {
+			logutil.Logger(bo.ctx).Info("2PC commitTS rejected by TiKV, retry with a newer commitTS",
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Stringer("info", logutil.Hex(rejected)))
+
+			// Update commit ts and retry.
+			commitTS, err := c.store.getTimestampWithRetry(bo)
+			if err != nil {
+				logutil.Logger(bo.ctx).Warn("2PC get commitTS failed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS))
+				return errors.Trace(err)
+			}
+
+			c.mu.Lock()
+			c.commitTS = commitTS
+			c.mu.Unlock()
+			return c.commitKeys(bo, batch.keys)
+		}
+
 		c.mu.RLock()
 		defer c.mu.RUnlock()
 		err = extractKeyErr(keyErr)
