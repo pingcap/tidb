@@ -790,43 +790,34 @@ func (b *builtinPeriodAddSig) vectorized() bool {
 	return true
 }
 
+// evalInt evals PERIOD_ADD(P,N).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	periods := buf.Int64s()
-	ns := buf1.Int64s()
-	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	ns := buf.Int64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 
-		if !validPeriod(periods[i]) {
-			if err := errIncorrectArgs.GenWithStackByArgs("period_add"); err != nil {
-				return err
-			}
-			i64s[i] = 0
-			continue
+		if !validPeriod(i64s[i]) {
+			return errIncorrectArgs.GenWithStackByArgs("period_add")
 		}
-		sumMonth := int64(period2Month(uint64(periods[i]))) + ns[i]
+		sumMonth := int64(period2Month(uint64(i64s[i]))) + ns[i]
 		i64s[i] = int64(month2Period(uint64(sumMonth)))
 	}
 	return nil
