@@ -83,6 +83,16 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.Coalesce: {
 
 		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+			},
+		},
+
+		{
 			retEvalType:   types.ETReal,
 			childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal},
 			geners: []dataGenerator{
@@ -139,16 +149,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-			},
-		},
-
-		{
-			retEvalType:   types.ETInt,
-			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt},
-			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
 			},
 		},
 	},

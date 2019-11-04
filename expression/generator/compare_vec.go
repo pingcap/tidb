@@ -87,6 +87,8 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		}
 {{- if eq .type.ETName "Json" }}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
+{{ else if eq .type.ETName "Int" }}
+		val := types.CompareInt64(arg0[i],arg1[i])
 {{ else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
@@ -148,6 +150,8 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 			i64s[i] = 0
 {{- if eq .type.ETName "Json" }}
 		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
+{{ else if eq .type.ETName "Int" }}
+		case types.CompareInt64(arg0[i], arg1[i]) == 0:
 {{ else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "String" }}
@@ -190,13 +194,8 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		for i := 0; i < n; i++ {
 			if !buf1.IsNull(i) && result.IsNull(i) {
 				i64s[i] = args[i]
-				result.SetNull(i, buf1.IsNull(i))
-				continue
+				result.SetNull(i, false)
 			}
-			if !result.IsNull(i) {
-				continue
-			}
-			result.SetNull(i, true)
 		}
 	}
 	return nil
@@ -204,42 +203,31 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 {{ else }}
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	argLen := len(b.args)
 
-	result.Reserve{{ .type.TypeNameInColumn }}(n)
+	bufs := make([]*chunk.Column, argLen)
 
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-
-	buf2, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf2)
-
-	buf2.Reserve{{ .type.TypeNameInColumn }}(len(b.args) * n)
-	for j := 0; j < len(b.args); j++ {
-		if err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1); err != nil {
+	for i := 0; i < argLen; i++ {
+		buf, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
-			if buf1.IsNull(i) {
-				buf2.AppendNull()
-				continue
-			}
-			buf2.Append{{ .type.TypeName }}(buf1.Get{{ .type.TypeName }}(i))
+		defer b.bufAllocator.put(buf)
+		err = b.args[i].VecEval{{ .type.TypeName }}(b.ctx, input, buf)
+		if err != nil {
+			return err
 		}
+		bufs[i]=buf
 	}
+	result.Reserve{{ .type.TypeName }}(n)
+
 	for i := 0; i < n; i++ {
-		for j := 0; j < len(b.args); j++ {
-			index := i + j*n
-			if !buf2.IsNull(index) {
-				result.Append{{ .type.TypeName }}(buf2.Get{{ .type.TypeName }}(index))
+		for j := 0; j < argLen; j++ {
+			if !bufs[j].IsNull(i) {
+				result.Append{{ .type.TypeName }}(bufs[j].Get{{ .type.TypeName }}(i))
 				break
 			}
-			if j == len(b.args)-1 && buf2.IsNull(index) {
+			if j == argLen-1 && bufs[j].IsNull(i) {
 				result.AppendNull()
 			}
 		}
@@ -328,6 +316,7 @@ var comparesMap = []CompareContext{
 }
 
 var typesMap = []TypeContext{
+	TypeInt,
 	TypeReal,
 	TypeDecimal,
 	TypeString,
@@ -344,10 +333,13 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 
 	var ctx = make(map[string]interface{})
 	for _, compareCtx := range compares {
-		for typesIndex, typeCtx := range types {
+		for _, typeCtx := range types {
 			ctx["compare"] = compareCtx
 			ctx["type"] = typeCtx
 			if compareCtx.CompareName == "NullEQ" {
+				if typeCtx.TypeName == "Int" {
+					continue
+				}
 				err := builtinNullEQCompareVecTpl.Execute(w, ctx)
 				if err != nil {
 					return err
@@ -358,14 +350,11 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 				if err != nil {
 					return err
 				}
-				if typesIndex == 0 {
-					ctx["type"] = TypeInt
-					err := builtinCoalesceCompareVecTpl.Execute(w, ctx)
-					if err != nil {
-						return err
-					}
-				}
+
 			} else {
+				if typeCtx.TypeName == "Int" {
+					continue
+				}
 				err := builtinCompareVecTpl.Execute(w, ctx)
 				if err != nil {
 					return err
@@ -388,13 +377,27 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []TypeC
 
 	for _, compareCtx := range compares {
 		if compareCtx.CompareName == "Coalesce" {
-			break
+			err := builtinCompareVecTestFuncHeader.Execute(w, CompareContext{CompareName: "Coalesce"})
+			if err != nil {
+				return err
+			}
+			for _, typeCtx := range types {
+				err := builtinCoalesceCompareVecTestFunc.Execute(w, typeCtx)
+				if err != nil {
+					return err
+				}
+			}
+			w.WriteString(builtinCompareVecTestFuncTail)
+			continue
 		}
 		err := builtinCompareVecTestFuncHeader.Execute(w, compareCtx)
 		if err != nil {
 			return err
 		}
 		for _, typeCtx := range types {
+			if typeCtx.TypeName == "Int" {
+				continue
+			}
 			err := builtinCompareVecTestCase.Execute(w, typeCtx)
 			if err != nil {
 				return err
@@ -402,19 +405,6 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []TypeC
 		}
 		w.WriteString(builtinCompareVecTestFuncTail)
 	}
-	err := builtinCompareVecTestFuncHeader.Execute(w, CompareContext{CompareName: "Coalesce"})
-	if err != nil {
-		return err
-	}
-	types = append(types, TypeInt)
-	for _, typeCtx := range types {
-		err := builtinCoalesceCompareVecTestFunc.Execute(w, typeCtx)
-		if err != nil {
-			return err
-		}
-	}
-	w.WriteString(builtinCompareVecTestFuncTail)
-
 	w.WriteString(builtinCompareVecTestTail)
 
 	data, err := format.Source(w.Bytes())
