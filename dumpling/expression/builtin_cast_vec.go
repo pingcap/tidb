@@ -302,11 +302,44 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastDurationAsIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	var duration types.Duration
+	ds := buf.GoDurations()
+	fsp := int8(b.args[0].GetType().Decimal)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		duration.Duration = ds[i]
+		duration.Fsp = fsp
+		dur, err := duration.RoundFrac(types.DefaultFsp)
+		if err != nil {
+			return err
+		}
+		i64s[i], err = dur.ToNumber().ToInt()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+
 }
 
 func (b *builtinCastIntAsTimeSig) vectorized() bool {
