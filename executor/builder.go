@@ -1020,7 +1020,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 		e.buildSideExec = leftExec
 		e.probeSideExec = rightExec
-		e.probeSideFilter = v.RightConditions
+		e.outerFilter = v.RightConditions
 		e.buildKeys = v.LeftJoinKeys
 		e.probeKeys = v.RightJoinKeys
 	} else {
@@ -1030,7 +1030,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 		e.buildSideExec = rightExec
 		e.probeSideExec = leftExec
-		e.probeSideFilter = v.LeftConditions
+		e.outerFilter = v.LeftConditions
 		e.buildKeys = v.RightJoinKeys
 		e.probeKeys = v.LeftJoinKeys
 	}
