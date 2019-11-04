@@ -789,14 +789,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			}
 			locks = append(locks, lock)
 		}
-		expire, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		// Because we already waited on tikv, no need to Backoff here.
+		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		if err1 := bo.BackoffWithMaxSleep(BoTxnLock, int(expire), errors.New(locks[0].String())); err1 != nil {
-			return err1
-		}
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
