@@ -215,7 +215,8 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 			result.AppendNull()
 		}
 	}
-	{{ end }}return nil
+	{{ end -}}
+	return nil
 }
 
 func (b *builtinIfNull{{ .TypeName }}Sig) vectorized() bool {
