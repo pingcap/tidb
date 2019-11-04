@@ -3066,7 +3066,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(1 - 4)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(Column#1 - Column#2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3090,7 +3090,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (a) values (10);`)
 	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
 	c.Assert(e, NotNil)
-	c.Assert(e.Error(), Equals, `other error: [types:1690]BIGINT value is out of range in '(10 - -9223372036854775808)'`)
+	c.Assert(e.Error(), Equals, `other error: [types:1690]BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`)
 	tk.MustExec(`drop table tb5`)
 
 	// for multiply
