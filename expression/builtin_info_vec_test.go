@@ -22,6 +22,7 @@ import (
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
+	ast.Version:     {},
 	ast.TiDBVersion: {},
 	ast.CurrentUser: {},
 	ast.FoundRows:   {},
