@@ -1039,8 +1039,10 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err = b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		return err
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		if err := handleInvalidTimeError(b.ctx, err); err != nil {
+			return err
+		}
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
