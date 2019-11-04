@@ -273,7 +273,12 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	txn.Set(kv.Key("second"), []byte("xxx"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
+	c.Assert(err, IsNil)
+	// Increase lock TTL to make CI more stable.
+	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 200*1024*1024)
+	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
+	c.Assert(err, IsNil)
 
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
@@ -291,7 +296,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	lock := s.mustGetLock(c, []byte("second"))
 	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
-	c.Assert(timeBeforeExpire >= int64(0), IsTrue)
+	c.Assert(timeBeforeExpire > int64(0), IsTrue)
 
 	// Force rollback the lock using lock.TTL = 0.
 	lock.TTL = uint64(0)

@@ -300,7 +300,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
-		return kv.ErrTxnTooLarge
+		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
 	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
