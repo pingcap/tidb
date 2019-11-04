@@ -738,7 +738,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// we cant return "nowait conflict" directly
 			if lock.LockType == pb.Op_PessimisticLock {
 				if action.lockWaitTime == kv.LockNoWait {
-					// the pessimistic lock found could be invalid lock which is timeout but not recycled yet
+					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
 					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
 						return ErrLockAcquireFailAndNoWaitSet
 					}
@@ -746,7 +746,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 					// do nothing but keep wait
 				} else {
 					// the lockWaitTime is set, check the lock wait timeout or not
-					// the pessimistic lock found could be invalid lock which is timeout but not recycled yet
+					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
 					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
 						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
 							return ErrLockWaitTimeout
