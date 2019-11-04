@@ -431,17 +431,15 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 	numRows := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, numRows)
 	for i := 0; i < numRows; i++ {
+		partialResults[i] = make([]aggfuncs.PartialResult, 0, len(w.aggFuncs))
+	}
+	for i := 0; i < numRows; i++ {
 		var ok bool
 		partialResults[i], ok = mapper[string(hack.String(groupKey[i]))]
 		if ok {
 			continue
 		}
 
-		if cap(partialResults[i]) < len(w.aggFuncs) {
-			partialResults[i] = make([]aggfuncs.PartialResult, 0, len(w.aggFuncs))
-		} else {
-			partialResults[i] = partialResults[i][:0]
-		}
 		for _, af := range w.aggFuncs {
 			partialResults[i] = append(partialResults[i], af.AllocPartialResult())
 		}
