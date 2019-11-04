@@ -1123,5 +1123,9 @@ var (
 
 func init() {
 	// Map error codes to mysql error codes.
-	terror.ErrClassToMySQLCodes[terror.ClassDomain] = make(map[terror.ErrCode]uint16)
+	domainMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInfoSchemaExpired: mysql.ErrInfoSchemaExpired,
+		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
 }
