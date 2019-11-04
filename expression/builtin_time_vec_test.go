@@ -46,7 +46,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DayOfWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.DayOfYear: {},
+	ast.DayOfYear:   {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.Day:       {},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
