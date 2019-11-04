@@ -256,6 +256,22 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteByte(lineBreaker)
 }
 
+// EncodePlanNode is used to encode the plan to a string.
+func NormalizePlanNode(depth, pid int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
+	buf.WriteString(strconv.Itoa(depth))
+	buf.WriteByte(separator)
+	buf.WriteString(encodeID(planType, pid))
+	buf.WriteByte(separator)
+	if isRoot {
+		buf.WriteString(rootTaskType)
+	} else {
+		buf.WriteString(copTaskType)
+	}
+	buf.WriteByte(separator)
+	buf.WriteString(explainInfo)
+	buf.WriteByte(lineBreaker)
+}
+
 func encodeID(planType string, id int) string {
 	planID := TypeStringToPhysicalID(planType)
 	return strconv.Itoa(planID) + idSeparator + strconv.Itoa(id)

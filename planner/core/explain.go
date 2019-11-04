@@ -81,6 +81,88 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	fmt.Fprintf(buffer, "table:%s", tblName)
+	if p.isPartition {
+		if pi := p.Table.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(p.physicalTableID)
+			fmt.Fprintf(buffer, ", partition:%s", partitionName)
+		}
+	}
+	if len(p.Index.Columns) > 0 {
+		buffer.WriteString(", index:")
+		for i, idxCol := range p.Index.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.Index.Columns) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	haveCorCol := false
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			haveCorCol = true
+			break
+		}
+	}
+	if len(p.rangeInfo) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
+	} else if haveCorCol {
+		fmt.Fprintf(buffer, ", range: decided by %v", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+	} else if len(p.Ranges) > 0 {
+		fmt.Fprint(buffer, ", range:[?,?]")
+	}
+	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
+	if p.Desc {
+		buffer.WriteString(", desc")
+	}
+	return buffer.String()
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	fmt.Fprintf(buffer, "table:%s", tblName)
+	if p.isPartition {
+		if pi := p.Table.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(p.physicalTableID)
+			fmt.Fprintf(buffer, ", partition:%s", partitionName)
+		}
+	}
+	if p.pkCol != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
+	}
+	haveCorCol := false
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			haveCorCol = true
+			break
+		}
+	}
+	if len(p.rangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	} else if haveCorCol {
+		fmt.Fprintf(buffer, ", range: decided by %v", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+	} else if len(p.Ranges) > 0 {
+		fmt.Fprint(buffer, ", range:[?,?]")
+	}
+	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
+	if p.Desc {
+		buffer.WriteString(", desc")
+	}
+	return buffer.String()
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
@@ -134,8 +216,18 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
+func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
+	return p.ExplainInfo()
+}
+
+// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
 	return "index:" + p.indexPlan.ExplainID().String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
+	return p.ExplainInfo()
 }
 
 // ExplainInfo implements Plan interface.
@@ -162,9 +254,19 @@ func (p *PhysicalSelection) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalSelection) ExplainNormalizedInfo() string {
+	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Exprs))
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalProjection) ExplainNormalizedInfo() string {
+	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
 }
 
 // ExplainInfo implements Plan interface.
@@ -189,6 +291,25 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 	if len(p.GroupByItems) > 0 {
 		fmt.Fprintf(buffer, "group by:%s, ",
 			expression.SortedExplainExpressionList(p.GroupByItems))
+	}
+	if len(p.AggFuncs) > 0 {
+		buffer.WriteString("funcs:")
+		for i, agg := range p.AggFuncs {
+			buffer.WriteString(aggregation.ExplainAggFunc(agg))
+			if i+1 < len(p.AggFuncs) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString("")
+	if len(p.GroupByItems) > 0 {
+		fmt.Fprintf(buffer, "group by:%s, ",
+			expression.SortedExplainNormalizedExpressionList(p.GroupByItems))
 	}
 	if len(p.AggFuncs) > 0 {
 		buffer.WriteString("funcs:")
@@ -229,6 +350,33 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString(p.JoinType.String())
+	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	if len(p.OuterJoinKeys) > 0 {
+		fmt.Fprintf(buffer, ", outer key:%s",
+			expression.ExplainColumnList(p.OuterJoinKeys))
+	}
+	if len(p.InnerJoinKeys) > 0 {
+		fmt.Fprintf(buffer, ", inner key:%s",
+			expression.ExplainColumnList(p.InnerJoinKeys))
+	}
+	if len(p.LeftConditions) > 0 {
+		fmt.Fprintf(buffer, ", left cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.OtherConditions))
+	}
+	return buffer.String()
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := new(bytes.Buffer)
@@ -252,6 +400,33 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
 			expression.SortedExplainExpressionList(p.OtherConditions))
+	}
+	return buffer.String()
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalHashJoin) ExplainNormalizedInfo() string {
+	buffer := new(bytes.Buffer)
+
+	if len(p.EqualConditions) == 0 {
+		buffer.WriteString("CARTESIAN ")
+	}
+
+	buffer.WriteString(p.JoinType.String())
+	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	if len(p.EqualConditions) > 0 {
+		fmt.Fprintf(buffer, ", equal:%s", expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
+	}
+	if len(p.LeftConditions) > 0 {
+		fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -281,11 +456,43 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString(p.JoinType.String())
+	if len(p.LeftJoinKeys) > 0 {
+		fmt.Fprintf(buffer, ", left key:%s",
+			expression.ExplainColumnList(p.LeftJoinKeys))
+	}
+	if len(p.RightJoinKeys) > 0 {
+		fmt.Fprintf(buffer, ", right key:%s",
+			expression.ExplainColumnList(p.RightJoinKeys))
+	}
+	if len(p.LeftConditions) > 0 {
+		fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			expression.SortedExplainNormalizedExpressionList(p.OtherConditions))
+	}
+	return buffer.String()
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	return buffer.String()
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalTopN) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString("")
+	buffer = explainNormalizedByItems(buffer, p.ByItems)
 	return buffer.String()
 }
 
@@ -473,6 +680,20 @@ func explainByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
 			order = "desc"
 		}
 		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
+		if i+1 < len(byItems) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer
+}
+
+func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
+	for i, item := range byItems {
+		order := "asc"
+		if item.Desc {
+			order = "desc"
+		}
+		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainNormalizedInfo(), order)
 		if i+1 < len(byItems) {
 			buffer.WriteString(", ")
 		}

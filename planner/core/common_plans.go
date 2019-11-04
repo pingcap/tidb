@@ -782,6 +782,9 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
+	if physicalPlan, ok := p.(PhysicalPlan); ok {
+		operatorInfo = operatorInfo + "    " + physicalPlan.ExplainNormalizedInfo()
+	}
 
 	count := "N/A"
 	if si := p.statsInfo(); si != nil {

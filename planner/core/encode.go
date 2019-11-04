@@ -15,6 +15,9 @@ package core
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"hash"
 	"sync"
 
 	"github.com/pingcap/tidb/util/plancodec"
@@ -64,5 +67,60 @@ func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
 	case *PhysicalIndexLookUpReader:
 		pn.encodePlan(copPlan.indexPlan, false, depth)
 		pn.encodePlan(copPlan.tablePlan, false, depth)
+	}
+}
+
+var digesterPool = sync.Pool{
+	New: func() interface{} {
+		return &planDigester{
+			hasher: sha256.New(),
+		}
+	},
+}
+
+type planDigester struct {
+	buf          bytes.Buffer
+	encodedPlans map[int]bool
+	hasher       hash.Hash
+}
+
+// EncodePlan is used to encodePlan the plan to the plan tree with compressing.
+func NormalizePlan(p PhysicalPlan) (normalized, digest string) {
+	d := digesterPool.Get().(*planDigester)
+	defer digesterPool.Put(d)
+	d.normalizePlanTree(p)
+	normalized = string(d.buf.Bytes())
+	d.hasher.Write(d.buf.Bytes())
+	d.buf.Reset()
+	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
+	d.hasher.Reset()
+	return
+}
+
+func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
+	d.encodedPlans = make(map[int]bool)
+	d.buf.Reset()
+	d.normalizePlan(p, true, 0)
+}
+
+func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
+	plancodec.NormalizePlanNode(depth, p.ID(), p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+	d.encodedPlans[p.ID()] = true
+
+	depth++
+	for _, child := range p.Children() {
+		if d.encodedPlans[child.ID()] {
+			continue
+		}
+		d.normalizePlan(child.(PhysicalPlan), isRoot, depth)
+	}
+	switch copPlan := p.(type) {
+	case *PhysicalTableReader:
+		d.normalizePlan(copPlan.tablePlan, false, depth)
+	case *PhysicalIndexReader:
+		d.normalizePlan(copPlan.indexPlan, false, depth)
+	case *PhysicalIndexLookUpReader:
+		d.normalizePlan(copPlan.indexPlan, false, depth)
+		d.normalizePlan(copPlan.tablePlan, false, depth)
 	}
 }

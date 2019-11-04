@@ -104,6 +104,28 @@ func (p *PointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo returns operator information to be explained.
+func (p *PointGetPlan) ExplainNormalizedInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.TblInfo.Name.O
+	fmt.Fprintf(buffer, "table:%s", tblName)
+	if p.IndexInfo != nil {
+		fmt.Fprintf(buffer, ", index:")
+		for i, col := range p.IndexInfo.Columns {
+			buffer.WriteString(col.Name.O)
+			if i < len(p.IndexInfo.Columns)-1 {
+				buffer.WriteString(" ")
+			}
+		}
+	} else {
+		fmt.Fprintf(buffer, ", handle:?")
+	}
+	if p.Lock {
+		fmt.Fprintf(buffer, ", lock")
+	}
+	return buffer.String()
+}
+
 // GetChildReqProps gets the required property by child index.
 func (p *PointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
@@ -188,6 +210,11 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 		}
 	}
 	return buffer.String()
+}
+
+// ExplainInfo returns operator information to be explained.
+func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
+	return p.ExplainInfo()
 }
 
 // GetChildReqProps gets the required property by child index.

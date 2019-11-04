@@ -36,9 +36,28 @@ func (expr *ScalarFunction) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo implements the Expression interface.
+func (expr *ScalarFunction) ExplainNormalizedInfo() string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
+	for i, arg := range expr.GetArgs() {
+		buffer.WriteString(arg.ExplainNormalizedInfo())
+		if i+1 < len(expr.GetArgs()) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
 // ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo() string {
 	return col.String()
+}
+
+// ExplainInfo implements the Expression interface.
+func (col *Column) ExplainNormalizedInfo() string {
+	return col.ExplainInfo()
 }
 
 // ExplainInfo implements the Expression interface.
@@ -48,6 +67,11 @@ func (expr *Constant) ExplainInfo() string {
 		return "not recognized const vanue"
 	}
 	return expr.format(dt)
+}
+
+// ExplainNormalizedInfo implements the Expression interface.
+func (expr *Constant) ExplainNormalizedInfo() string {
+	return "?"
 }
 
 func (expr *Constant) format(dt types.Datum) string {
@@ -81,6 +105,38 @@ func SortedExplainExpressionList(exprs []Expression) []byte {
 	exprInfos := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
 		exprInfos = append(exprInfos, expr.ExplainInfo())
+	}
+	sort.Strings(exprInfos)
+	for i, info := range exprInfos {
+		buffer.WriteString(info)
+		if i+1 < len(exprInfos) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
+
+func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
+	buffer := bytes.NewBufferString("")
+	exprInfos := make([]string, 0, len(exprs))
+	for _, expr := range exprs {
+		exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
+	}
+	sort.Strings(exprInfos)
+	for i, info := range exprInfos {
+		buffer.WriteString(info)
+		if i+1 < len(exprInfos) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
+
+func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
+	buffer := bytes.NewBufferString("")
+	exprInfos := make([]string, 0, len(exprs))
+	for _, expr := range exprs {
+		exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
 	}
 	sort.Strings(exprInfos)
 	for i, info := range exprInfos {
