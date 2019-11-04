@@ -84,4 +84,4 @@ replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-
 
 go 1.13
 
-replace github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20191028092548-5369a1a8884b
+replace github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20191104023847-4328ea77ee89
