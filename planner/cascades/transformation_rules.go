@@ -15,7 +15,6 @@ package cascades
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/util/ranger"
@@ -344,13 +343,6 @@ func (r *PushSelDownAggregation) GetPattern() *memo.Pattern {
 
 // Match implements Transformation interface.
 func (r *PushSelDownAggregation) Match(expr *memo.ExprIter) bool {
-	// The aggregation must be a complete mode.
-	agg := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	for _, aggFunc := range agg.AggFuncs {
-		if aggFunc.Mode != aggregation.CompleteMode {
-			return false
-		}
-	}
 	return true
 }
 
