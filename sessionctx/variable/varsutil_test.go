@@ -336,6 +336,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "5.0")
 	c.Assert(v.DescScanFactor, Equals, 5.0)
 
+	c.Assert(v.SeekFactor, Equals, 20.0)
+	err = SetSessionSystemVar(v, TiDBOptSeekFactor, types.NewStringDatum("50.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptSeekFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "50.0")
+	c.Assert(v.SeekFactor, Equals, 50.0)
+
 	c.Assert(v.MemoryFactor, Equals, 0.001)
 	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, types.NewStringDatum("1.0"))
 	c.Assert(err, IsNil)
@@ -433,6 +441,8 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBOptScanFactor, "-2", true},
 		{TiDBOptDescScanFactor, "a", true},
 		{TiDBOptDescScanFactor, "-2", true},
+		{TiDBOptSeekFactor, "a", true},
+		{TiDBOptSeekFactor, "-2", true},
 		{TiDBOptMemoryFactor, "a", true},
 		{TiDBOptMemoryFactor, "-2", true},
 		{TiDBOptConcurrencyFactor, "a", true},
@@ -449,6 +459,10 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBTxnMode, "pessimistic", false},
 		{TiDBTxnMode, "optimistic", false},
 		{TiDBTxnMode, "", false},
+		{TiDBIsolationReadEngines, "", true},
+		{TiDBIsolationReadEngines, "tikv", false},
+		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
 	}
 
 	for _, t := range tests {

@@ -103,7 +103,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 
 	m.db.Put(k, v)
 	if m.Size() > int(m.bufferSizeLimit) {
-		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", m.Size())
+		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
 	}
 	return nil
 }
