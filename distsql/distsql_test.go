@@ -16,7 +16,6 @@ package distsql
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
