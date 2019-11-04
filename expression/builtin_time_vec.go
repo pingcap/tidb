@@ -552,9 +552,7 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
