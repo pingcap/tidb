@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
@@ -166,6 +167,7 @@ func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mut
 		PrimaryLock:  []byte(primary),
 		StartVersion: startTS,
 		LockTtl:      ttl,
+		MinCommitTs:  startTS + 1,
 	}
 	errs := s.store.Prewrite(req)
 	for _, err := range errs {
@@ -680,6 +682,17 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
+}
+
+func (s *testMVCCLevelDB) TestRejectCommitTS(c *C) {
+	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
+	// Push the minCommitTS
+	_, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100)
+	c.Assert(err, IsNil)
+	err = s.store.Commit([][]byte{[]byte("x")}, 5, 10)
+	e, ok := errors.Cause(err).(*ErrCommitTSExpired)
+	c.Assert(ok, IsTrue)
+	c.Assert(e.MinCommitTs, Equals, uint64(101))
 }
 
 func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
