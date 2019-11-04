@@ -15,6 +15,7 @@ package executor
 
 import (
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,8 @@ import (
 // DirtyDB stores uncommitted write operations for a transaction.
 // It is stored and retrieved by context.Value and context.SetValue method.
 type DirtyDB struct {
+	sync.Mutex
+
 	// tables is a map whose key is tableID.
 	tables map[int64]*DirtyTable
 }
@@ -60,6 +63,9 @@ func (udb *DirtyDB) TruncateTable(tid int64) {
 
 // GetDirtyTable gets the DirtyTable by id from the DirtyDB.
 func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
+	// The index join access the tables map parallelly.
+	// But the map throws panic in this case. So it's locked.
+	udb.Lock()
 	dt, ok := udb.tables[tid]
 	if !ok {
 		dt = &DirtyTable{
@@ -68,6 +74,7 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 		}
 		udb.tables[tid] = dt
 	}
+	udb.Unlock()
 	return dt
 }
 
