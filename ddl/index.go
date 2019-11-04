@@ -869,7 +869,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 			// Lock the row key to notify us that someone delete or update the row,
 			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(context.Background(), 0, idxRecord.key)
+			err := txn.LockKeys(context.Background(), nil, 0, idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -893,6 +893,8 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 	return
 }
+
+var addIndexSpeedCounter = metrics.AddIndexTotalCounter.WithLabelValues("speed")
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *addIndexResult {
@@ -919,6 +921,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			return result
 		}
 
+		addIndexSpeedCounter.Add(float64(taskCtx.addedCount))
 		mergeAddIndexCtxToResult(&taskCtx, result)
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
 

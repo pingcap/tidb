@@ -549,6 +549,14 @@ func (c *Column) GetRaw(rowID int) []byte {
 	return data
 }
 
+// SetRaw sets the raw bytes for the rowIdx-th element.
+// NOTE: Two conditions must be satisfied before calling this function:
+// 1. The column should be stored with variable-length elements.
+// 2. The length of the new element should be exactly the same as the old one.
+func (c *Column) SetRaw(rowID int, bs []byte) {
+	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
+}
+
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
 func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
@@ -604,6 +612,21 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		return c.CopyConstruct(dst)
 	}
 
+	selLength := len(sel)
+	if selLength == c.length {
+		// The variable 'ascend' is used to check if the sel array is in ascending order
+		ascend := true
+		for i := 1; i < selLength; i++ {
+			if sel[i] < sel[i-1] {
+				ascend = false
+				break
+			}
+		}
+		if ascend {
+			return c.CopyConstruct(dst)
+		}
+	}
+
 	if dst == nil {
 		dst = newColumn(c.typeSize(), len(sel))
 	} else {
@@ -637,9 +660,17 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // MergeNulls merges these columns' null bitmaps.
 // For a row, if any column of it is null, the result is null.
 // It works like: if col1.IsNull || col2.IsNull || col3.IsNull.
-// The user should ensure that all these columns have the same length, and
-// data stored in these columns are fixed-length type.
+// The caller should ensure that all these columns have the same
+// length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
+	if !c.isFixed() {
+		panic("result column should be fixed-length type")
+	}
+	for _, col := range cols {
+		if c.length != col.length {
+			panic("should ensure all columns have the same length")
+		}
+	}
 	for _, col := range cols {
 		for i := range c.nullBitmap {
 			// bit 0 is null, 1 is not null, so do AND operations here.

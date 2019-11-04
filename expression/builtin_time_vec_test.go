@@ -25,6 +25,69 @@ import (
 )
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
+	ast.DateLiteral: {},
+	ast.DateDiff:    {},
+	ast.TimeDiff:    {},
+	ast.DateFormat:  {},
+	ast.Hour: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.Minute: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.Second: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.ToSeconds: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.MicroSecond: {},
+	ast.Now:         {},
+	ast.DayOfWeek: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.DayOfYear: {},
+	ast.Day:       {},
+	ast.CurrentTime: {
+		{retEvalType: types.ETDuration},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
+	},
+	ast.CurrentDate: {
+		{retEvalType: types.ETDatetime},
+	},
+	ast.MakeDate:   {},
+	ast.MakeTime:   {},
+	ast.PeriodAdd:  {},
+	ast.PeriodDiff: {},
+	ast.Quarter:    {},
+	ast.TimeFormat: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
+	},
+	ast.TimeToSec:        {},
+	ast.TimestampAdd:     {},
+	ast.TimestampDiff:    {},
+	ast.TimestampLiteral: {},
+	ast.SubDate:          {},
+	ast.AddDate:          {},
+	ast.SubTime:          {},
+	ast.AddTime: {
+		// builtinAddStringAndStringSig, a special case written by hand.
+		// arg1 has BinaryFlag here.
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {
+				Tp:      mysql.TypeString,
+				Flen:    types.UnspecifiedLength,
+				Decimal: types.UnspecifiedLength,
+				Flag:    mysql.BinaryFlag,
+			}},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+	},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
@@ -33,6 +96,37 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Date: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Timestamp: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataTimeStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{new(dataTimeStrGener), new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{new(dataTimeStrGener), nil}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{nil, new(dataStrGener)}},
+	},
+	ast.MonthName: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.DayOfMonth: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.UTCDate: {
+		{retEvalType: types.ETDatetime},
+	},
+	ast.Weekday: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
+	},
+	ast.WeekOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.FromDays: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 }
 

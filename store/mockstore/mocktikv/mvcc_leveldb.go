@@ -712,6 +712,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 			return nil
 		}
 		// Overwrite the pessimistic lock.
+		if ttl < dec.lock.ttl {
+			// Maybe ttlManager has already set the lock TTL, don't decrease it.
+			ttl = dec.lock.ttl
+		}
 	} else {
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
@@ -793,6 +797,16 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 			return nil
 		}
 		return ErrRetryable("txn not found")
+	}
+	// Reject the commit request whose commitTS is less than minCommiTS.
+	if dec.lock.minCommitTS > commitTS {
+		return &ErrCommitTSExpired{
+			kvrpcpb.CommitTsExpired{
+				StartTs:           startTS,
+				AttemptedCommitTs: commitTS,
+				Key:               key,
+				MinCommitTs:       dec.lock.minCommitTS,
+			}}
 	}
 
 	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
@@ -957,7 +971,6 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		}
 		// If current transaction's lock exists.
 		if ok && dec.lock.startTS == startTS {
-
 			// If the lock has already outdated, clean up it.
 			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
 				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
@@ -1499,13 +1512,12 @@ func (mvcc *MVCCLevelDB) MvccGetByStartTS(starTS uint64) (*kvrpcpb.MvccInfo, []b
 		var value mvccValue
 		err := value.UnmarshalBinary(iter.Value())
 		if err == nil && value.startTS == starTS {
-			_, key, _ = codec.DecodeBytes(iter.Key(), nil)
+			if _, key, err = codec.DecodeBytes(iter.Key(), nil); err != nil {
+				return nil, nil
+			}
 			break
 		}
 		iter.Next()
-	}
-	if key == nil {
-		return nil, nil
 	}
 
 	return mvcc.MvccGetByKey(key), key

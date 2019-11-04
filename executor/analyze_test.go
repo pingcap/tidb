@@ -251,7 +251,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
 }
 
-func (s *testSuite1) TestFastAnalyze(c *C) {
+func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := mockstore.NewMockTikvStore(
@@ -311,13 +311,13 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
 		"IndexReader_6 4.00 root index:IndexScan_5",
-		"└─IndexScan_5 4.00 cop table:t1, index:a, b, range:[1,1], keep order:false"))
+		"└─IndexScan_5 4.00 cop[tikv] table:t1, index:a, b, range:[1,1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
 		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+		"└─IndexScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
+		"└─IndexScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")

@@ -15,6 +15,8 @@ package session_test
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -60,9 +62,11 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	s.dom.GetGlobalVarsCache().Disable()
 	c.Assert(err, IsNil)
+	tikv.PrewriteMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
+	tikv.PrewriteMaxBackoff = 20000
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
@@ -365,14 +369,12 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	syncCh <- struct{}{}
 	tk.MustQuery("select c from conflict where id = 1").Check(testkit.Rows("3"))
 
-	// Check outdated pessimistic lock is resolved.
+	// Check pessimistic lock is not resolved.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update conflict set c = 4 where id = 1")
-	time.Sleep(300 * time.Millisecond)
 	tk2.MustExec("begin optimistic")
 	tk2.MustExec("update conflict set c = 5 where id = 1")
-	tk2.MustExec("commit")
-	_, err := tk.Exec("commit")
+	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
@@ -391,4 +393,49 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk.MustExec("insert into conflict values (1, 999) on duplicate key update c = c + 2")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from conflict").Check(testkit.Rows("1 3"))
+}
+
+func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
+	// Test kill command works on waiting pessimistic lock.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		sessVars := tk2.Se.GetSessionVars()
+		succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+		c.Assert(succ, IsTrue)
+		wg.Wait()
+	}()
+	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
+	wg.Done()
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, tikv.ErrQueryInterrupted), IsTrue)
+	tk.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
+	// Test killing an idle pessimistic session stop its ttlManager.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+	sessVars := tk.Se.GetSessionVars()
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	c.Assert(succ, IsTrue)
+
+	// This query should success rather than returning a ResolveLock error.
+	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
 }

@@ -69,6 +69,11 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 0
 
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.Log.SlowThreshold = 10000
+	config.StoreGlobalConfig(&newCfg)
+
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -983,6 +988,14 @@ func (s *testIntegrationSuite5) TestBitDefaultValue(c *C) {
 	tk.MustExec("insert into t_bit set c2=1;")
 	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
 	tk.MustExec("drop table t_bit")
+
+	tk.MustExec("create table t_bit (a int)")
+	tk.MustExec("insert into t_bit value (1)")
+	tk.MustExec("alter table t_bit add column c bit(16) null default b'1100110111001'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x19\xb9"))
+	tk.MustExec("update t_bit set c = b'11100000000111'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
+
 	tk.MustExec(`create table testalltypes1 (
     field_1 bit default 1,
     field_2 tinyint null default null
@@ -1568,6 +1581,18 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+
+	s.tk.MustExec("drop table if exists multi_unique")
+	s.tk.MustExec("create table multi_unique (a int unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key primary key unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key unique unique key unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a serial serial default value)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a serial serial default value serial default value)")
+	s.tk.MustExec("drop table multi_unique")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
@@ -2023,4 +2048,53 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("drop table t3")
 	tk.MustExec("drop table t4")
 	tk.MustExec("drop table t5")
+}
+
+func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// In generated columns expression, these items are not allowed:
+	// 1. Blocked function (for full function list, please visit https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc)
+	// Note: This list is not complete, if you need a complete list, please refer to MySQL 5.7 source code.
+	tk.MustGetErrCode("create table t (a int, b int as (sysdate()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 2. Non-builtin function
+	tk.MustGetErrCode("create table t (a int, b int as (non_exist_funcA()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 3. values(x) function
+	tk.MustGetErrCode("create table t (a int, b int as (values(a)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 4. Subquery
+	tk.MustGetErrCode("create table t (a int, b int as ((SELECT 1 FROM t1 UNION SELECT 1 FROM t1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 5. Variable & functions related to variable
+	tk.MustExec("set @x = 1")
+	tk.MustGetErrCode("create table t (a int, b int as (@x))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (@@max_connections))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (@y:=1))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (getval("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (setval("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	// 6. Aggregate function
+	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
+
+	// Determinate functions are allowed:
+	tk.MustExec("create table t1 (a int, b int generated always as (abs(a)) virtual)")
+	tk.MustExec("insert into t1 values (-1, default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("-1 1"))
+
+	// Functions added in MySQL 8.0, but now not supported in TiDB
+	// They will be deal with non-exists function, and throw error.git
+	tk.MustGetErrCode("create table t (a int, b int as (updatexml(1, 1, 1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (statement_digest(1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t (a int, b int as (statement_digest_text(1)))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+}
+
+func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
+	_, err := tk.Exec("create table test.t_parser_issue_284_2(id int not null primary key, c1 int not null, constraint foreign key (c1) references t_parser_issue_284(c1))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table test.t_parser_issue_284")
+	tk.MustExec("drop table test.t_parser_issue_284_2")
 }
