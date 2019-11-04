@@ -1029,9 +1029,10 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}.Init(ds.ctx, ds.blockOffset)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+		// append the AccessCondition to filterCondition because TiFlash only support full range scan for each
+		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-		ts.Ranges = ranger.FullIntRange(false)
 	} else {
 		ts.StoreType = kv.TiKV
 	}
