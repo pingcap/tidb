@@ -256,7 +256,6 @@ func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -505,7 +504,6 @@ func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -754,7 +752,6 @@ func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -1003,7 +1000,6 @@ func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1252,7 +1248,6 @@ func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1501,7 +1496,6 @@ func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-
 		if val != 0 {
 			i64s[i] = 1
 		} else {
