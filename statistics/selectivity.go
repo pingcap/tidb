@@ -276,15 +276,15 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
 	case ranger.IndexRangeType:
-		if cachedPath == nil {
-			var res *ranger.DetachRangeResult
-			res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
-			ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
-			if err != nil {
-				return 0, nil, false, err
-			}
-		} else {
+		if cachedPath != nil {
 			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
+			break
+		}
+		var res *ranger.DetachRangeResult
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
+		if err != nil {
+			return 0, nil, false, err
 		}
 	default:
 		panic("should never be here")
