@@ -220,7 +220,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 					continue
 				}
 				// If the new Group expression is successfully inserted into the
-				// current Group, the Group as unexplored to enable the exploration
+				// current Group, mark the Group as unexplored to enable the exploration
 				// on the new Group expression and all the antecedent groups.
 				g.Explored = false
 			}
