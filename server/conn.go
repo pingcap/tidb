@@ -672,6 +672,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
+				// err==io.EOF doesn't always means that the connection had close.
+				// Such as problem here https://github.com/pingcap/tidb/issues/10308.
+				// The problem in this issues is because this code before here
+				// https://github.com/pingcap/tidb/blob/5340e177b6be541f2981a9e29b7bf7a3625f7826/types/time.go#L1181
+				// will make EOF err by code like `fmt.Sscanf("- -", "%1d%2d", &minute, &second)`.
+				// And, if the connection had close, call writeError with this err has no side effect.
+				err = cc.writeError(err)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
