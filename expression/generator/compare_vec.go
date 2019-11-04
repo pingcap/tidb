@@ -391,7 +391,7 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []TypeC
 			return err
 		}
 		for _, typeCtx := range types {
-			if typeCtx.TypeName == "Int" {
+			if typeCtx.TypeName == TypeInt.TypeName {
 				continue
 			}
 			err := builtinCompareVecTestCase.Execute(w, typeCtx)
