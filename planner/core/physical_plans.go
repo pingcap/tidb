@@ -269,7 +269,7 @@ type PhysicalHashJoin struct {
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
 
-	OuterHashJoin bool
+	UseOuterToBuild bool
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.

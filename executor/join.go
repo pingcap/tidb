@@ -414,7 +414,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 
 func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, rowsIds, err := e.rowContainer.GetMatchedRowsAndPtrs(probeSideRow, hCtx)
+	buildSideRows, rowsPtrs, err := e.rowContainer.GetMatchedRowsAndPtrs(probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -422,8 +422,8 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 	if len(buildSideRows) == 0 {
 		return true, joinResult
 	}
-	for i := range rowsIds {
-		e.outerMatchedStatus[rowsIds[i].ChkIdx].Set(int(rowsIds[i].RowIdx))
+	for i := range rowsPtrs {
+		e.outerMatchedStatus[rowsPtrs[i].ChkIdx].Set(int(rowsPtrs[i].RowIdx))
 	}
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
@@ -616,7 +616,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		if e.finished.Load().(bool) {
 			return nil
 		}
-		if e.useOuterToBuild {
+		if !e.useOuterToBuild {
+			err = e.rowContainer.PutChunk(chk)
+		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
@@ -629,8 +631,6 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			} else {
 				err = e.rowContainer.PutChunk(chk)
 			}
-		} else {
-			err = e.rowContainer.PutChunk(chk)
 		}
 		if err != nil {
 			return err

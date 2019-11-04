@@ -130,7 +130,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	return c
 }
 
-// GetMatchedRowsAndPtrs get matched rows and IDs from probeRow. It can be called
+// GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
 func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {

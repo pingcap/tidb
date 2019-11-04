@@ -1003,7 +1003,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		joinType:          v.JoinType,
 		isOuterJoin:       v.JoinType.IsOuterJoin(),
 		buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
-		useOuterToBuild:   v.OuterHashJoin,
+		useOuterToBuild:   v.UseOuterToBuild,
 	}
 	// reverse the inner and the outer
 	if e.useOuterToBuild {
