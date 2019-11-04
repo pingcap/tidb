@@ -677,6 +677,7 @@ func (b *builtinCRC32Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	for i := range i64s {
 		if buf.IsNull(i) {
 			i64s[i] = 0
+			result.SetNull(i, true)
 		} else {
 			i64s[i] = int64(crc32.ChecksumIEEE(buf.GetBytes(i)))
 		}
