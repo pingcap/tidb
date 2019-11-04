@@ -25,7 +25,6 @@ import (
 
 var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 	ast.LT: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -34,7 +33,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.LE: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -43,7 +41,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.GT: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -52,7 +49,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.GE: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -61,7 +57,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.EQ: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -70,7 +65,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.NE: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -79,7 +73,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.NullEQ: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -88,16 +81,6 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
 	ast.Coalesce: {
-
-		{
-			retEvalType:   types.ETInt,
-			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt},
-			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-			},
-		},
 
 		{
 			retEvalType:   types.ETReal,
@@ -156,6 +139,16 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
 			},
 		},
 	},

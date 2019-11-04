@@ -163,6 +163,14 @@ func (b *builtinGreatestIntSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinGEIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinLeastRealSig) vectorized() bool {
 	return true
 }
@@ -250,6 +258,86 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
+func (b *builtinEQIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfEQ(result.Int64s())
+	return nil
+}
+
+func (b *builtinNEIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
+func (b *builtinGTIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfGT(result.Int64s())
+	return nil
+}
+
+func (b *builtinNullEQIntSig) vectorized() bool {
+	return false
+}
+
+func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	return errors.Errorf("not implemented")
+}
+
 func (b *builtinIntervalIntSig) vectorized() bool {
 	return true
 }
@@ -306,6 +394,70 @@ func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		}
 		res[i] = int64(idx)
 	}
+	return nil
+}
+
+func (b *builtinLEIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfLE(result.Int64s())
+	return nil
+}
+
+func (b *builtinLTIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfLT(result.Int64s())
 	return nil
 }
 
