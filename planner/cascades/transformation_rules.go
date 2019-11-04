@@ -385,6 +385,7 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 				}
 			}
 			if canPush {
+				// TODO: Don't substitute since they should be the same column.
 				newCond := expression.ColumnSubstitute(cond, agg.Schema(), exprsOriginal)
 				pushedExprs = append(pushedExprs, newCond)
 			} else {
