@@ -1884,7 +1884,6 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 
 	// Get PD servers info.
 	store := ctx.GetStore()
-
 	etcd, ok := store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
