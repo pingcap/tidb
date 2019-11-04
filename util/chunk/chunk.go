@@ -343,7 +343,7 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
 		chkCol.appendNullBitmap(!rowCol.IsNull(row.idx))
-		if rowCol.IsFixed() {
+		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
 			chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
@@ -372,7 +372,7 @@ func (c *Chunk) preAlloc(row Row) (rowIdx uint32) {
 		dstCol := c.columns[i]
 		dstCol.appendNullBitmap(!srcCol.IsNull(row.idx))
 		elemLen := len(srcCol.elemBuf)
-		if !srcCol.IsFixed() {
+		if !srcCol.isFixed() {
 			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
 			dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)+elemLen))
 		}
@@ -394,7 +394,7 @@ func (c *Chunk) preAlloc(row Row) (rowIdx uint32) {
 			newCap = needCap
 		} else {
 			avgElemLen := elemLen
-			if !srcCol.IsFixed() {
+			if !srcCol.isFixed() {
 				avgElemLen = len(dstCol.data) / len(dstCol.offsets)
 			}
 			// slowIncThreshold indicates the threshold exceeding which the
@@ -427,7 +427,7 @@ func (c *Chunk) insert(rowIdx int, row Row) {
 		}
 		dstCol := c.columns[i]
 		var srcStart, srcEnd, destStart, destEnd int
-		if srcCol.IsFixed() {
+		if srcCol.isFixed() {
 			srcElemLen, destElemLen := len(srcCol.elemBuf), len(dstCol.elemBuf)
 			srcStart, destStart = row.idx*srcElemLen, rowIdx*destElemLen
 			srcEnd, destEnd = srcStart+srcElemLen, destStart+destElemLen
@@ -443,7 +443,7 @@ func (c *Chunk) insert(rowIdx int, row Row) {
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
 		dst := c.columns[colID]
-		if src.IsFixed() {
+		if src.isFixed() {
 			elemLen := len(src.elemBuf)
 			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
 		} else {
@@ -466,7 +466,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 func (c *Chunk) TruncateTo(numRows int) {
 	c.Reconstruct()
 	for _, col := range c.columns {
-		if col.IsFixed() {
+		if col.isFixed() {
 			elemLen := len(col.elemBuf)
 			col.data = col.data[:numRows*elemLen]
 		} else {

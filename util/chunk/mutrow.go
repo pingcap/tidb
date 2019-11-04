@@ -357,7 +357,7 @@ func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 			dstCol.nullBitmap[0] = 0
 		}
 
-		if srcCol.IsFixed() {
+		if srcCol.isFixed() {
 			elemLen := len(srcCol.elemBuf)
 			offset := row.idx * elemLen
 			dstCol.data = srcCol.data[offset : offset+elemLen]

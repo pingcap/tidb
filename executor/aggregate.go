@@ -982,8 +982,8 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 		e.groupRowsSringKey[i] = string(hack.String(e.groupRowsKey[i]))
 	}
 
+	var match bool
 	for i := 0; i < numRows; {
-		match := true
 		j := i + 1
 		for ; j < numRows; j++ {
 			match = e.groupRowsSringKey[i] == e.groupRowsSringKey[j]

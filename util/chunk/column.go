@@ -87,8 +87,8 @@ func (c *Column) typeSize() int {
 	return varElemLen
 }
 
-// IsFixed is used to check whether the type of element in column is fixed type
-func (c *Column) IsFixed() bool {
+// isFixed is used to check whether the type of element in column is fixed type
+func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
@@ -167,7 +167,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 // AppendNull appends a null value into this Column.
 func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
-	if c.IsFixed() {
+	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
 	} else {
 		c.offsets = append(c.offsets, c.offsets[c.length])
@@ -562,11 +562,6 @@ func (c *Column) GetBytes(rowID int) []byte {
 	return c.data[c.offsets[rowID]:c.offsets[rowID+1]]
 }
 
-// GetFixedTypeBytes returns the byte slice in the specific row for fixed size type
-func (c *Column) GetFixedTypeBytes(rowID int) []byte {
-	return c.data[rowID*8 : (rowID+1)*8]
-}
-
 // GetEnum returns the Enum in the specific row.
 func (c *Column) GetEnum(rowID int) types.Enum {
 	name, val := c.getNameValue(rowID)
@@ -601,7 +596,7 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 // GetRaw returns the underlying raw bytes in the specific row.
 func (c *Column) GetRaw(rowID int) []byte {
 	var data []byte
-	if c.IsFixed() {
+	if c.isFixed() {
 		elemLen := len(c.elemBuf)
 		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
 	} else {
@@ -623,7 +618,7 @@ func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
 		return
 	}
-	if c.IsFixed() {
+	if c.isFixed() {
 		elemLen := len(c.elemBuf)
 		for dst, src := range sel {
 			idx := dst >> 3
@@ -694,7 +689,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		dst.Reset()
 	}
 
-	if c.IsFixed() {
+	if c.isFixed() {
 		elemLen := len(c.elemBuf)
 		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
@@ -724,7 +719,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
-	if !c.IsFixed() {
+	if !c.isFixed() {
 		panic("result column should be fixed-length type")
 	}
 	for _, col := range cols {
