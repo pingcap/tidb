@@ -2028,64 +2028,66 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 		}
 
 		wg.Add(1)
-		util.WithRecovery(func() {
-			defer wg.Done()
-			var url string
-			switch typ {
-			case "pd":
-				url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
-			case "tikv", "tidb":
-				url = fmt.Sprintf("http://%s/config", statusAddr)
-			default:
-				ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
-				return
-			}
-			req, err := http.NewRequest(http.MethodGet, url, nil)
-			if err != nil {
-				ch <- result{err: errors.Trace(err)}
-				return
-			}
-			req.Header.Add("PD-Allow-follower-handle", "true")
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				ch <- result{err: errors.Trace(err)}
-				return
-			}
-			var nested map[string]interface{}
-			if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
-				ch <- result{err: errors.Trace(err)}
-				return
-			}
-			terror.Log(resp.Body.Close())
+		go func() {
+			util.WithRecovery(func() {
+				defer wg.Done()
+				var url string
+				switch typ {
+				case "pd":
+					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
+				case "tikv", "tidb":
+					url = fmt.Sprintf("http://%s/config", statusAddr)
+				default:
+					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
+					return
+				}
+				req, err := http.NewRequest(http.MethodGet, url, nil)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				req.Header.Add("PD-Allow-follower-handle", "true")
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				var nested map[string]interface{}
+				if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				terror.Log(resp.Body.Close())
 
-			data, err := flatten.Flatten(nested, "", flatten.DotStyle)
-			if err != nil {
-				ch <- result{err: errors.Trace(err)}
-				return
-			}
-			// Sorts by keys and make the result stable
-			type item struct {
-				key string
-				val string
-			}
-			var items []item
-			for key, val := range data {
-				items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
-			}
-			sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
-			var rows [][]types.Datum
-			for _, item := range items {
-				rows = append(rows, types.MakeDatums(
-					0,
-					typ,
-					name,
-					address,
-					item.key,
-					item.val,
-				))
-			}
-			ch <- result{rows: rows}
-		}, nil)
+				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				// Sorts by keys and make the result stable
+				type item struct {
+					key string
+					val string
+				}
+				var items []item
+				for key, val := range data {
+					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
+				}
+				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+				var rows [][]types.Datum
+				for _, item := range items {
+					rows = append(rows, types.MakeDatums(
+						0,
+						typ,
+						name,
+						address,
+						item.key,
+						item.val,
+					))
+				}
+				ch <- result{rows: rows}
+			}, nil)
+		}()
 	}
 
 	wg.Wait()
