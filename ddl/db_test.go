@@ -1806,6 +1806,12 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
 
+	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	c.Assert(err, IsNil)
+	result := s.tk.MustQuery("show create table collateTest")
+	got := result.Rows()[0][1]
+	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+
 	// test for enum column
 	failSQL := "create table t_enum (a enum('e','e'));"
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
