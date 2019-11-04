@@ -1844,7 +1844,7 @@ func dataForServersInfo() ([][]types.Datum, error) {
 }
 
 func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
-	// get TiDB servers info.
+	// Get TiDB servers info.
 	tidbNodes, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1868,7 +1868,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		rows = append(rows, row)
 	}
 
-	// get PD servers info.
+	// Get PD servers info.
 	store := ctx.GetStore()
 	etcd, ok := store.(tikv.EtcdBackend)
 	if !ok {
@@ -1878,7 +1878,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		addr = strings.TrimSpace(addr)
 
 		// get pd version
-		url := fmt.Sprintf("http://%s/pd/api/v1/config/cluster-version", addr)
+		url := fmt.Sprintf("http://%s%s", addr, pdapi.ClusterVersion)
 		resp, err := http.Get(url)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1891,7 +1891,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// get pd git_hash
-		url = fmt.Sprintf("http://%s/pd/api/v1/status", addr)
+		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
 		resp, err = http.Get(url)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1918,7 +1918,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		rows = append(rows, row)
 	}
 
-	// get TiKV servers info.
+	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
 		return nil, errors.Errorf("%T is not an TiKV store instance", store)
