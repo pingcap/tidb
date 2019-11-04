@@ -472,15 +472,6 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
-type randJSONDurationWithLen struct{}
-
-func (g *randJSONDurationWithLen) gen() interface{} {
-	d := types.Duration{
-		Duration: time.Duration(time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond),
-		Fsp:      3}
-	return json.CreateBinary(d.String())
-}
-
 type vecExprBenchCase struct {
 	// retEvalType is the EvalType of the expression result.
 	// This field is required.
