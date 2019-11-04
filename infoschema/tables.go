@@ -1974,7 +1974,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sql := "SELECT type, name, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO"
+	sql := "SELECT type, name, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
@@ -2009,6 +2009,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 
 	type result struct {
+		idx  int
 		rows [][]types.Datum
 		err  error
 	}
@@ -2016,7 +2017,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(rows))
-	for _, row := range rows {
+	for i, row := range rows {
 		typ := row.GetString(0)
 		name := row.GetString(1)
 		address := row.GetString(2)
@@ -2027,7 +2028,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 		}
 
 		wg.Add(1)
-		go func() {
+		go func(index int) {
 			util.WithRecovery(func() {
 				defer wg.Done()
 				var url string
@@ -2084,19 +2085,25 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 						item.val,
 					))
 				}
-				ch <- result{rows: rows}
+				ch <- result{idx: index, rows: rows}
 			}, nil)
-		}()
+		}(i)
 	}
 
 	wg.Wait()
 	close(ch)
 
+	// Keep the original order to make the result more stable
+	var results []result
 	for result := range ch {
 		if result.err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			continue
 		}
+		results = append(results, result)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	for _, result := range results {
 		for _, row := range result.rows {
 			row[0] = types.NewDatum(len(finalRows) + 1)
 			finalRows = append(finalRows, row)
