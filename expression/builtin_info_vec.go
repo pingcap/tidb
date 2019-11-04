@@ -57,8 +57,9 @@ func (b *builtinTiDBVersionSig) vectorized() bool {
 func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
+	info := printer.GetTiDBInfo()
 	for i := 0; i < n; i++ {
-		result.AppendString(printer.GetTiDBInfo())
+		result.AppendString(info)
 	}
 	return nil
 }
