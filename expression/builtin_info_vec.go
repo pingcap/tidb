@@ -143,10 +143,10 @@ func (b *builtinVersionSig) vectorized() bool {
 
 func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		result.AppendString(mysql.ServerVersion)
 	}
-
 	return nil
 }
 
