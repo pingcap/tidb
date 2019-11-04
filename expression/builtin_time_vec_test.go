@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -23,6 +24,12 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
+
+type periodGener struct{}
+
+func (g *periodGener) gen() interface{} {
+	return int64((rand.Intn(2500)+1)*100 + rand.Intn(12) + 1)
+}
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
@@ -56,7 +63,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.MakeTime:  {},
 	ast.PeriodAdd: {},
 	ast.PeriodDiff: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{1, 13}, &rangeInt64Gener{1, 13}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
 	},
 	ast.Quarter: {},
 	ast.TimeFormat: {
