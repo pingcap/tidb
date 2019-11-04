@@ -38,6 +38,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Second: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},
+	ast.ToSeconds: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.MicroSecond: {},
 	ast.Now:         {},
 	ast.DayOfWeek: {
@@ -118,6 +121,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Weekday: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
+	},
+	ast.WeekOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.FromDays: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
