@@ -299,6 +299,10 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		if buf.IsNull(i) {
 			i64s[i] = 0
 		} else {
+			// Note that the input should be IP address in byte format.
+			// For IPv4, it should be byte slice with 4 bytes.
+			// For IPv6, it should be byte slice with 16 bytes.
+			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 			ipAddress := buf.GetBytes(i)
 			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
 				//Not an IPv6 address, return false
