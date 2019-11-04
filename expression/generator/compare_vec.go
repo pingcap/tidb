@@ -281,13 +281,13 @@ func BenchmarkVectorizedGeneratedBuiltinCompareFunc(b *testing.B) {
 
 var builtinCoalesceCompareVecTestFunc = template.Must(template.New("").Parse(`
 {
-retEvalType: types.ET{{ .ETName }},
-childrenTypes: []types.EvalType{types.ET{{ .ETName }}, types.ET{{ .ETName }}, types.ET{{ .ETName }}},
-geners: []dataGenerator{
-gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-},
+	retEvalType: types.ET{{ .ETName }},
+	childrenTypes: []types.EvalType{types.ET{{ .ETName }}, types.ET{{ .ETName }}, types.ET{{ .ETName }}},
+	geners: []dataGenerator{
+		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
+		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
+		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
+	},
 },
 
 
@@ -333,7 +333,7 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 			ctx["compare"] = compareCtx
 			ctx["type"] = typeCtx
 			if compareCtx.CompareName == "NullEQ" {
-				if typeCtx.TypeName == "Int" {
+				if typeCtx.TypeName == TypeInt.TypeName {
 					continue
 				}
 				err := builtinNullEQCompareVecTpl.Execute(w, ctx)
@@ -348,7 +348,7 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 				}
 
 			} else {
-				if typeCtx.TypeName == "Int" {
+				if typeCtx.TypeName == TypeInt.TypeName {
 					continue
 				}
 				err := builtinCompareVecTpl.Execute(w, ctx)
