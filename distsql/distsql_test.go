@@ -16,8 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/mock"
-
+	"github.com/pingcap/tidb/config"
 	"sync"
 	"testing"
 	"time"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -368,19 +366,47 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	numRows := mathutil.Min(resp.batch, resp.total-resp.count)
 	resp.count += numRows
 
-	datum := types.NewIntDatum(1)
-	bytes := make([]byte, 0, 100)
-	bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
-	chunks := make([]tipb.Chunk, numRows)
-	for i := range chunks {
-		chkData := make([]byte, len(bytes))
-		copy(chkData, bytes)
-		chunks[i] = tipb.Chunk{RowsData: chkData}
+	var chunks []tipb.Chunk
+	if !config.GetGlobalConfig().TiKVClient.EnableArrow {
+		datum := types.NewIntDatum(1)
+		bytes := make([]byte, 0, 100)
+		bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
+		chunks = make([]tipb.Chunk, numRows)
+		for i := range chunks {
+			chkData := make([]byte, len(bytes))
+			copy(chkData, bytes)
+			chunks[i] = tipb.Chunk{RowsData: chkData}
+		}
+	} else {
+		chunks = make([]tipb.Chunk, 0)
+		for numRows > 0 {
+			rows := mathutil.Min(numRows, 1024)
+			numRows -= rows
+
+			colTypes := make([]*types.FieldType, 4)
+			for i := 0; i < 4; i++ {
+				colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+			}
+			chk := chunk.New(colTypes, numRows, numRows)
+
+			for rowOrdinal := 0; rowOrdinal < rows; rowOrdinal++ {
+				for colOrdinal := 0; colOrdinal < 4; colOrdinal++ {
+					chk.AppendInt64(colOrdinal, 123)
+				}
+			}
+
+			codec := chunk.NewCodec(colTypes)
+			buffer := codec.Encode(chk)
+			chunks = append(chunks, tipb.Chunk{RowsData: buffer})
+		}
 	}
 
 	respPB := &tipb.SelectResponse{
 		Chunks:       chunks,
 		OutputCounts: []int64{1},
+	}
+	if config.GetGlobalConfig().TiKVClient.EnableArrow {
+		respPB.EncodeType = tipb.EncodeType_TypeArrow
 	}
 	respBytes, err := respPB.Marshal()
 	if err != nil {
@@ -409,426 +435,6 @@ func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 
 // RespTime implements kv.ResultSubset interface.
 func (r *mockResultSubset) RespTime() time.Duration { return 0 }
-
-func populateBuffer() []byte {
-	numCols := 4
-	numRows := 1024
-	buffer := make([]byte, 0, 1024)
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			buffer, _ = codec.EncodeValue(sc, buffer, types.NewIntDatum(123))
-		}
-	}
-
-	return buffer
-}
-
-func mockReadRowsData(buffer []byte, colTypes []*types.FieldType, chk *chunk.Chunk) (err error) {
-	chk.Reset()
-	numCols := 4
-	numRows := 1024
-
-	decoder := codec.NewDecoder(chk, time.Local)
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			buffer, err = decoder.DecodeOne(buffer, colOrdinal, colTypes[colOrdinal])
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func BenchmarkReadRowsData(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	buffer := populateBuffer()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		mockReadRowsData(buffer, colTypes, chk)
-	}
-}
-
-func BenchmarkDecodeToChunk(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendInt64(colOrdinal, 123)
-		}
-	}
-
-	codec := chunk.NewCodec(colTypes)
-	buffer := codec.Encode(chk)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		codec.DecodeToChunk(buffer, chk)
-	}
-}
-
-func BenchmarkReadRowsDataWithNewChunk(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	buffer := populateBuffer()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		chk := chunk.New(colTypes, numRows, numRows)
-		b.StartTimer()
-		mockReadRowsData(buffer, colTypes, chk)
-	}
-}
-
-func BenchmarkDecodeToChunkWithNewChunk(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendInt64(colOrdinal, 123)
-		}
-	}
-
-	codec := chunk.NewCodec(colTypes)
-	buffer := codec.Encode(chk)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		chk := chunk.New(colTypes, numRows, numRows)
-		b.StartTimer()
-		codec.DecodeToChunk(buffer, chk)
-	}
-}
-
-func BenchmarkDecodeToChunkWithRequestedRows_int(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendInt64(colOrdinal, 123)
-		}
-	}
-
-	codec := chunk.NewCodec(colTypes)
-	buffer := codec.Encode(chk)
-
-	acodec := chunk.NewDecoder(
-		chunk.NewChunkWithCapacity(colTypes, 0),
-		colTypes)
-
-	chk.SetRequiredRows(1024, 1024)
-	chk.Reset()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		acodec.Reset(buffer)
-		for !acodec.IsFinished() {
-			for !chk.IsFull() && !acodec.IsFinished() {
-				acodec.Decode(chk)
-			}
-			chk.Reset()
-		}
-	}
-}
-
-func BenchmarkDecodeToChunkWithRequestedRows_string(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendString(colOrdinal, "123456")
-		}
-	}
-
-	codec := chunk.NewCodec(colTypes)
-	buffer := codec.Encode(chk)
-
-	acodec := chunk.NewDecoder(
-		chunk.NewChunkWithCapacity(colTypes, 0),
-		colTypes)
-
-	chk.SetRequiredRows(1024, 1024)
-	chk.Reset()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		acodec.Reset(buffer)
-		for !acodec.IsFinished() {
-			for !chk.IsFull() && !acodec.IsFinished() {
-				acodec.Decode(chk)
-			}
-			chk.Reset()
-		}
-	}
-}
-
-func BenchmarkDecodeToChunkReuse_int(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendInt64(colOrdinal, 123)
-		}
-	}
-
-	codec := chunk.NewCodec(colTypes)
-	buffer := codec.Encode(chk)
-
-	acodec := chunk.NewDecoder(
-		chunk.NewChunkWithCapacity(colTypes, 0),
-		colTypes)
-
-	chk.SetRequiredRows(1024, 1024)
-	chk.Reset()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		acodec.Reset(buffer)
-		for !acodec.IsFinished() {
-			for !chk.IsFull() && !acodec.IsFinished() {
-				acodec.ReuseIntermChk(chk)
-			}
-			chk.Reset()
-		}
-	}
-}
-
-func BenchmarkDecodeToChunkReuse_string(b *testing.B) {
-	numCols := 4
-	numRows := 1024
-
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendString(colOrdinal, "123456")
-		}
-	}
-
-	codec := chunk.NewCodec(colTypes)
-	buffer := codec.Encode(chk)
-
-	acodec := chunk.NewDecoder(
-		chunk.NewChunkWithCapacity(colTypes, 0),
-		colTypes)
-
-	chk.SetRequiredRows(1024, 1024)
-	chk.Reset()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		acodec.Reset(buffer)
-		for !acodec.IsFinished() {
-			for !chk.IsFull() && !acodec.IsFinished() {
-				acodec.ReuseIntermChk(chk)
-			}
-			chk.Reset()
-		}
-	}
-}
-
-type dataBufferGen struct {
-	times int
-	data  [][]byte
-	cur   int
-}
-
-func (g *dataBufferGen) get() []byte {
-	if g.cur == len(g.data) {
-		g.cur, g.times = 0, g.times-1
-	}
-	if g.times == 0 {
-		return nil
-	}
-	res := make([]byte, 0, 1024)
-	res = append(res[:0], g.data[g.cur]...)
-	return res
-}
-
-func populateBufferForChunk(numCols, numRows int) []byte {
-	colTypes := make([]*types.FieldType, numCols)
-	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
-			chk.AppendString(colOrdinal, "123456")
-		}
-	}
-	codec := chunk.NewCodec(colTypes)
-	return codec.Encode(chk)
-}
-
-func buildBigResponse(gen *dataBufferGen) {
-	gen.data = make([][]byte, 20)
-	for i := 0; i < 20; i++ {
-		gen.data[i] = make([]byte, 0, 1024)
-	}
-	betchSize := 32
-	for i := 0; i < 20; i++ {
-		gen.data[i] = populateBufferForChunk(4, betchSize)
-		if betchSize < 1024 {
-			betchSize *= 2
-		}
-	}
-}
-
-func BenchmarkDecodeToChunkRequiredRows_BigResponse(b *testing.B) {
-	datagen := &dataBufferGen{}
-	buildBigResponse(datagen)
-
-	colTypes := make([]*types.FieldType, 4)
-	for i := 0; i < 4; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
-	}
-	chk := chunk.New(colTypes, 4, 1024)
-	acodec := chunk.NewDecoder(
-		chunk.NewChunkWithCapacity(colTypes, 0),
-		colTypes)
-
-	chk.SetRequiredRows(100, 1024)
-	chk.Reset()
-	datagen.times = b.N
-	datagen.cur = 0
-	b.ResetTimer()
-
-	for true {
-		if chk.IsFull() {
-			chk.Reset()
-		}
-		if acodec.IsFinished() {
-			b.StopTimer()
-			buffer := datagen.get()
-			if buffer == nil {
-				return
-			}
-			b.StartTimer()
-			acodec.Reset(buffer)
-		}
-		// If the next chunk size is greater than required rows * 0.8, reuse the memory of the next chunk and return
-		// immediately. Otherwise, splice the data to one chunk and wait the next chunk.
-		if acodec.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
-			if chk.NumRows() > 0 {
-				chk.Reset()
-				continue
-			}
-			acodec.ReuseIntermChk(chk)
-			chk.Reset()
-			datagen.cur++
-			continue
-		}
-		acodec.Decode(chk)
-		if acodec.IsFinished() {
-			datagen.cur++
-		}
-	}
-}
-
-type mockResponseForChunkEncode struct {
-	mockResponse
-}
-
-func (resp *mockResponseForChunkEncode) Next(ctx context.Context) (kv.ResultSubset, error) {
-	resp.Lock()
-	defer resp.Unlock()
-
-	if resp.count >= resp.total {
-		return nil, nil
-	}
-	numRows := mathutil.Min(resp.batch, resp.total-resp.count)
-	resp.count += numRows
-
-	colTypes := make([]*types.FieldType, 4)
-	for i := 0; i < 4; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
-	}
-	chk := chunk.New(colTypes, numRows, numRows)
-
-	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
-		for colOrdinal := 0; colOrdinal < 4; colOrdinal++ {
-			chk.AppendInt64(colOrdinal, 123)
-		}
-	}
-	codec := chunk.NewCodec(colTypes)
-	bytes := codec.Encode(chk)
-
-	chunks := make([]tipb.Chunk, numRows)
-	for i := range chunks {
-		chkData := make([]byte, len(bytes))
-		copy(chkData, bytes)
-		chunks[i] = tipb.Chunk{RowsData: chkData}
-	}
-
-	respPB := &tipb.SelectResponse{
-		Chunks:       chunks,
-		OutputCounts: []int64{1},
-	}
-	respBytes, err := respPB.Marshal()
-	if err != nil {
-		panic(err)
-	}
-	return &mockResultSubset{respBytes}, nil
-}
 
 func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldType) {
 	request, _ := (&RequestBuilder{}).SetKeyRanges(nil).
@@ -868,15 +474,41 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 }
 
 func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
-	ctx := mock.NewContext()
-
-	selectResult, colTypes := createSelectNormal(100, 100000, ctx)
+	s := &testSuite{}
+	s.SetUpSuite(nil)
+	b.StopTimer()
+	selectResult, colTypes := createSelectNormal(4000, b.N*4000, s.sctx)
 	selectResult.Fetch(context.TODO())
 	chk := chunk.NewChunkWithCapacity(colTypes, 1024)
+	b.StartTimer()
 	for true {
-		selectResult.Next(context.TODO(), chk)
-		if chk.NumCols() == 0 {
+		err := selectResult.Next(context.TODO(), chk)
+		if err != nil {
+			panic(err)
+		}
+		if chk.NumRows() == 0 {
 			return
 		}
+		chk.Reset()
+	}
+}
+
+func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
+	s := &testSuite{}
+	s.SetUpSuite(nil)
+	b.StopTimer()
+	selectResult, colTypes := createSelectNormal(32, b.N*32, s.sctx)
+	selectResult.Fetch(context.TODO())
+	chk := chunk.NewChunkWithCapacity(colTypes, 1024)
+	b.StartTimer()
+	for true {
+		err := selectResult.Next(context.TODO(), chk)
+		if err != nil {
+			panic(err)
+		}
+		if chk.NumRows() == 0 {
+			return
+		}
+		chk.Reset()
 	}
 }
