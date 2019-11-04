@@ -1753,7 +1753,6 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		case isNull0 != isNull1:
 			i64s[i] = 0
 		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
-
 			i64s[i] = 1
 		}
 	}
