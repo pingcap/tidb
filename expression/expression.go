@@ -46,9 +46,6 @@ type VecExpr interface {
 	// Vectorized returns if this expression supports vectorized evaluation.
 	Vectorized() bool
 
-	// VecEval evaluates this expression in a vectorized manner.
-	VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-
 	// VecEvalInt evaluates this expression in a vectorized manner.
 	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 
@@ -288,7 +285,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := vecEval(ctx, expr, input, buf); err != nil {
+		if err := VecEval(ctx, expr, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -422,7 +419,8 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	return errors.Trace(err)
 }
 
-func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+// VecEval evaluates the expression in a vectorized manner.
+func VecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	switch expr.GetType().EvalType() {
 	case types.ETInt:
 		err = expr.VecEvalInt(ctx, input, result)
@@ -438,6 +436,8 @@ func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result
 		err = expr.VecEvalJSON(ctx, input, result)
 	case types.ETDecimal:
 		err = expr.VecEvalDecimal(ctx, input, result)
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
 	}
 	return
 }

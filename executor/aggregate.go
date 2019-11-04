@@ -968,7 +968,7 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 		e.groupKey = append(e.groupKey, col)
 	}
 	for i, item := range e.GroupByItems {
-		err := item.VecEval(e.ctx, chk, e.groupKey[i])
+		err := expression.VecEval(e.ctx, item, chk, e.groupKey[i])
 		if err != nil {
 			return err
 		}
