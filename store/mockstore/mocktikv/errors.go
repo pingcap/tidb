@@ -96,3 +96,11 @@ type ErrCommitTSExpired struct {
 func (e *ErrCommitTSExpired) Error() string {
 	return "commit ts expired"
 }
+
+type ErrTxnNotFound struct {
+	kvrpcpb.TxnNotFound
+}
+
+func (e *ErrTxnNotFound) Error() string {
+	return "txn not found"
+}

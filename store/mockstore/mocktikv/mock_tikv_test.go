@@ -663,14 +663,14 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
 
-	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(666))
 	c.Assert(commitTS, Equals, uint64(0))
 
 	s.mustCommitOK(c, [][]byte{[]byte("pk")}, 5, 30)
 
-	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(30))
@@ -678,7 +678,7 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", 5, 666)
 	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, 5)
 
-	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0, 666)
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
@@ -687,7 +687,7 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 func (s *testMVCCLevelDB) TestRejectCommitTS(c *C) {
 	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
 	// Push the minCommitTS
-	_, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100)
+	_, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100, false)
 	c.Assert(err, IsNil)
 	err = s.store.Commit([][]byte{[]byte("x")}, 5, 10)
 	e, ok := errors.Cause(err).(*ErrCommitTSExpired)

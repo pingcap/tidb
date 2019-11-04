@@ -1025,7 +1025,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 // primaryKey + lockTS together could locate the primary lock.
 // callerStartTS is the start ts of reader transaction.
 // currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
-func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64) (uint64, uint64, error) {
+func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64, rollbackIfNotExist bool) (uint64, uint64, error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -1105,9 +1105,21 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	}
 
 	// If current transaction is not prewritted before, it may be pessimistic lock.
-	// When pessimistic lock rollback, it may not leave a 'rollbacked' tombstone.
-	logutil.BgLogger().Debug("CheckTxnStatus can't find the primary lock, pessimistic rollback?")
-	return 0, 0, nil
+	// When pessimistic txn rollback statement, it may not leave a 'rollbacked' tombstone.
+
+	// Or maybe caused by concurrent prewrite operation.
+	// Especially in the non-block reading case, the secondary lock is likely to be
+	// written before the primary lock.
+
+	if rollbackIfNotExist {
+		// ttl, commitTS = 0, 0 means rollback
+		return 0, 0, nil
+	}
+
+	return 0, 0, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
+		StartTs:    lockTS,
+		PrimaryKey: primaryKey,
+	}}
 }
 
 // TxnHeartBeat implements the MVCCStore interface.
