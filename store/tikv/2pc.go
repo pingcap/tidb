@@ -678,6 +678,15 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	lockWaitStartTime := time.Now()
 	for {
+		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
+		if action.lockWaitTime > 0 {
+			timeLeft := action.lockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
+			if timeLeft <= 0 {
+				req.PessimisticLock().WaitTimeout = kv.LockNoWait
+			} else {
+				req.PessimisticLock().WaitTimeout = timeLeft
+			}
+		}
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
@@ -729,15 +738,15 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// we cant return "nowait conflict" directly
 			if lock.LockType == pb.Op_PessimisticLock {
 				if action.lockWaitTime == kv.LockNoWait {
-					// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+					// the pessimistic lock found could be invalid lock which is timeout but not recycled yet
 					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
 						return ErrLockAcquireFailAndNoWaitSet
 					}
 				} else if action.lockWaitTime == kv.LockAlwaysWait {
 					// do nothing but keep wait
 				} else {
-					// user has set the `InnodbLockWaitTimeout`, check timeout
-					// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+					// the lockWaitTime is set, check the lock wait timeout or not
+					// the pessimistic lock found could be invalid lock which is timeout but not recycled yet
 					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
 						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
 							return ErrLockWaitTimeout
