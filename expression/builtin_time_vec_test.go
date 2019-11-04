@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -23,6 +24,26 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
+
+// unitStrGener is used to generate strings which are unit format
+type unitStrGener struct{}
+
+func (g *unitStrGener) gen() interface{} {
+	units := []string{
+		"MICROSECOND",
+		"SECOND",
+		"MINUTE",
+		"HOUR",
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+	}
+
+	n := rand.Int() % len(units)
+	return units[n]
+}
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
@@ -65,8 +86,14 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec:        {},
-	ast.TimestampAdd:     {},
+	ast.TimeToSec: {},
+	ast.TimestampAdd: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
+		},
+	},
 	ast.TimestampDiff:    {},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
