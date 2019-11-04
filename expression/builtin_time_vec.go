@@ -1053,7 +1053,7 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
