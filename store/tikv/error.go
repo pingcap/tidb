@@ -32,13 +32,14 @@ const mismatchClusterID = "mismatch cluster id"
 
 // MySQL error instances.
 var (
-	ErrTiKVServerTimeout  = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout])
-	ErrResolveLockTimeout = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout])
-	ErrPDServerTimeout    = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout])
-	ErrRegionUnavailable  = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable])
-	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
-	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
-	ErrQueryInterrupted   = terror.ClassTiKV.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
+	ErrTiKVServerTimeout           = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout])
+	ErrResolveLockTimeout          = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout])
+	ErrPDServerTimeout             = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout])
+	ErrRegionUnavailable           = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable])
+	ErrTiKVServerBusy              = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
+	ErrGCTooEarly                  = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
+	ErrQueryInterrupted            = terror.ClassTiKV.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
+	ErrLockAcquireFailAndNoWaitSet = terror.ClassTiKV.New(mysql.ErrLockAcquireFailAndNoWaitSet, mysql.MySQLErrName[mysql.ErrLockAcquireFailAndNoWaitSet])
 )
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
@@ -54,14 +55,15 @@ func (d *ErrDeadlock) Error() string {
 
 func init() {
 	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrTiKVServerTimeout:   mysql.ErrTiKVServerTimeout,
-		mysql.ErrResolveLockTimeout:  mysql.ErrResolveLockTimeout,
-		mysql.ErrPDServerTimeout:     mysql.ErrPDServerTimeout,
-		mysql.ErrRegionUnavailable:   mysql.ErrRegionUnavailable,
-		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
-		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
-		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
-		mysql.ErrQueryInterrupted:    mysql.ErrQueryInterrupted,
+		mysql.ErrTiKVServerTimeout:           mysql.ErrTiKVServerTimeout,
+		mysql.ErrResolveLockTimeout:          mysql.ErrResolveLockTimeout,
+		mysql.ErrPDServerTimeout:             mysql.ErrPDServerTimeout,
+		mysql.ErrRegionUnavailable:           mysql.ErrRegionUnavailable,
+		mysql.ErrTiKVServerBusy:              mysql.ErrTiKVServerBusy,
+		mysql.ErrGCTooEarly:                  mysql.ErrGCTooEarly,
+		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
+		mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
+		mysql.ErrLockAcquireFailAndNoWaitSet: mysql.ErrLockAcquireFailAndNoWaitSet,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }

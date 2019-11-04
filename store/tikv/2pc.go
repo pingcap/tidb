@@ -46,7 +46,10 @@ type twoPhaseCommitAction interface {
 type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
-type actionPessimisticLock struct{ killed *uint32 }
+type actionPessimisticLock struct {
+	killed       *uint32
+	lockWaitTime int64
+}
 type actionPessimisticRollback struct{}
 
 var (
@@ -671,6 +674,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      elapsed + PessimisticLockTTL,
 		IsFirstLock:  c.isFirstLock,
+		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
@@ -686,7 +690,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -716,6 +720,17 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
 				return errors.Trace(err1)
+			}
+			// Check lock conflict error for nowait, if nowait set and key locked by others,
+			// report error immediately and do no more resolve locks.
+			// if the lock left behind whose related txn is already committed or rollbacked,
+			// (eg secondary locks not committed or rollbacked yet)
+			// we cant return "nowait conflict" directly
+			if action.lockWaitTime == kv.LockNoWait && lock.LockType == pb.Op_PessimisticLock {
+				// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+					return ErrLockAcquireFailAndNoWaitSet
+				}
 			}
 			locks = append(locks, lock)
 		}
@@ -957,8 +972,9 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
+	keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
