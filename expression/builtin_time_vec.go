@@ -750,12 +750,13 @@ func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
+	fsp := b.args[0].GetType().Decimal
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		var sign int
-		duration := buf.GetDuration(i, int(types.UnspecifiedFsp))
+		duration := buf.GetDuration(i, int(fsp))
 		if duration.Duration >= 0 {
 			sign = 1
 		} else {
