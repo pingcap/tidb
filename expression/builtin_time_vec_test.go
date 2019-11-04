@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -23,6 +24,26 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
+
+// unitStrGener is used to generate strings which are unit format
+type unitStrGener struct{}
+
+func (g *unitStrGener) gen() interface{} {
+	units := []string{
+		"MICROSECOND",
+		"SECOND",
+		"MINUTE",
+		"HOUR",
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+	}
+
+	n := rand.Int() % len(units)
+	return units[n]
+}
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
@@ -46,8 +67,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DayOfWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.DayOfYear: {},
-	ast.Day:       {},
+	ast.DayOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Day: {},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
@@ -63,8 +86,14 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec:        {},
-	ast.TimestampAdd:     {},
+	ast.TimeToSec: {},
+	ast.TimestampAdd: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
+		},
+	},
 	ast.TimestampDiff:    {},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
