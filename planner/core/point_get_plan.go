@@ -80,6 +80,12 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ExplainInfo returns operator information to be explained.
 func (p *PointGetPlan) ExplainInfo() string {
+	return p.explainInfo(false)
+
+}
+
+// ExplainInfo returns operator information to be explained.
+func (p *PointGetPlan) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
@@ -92,10 +98,14 @@ func (p *PointGetPlan) ExplainInfo() string {
 			}
 		}
 	} else {
-		if p.UnsignedHandle {
-			fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+		if normalized {
+			fmt.Fprintf(buffer, ", handle:?")
 		} else {
-			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+			if p.UnsignedHandle {
+				fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+			} else {
+				fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+			}
 		}
 	}
 	if p.Lock {
@@ -104,26 +114,9 @@ func (p *PointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo returns operator information to be explained.
+// ExplainNormalizedInfo returns normalized operator information to be explained.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	buffer := bytes.NewBufferString("")
-	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, ", index:")
-		for i, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O)
-			if i < len(p.IndexInfo.Columns)-1 {
-				buffer.WriteString(" ")
-			}
-		}
-	} else {
-		fmt.Fprintf(buffer, ", handle:?")
-	}
-	if p.Lock {
-		fmt.Fprintf(buffer, ", lock")
-	}
-	return buffer.String()
+	return p.explainInfo(true)
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -212,7 +205,7 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo returns operator information to be explained.
+// ExplainNormalizedInfo returns normalized operator information to be explained.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
 	return p.ExplainInfo()
 }

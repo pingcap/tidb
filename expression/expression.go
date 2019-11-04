@@ -131,6 +131,7 @@ type Expression interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.

@@ -256,7 +256,7 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteByte(lineBreaker)
 }
 
-// EncodePlanNode is used to encode the plan to a string.
+// NormalizePlanNode is used to normalize the plan to a string.
 func NormalizePlanNode(depth, pid int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)

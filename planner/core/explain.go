@@ -215,7 +215,7 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return p.ExplainInfo()
 }
@@ -225,7 +225,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 	return "index:" + p.indexPlan.ExplainID().String()
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 	return p.ExplainInfo()
 }

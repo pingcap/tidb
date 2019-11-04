@@ -129,7 +129,6 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 			isSame: false,
 		},
 	}
-
 	for _, testCase := range normalizedDigestCases {
 		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
 	}
@@ -168,6 +167,5 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
 		c.Assert(digest1 != digest2, IsTrue, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
-
 	}
 }

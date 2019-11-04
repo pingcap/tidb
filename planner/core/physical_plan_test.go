@@ -902,7 +902,7 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s sql2:%s", i, tt.sql1, tt.sql2)
+		comment := Commentf("case:%v sql1:%s sql2:%s", i, tt.sql1, tt.sql2)
 		stmt1, err := s.ParseOneStmt(tt.sql1, "", "")
 		c.Assert(err, IsNil, comment)
 		stmt2, err := s.ParseOneStmt(tt.sql2, "", "")

@@ -55,7 +55,7 @@ func (col *Column) ExplainInfo() string {
 	return col.String()
 }
 
-// ExplainInfo implements the Expression interface.
+// ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
 	return col.ExplainInfo()
 }
@@ -116,6 +116,7 @@ func SortedExplainExpressionList(exprs []Expression) []byte {
 	return buffer.Bytes()
 }
 
+// SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
 func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
@@ -132,6 +133,7 @@ func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
 	return buffer.Bytes()
 }
 
+// SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.
 func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))

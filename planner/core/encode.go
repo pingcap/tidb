@@ -84,7 +84,7 @@ type planDigester struct {
 	hasher       hash.Hash
 }
 
-// EncodePlan is used to encodePlan the plan to the plan tree with compressing.
+// NormalizePlan is used to normalize the plan and generated plan digest.
 func NormalizePlan(p PhysicalPlan) (normalized, digest string) {
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)

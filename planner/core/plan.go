@@ -164,7 +164,7 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
-	// ExplainNormalizedInfo returns operator normalized information to be explained.
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 }
 
