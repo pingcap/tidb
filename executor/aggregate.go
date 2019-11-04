@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -828,9 +829,13 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 		numGroups := len(e.groupChecker.groupRowsIndex)
 		begin := 0
 		for k := 0; k < numGroups; k++ {
-			if k == 0 && remainGroup && e.groupChecker.groupRowsKey != nil {
+			if k == 0 && remainGroup {
 				var equal bool
-				equal = remainGroupKey == string(e.groupChecker.groupRowsKey[0])
+				if len(e.groupChecker.GroupByItems) == 0 {
+					equal = true
+				} else {
+					equal = remainGroupKey == e.groupChecker.groupRowsSringKey[0]
+				}
 				if !equal {
 					err = e.appendResult2Chunk(chk)
 					if err != nil {
@@ -856,7 +861,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				e.groupRows = e.groupRows[:0]
 			} else {
 				if e.groupChecker.groupRowsKey != nil {
-					remainGroupKey = string(e.groupChecker.groupRowsKey[k])
+					remainGroupKey = e.groupChecker.groupRowsSringKey[end-1]
 				}
 				remainGroup = true
 			}
@@ -925,24 +930,21 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 }
 
 type groupChecker struct {
-	ctx            sessionctx.Context
-	StmtCtx        *stmtctx.StatementContext
-	GroupByItems   []expression.Expression
-	groupRowsIndex []int
-	groupRowsKey   [][]byte
-	groupKey       []*chunk.Column
-	isFixedType    []bool
+	ctx               sessionctx.Context
+	StmtCtx           *stmtctx.StatementContext
+	GroupByItems      []expression.Expression
+	groupRowsIndex    []int
+	groupRowsKey      [][]byte
+	groupRowsSringKey []string
 }
 
 func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
-	groupKey := make([]*chunk.Column, 0, len(items))
-	isFixedType := make([]bool, len(items))
+	groupRowsSringKey := make([]string, 1024)
 	return &groupChecker{
-		ctx:          ctx,
-		StmtCtx:      stmtCtx,
-		GroupByItems: items,
-		groupKey:     groupKey,
-		isFixedType:  isFixedType,
+		ctx:               ctx,
+		StmtCtx:           stmtCtx,
+		GroupByItems:      items,
+		groupRowsSringKey: groupRowsSringKey,
 	}
 }
 
@@ -950,66 +952,45 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 	numRows := chk.NumRows()
-	numItems := len(e.GroupByItems)
 	e.groupRowsIndex = e.groupRowsIndex[:0]
-	e.groupRowsKey = e.groupRowsKey[:0]
 	if len(e.GroupByItems) == 0 {
 		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
 		return nil
 	}
+	if len(e.groupRowsSringKey) < numRows {
+		e.groupRowsSringKey = make([]string, numRows)
+	}
 
-	e.groupKey = e.groupKey[:0]
-	for i := 0; i < numItems; i++ {
-		col, err := expression.GetColumn(e.GroupByItems[i].GetType().EvalType(), numRows)
-		defer expression.PutColumn(col)
+	for _, item := range e.GroupByItems {
+		eType := item.GetType().EvalType()
+		col, err := expression.GetColumn(eType, numRows)
 		if err != nil {
 			return err
 		}
-		e.groupKey = append(e.groupKey, col)
-	}
-	for i, item := range e.GroupByItems {
-		err := expression.VecEval(e.ctx, item, chk, e.groupKey[i])
+		err = expression.VecEval(e.ctx, item, chk, col)
 		if err != nil {
 			return err
 		}
+		e.groupRowsKey, err = col.EncodeTo(e.groupRowsKey, eType)
+		if err != nil {
+			return err
+		}
+		expression.PutColumn(col)
 	}
 
-	for i := 0; i < numItems; i++ {
-		if e.groupKey[i].IsFixed() {
-			e.isFixedType[i] = true
-		} else {
-			e.isFixedType[i] = false
-		}
+	for i := 0; i < numRows; i++ {
+		e.groupRowsSringKey[i] = string(hack.String(e.groupRowsKey[i]))
 	}
+
 	for i := 0; i < numRows; {
 		match := true
 		j := i + 1
 		for ; j < numRows; j++ {
-			for k := 0; k < numItems; k++ {
-				var equal bool
-				if !e.isFixedType[k] {
-					equal = string(e.groupKey[k].GetBytes(i)) == string(e.groupKey[k].GetBytes(j))
-				} else {
-					equal = string(e.groupKey[k].GetFixedTypeBytes(i)) == string(e.groupKey[k].GetFixedTypeBytes(j))
-				}
-				if !equal {
-					match = false
-					break
-				}
-			}
+			match = e.groupRowsSringKey[i] == e.groupRowsSringKey[j]
 			if !match {
 				break
 			}
 		}
-		var groupKeyByte []byte
-		for k := 0; k < numItems; k++ {
-			if !e.isFixedType[k] {
-				groupKeyByte = append(groupKeyByte, e.groupKey[k].GetBytes(j-1)...)
-			} else {
-				groupKeyByte = append(groupKeyByte, e.groupKey[k].GetFixedTypeBytes(j-1)...)
-			}
-		}
-		e.groupRowsKey = append(e.groupRowsKey, groupKeyByte)
 		e.groupRowsIndex = append(e.groupRowsIndex, j)
 		i = j
 	}
@@ -1020,7 +1001,13 @@ func (e *groupChecker) reset() {
 	if e.groupRowsIndex != nil {
 		e.groupRowsIndex = e.groupRowsIndex[:0]
 	}
-	if e.groupKey != nil {
-		e.groupKey = e.groupKey[:0]
+	if e.groupRowsKey != nil {
+		for i := 0; i < len(e.groupRowsKey); i++ {
+			e.groupRowsKey[i] = e.groupRowsKey[i][:0]
+		}
+		e.groupRowsKey = e.groupRowsKey[:0]
+	}
+	if e.groupRowsSringKey != nil {
+		e.groupRowsSringKey = e.groupRowsSringKey[:0]
 	}
 }
