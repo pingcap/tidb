@@ -341,11 +341,7 @@ func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		if !validPeriod(i64s[i]) || !validPeriod(periods[i]) {
-			if err := errIncorrectArgs.GenWithStackByArgs("period_diff"); err != nil {
-				return err
-			}
-			i64s[i] = 0
-			continue
+			return errIncorrectArgs.GenWithStackByArgs("period_diff")
 		}
 		i64s[i] = int64(period2Month(uint64(i64s[i])) - period2Month(uint64(periods[i])))
 	}
