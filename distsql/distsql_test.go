@@ -16,6 +16,8 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/mock"
+
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -781,32 +784,99 @@ func BenchmarkDecodeToChunkRequiredRows_BigResponse(b *testing.B) {
 	}
 }
 
-func BenchmarkDecodeToChunk_BigResponse(b *testing.B) {
-	datagen := &dataBufferGen{}
-	buildBigResponse(datagen)
+type mockResponseForChunkEncode struct {
+	mockResponse
+}
+
+func (resp *mockResponseForChunkEncode) Next(ctx context.Context) (kv.ResultSubset, error) {
+	resp.Lock()
+	defer resp.Unlock()
+
+	if resp.count >= resp.total {
+		return nil, nil
+	}
+	numRows := mathutil.Min(resp.batch, resp.total-resp.count)
+	resp.count += numRows
 
 	colTypes := make([]*types.FieldType, 4)
 	for i := 0; i < 4; i++ {
-		colTypes[i] = &types.FieldType{Tp: mysql.TypeString}
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
 	}
-	chk := chunk.New(colTypes, 4, 1024)
-	chk.SetRequiredRows(100, 1024)
-	chk.Reset()
-	datagen.times = b.N
-	datagen.cur = 0
-	b.ResetTimer()
+	chk := chunk.New(colTypes, numRows, numRows)
 
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < 4; colOrdinal++ {
+			chk.AppendInt64(colOrdinal, 123)
+		}
+	}
+	codec := chunk.NewCodec(colTypes)
+	bytes := codec.Encode(chk)
+
+	chunks := make([]tipb.Chunk, numRows)
+	for i := range chunks {
+		chkData := make([]byte, len(bytes))
+		copy(chkData, bytes)
+		chunks[i] = tipb.Chunk{RowsData: chkData}
+	}
+
+	respPB := &tipb.SelectResponse{
+		Chunks:       chunks,
+		OutputCounts: []int64{1},
+	}
+	respBytes, err := respPB.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	return &mockResultSubset{respBytes}, nil
+}
+
+func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+	request, _ := (&RequestBuilder{}).SetKeyRanges(nil).
+		SetDAGRequest(&tipb.DAGRequest{}).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetFromSessionVars(variable.NewSessionVars()).
+		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"),
+			ctx.GetSessionVars().MemQuotaDistSQL)).
+		Build()
+
+	/// 4 int64 types.
+	colTypes := []*types.FieldType{
+		{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+			Charset: charset.CharsetBin,
+			Collate: charset.CollationBin,
+		},
+	}
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+
+	// Test Next.
+	var response SelectResult
+	response, _ = Select(context.TODO(), ctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+
+	result, _ := response.(*selectResult)
+	resp, _ := result.resp.(*mockResponse)
+	resp.total = totalRows
+	resp.batch = batch
+
+	return result, colTypes
+}
+
+func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
+	ctx := mock.NewContext()
+
+	selectResult, colTypes := createSelectNormal(100, 100000, ctx)
+	selectResult.Fetch(context.TODO())
+	chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 	for true {
-		b.StopTimer()
-		buffer := datagen.get()
-		if buffer == nil {
+		selectResult.Next(context.TODO(), chk)
+		if chk.NumCols() == 0 {
 			return
 		}
-		b.StartTimer()
-
-		codec := chunk.NewCodec(colTypes)
-		_ = codec.DecodeToChunkTest(buffer, chk)
-		datagen.cur++
-		chk.Reset()
 	}
 }
