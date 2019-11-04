@@ -985,12 +985,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
-	if ds.preferStoreType&preferTiFlash != 0 && ts.StoreType == kv.TiKV {
-		return invalidTask, nil
-	}
-	if ds.preferStoreType&preferTiKV != 0 && ts.StoreType == kv.TiFlash {
-		return invalidTask, nil
-	}
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
@@ -1034,6 +1028,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.tableFilters,
 		StoreType:       path.storeType,
 	}.Init(ds.ctx, ds.blockOffset)
+	if ds.preferStoreType&preferTiFlash != 0 {
+		ts.StoreType = kv.TiFlash
+	}
+	if ds.preferStoreType&preferTiKV != 0 {
+		ts.StoreType = kv.TiKV
+	}
 	if ts.StoreType == kv.TiFlash {
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
