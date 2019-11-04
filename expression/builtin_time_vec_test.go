@@ -31,6 +31,26 @@ func (g *periodGener) gen() interface{} {
 	return int64((rand.Intn(2500)+1)*100 + rand.Intn(12) + 1)
 }
 
+// unitStrGener is used to generate strings which are unit format
+type unitStrGener struct{}
+
+func (g *unitStrGener) gen() interface{} {
+	units := []string{
+		"MICROSECOND",
+		"SECOND",
+		"MINUTE",
+		"HOUR",
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+	}
+
+	n := rand.Int() % len(units)
+	return units[n]
+}
+
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
 	ast.DateDiff:    {},
@@ -45,13 +65,18 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Second: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},
+	ast.ToSeconds: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.MicroSecond: {},
 	ast.Now:         {},
 	ast.DayOfWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.DayOfYear: {},
-	ast.Day:       {},
+	ast.DayOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Day: {},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
@@ -69,8 +94,14 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec:        {},
-	ast.TimestampAdd:     {},
+	ast.TimeToSec: {},
+	ast.TimestampAdd: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
+		},
+	},
 	ast.TimestampDiff:    {},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
@@ -127,6 +158,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Weekday: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
+	},
+	ast.WeekOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.FromDays: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
