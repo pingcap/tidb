@@ -1890,7 +1890,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		terror.Log(resp.Body.Close())
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
-		// get pd git_hash
+		// Get pd git_hash
 		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
 		resp, err = http.Get(url)
 		if err != nil {
