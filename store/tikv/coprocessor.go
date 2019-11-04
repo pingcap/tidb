@@ -384,12 +384,13 @@ type copIteratorTaskSender struct {
 }
 
 type copResponse struct {
-	pbResp   *coprocessor.Response
-	detail   *execdetails.ExecDetails
-	startKey kv.Key
-	err      error
-	respSize int64
-	respTime time.Duration
+	pbResp                 *coprocessor.Response
+	detail                 *execdetails.ExecDetails
+	startKey               kv.Key
+	err                    error
+	respSize               int64
+	respTime               time.Duration
+	maxExecutionDurationMs uint64 // TODO: figure out how to pass this param to TiKV
 }
 
 const (
@@ -650,11 +651,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		Data:   worker.req.Data,
 		Ranges: task.ranges.toPBRanges(),
 	}, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
-		Priority:       kvPriorityToCommandPri(worker.req.Priority),
-		NotFillCache:   worker.req.NotFillCache,
-		HandleTime:     true,
-		ScanDetail:     true,
+		IsolationLevel:         pbIsolationLevel(worker.req.IsolationLevel),
+		Priority:               kvPriorityToCommandPri(worker.req.Priority),
+		NotFillCache:           worker.req.NotFillCache,
+		HandleTime:             true,
+		ScanDetail:             true,
+		MaxExecutionDurationMs: 30, // TODO: how to set this?
 	})
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)
