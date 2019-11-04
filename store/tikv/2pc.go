@@ -676,6 +676,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+	lockWaitStartTime := time.Now()
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -726,15 +727,28 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// if the lock left behind whose related txn is already committed or rollbacked,
 			// (eg secondary locks not committed or rollbacked yet)
 			// we cant return "nowait conflict" directly
-			if action.lockWaitTime == kv.LockNoWait && lock.LockType == pb.Op_PessimisticLock {
-				// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
-				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-					return ErrLockAcquireFailAndNoWaitSet
+			if lock.LockType == pb.Op_PessimisticLock {
+				if action.lockWaitTime == kv.LockNoWait {
+					// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+						return ErrLockAcquireFailAndNoWaitSet
+					}
+				} else if action.lockWaitTime == kv.LockAlwaysWait {
+					// do nothing but keep wait
+				} else {
+					// user has set the `InnodbLockWaitTimeout`, check timeout
+					// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
+							return ErrLockWaitTimeout
+						}
+					}
 				}
 			}
 			locks = append(locks, lock)
 		}
 		// Because we already waited on tikv, no need to Backoff here.
+		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
 		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)

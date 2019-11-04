@@ -262,7 +262,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
-					fp.LockWaitTime = kv.LockAlwaysWait
+					fp.LockWaitTime = sessVars.LockWaitTimeout
 					if x.LockTp == ast.SelectLockForUpdateNoWait {
 						fp.LockWaitTime = kv.LockNoWait
 					}
@@ -621,7 +621,7 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 		schema:       schema,
 		TblInfo:      tbl,
 		outputNames:  names,
-		LockWaitTime: kv.LockAlwaysWait,
+		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
