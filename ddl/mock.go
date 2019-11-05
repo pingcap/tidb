@@ -164,7 +164,7 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 		return nil, errors.Trace(err)
 	}
 
-	if err = resolveDefaultTableCharsetAndCollation(tbl, ""); err != nil {
+	if err = resolveDefaultTableCharsetAndCollation(tbl, "", ""); err != nil {
 		return nil, errors.Trace(err)
 	}
 
