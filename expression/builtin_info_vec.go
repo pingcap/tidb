@@ -136,11 +136,21 @@ func (b *builtinLastInsertIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinLastInsertIDWithIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := len(i64s) - 1; i >= 0; i-- {
+		if !result.IsNull(i) {
+			b.ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
+			break
+		}
+	}
+	return nil
 }
 
 func (b *builtinVersionSig) vectorized() bool {
