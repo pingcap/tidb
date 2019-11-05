@@ -34,7 +34,7 @@ func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
 	expr.Children = append(expr.Children, g1)
 	g2 := NewGroupWithSchema(expr, nil)
 
-	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
+	pattern := BuildPattern(OperandJoin, EngineAll, BuildPattern(OperandProjection, EngineAll), BuildPattern(OperandSelection, EngineAll))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
 
 	c.Assert(iter, NotNil)
@@ -75,7 +75,7 @@ func (s *testMemoSuite) TestExprIterNext(c *C) {
 	expr.Children = append(expr.Children, g1)
 	g2 := NewGroupWithSchema(expr, nil)
 
-	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
+	pattern := BuildPattern(OperandJoin, EngineAll, BuildPattern(OperandProjection, EngineAll), BuildPattern(OperandSelection, EngineAll))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
 	c.Assert(iter, NotNil)
 
@@ -135,9 +135,9 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	sel3.Children = append(sel3.Children, g2)
 
 	// create a pattern: join(proj, sel(limit))
-	lhsPattern := BuildPattern(OperandProjection)
-	rhsPattern := BuildPattern(OperandSelection, BuildPattern(OperandLimit))
-	pattern := BuildPattern(OperandJoin, lhsPattern, rhsPattern)
+	lhsPattern := BuildPattern(OperandProjection, EngineAll)
+	rhsPattern := BuildPattern(OperandSelection, EngineAll, BuildPattern(OperandLimit, EngineAll))
+	pattern := BuildPattern(OperandJoin, EngineAll, lhsPattern, rhsPattern)
 
 	// create expression iterator for the pattern on join
 	iter := NewExprIterFromGroupElem(g3.Equivalents.Front(), pattern)
@@ -168,4 +168,103 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	}
 
 	c.Assert(count, Equals, 18)
+}
+
+func countMatchedIter(group *Group, pattern *Pattern) int {
+	count := 0
+	for elem := group.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		iter := NewExprIterFromGroupElem(elem, pattern)
+		if iter == nil {
+			continue
+		}
+		for ; iter.Matched(); iter.Next() {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0)), nil).SetEngineType(EngineTiFlash)
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
+
+	g2 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0)), nil).SetEngineType(EngineTiKV)
+	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
+
+	flashGather := NewGroupExpr(plannercore.TableGather{}.Init(s.sctx, 0))
+	flashGather.Children = append(flashGather.Children, g1)
+	g3 := NewGroupWithSchema(flashGather, nil).SetEngineType(EngineTiDB)
+
+	tikvGather := NewGroupExpr(plannercore.TableGather{}.Init(s.sctx, 0))
+	tikvGather.Children = append(tikvGather.Children, g2)
+	g3.Insert(tikvGather)
+
+	join := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx, 0))
+	join.Children = append(join.Children, g3, g3)
+	g4 := NewGroupWithSchema(join, nil).SetEngineType(EngineTiDB)
+
+	// The Groups look like this:
+	// Group 4
+	//     Join input:[Group3, Group3]
+	// Group 3
+	//     TableGather input:[Group2] EngineTiKV
+	//     TableGather input:[Group1] EngineTiFlash
+	// Group 2
+	//     Selection
+	//     Projection
+	//     Limit
+	//     Limit
+	// Group 1
+	//     Selection
+	//     Projection
+	//     Limit
+	//     Limit
+
+	p0 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly))
+	c.Assert(countMatchedIter(g3, p0), Equals, 2)
+	p1 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly))
+	c.Assert(countMatchedIter(g3, p1), Equals, 2)
+	p2 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash))
+	c.Assert(countMatchedIter(g3, p2), Equals, 4)
+	p3 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandSelection, EngineTiFlashOnly))
+	c.Assert(countMatchedIter(g3, p3), Equals, 1)
+	p4 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandProjection, EngineTiKVOnly))
+	c.Assert(countMatchedIter(g3, p4), Equals, 1)
+
+	p5 := BuildPattern(
+		OperandJoin,
+		EngineTiDBOnly,
+		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
+		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
+	)
+	c.Assert(countMatchedIter(g4, p5), Equals, 4)
+	p6 := BuildPattern(
+		OperandJoin,
+		EngineTiDBOnly,
+		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly)),
+		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
+	)
+	c.Assert(countMatchedIter(g4, p6), Equals, 4)
+	p7 := BuildPattern(
+		OperandJoin,
+		EngineTiDBOnly,
+		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
+		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
+	)
+	c.Assert(countMatchedIter(g4, p7), Equals, 16)
+
+	// This is not a test case for EngineType. This case is to test
+	// the Pattern without a leaf AnyOperand. It is more efficient to
+	// test it here.
+	p8 := BuildPattern(
+		OperandJoin,
+		EngineTiDBOnly,
+		BuildPattern(OperandTableGather, EngineTiDBOnly),
+		BuildPattern(OperandTableGather, EngineTiDBOnly),
+	)
+	c.Assert(countMatchedIter(g4, p8), Equals, 4)
 }

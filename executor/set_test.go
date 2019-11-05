@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite2) TestSetVar(c *C) {
+func (s *testSuite5) TestSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -267,8 +267,8 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set tidb_slow_log_threshold = 0")
 	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_slow_log_threshold = 1")
-	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_slow_log_threshold = 30000")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("30000"))
 	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
 	c.Assert(err, NotNil)
 
@@ -383,9 +383,14 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
+
+	tk.MustExec("set @@tidb_record_plan_in_slow_log = 1")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("0"))
 }
 
-func (s *testSuite2) TestSetCharset(c *C) {
+func (s *testSuite5) TestSetCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 
@@ -410,7 +415,7 @@ func (s *testSuite2) TestSetCharset(c *C) {
 	tk.MustExec(`SET NAMES binary`)
 }
 
-func (s *testSuite2) TestValidateSetVar(c *C) {
+func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
@@ -500,6 +505,19 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.thread_pool_size=65")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
+	result = tk.MustQuery("select @@global.thread_pool_size;")
+	result.Check(testkit.Rows("64"))
+
+	tk.MustExec("set @@global.thread_pool_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '-1'"))
+	result = tk.MustQuery("select @@global.thread_pool_size;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.thread_pool_size='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.max_allowed_packet=-1")
@@ -750,7 +768,7 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite2) TestSelectGlobalVar(c *C) {
+func (s *testSuite5) TestSelectGlobalVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
@@ -770,7 +788,7 @@ func (s *testSuite2) TestSelectGlobalVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite2) TestEnableNoopFunctionsVar(c *C) {
+func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// test for tidb_enable_noop_functions

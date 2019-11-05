@@ -212,7 +212,6 @@ const (
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
-	prewriteMaxBackoff             = 20000
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000
 	GcResolveLockMaxBackoff        = 100000
@@ -227,8 +226,13 @@ const (
 	pessimisticRollbackMaxBackoff  = 10000
 )
 
-// CommitMaxBackoff is max sleep time of the 'commit' command
-var CommitMaxBackoff = 41000
+var (
+	// CommitMaxBackoff is max sleep time of the 'commit' command
+	CommitMaxBackoff = 41000
+
+	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
+	PrewriteMaxBackoff = 20000
+)
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {

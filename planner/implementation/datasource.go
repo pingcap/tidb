@@ -31,7 +31,7 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (impl *TableDualImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+func (impl *TableDualImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	return 0
 }
 
@@ -52,7 +52,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statisti
 }
 
 // CalcCost calculates the cost of the table reader Implementation.
-func (impl *TableReaderImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	width := impl.tblColHists.GetAvgRowSize(reader.Schema().Columns, false)
 	sessVars := reader.SCtx().GetSessionVars()
@@ -62,7 +62,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, childCosts []float64, ch
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
-	impl.cost = (networkCost + childCosts[0]) / copIterWorkers
+	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
 
@@ -85,7 +85,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 }
 
 // CalcCost calculates the cost of the table scan Implementation.
-func (impl *TableScanImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
 	width := impl.tblColHists.GetAvgRowSize(impl.tblCols, false)
 	sessVars := ts.SCtx().GetSessionVars()

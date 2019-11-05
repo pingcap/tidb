@@ -1,0 +1,42 @@
+drop table if exists t, tt;
+create table t(a int, b int, index ia(a));
+desc select avg(a) from t;
+id	count	task	operator info
+StreamAgg_20	1.00	root	funcs:avg(Column#8, Column#9)
+└─IndexReader_21	1.00	root	index:StreamAgg_8
+  └─StreamAgg_8	1.00	cop[tikv]	funcs:avg(Column#1)
+    └─IndexScan_19	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t;
+id	count	task	operator info
+StreamAgg_16	1.00	root	funcs:avg(Column#8, Column#9)
+└─TableReader_17	1.00	root	data:StreamAgg_8
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:count(Column#1), sum(Column#1)
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t;
+id	count	task	operator info
+StreamAgg_16	1.00	root	funcs:sum(Column#7)
+└─TableReader_17	1.00	root	data:StreamAgg_8
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(Column#1)
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t;
+id	count	task	operator info
+StreamAgg_16	1.00	root	funcs:sum(Column#7)
+└─TableReader_17	1.00	root	data:StreamAgg_8
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(plus(Column#1, 1))
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t;
+id	count	task	operator info
+StreamAgg_16	1.00	root	funcs:sum(Column#7)
+└─TableReader_17	1.00	root	data:StreamAgg_8
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(isnull(Column#1))
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+create table tt(a int, b int, primary key(a));
+desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
+id	count	task	operator info
+TableReader_6	44.00	root	data:TableScan_5
+└─TableScan_5	44.00	cop[tikv]	table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
+id	count	task	operator info
+TableReader_7	44.00	root	data:Selection_6
+└─Selection_6	44.00	cop[tiflash]	or(and(gt(Column#1, 1), lt(Column#1, 20)), and(ge(Column#1, 30), lt(Column#1, 55)))
+  └─TableScan_5	44.00	cop[tiflash]	table:tt, range:[-inf,+inf], keep order:false, stats:pseudo

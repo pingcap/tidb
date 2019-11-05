@@ -17,7 +17,6 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"go/format"
 	"io/ioutil"
 	"log"
@@ -410,7 +409,6 @@ func generateOneFile(fileNamePrefix string) (err error) {
 }
 
 func main() {
-	flag.Parse()
 	var err error
 	outputDir := "."
 	err = generateOneFile(filepath.Join(outputDir, "builtin_time_vec_generated"))

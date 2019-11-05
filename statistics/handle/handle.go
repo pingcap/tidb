@@ -83,7 +83,9 @@ func (h *Handle) Clear() {
 	}
 	h.feedback = h.feedback[:0]
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
-	h.mu.ctx.GetSessionVars().MaxChunkSize = 32
+	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
+	h.mu.ctx.GetSessionVars().EnableArrow = false
+	h.mu.ctx.GetSessionVars().ProjectionConcurrency = 0
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 	h.mu.rateMap = make(errorRateDeltaMap)
@@ -350,6 +352,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 	idx := table.Indices[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
+	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	if statistics.IsAnalyzed(flag) {
 		h.mu.Lock()
 		h.mu.rateMap.clear(table.PhysicalID, histID, true)
@@ -370,7 +373,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, LastAnalyzePos: *lastAnalyzePos.Copy()}
 		}
 		break
 	}
@@ -389,6 +392,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
 	correlation := row.GetFloat64(9)
+	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -426,7 +430,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 				ErrorRate:      errorRate,
 				IsHandle:       tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:           flag,
-				LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob)),
+				LastAnalyzePos: *lastAnalyzePos.Copy(),
 			}
 			col.Histogram.Correlation = correlation
 			break
@@ -449,7 +453,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 				ErrorRate:      errorRate,
 				IsHandle:       tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:           flag,
-				LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob)),
+				LastAnalyzePos: *lastAnalyzePos.Copy(),
 			}
 			break
 		}

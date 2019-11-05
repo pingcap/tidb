@@ -10,8 +10,8 @@ EXPLAIN SELECT name, id FROM person WHERE city = 'Beijing';
 id	count	task	operator info
 Projection_4	10.00	root	Column#2, Column#1
 └─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop	table:person, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop	table:person, keep order:false, stats:pseudo
+  ├─IndexScan_8	10.00	cop[tikv]	table:person, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
+  └─TableScan_9	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `sgc`;
 CREATE TABLE `sgc` (
 `j1` JSON DEFAULT NULL,
@@ -25,21 +25,21 @@ KEY `idx_a_b` (`a`,`b`)
 EXPLAIN SELECT a FROM sgc where a < 3;
 id	count	task	operator info
 IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop	table:sgc, index:a, range:[-inf,3), keep order:false, stats:pseudo
+└─IndexScan_5	3323.33	cop[tikv]	table:sgc, index:a, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b FROM sgc where a < 3;
 id	count	task	operator info
 IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop	table:sgc, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+└─IndexScan_5	3323.33	cop[tikv]	table:sgc, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where b < 3;
 id	count	task	operator info
 IndexReader_13	3323.33	root	index:Selection_12
-└─Selection_12	3323.33	cop	lt(Column#4, 3)
-  └─IndexScan_11	10000.00	cop	table:sgc, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─Selection_12	3323.33	cop[tikv]	lt(Column#4, 3)
+  └─IndexScan_11	10000.00	cop[tikv]	table:sgc, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where a < 3 and b < 3;
 id	count	task	operator info
 IndexReader_11	1104.45	root	index:Selection_10
-└─Selection_10	1104.45	cop	lt(Column#4, 3)
-  └─IndexScan_9	3323.33	cop	table:sgc, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+└─Selection_10	1104.45	cop[tikv]	lt(Column#4, 3)
+  └─IndexScan_9	3323.33	cop[tikv]	table:sgc, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 DROP TABLE IF EXISTS sgc1,
 sgc2;
 CREATE TABLE `sgc1` (
@@ -71,24 +71,24 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
-IndexHashJoin_33	5.00	root	inner join, inner:IndexLookUp_24, outer key:Column#8, inner key:Column#3
-├─IndexLookUp_24	5.00	root	
-│ ├─Selection_23	5.00	cop	not(isnull(Column#3))
-│ │ └─IndexScan_21	5.00	cop	table:sgc1, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
-│ └─TableScan_22	5.00	cop	table:sgc1, keep order:false
-└─TableReader_36	1.00	root	data:Selection_35
-  └─Selection_35	1.00	cop	not(isnull(Column#8))
-    └─TableScan_34	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
+IndexHashJoin_35	5.00	root	inner join, inner:IndexLookUp_25, outer key:Column#8, inner key:Column#3
+├─IndexLookUp_25	5.00	root	
+│ ├─Selection_24	5.00	cop[tikv]	not(isnull(Column#3))
+│ │ └─IndexScan_22	5.00	cop[tikv]	table:sgc1, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
+│ └─TableScan_23	5.00	cop[tikv]	table:sgc1, keep order:false
+└─TableReader_38	1.00	root	data:Selection_37
+  └─Selection_37	1.00	cop[tikv]	not(isnull(Column#8))
+    └─TableScan_36	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
 Projection_6	5.00	root	Column#1, Column#2, Column#3, Column#4, Column#6, Column#7, Column#8, Column#9
-└─HashRightJoin_23	5.00	root	inner join, inner:TableReader_42, equal:[eq(Column#8, Column#3)]
-  ├─TableReader_42	1.00	root	data:Selection_41
-  │ └─Selection_41	1.00	cop	not(isnull(Column#8))
-  │   └─TableScan_40	1.00	cop	table:sgc2, range:[-inf,+inf], keep order:false
-  └─TableReader_51	5.00	root	data:Selection_50
-    └─Selection_50	5.00	cop	not(isnull(Column#3))
-      └─TableScan_49	5.00	cop	table:sgc1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_24	5.00	root	inner join, inner:TableReader_43, equal:[eq(Column#8, Column#3)]
+  ├─TableReader_43	1.00	root	data:Selection_42
+  │ └─Selection_42	1.00	cop[tikv]	not(isnull(Column#8))
+  │   └─TableScan_41	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
+  └─TableReader_52	5.00	root	data:Selection_51
+    └─Selection_51	5.00	cop[tikv]	not(isnull(Column#3))
+      └─TableScan_50	5.00	cop[tikv]	table:sgc1, range:[-inf,+inf], keep order:false
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,
@@ -106,32 +106,32 @@ EXPLAIN SELECT * FROM sgc3 WHERE a <= 1;
 id	count	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
-│ └─Selection_10	3323.33	cop	le(Column#2, 1)
-│   └─TableScan_9	10000.00	cop	table:sgc3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_10	3323.33	cop[tikv]	le(Column#2, 1)
+│   └─TableScan_9	10000.00	cop[tikv]	table:sgc3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
 └─TableReader_14	3323.33	root	data:Selection_13
-  └─Selection_13	3323.33	cop	le(Column#2, 1)
-    └─TableScan_12	10000.00	cop	table:sgc3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Selection_13	3323.33	cop[tikv]	le(Column#2, 1)
+    └─TableScan_12	10000.00	cop[tikv]	table:sgc3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM sgc3 WHERE a < 7;
 id	count	task	operator info
 Union_13	23263.33	root	
 ├─TableReader_16	3323.33	root	data:Selection_15
-│ └─Selection_15	3323.33	cop	lt(Column#2, 7)
-│   └─TableScan_14	10000.00	cop	table:sgc3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_15	3323.33	cop[tikv]	lt(Column#2, 7)
+│   └─TableScan_14	10000.00	cop[tikv]	table:sgc3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
 ├─TableReader_19	3323.33	root	data:Selection_18
-│ └─Selection_18	3323.33	cop	lt(Column#2, 7)
-│   └─TableScan_17	10000.00	cop	table:sgc3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_18	3323.33	cop[tikv]	lt(Column#2, 7)
+│   └─TableScan_17	10000.00	cop[tikv]	table:sgc3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 ├─TableReader_22	3323.33	root	data:Selection_21
-│ └─Selection_21	3323.33	cop	lt(Column#2, 7)
-│   └─TableScan_20	10000.00	cop	table:sgc3, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_21	3323.33	cop[tikv]	lt(Column#2, 7)
+│   └─TableScan_20	10000.00	cop[tikv]	table:sgc3, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
 ├─TableReader_25	3323.33	root	data:Selection_24
-│ └─Selection_24	3323.33	cop	lt(Column#2, 7)
-│   └─TableScan_23	10000.00	cop	table:sgc3, partition:p3, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_24	3323.33	cop[tikv]	lt(Column#2, 7)
+│   └─TableScan_23	10000.00	cop[tikv]	table:sgc3, partition:p3, range:[-inf,+inf], keep order:false, stats:pseudo
 ├─TableReader_28	3323.33	root	data:Selection_27
-│ └─Selection_27	3323.33	cop	lt(Column#2, 7)
-│   └─TableScan_26	10000.00	cop	table:sgc3, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_27	3323.33	cop[tikv]	lt(Column#2, 7)
+│   └─TableScan_26	10000.00	cop[tikv]	table:sgc3, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo
 ├─TableReader_31	3323.33	root	data:Selection_30
-│ └─Selection_30	3323.33	cop	lt(Column#2, 7)
-│   └─TableScan_29	10000.00	cop	table:sgc3, partition:p5, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─Selection_30	3323.33	cop[tikv]	lt(Column#2, 7)
+│   └─TableScan_29	10000.00	cop[tikv]	table:sgc3, partition:p5, range:[-inf,+inf], keep order:false, stats:pseudo
 └─TableReader_34	3323.33	root	data:Selection_33
-  └─Selection_33	3323.33	cop	lt(Column#2, 7)
-    └─TableScan_32	10000.00	cop	table:sgc3, partition:max, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Selection_33	3323.33	cop[tikv]	lt(Column#2, 7)
+    └─TableScan_32	10000.00	cop[tikv]	table:sgc3, partition:max, range:[-inf,+inf], keep order:false, stats:pseudo

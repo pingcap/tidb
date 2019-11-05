@@ -43,13 +43,14 @@ import (
 type SplitIndexRegionExec struct {
 	baseExecutor
 
-	tableInfo    *model.TableInfo
-	indexInfo    *model.IndexInfo
-	lower        []types.Datum
-	upper        []types.Datum
-	num          int
-	valueLists   [][]types.Datum
-	splitIdxKeys [][]byte
+	tableInfo      *model.TableInfo
+	partitionNames []model.CIStr
+	indexInfo      *model.IndexInfo
+	lower          []types.Datum
+	upper          []types.Datum
+	num            int
+	valueLists     [][]types.Datum
+	splitIdxKeys   [][]byte
 
 	done bool
 	splitRegionResult
@@ -115,38 +116,115 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
-	var idxKeys [][]byte
-	if e.num > 0 {
-		idxKeys = make([][]byte, 0, e.num)
-	} else {
-		idxKeys = make([][]byte, 0, len(e.valueLists)+1)
+	// Split index regions by user specified value lists.
+	if len(e.valueLists) > 0 {
+		return e.getSplitIdxKeysFromValueList()
 	}
+
+	return e.getSplitIdxKeysFromBound()
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxKeysFromValueList() (keys [][]byte, err error) {
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, len(e.valueLists)+1)
+		return e.getSplitIdxPhysicalKeysFromValueList(e.tableInfo.ID, keys)
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, (len(e.valueLists)+1)*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys, err = e.getSplitIdxPhysicalKeysFromValueList(p.ID, keys)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return keys, nil
+	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, (len(e.valueLists)+1)*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys, err = e.getSplitIdxPhysicalKeysFromValueList(pid, keys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
+	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
+	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	for _, v := range e.valueLists {
+		idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, v, math.MinInt64, nil)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, idxKey)
+	}
+	return keys, nil
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID int64, keys [][]byte) [][]byte {
 	// Split in the start of the index key.
-	startIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
-	idxKeys = append(idxKeys, startIdxKey)
+	startIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
+	keys = append(keys, startIdxKey)
 
 	// Split in the end for the other index key.
 	for _, idx := range e.tableInfo.Indices {
 		if idx.ID <= e.indexInfo.ID {
 			continue
 		}
-		endIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, idx.ID)
-		idxKeys = append(idxKeys, endIdxKey)
+		endIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, idx.ID)
+		keys = append(keys, endIdxKey)
 		break
 	}
+	return keys
+}
 
-	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
-	// Split index regions by user specified value lists.
-	if len(e.valueLists) > 0 {
-		for _, v := range e.valueLists {
-			idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, v, math.MinInt64, nil)
+func (e *SplitIndexRegionExec) getSplitIdxKeysFromBound() (keys [][]byte, err error) {
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, e.num)
+		return e.getSplitIdxPhysicalKeysFromBound(e.tableInfo.ID, keys)
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, e.num*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys, err = e.getSplitIdxPhysicalKeysFromBound(p.ID, keys)
 			if err != nil {
 				return nil, err
 			}
-			idxKeys = append(idxKeys, idxKey)
 		}
-		return idxKeys, nil
+		return keys, nil
 	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, e.num*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys, err = e.getSplitIdxPhysicalKeysFromBound(pid, keys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64, keys [][]byte) ([][]byte, error) {
+	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
+	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
 	lowerIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.lower, math.MinInt64, nil)
 	if err != nil {
@@ -158,6 +236,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
 		lowerStr, err1 := datumSliceToString(e.lower)
 		upperStr, err2 := datumSliceToString(e.upper)
@@ -166,7 +245,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		}
 		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
 	}
-	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
+	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
 
 // getValuesList is used to get `num` values between lower and upper value.
@@ -245,12 +324,13 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 type SplitTableRegionExec struct {
 	baseExecutor
 
-	tableInfo  *model.TableInfo
-	lower      types.Datum
-	upper      types.Datum
-	num        int
-	valueLists [][]types.Datum
-	splitKeys  [][]byte
+	tableInfo      *model.TableInfo
+	partitionNames []model.CIStr
+	lower          types.Datum
+	upper          types.Datum
+	num            int
+	valueLists     [][]types.Datum
+	splitKeys      [][]byte
 
 	done bool
 	splitRegionResult
@@ -360,63 +440,130 @@ func isCtxDone(ctx context.Context) bool {
 	}
 }
 
-var minRegionStepValue = uint64(1000)
+var minRegionStepValue = int64(1000)
 
 func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
-	var keys [][]byte
-	if e.num > 0 {
-		keys = make([][]byte, 0, e.num)
-	} else {
-		keys = make([][]byte, 0, len(e.valueLists))
-	}
-	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
 	if len(e.valueLists) > 0 {
-		for _, v := range e.valueLists {
-			key := tablecodec.EncodeRecordKey(recordPrefix, v[0].GetInt64())
-			keys = append(keys, key)
+		return e.getSplitTableKeysFromValueList()
+	}
+
+	return e.getSplitTableKeysFromBound()
+}
+
+func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error) {
+	var keys [][]byte
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, len(e.valueLists))
+		return e.getSplitTablePhysicalKeysFromValueList(e.tableInfo.ID, keys), nil
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, len(e.valueLists)*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys = e.getSplitTablePhysicalKeysFromValueList(p.ID, keys)
 		}
 		return keys, nil
 	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, len(e.valueLists)*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys = e.getSplitTablePhysicalKeysFromValueList(pid, keys)
+	}
+	return keys, nil
+}
+
+func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID int64, keys [][]byte) [][]byte {
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
+	for _, v := range e.valueLists {
+		key := tablecodec.EncodeRecordKey(recordPrefix, v[0].GetInt64())
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func (e *SplitTableRegionExec) getSplitTableKeysFromBound() ([][]byte, error) {
+	low, step, err := e.calculateBoundValue()
+	if err != nil {
+		return nil, err
+	}
+	var keys [][]byte
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		keys = make([][]byte, 0, e.num)
+		return e.getSplitTablePhysicalKeysFromBound(e.tableInfo.ID, low, step, keys), nil
+	}
+
+	// Split for all table partitions.
+	if len(e.partitionNames) == 0 {
+		keys = make([][]byte, 0, e.num*len(pi.Definitions))
+		for _, p := range pi.Definitions {
+			keys = e.getSplitTablePhysicalKeysFromBound(p.ID, low, step, keys)
+		}
+		return keys, nil
+	}
+
+	// Split for specified table partitions.
+	keys = make([][]byte, 0, e.num*len(e.partitionNames))
+	for _, name := range e.partitionNames {
+		pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
+		if err != nil {
+			return nil, err
+		}
+		keys = e.getSplitTablePhysicalKeysFromBound(pid, low, step, keys)
+	}
+	return keys, nil
+}
+
+func (e *SplitTableRegionExec) calculateBoundValue() (lowerValue int64, step int64, err error) {
 	isUnsigned := false
 	if e.tableInfo.PKIsHandle {
 		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
 			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
 		}
 	}
-	var step uint64
-	var lowerValue int64
 	if isUnsigned {
 		lowerRecordID := e.lower.GetUint64()
 		upperRecordID := e.upper.GetUint64()
 		if upperRecordID <= lowerRecordID {
-			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
-		step = (upperRecordID - lowerRecordID) / uint64(e.num)
+		step = int64(uint64(upperRecordID-lowerRecordID) / uint64(e.num))
 		lowerValue = int64(lowerRecordID)
 	} else {
 		lowerRecordID := e.lower.GetInt64()
 		upperRecordID := e.upper.GetInt64()
 		if upperRecordID <= lowerRecordID {
-			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
-		step = uint64(upperRecordID-lowerRecordID) / uint64(e.num)
+		step = (upperRecordID - lowerRecordID) / int64(e.num)
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
+		return 0, 0, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
+	return lowerValue, step, nil
+}
 
+func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID, low, step int64, keys [][]byte) [][]byte {
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	// Split a separate region for index.
 	if len(e.tableInfo.Indices) > 0 {
 		keys = append(keys, recordPrefix)
 	}
-	recordID := lowerValue
+	recordID := low
 	for i := 1; i < e.num; i++ {
-		recordID += int64(step)
+		recordID += step
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		keys = append(keys, key)
 	}
-	return keys, nil
+	return keys
 }
 
 // RegionMeta contains a region's peer detail
