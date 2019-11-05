@@ -541,39 +541,11 @@ func (b *builtinSubDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *
 }
 
 func (b *builtinQuarterSig) vectorized() bool {
-	return true
+	return false
 }
 
 func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
-	}
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf)
-	i64s := result.Int64s()
-	ds := buf.Times()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
-		i64s[i] = int64((ds[i].Time.Month() + 2) / 3)
-	}
-	return nil
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinWeekWithModeSig) vectorized() bool {
