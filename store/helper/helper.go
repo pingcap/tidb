@@ -638,12 +638,14 @@ type StoreStat struct {
 
 // StoreBaseStat stores the basic information of one store.
 type StoreBaseStat struct {
-	ID        int64        `json:"id"`
-	Address   string       `json:"address"`
-	State     int64        `json:"state"`
-	StateName string       `json:"state_name"`
-	Version   string       `json:"version"`
-	Labels    []StoreLabel `json:"labels"`
+	ID            int64        `json:"id"`
+	Address       string       `json:"address"`
+	State         int64        `json:"state"`
+	StateName     string       `json:"state_name"`
+	Version       string       `json:"version"`
+	Labels        []StoreLabel `json:"labels"`
+	StatusAddress string       `json:"status_address"`
+	GitHash       string       `json:"git_hash"`
 }
 
 // StoreLabel stores the information of one store label.
