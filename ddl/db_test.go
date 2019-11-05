@@ -1835,7 +1835,15 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	got := result.Rows()[0][1]
 	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
 
+	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
+	s.tk.MustExec("use test2")
+	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
+	result = s.tk.MustQuery("show create table dbCollateTest")
+	got = result.Rows()[0][1]
+	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+
 	// test for enum column
+	s.tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('e','E'));"
