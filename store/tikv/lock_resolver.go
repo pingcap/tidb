@@ -129,11 +129,12 @@ var ttlFactor = 6000
 
 // Lock represents a lock from tikv server.
 type Lock struct {
-	Key     []byte
-	Primary []byte
-	TxnID   uint64
-	TTL     uint64
-	TxnSize uint64
+	Key      []byte
+	Primary  []byte
+	TxnID    uint64
+	TTL      uint64
+	TxnSize  uint64
+	LockType kvrpcpb.Op
 }
 
 func (l *Lock) String() string {
@@ -143,11 +144,12 @@ func (l *Lock) String() string {
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	return &Lock{
-		Key:     l.GetKey(),
-		Primary: l.GetPrimaryLock(),
-		TxnID:   l.GetLockVersion(),
-		TTL:     l.GetLockTtl(),
-		TxnSize: l.GetTxnSize(),
+		Key:      l.GetKey(),
+		Primary:  l.GetPrimaryLock(),
+		TxnID:    l.GetLockVersion(),
+		TTL:      l.GetLockTtl(),
+		TxnSize:  l.GetTxnSize(),
+		LockType: l.LockType,
 	}
 }
 
