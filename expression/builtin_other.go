@@ -79,7 +79,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
-		sig = &builtinInIntSig{baseBuiltinFunc: bf}
+		inInt := builtinInIntSig{baseBuiltinFunc: bf}
+		err := inInt.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inInt, err
+		}
+		sig = &inInt
 		sig.setPbCode(tipb.ScalarFuncSig_InInt)
 	case types.ETString:
 		sig = &builtinInStringSig{baseBuiltinFunc: bf}
@@ -106,6 +111,31 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseBuiltinFunc
+	hashSet map[int64]bool
+	hasNull bool
+	varArgs []Expression
+}
+
+func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.varArgs = make([]Expression, 1)
+	b.varArgs[0] = b.args[0]
+	b.hashSet = make(map[int64]bool, len(b.args)-1)
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.hasNull = true
+				continue
+			}
+			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
+		} else {
+			b.varArgs = append(b.varArgs, b.args[i])
+		}
+	}
+	return nil
 }
 
 func (b *builtinInIntSig) Clone() builtinFunc {
@@ -115,13 +145,30 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.varArgs[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+
+	if isUnsigned, ok := b.hashSet[arg0]; ok {
+		if isUnsigned0 && isUnsigned {
+			return 1, false, nil
+		} else if !isUnsigned0 && !isUnsigned {
+			return 1, false, nil
+		} else if !isUnsigned0 && isUnsigned {
+			if arg0 >= 0 {
+				return 1, false, nil
+			}
+		} else {
+			if arg0 >= 0 {
+				return 1, false, nil
+			}
+		}
+	}
+
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range b.varArgs[1:] {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -149,7 +196,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 			}
 		}
 	}
-	return 0, hasNull, nil
+	return 0, hasNull || b.hasNull, nil
 }
 
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
