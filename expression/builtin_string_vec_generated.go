@@ -16,7 +16,6 @@
 package expression
 
 import (
-    "fmt"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -42,19 +41,17 @@ func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	arg0 := buf0.Int64s()
 
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0)
 	i64s := result.Int64s()
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEvalInt(b.ctx, input, buf1); err != nil {
 			return err
 		}
+		buf1.MergeNulls(buf0)
 
-		fmt.Println("------------")
-		fmt.Println(arg[j])
 		arg1 := buf1.Int64s()
 
 		for j := 0; j < n; j++ {
-			if result.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 
@@ -92,17 +89,17 @@ func (b *builtinFieldRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	arg0 := buf0.Float64s()
 
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0)
 	i64s := result.Int64s()
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEvalReal(b.ctx, input, buf1); err != nil {
 			return err
 		}
+		buf1.MergeNulls(buf0)
 
 		arg1 := buf1.Float64s()
 
 		for j := 0; j < n; j++ {
-			if result.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 
@@ -138,15 +135,15 @@ func (b *builtinFieldStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	defer b.bufAllocator.put(buf1)
 
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0)
 	i64s := result.Int64s()
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEvalString(b.ctx, input, buf1); err != nil {
 			return err
 		}
+		buf1.MergeNulls(buf0)
 
 		for j := 0; j < n; j++ {
-			if result.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 

@@ -75,17 +75,17 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *
 	arg0 := buf0.{{ .TypeNameInColumn }}s()
 {{ end }}
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0)
 	i64s := result.Int64s()
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEval{{ .TypeName }}(b.ctx, input, buf1); err != nil {
 			return err
 		}
+		buf1.MergeNulls(buf0)
 {{ if .Fixed }}
 		arg1 := buf1.{{ .TypeNameInColumn }}s()
 {{ end }}
 		for j := 0; j < n; j++ {
-			if result.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 {{ if .Fixed }}
