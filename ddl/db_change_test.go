@@ -112,7 +112,8 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 		}
 		if job.SchemaState != model.StatePublic {
 			var result *testkit.Result
-			if job.Query[12:14] == "t2" {
+			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+			if job.TableID == tbl2.Meta().ID {
 				result = tk.MustQuery("show create table t2")
 			} else {
 				result = tk.MustQuery("show create table t")
