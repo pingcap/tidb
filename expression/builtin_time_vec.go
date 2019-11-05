@@ -874,6 +874,7 @@ func (b *builtinPeriodAddSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 
+		// this is non-vectorized implementation
 		if !validPeriod(i64s[i]) {
 			return errIncorrectArgs.GenWithStackByArgs("period_add")
 		}
