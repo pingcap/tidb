@@ -106,3 +106,11 @@ func (s *testSuite) TestBatchIndexJoinUnionScan(c *C) {
 	))
 	tk.MustExec("rollback")
 }
+
+func (s *testSuite) TestIndexJoinPartitionTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	tk.MustExec("insert into t values(1, 27, 2)")
+	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
+}

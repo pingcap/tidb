@@ -72,13 +72,6 @@ type StatementContext struct {
 	// prefix in a strict way, only extract 0-9 and (+ or - in first bit).
 	CastStrToIntStrict bool
 
-	// StartTime is the query start time.
-	StartTime time.Time
-	// DurationParse is the duration of pasing SQL string to AST.
-	DurationParse time.Duration
-	// DurationCompile is the duration of compiling AST to execution plan.
-	DurationCompile time.Duration
-
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -309,9 +302,6 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
-	sc.StartTime = time.Now()
-	sc.DurationCompile = time.Duration(0)
-	sc.DurationParse = time.Duration(0)
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

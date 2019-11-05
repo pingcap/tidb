@@ -51,6 +51,20 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.cacheable = false
 			return in, true
 		}
+	case *ast.OrderByClause:
+		for _, item := range node.Items {
+			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
+				checker.cacheable = false
+				return in, true
+			}
+		}
+	case *ast.GroupByClause:
+		for _, item := range node.Items {
+			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
+				checker.cacheable = false
+				return in, true
+			}
+		}
 	case *ast.Limit:
 		if node.Count != nil {
 			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {

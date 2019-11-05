@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"golang.org/x/net/context"
@@ -223,7 +224,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue)
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {

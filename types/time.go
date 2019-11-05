@@ -2175,6 +2175,11 @@ func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) boo
 		return true
 	}
 
+	if len(date) == 0 {
+		ctx[token] = 0
+		return true
+	}
+
 	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
 		return false
@@ -2289,6 +2294,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		"%S": {},
 		"%k": {},
 		"%l": {},
+		"%f": {},
 	}
 	dateTokens := map[string]struct{}{
 		"%y": {},

@@ -366,3 +366,54 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 	}
 	return "insert into t values " + strings.Join(placeholders, ","), params
 }
+
+func (s *testSuite) TestPreparedIssue8153(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		var err error
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int)")
+		tk.MustExec("insert into t (a, b) values (1,3), (2,2), (3,1)")
+
+		tk.MustExec(`prepare stmt from 'select * from t order by ? asc'`)
+		r := tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 3", "2 2", "3 1"))
+
+		tk.MustExec(`set @param = 1`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 3", "2 2", "3 1"))
+
+		tk.MustExec(`set @param = 2`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("3 1", "2 2", "1 3"))
+
+		tk.MustExec(`set @param = 3`)
+		_, err = tk.Exec(`execute stmt using @param;`)
+		c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '?' in 'order clause'")
+
+		tk.MustExec(`set @param = '##'`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 3", "2 2", "3 1"))
+
+		tk.MustExec("insert into t (a, b) values (1,1), (1,2), (2,1), (2,3), (3,2), (3,3)")
+		tk.MustExec(`prepare stmt from 'select ?, sum(a) from t group by ?'`)
+
+		tk.MustExec(`set @a=1,@b=1`)
+		r = tk.MustQuery(`execute stmt using @a,@b;`)
+		r.Check(testkit.Rows("1 18"))
+
+		tk.MustExec(`set @a=1,@b=2`)
+		_, err = tk.Exec(`execute stmt using @a,@b;`)
+		c.Assert(err.Error(), Equals, "[planner:1056]Can't group on 'sum(a)'")
+	}
+}

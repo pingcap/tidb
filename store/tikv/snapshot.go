@@ -300,13 +300,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 		return NewLock(locked), nil
 	}
 	if keyErr.Conflict != nil {
-		err := errors.New(conflictToString(keyErr.Conflict))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return nil, newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
 		logutil.Logger(context.Background()).Debug("error", zap.Error(err))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return nil, errors.Annotate(err, kv.TxnRetryableMark)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
@@ -316,16 +315,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
-func conflictToString(conflict *pb.WriteConflict) string {
+func newWriteConflictError(conflict *pb.WriteConflict) error {
 	var buf bytes.Buffer
-	_, err := fmt.Fprintf(&buf, "WriteConflict: txnStartTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
-	if err != nil {
-		logutil.Logger(context.Background()).Error("error", zap.Error(err))
-	}
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return buf.String()
+	return kv.ErrWriteConflict.GenWithStackByArgs(conflict.StartTs, conflict.ConflictTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

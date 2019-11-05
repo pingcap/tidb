@@ -181,3 +181,6 @@ explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
+
+# test sleep in subquery
+explain select 1 from (select sleep(1)) t;

@@ -542,7 +542,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		logutil.Logger(context.Background()).Debug("2PC failed commit primary key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Annotate(err, txnRetryableMark)
+		return errors.Annotate(err, kv.TxnRetryableMark)
 	}
 
 	c.mu.Lock()
@@ -685,7 +685,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return errors.Annotate(err, kv.TxnRetryableMark)
 	}
 
 	start = time.Now()

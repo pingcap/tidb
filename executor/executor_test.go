@@ -85,6 +85,7 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
+var _ = Suite(&testFlushSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1144,7 +1145,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b decimal(6, 3))")
 	tk.MustExec("insert into t values(1, 1.000)")
-	tk.MustQuery("select count(distinct a) from (select a from t union select b from t) tmp;").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {

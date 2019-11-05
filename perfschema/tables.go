@@ -122,8 +122,8 @@ func (vt *perfSchemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData
 }
 
 // AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
-func (vt *perfSchemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
+func (vt *perfSchemaTable) AllocAutoIncrementValue(ctx sessionctx.Context, n int) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
 }
 
 // AllocHandle implements table.Table AllocHandle interface.

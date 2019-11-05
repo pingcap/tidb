@@ -652,12 +652,26 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
-	signedDeny(c, mysql.TypeYear, 123, "<nil>")
-	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
+	signedDeny(c, mysql.TypeYear, 123, "0")
+	signedDeny(c, mysql.TypeYear, 3000, "0")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
 	signedAccept(c, mysql.TypeYear, "abc", "0")
 	signedAccept(c, mysql.TypeYear, "00abc", "2000")
 	signedAccept(c, mysql.TypeYear, "0019", "2019")
+	signedAccept(c, mysql.TypeYear, 2155, "2155")
+	signedAccept(c, mysql.TypeYear, 2155.123, "2155")
+	signedDeny(c, mysql.TypeYear, 2156, "0")
+	signedDeny(c, mysql.TypeYear, 123.123, "0")
+	signedDeny(c, mysql.TypeYear, 1900, "0")
+	signedAccept(c, mysql.TypeYear, 1901, "1901")
+	signedAccept(c, mysql.TypeYear, 1900.567, "1901")
+	signedDeny(c, mysql.TypeYear, 1900.456, "0")
+	signedAccept(c, mysql.TypeYear, 1, "2001")
+	signedAccept(c, mysql.TypeYear, 69, "2069")
+	signedAccept(c, mysql.TypeYear, 70, "1970")
+	signedAccept(c, mysql.TypeYear, 99, "1999")
+	signedDeny(c, mysql.TypeYear, 100, "0")
+	signedDeny(c, mysql.TypeYear, "99999999999999999999999999999999999", "0")
 
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")
@@ -719,22 +733,24 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	tests := []struct {
 		origin  string
 		valid   string
+		signed  bool
 		warning bool
 	}{
-		{"100", "100", false},
-		{"-100", "-100", false},
-		{"1abc", "1", true},
-		{"-1-1", "-1", true},
-		{"+1+1", "+1", true},
-		{"123..34", "123", true},
-		{"123.23E-10", "123", true},
-		{"1.1e1.3", "1", true},
-		{"11e1.3", "11", true},
-		{"1.", "1", true},
-		{".1", "0", true},
-		{"", "0", true},
-		{"123e+", "123", true},
-		{"123de", "123", true},
+		{"100", "100", true, false},
+		{"-100", "-100", true, false},
+		{"9223372036854775808", "9223372036854775808", false, false},
+		{"1abc", "1", true, true},
+		{"-1-1", "-1", true, true},
+		{"+1+1", "+1", true, true},
+		{"123..34", "123", true, true},
+		{"123.23E-10", "123", true, true},
+		{"1.1e1.3", "1", true, true},
+		{"11e1.3", "11", true, true},
+		{"1.", "1", true, true},
+		{".1", "0", true, true},
+		{"", "0", true, true},
+		{"123e+", "123", true, true},
+		{"123de", "123", true, true},
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.TruncateAsWarning = true
@@ -744,7 +760,11 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
 		c.Assert(err, IsNil)
 		c.Assert(prefix, Equals, tt.valid)
-		_, err = strconv.ParseInt(prefix, 10, 64)
+		if tt.signed {
+			_, err = strconv.ParseInt(prefix, 10, 64)
+		} else {
+			_, err = strconv.ParseUint(prefix, 10, 64)
+		}
 		c.Assert(err, IsNil)
 		warnings := sc.GetWarnings()
 		if tt.warning {

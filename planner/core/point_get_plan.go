@@ -153,8 +153,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
 	} else if selStmt.Limit != nil {
-		sc := ctx.GetSessionVars().StmtCtx
-		count, offset, err := extractLimitCountOffset(sc, selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}

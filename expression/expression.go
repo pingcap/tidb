@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -276,7 +277,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -376,4 +377,25 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
+}
+
+// wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
+// type int, otherwise, returns `arg` directly.
+// The `keepNull` controls what the istrue function will return when `arg` is null:
+// 1. keepNull is true and arg is null, the istrue function returns null.
+// 2. keepNull is false and arg is null, the istrue function returns 0.
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+	if arg.GetType().EvalType() == types.ETInt {
+		return arg, nil
+	}
+	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	if err != nil {
+		return nil, err
+	}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}, nil
 }

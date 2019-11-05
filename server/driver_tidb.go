@@ -379,6 +379,13 @@ func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
+func (trs *tidbResultSet) OnFetchReturned() {
+	if cl, ok := trs.recordSet.(fetchNotifier); ok {
+		cl.OnFetchReturned()
+	}
+}
+
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()

@@ -189,7 +189,13 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(errors.Trace(err))
 		}
-		logutil.Logger(context.Background()).Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		if name != variable.AutocommitVar {
+			logutil.Logger(context.Background()).Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		} else {
+			// Some applications will set `autocommit` variable before query.
+			// This will print too many unnecessary log info.
+			logutil.Logger(context.Background()).Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		}
 	}
 
 	return nil

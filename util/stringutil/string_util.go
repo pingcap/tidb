@@ -14,6 +14,7 @@
 package stringutil
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -239,4 +240,28 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 // Copy deep copies a string.
 func Copy(src string) string {
 	return string(hack.Slice(src))
+}
+
+// StringerFunc defines string func implement fmt.Stringer.
+type StringerFunc func() string
+
+// String implements fmt.Stringer
+func (l StringerFunc) String() string {
+	return l()
+}
+
+// MemoizeStr returns memoized version of stringFunc.
+func MemoizeStr(l func() string) fmt.Stringer {
+	return StringerFunc(func() string {
+		return l()
+	})
+}
+
+// StringerStr defines a alias to normal string.
+// implement fmt.Stringer
+type StringerStr string
+
+// String implements fmt.Stringer
+func (i StringerStr) String() string {
+	return string(i)
 }

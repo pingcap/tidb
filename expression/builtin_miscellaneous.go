@@ -138,7 +138,6 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 				finish = true
 			}
 		default:
-			fmt.Println("================")
 			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 				return 1, false, nil
 			}
