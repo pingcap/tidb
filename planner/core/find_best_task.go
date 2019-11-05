@@ -542,7 +542,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 }
 
 // TODO: refactor this part, we should not call Clone in fact.
-func (is *PhysicalIndexScan) initSchema( idx *model.IndexInfo, isDoubleRead bool) {
+func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)

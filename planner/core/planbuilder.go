@@ -700,8 +700,8 @@ func (b *planBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl tab
 		ts.isPartition = true
 	}
 	cop := &copTask{
-		indexPlan:   is,
-		tablePlan:   ts,
+		indexPlan: is,
+		tablePlan: ts,
 	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(idx, true)
