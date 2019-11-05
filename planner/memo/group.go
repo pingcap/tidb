@@ -152,8 +152,8 @@ func (g *Group) Delete(e *GroupExpr) {
 		if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
 			g.FirstExpr[operand] = nextElem
 		} else {
-			// It is the only one of the Operand in this Group, so we should delete it
-			// from the FirstExpr.
+			// There is no more GroupExpr of the Operand, so we should
+			// delete the FirstExpr of this Operand.
 			delete(g.FirstExpr, operand)
 		}
 	}
