@@ -336,8 +336,8 @@ type PushSelDownAggregation struct {
 func (r *PushSelDownAggregation) GetPattern() *memo.Pattern {
 	return memo.BuildPattern(
 		memo.OperandSelection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandAggregation, memo.EngineTiDBOnly),
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandAggregation, memo.EngineAll),
 	)
 }
 
