@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -112,7 +113,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	} else if len(p.Ranges) > 0 {
 		if p.StoreType == kv.TiFlash {
 			// TiFlash table always use full range scan for each region,
-			// the Ranges here is used to prune cop task
+			// the ranges in p.Ranges is used to prune cop task
 			fmt.Fprintf(buffer, ", range:[-inf,+inf]")
 		} else {
 			fmt.Fprint(buffer, ", range:")
