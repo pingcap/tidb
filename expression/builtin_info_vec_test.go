@@ -38,7 +38,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.RowCount:       {},
 	ast.CurrentRole:    {},
 	ast.TiDBIsDDLOwner: {},
-	ast.ConnectionID:   {},
+	ast.ConnectionID: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
 	ast.LastInsertId: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
