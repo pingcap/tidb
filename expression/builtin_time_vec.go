@@ -596,7 +596,7 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Microseconds())
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).MicroSecond())
 	}
 	return nil
 }
