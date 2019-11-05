@@ -98,11 +98,21 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var res int64
+	if b.ctx.DDLOwnerChecker().IsOwner() {
+		res = 1
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinFoundRowsSig) vectorized() bool {
