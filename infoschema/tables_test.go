@@ -15,13 +15,17 @@ package infoschema_test
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -33,8 +37,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -567,6 +574,66 @@ func (s *testTableSuite) TestForServersInfo(c *C) {
 func (s *testTableSuite) TestColumnStatistics(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
+}
+
+type mockStore struct {
+	tikv.Storage
+	host string
+}
+
+func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
+func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
+
+func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.QueryToErr("select * from information_schema.tidb_cluster_info")
+	c.Assert(err, NotNil)
+	// mocktikv cannot retrieve cluster info
+	c.Assert(err.Error(), Equals, "pd unavailable")
+
+	// mock PD http server
+	router := mux.NewRouter()
+	server := httptest.NewServer(router)
+	defer server.Close()
+	// mock store stats stat
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
+		return &helper.StoresStat{
+			Count: 1,
+			Stores: []helper.StoreStat{
+				{
+					Store: helper.StoreBaseStat{
+						ID:            1,
+						Address:       "127.0.0.1:20160",
+						State:         0,
+						StateName:     "Up",
+						Version:       "4.0.0-alpha",
+						StatusAddress: "127.0.0.1:20160",
+						GitHash:       "mock-tikv-githash",
+					},
+				},
+			},
+		}, nil
+	}))
+	// mock PD API
+	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+		return struct {
+			GitHash string `json:"git_hash"`
+		}{GitHash: "mock-pd-githash"}, nil
+	}))
+
+	pdAddr := strings.TrimPrefix(server.URL, "http://")
+	store := &mockStore{
+		s.store.(tikv.Storage),
+		pdAddr,
+	}
+	tk = testkit.NewTestKit(c, store)
+	tk.MustQuery("select * from information_schema.tidb_cluster_info").Check(testkit.Rows(
+		"1 tidb tidb-0 :4000 :10080 5.7.25-TiDB-None None",
+		"2 pd pd-0 "+pdAddr+" "+pdAddr+" 4.0.0-alpha mock-pd-githash",
+		"3 tikv tikv-0 127.0.0.1:20160 127.0.0.1:20160 4.0.0-alpha mock-tikv-githash",
+	))
 }
 
 func (s *testTableSuite) TestReloadDropDatabase(c *C) {

@@ -302,11 +302,44 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastDurationAsIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	var duration types.Duration
+	ds := buf.GoDurations()
+	fsp := int8(b.args[0].GetType().Decimal)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		duration.Duration = ds[i]
+		duration.Fsp = fsp
+		dur, err := duration.RoundFrac(types.DefaultFsp)
+		if err != nil {
+			return err
+		}
+		i64s[i], err = dur.ToNumber().ToInt()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+
 }
 
 func (b *builtinCastIntAsTimeSig) vectorized() bool {
@@ -1237,11 +1270,43 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastJSONAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastJSONAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	ctx := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	var dur types.Duration
+	ds := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		s, err := buf.GetJSON(i).Unquote()
+		if err != nil {
+			return nil
+		}
+		dur, err = types.ParseDuration(ctx, s, int8(b.tp.Decimal))
+		if types.ErrTruncatedWrongVal.Equal(err) {
+			err = ctx.HandleTruncate(err)
+		}
+		if err != nil {
+			return err
+		}
+		ds[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinCastDecimalAsJSONSig) vectorized() bool {
