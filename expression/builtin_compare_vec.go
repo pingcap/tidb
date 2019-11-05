@@ -347,11 +347,38 @@ func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinCoalesceRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalReal(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		v := buf.Float64s()
+		for i := 0; i < n; i++ {
+			if !result.IsNull(i) {
+				continue
+			}
+			if !buf.IsNull(i) {
+				f64s[i] = v[i]
+			}
+		}
+		result.LogicalORNulls(buf)
+	}
+	return nil
 }
 
 func (b *builtinCoalesceStringSig) vectorized() bool {

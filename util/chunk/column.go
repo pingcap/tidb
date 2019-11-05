@@ -678,3 +678,21 @@ func (c *Column) MergeNulls(cols ...*Column) {
 		}
 	}
 }
+
+// LogicalORNulls merges these columns' null bitmaps
+// by using logical OR
+func (c *Column) LogicalORNulls(cols ...*Column) {
+	if !c.isFixed() {
+		panic("result column should be fixed-length type")
+	}
+	for _, col := range cols {
+		if c.length != col.length {
+			panic("should ensure all columns have the same length")
+		}
+	}
+	for _, col := range cols {
+		for i := range c.nullBitmap {
+			c.nullBitmap[i] |= col.nullBitmap[i]
+		}
+	}
+}
