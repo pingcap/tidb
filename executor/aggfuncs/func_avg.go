@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -153,7 +154,7 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src Par
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	valSet set.DecimalSet
+	valSet set.StringSet
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -162,7 +163,7 @@ type avgOriginal4DistinctDecimal struct {
 
 func (e *avgOriginal4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := &partialResult4AvgDistinctDecimal{
-		valSet: set.NewDecimalSet(),
+		valSet: set.NewStringSet(),
 	}
 	return PartialResult(p)
 }
@@ -171,7 +172,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
-	p.valSet = set.NewDecimalSet()
+	p.valSet = set.NewStringSet()
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -181,10 +182,18 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.Exist(input) {
+		if isNull {
 			continue
 		}
-
+		hash, err := input.ToHashKey()
+		if err != nil {
+			return err
+		}
+		decStr := string(hack.String(hash))
+		if p.valSet.Exist(decStr) {
+			continue
+		}
+		p.valSet.Insert(decStr)
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
@@ -192,7 +201,6 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		}
 		p.sum = *newSum
 		p.count++
-		p.valSet.Insert(input)
 	}
 	return nil
 }

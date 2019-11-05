@@ -386,3 +386,8 @@ Projection_7	10000.00	root	6_aux_0
   │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_12	10000.00	root	data:TableScan_11
     └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1 from (select sleep(1)) t;
+id	count	task	operator info
+Projection_4	1.00	root	1
+└─Projection_5	1.00	root	sleep(1)
+  └─TableDual_6	1.00	root	rows:1
