@@ -1,0 +1,21 @@
+language: go
+
+go_import_path: github.com/pingcap/failpoint
+
+go:
+  - "1.12.x"
+
+env:
+    - TEST_SUITE="build test"
+    - TEST_SUITE="cover upload-cover"
+
+# Run coverage tests.
+matrix:
+  fast_finish: true
+  allow_failures:
+    - go: "1.12.x"
+      env: TEST_SUITE="cover upload-cover"
+
+script:
+  - make $TEST_SUITE
+

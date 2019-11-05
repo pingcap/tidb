@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package binlog;
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+
+// Interfaces exported by Pump.
+service Pump {
+    // Writes a binlog to the local file on the pump machine.
+    // A response with an empty errmsg is returned if the binlog is written successfully.
+    rpc WriteBinlog(WriteBinlogReq) returns (WriteBinlogResp) {}
+
+    // Sends binlog stream from a given location.
+    rpc PullBinlogs(PullBinlogReq) returns (stream PullBinlogResp) {}
+}
+
+message WriteBinlogReq {
+    // The identifier of tidb-cluster, which is given at tidb startup.
+    // Must specify the clusterID for each binlog to write.
+    uint64 clusterID = 1;
+
+    // Payload bytes can be decoded back to binlog struct by the protobuf.
+    bytes payload = 2;
+}
+
+message WriteBinlogResp {
+    // An empty errmsg returned means a successful write.
+    // Otherwise return the error description.
+    string errmsg = 1;
+}
+
+message PullBinlogReq {
+    // Specifies which clusterID of binlog to pull.
+    uint64 clusterID = 1;
+
+    // The position from which the binlog will be sent.
+    Pos startFrom  = 2 [(gogoproto.nullable) = false];
+}
+
+message PullBinlogResp {
+    // The binlog entity that send in a stream
+    Entity entity = 1 [(gogoproto.nullable) = false];
+}
+
+// Binlogs are stored in a number of sequential files in a directory.
+// The Pos describes the position of a binlog.
+message Pos {
+    // The suffix of binlog file, like .000001 .000002
+    uint64 suffix = 1;
+
+    // The binlog offset in a file.
+    int64 offset = 2;
+}
+
+// Meta saves the binlog's meta information.
+message Meta {
+    // The binlog's start ts, used in Prewrite, Commit and Rollback type binlog.
+    int64 startTs = 1;
+
+    // The binlog's commit ts, used only in Commit type binlog.
+    int64 commitTs = 2;
+}
+
+message Entity {
+    // The position of the binlog entity.
+    Pos pos = 1 [(gogoproto.nullable) = false];
+
+    // The payload of binlog entity.
+    bytes payload = 2;
+
+    // checksum of binlog payload.
+    bytes checksum = 3;
+
+    // The meta information of the binlog entity.
+    Meta meta = 4 [(gogoproto.nullable) = false];
+}

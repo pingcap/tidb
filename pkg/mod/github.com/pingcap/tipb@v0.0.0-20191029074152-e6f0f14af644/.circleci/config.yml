@@ -1,0 +1,51 @@
+version: 2
+jobs:
+  go:
+    docker:
+      - image: circleci/golang:stretch
+    environment:
+      PROTOC_VERSION: "3.5.1"
+    working_directory: /go/src/github.com/pingcap/tipb
+    steps:
+      - checkout
+      - run:
+          name: Download dependence
+          # Define variables that need interpolation
+          # As CircleCI's each `run` declaration starts a new shell, we need to persist them to $BASH_ENV
+          command: |
+            echo 'export PATH=$HOME/.local/bin:$PATH' >> $BASH_ENV
+            curl -OL https://github.com/google/protobuf/releases/download/v$PROTOC_VERSION/protoc-$PROTOC_VERSION-linux-x86_64.zip
+            unzip protoc-$PROTOC_VERSION-linux-x86_64.zip -d $HOME/.local
+            rm protoc-$PROTOC_VERSION-linux-x86_64.zip
+            go get -u github.com/gogo/protobuf/protoc-gen-gofast
+            cd $GOPATH/src/github.com/gogo/protobuf
+            git checkout v0.5
+            rm $GOPATH/bin/protoc-gen-gofast
+            go get github.com/gogo/protobuf/protoc-gen-gofast
+            go get golang.org/x/tools/cmd/goimports
+      - run:
+          name: Test Golang
+          command: make go binlog && git diff --exit-code
+          no_output_timeout: 1800s
+
+  rust:
+    docker:
+      - image: circleci/rust:stretch
+    environment:
+      RUST_TEST_THREADS: "1"
+      RUST_BACKTRACE: "1"
+      RUSTFLAGS: "-Dwarnings"
+    steps:
+      - checkout
+      # TODO: Run make rust and check whether it generates different contents.
+      - run:
+          name: Test Rust
+          command: cargo check && cargo check --features prost-codec --no-default-features
+          no_output_timeout: 1800s
+
+workflows:
+  version: 2
+  ci-test:
+      jobs:
+        - go
+        - rust

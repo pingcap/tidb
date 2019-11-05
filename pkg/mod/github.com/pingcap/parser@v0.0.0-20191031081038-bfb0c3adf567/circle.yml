@@ -1,0 +1,57 @@
+version: 2
+
+jobs:
+  build-ut:
+    docker:
+      - image: golang:1.13
+    working_directory: /go/src/github.com/pingcap/parser
+    steps:
+      - checkout
+      - run:
+          name: "Verify parser.go is up-to-date"
+          command: |
+            mv parser.go parser.go.committed
+            make parser
+            diff -u parser.go.committed parser.go
+      - run:
+          name: "Check code format"
+          command: make fmt
+      - run:
+          name: "Build & Test"
+          command: make test
+      - run:
+          name: "Upload coverage"
+          command: bash <(curl -s https://codecov.io/bash)
+  build-integration:
+    docker:
+    - image: golang:1.13
+    working_directory: /go/src/github.com/pingcap/parser
+    steps:
+    - checkout
+    - run:
+        name: "Verify parser.go is up-to-date"
+        command: |
+          mv parser.go parser.go.committed
+          make parser
+          diff -u parser.go.committed parser.go
+    - run:
+        name: "Check code format"
+        command: make fmt
+    - run:
+        name: "Build"
+        command: make
+    - run:
+        name: "Integration Test"
+        command: |
+          cd /go/src/github.com/pingcap/
+          git clone git@github.com:pingcap/tidb.git
+          cd tidb
+          rm go.sum
+          GO111MODULE=on go mod edit -replace github.com/pingcap/parser=github.com/${CIRCLE_PR_USERNAME:-$CIRCLE_PROJECT_USERNAME}/${CIRCLE_PR_REPONAME:-$CIRCLE_PROJECT_REPONAME}@$CIRCLE_SHA1
+          make gotest
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+    - build-ut
+    - build-integration

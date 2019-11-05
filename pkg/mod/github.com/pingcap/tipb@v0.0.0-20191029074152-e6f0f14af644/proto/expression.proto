@@ -1,0 +1,616 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+message FieldType {
+	optional int32 tp = 1      [(gogoproto.nullable) = false];
+	optional uint32 flag = 2   [(gogoproto.nullable) = false];
+	optional int32 flen = 3    [(gogoproto.nullable) = false];
+	optional int32 decimal = 4 [(gogoproto.nullable) = false];
+	optional int32 collate = 5 [(gogoproto.nullable) = false];
+	optional string charset = 6 [(gogoproto.nullable) = false];
+}
+
+enum ExprType {
+	/* Children count 0. */
+	// Values are encoded bytes.
+	Null = 0;
+	Int64 = 1;
+	Uint64 = 2;
+	Float32 = 3;
+	Float64 = 4;
+	String = 5;
+	Bytes = 6;
+
+	// Mysql specific types.
+	MysqlBit = 101;
+	MysqlDecimal = 102;
+	MysqlDuration = 103;
+	MysqlEnum = 104;
+	MysqlHex = 105;
+	MysqlSet = 106;
+	MysqlTime = 107;
+	MysqlJson = 108;
+
+	// Encoded value list.
+	ValueList = 151;
+
+	// Column reference. value is int64 column ID.
+	ColumnRef = 201;
+
+	/* Mysql functions, children count is function specific. */
+	// Aggregate functions.
+	Count = 3001;
+	Sum = 3002;
+	Avg = 3003;
+	Min = 3004;
+	Max = 3005;
+	First = 3006;
+	GroupConcat = 3007;
+	Agg_BitAnd = 3008;
+	Agg_BitOr = 3009;
+	Agg_BitXor = 3010;
+	Std = 3011;
+	Stddev = 3012;
+	StddevPop = 3013;
+	StddevSamp = 3014;
+	VarPop = 3015;
+	VarSamp = 3016;
+	Variance = 3017;
+	JsonArrayAgg = 3018;
+	JsonObjectAgg = 3019;
+
+	/* Scalar Function */
+	ScalarFunc = 10000;
+}
+
+enum ScalarFuncSig {
+	/* Casting */
+	CastIntAsInt = 0;
+	CastIntAsReal = 1;
+	CastIntAsString = 2;
+	CastIntAsDecimal = 3;
+	CastIntAsTime = 4;
+	CastIntAsDuration = 5;
+	CastIntAsJson = 6;
+
+	CastRealAsInt = 10;
+	CastRealAsReal = 11;
+	CastRealAsString = 12;
+	CastRealAsDecimal = 13;
+	CastRealAsTime = 14;
+	CastRealAsDuration = 15;
+	CastRealAsJson = 16;
+
+	CastDecimalAsInt = 20;
+	CastDecimalAsReal = 21;
+	CastDecimalAsString = 22;
+	CastDecimalAsDecimal = 23;
+	CastDecimalAsTime = 24;
+	CastDecimalAsDuration = 25;
+	CastDecimalAsJson = 26;
+
+	CastStringAsInt = 30;
+	CastStringAsReal = 31;
+	CastStringAsString = 32;
+	CastStringAsDecimal = 33;
+	CastStringAsTime = 34;
+	CastStringAsDuration = 35;
+	CastStringAsJson = 36;
+
+	CastTimeAsInt = 40;
+	CastTimeAsReal = 41;
+	CastTimeAsString = 42;
+	CastTimeAsDecimal = 43;
+	CastTimeAsTime = 44;
+	CastTimeAsDuration = 45;
+	CastTimeAsJson = 46;
+
+	CastDurationAsInt = 50;
+	CastDurationAsReal = 51;
+	CastDurationAsString = 52;
+	CastDurationAsDecimal = 53;
+	CastDurationAsTime = 54;
+	CastDurationAsDuration = 55;
+	CastDurationAsJson = 56;
+
+	CastJsonAsInt = 60;
+	CastJsonAsReal = 61;
+	CastJsonAsString = 62;
+	CastJsonAsDecimal = 63;
+	CastJsonAsTime = 64;
+	CastJsonAsDuration = 65;
+	CastJsonAsJson = 66;
+
+	/*compare*/
+	CoalesceInt = 4201;
+	CoalesceReal = 4202;
+	CoalesceDecimal = 4203;
+	CoalesceString = 4204;
+	CoalesceTime = 4205;
+	CoalesceDuration = 4206;
+	// unimplemented in tidb
+	CoalesceJson = 4207;
+	LTInt = 100;
+	LTReal = 101;
+	LTDecimal = 102;
+	LTString = 103;
+	LTTime = 104;
+	LTDuration = 105;
+	LTJson = 106;
+	LEInt = 110;
+	LEReal = 111;
+	LEDecimal = 112;
+	LEString = 113;
+	LETime = 114;
+	LEDuration = 115;
+	LEJson = 116;
+	GTInt = 120;
+	GTReal = 121;
+	GTDecimal = 122;
+	GTString = 123;
+	GTTime = 124;
+	GTDuration = 125;
+	GTJson = 126;
+	GreatestInt = 4215;
+	GreatestReal = 4216;
+	GreatestDecimal = 4217;
+	GreatestString = 4218;
+	GreatestTime = 4219;
+	LeastInt = 4220;
+	LeastReal = 4221;
+	LeastDecimal = 4222;
+	LeastString = 4223;
+	LeastTime = 4224;
+	IntervalInt = 4225;
+	IntervalReal = 4226;
+	GEInt = 130;
+	GEReal = 131;
+	GEDecimal = 132;
+	GEString = 133;
+	GETime = 134;
+	GEDuration = 135;
+	GEJson = 136;
+	EQInt = 140;
+	EQReal = 141;
+	EQDecimal = 142;
+	EQString = 143;
+	EQTime = 144;
+	EQDuration = 145;
+	EQJson = 146;
+	NEInt = 150;
+	NEReal = 151;
+	NEDecimal = 152;
+	NEString = 153;
+	NETime = 154;
+	NEDuration = 155;
+	NEJson = 156;
+	NullEQInt = 160;
+	NullEQReal = 161;
+	NullEQDecimal = 162;
+	NullEQString = 163;
+	NullEQTime = 164;
+	NullEQDuration = 165;
+	NullEQJson = 166;
+    
+	/*arithmetic*/
+	PlusReal = 200;
+	PlusDecimal = 201;
+	PlusInt = 203;
+	MinusReal = 204;
+	MinusDecimal = 205;
+	MinusInt = 207;
+	MultiplyReal = 208;
+	MultiplyDecimal = 209;
+	MultiplyInt = 210;
+	DivideReal = 211;
+	DivideDecimal = 212;
+	IntDivideInt = 213;
+	IntDivideDecimal = 214;
+	ModReal = 215;
+	ModDecimal = 216;
+	ModInt = 217;
+	MultiplyIntUnsigned = 218;
+	
+	/*math*/
+	AbsInt = 2101;
+	AbsUInt = 2102;
+	AbsReal = 2103;
+	AbsDecimal = 2104;
+	CeilIntToDec = 2105;
+	CeilIntToInt = 2106;
+	CeilDecToInt = 2107;
+	CeilDecToDec = 2108;
+	CeilReal = 2109;
+	FloorIntToDec = 2110;
+	FloorIntToInt = 2111;
+	FloorDecToInt = 2112;
+	FloorDecToDec = 2113;
+	FloorReal = 2114;
+	RoundReal = 2121;
+	RoundInt = 2122;
+	RoundDec = 2123;
+	RoundWithFracReal = 2124;
+	RoundWithFracInt = 2125;
+	RoundWithFracDec = 2126;
+	Log1Arg = 2131;
+	Log2Args = 2132;
+	Log2 = 2133;
+	Log10 = 2134;
+	Rand = 2135;
+	RandWithSeed = 2136;
+	Pow = 2137;
+	Conv = 2138;
+	CRC32 = 2139;
+	Sign = 2140;
+	Sqrt = 2141;
+	Acos = 2142;
+	Asin = 2143;
+	Atan1Arg = 2144;
+	Atan2Args = 2145;
+	Cos = 2146;
+	Cot = 2147;
+	Degrees = 2148;
+	Exp = 2149;
+	PI = 2150;
+	Radians = 2151;
+	Sin = 2152;
+	Tan = 2153;
+	TruncateInt = 2154;
+	TruncateReal = 2155;
+	TruncateDecimal = 2156;
+	
+	/*op*/
+	LogicalAnd = 3101;
+	LogicalOr = 3102;
+	LogicalXor = 3103;
+	UnaryNotInt = 3104;
+	UnaryNotDecimal = 3105;
+	UnaryNotReal = 3106;
+	UnaryMinusInt = 3108;
+	UnaryMinusReal = 3109;
+	UnaryMinusDecimal = 3110;
+	DecimalIsNull = 3111;
+	DurationIsNull = 3112;
+	RealIsNull = 3113;
+	StringIsNull = 3114;
+	TimeIsNull = 3115;
+	IntIsNull = 3116;
+	// unimplemented in tidb
+	JsonIsNull = 3117;
+	BitAndSig = 3118;
+	BitOrSig = 3119;
+	BitXorSig = 3120;
+	BitNegSig = 3121;
+	IntIsTrue = 3122;
+	RealIsTrue = 3123;
+	DecimalIsTrue = 3124;
+	IntIsFalse = 3125;
+	RealIsFalse = 3126;
+	DecimalIsFalse = 3127;
+	LeftShift = 3129;
+	RightShift = 3130;
+	
+	/*other*/
+	BitCount = 3128;
+	GetParamString = 3131;
+	GetVar = 3132;
+	RowSig = 3133;
+	SetVar = 3134;
+	ValuesDecimal = 3135;
+	ValuesDuration = 3136;
+	ValuesInt = 3137;
+	ValuesJSON = 3138;
+	ValuesReal = 3139;
+	ValuesString = 3140;
+	ValuesTime = 3141;
+	InInt = 4001;
+	InReal = 4002;
+	InDecimal = 4003;
+	InString = 4004;
+	InTime = 4005;
+	InDuration = 4006;
+	InJson = 4007;
+    
+	/*control*/
+	IfNullInt = 4101;
+	IfNullReal = 4102;
+	IfNullDecimal = 4103;
+	IfNullString = 4104;
+	IfNullTime = 4105;
+	IfNullDuration = 4106;
+	IfInt = 4107;
+	IfReal = 4108;
+	IfDecimal = 4109;
+	IfString = 4110;
+	IfTime = 4111;
+	IfDuration = 4112;
+	IfNullJson = 4113;
+	IfJson = 4114;
+	CaseWhenInt = 4208;
+	CaseWhenReal = 4209;
+	CaseWhenDecimal = 4210;
+	CaseWhenString = 4211;
+	CaseWhenTime = 4212;
+	CaseWhenDuration = 4213;
+	// unimplemented in tidb
+	CaseWhenJson = 4214;
+
+	/* encryption */
+	AesDecrypt = 4501;
+	AesEncrypt = 4502;
+	Compress = 4503;
+	MD5 = 4504;
+	Password = 4505;
+	RandomBytes = 4506;
+	SHA1 = 4507;
+	SHA2 = 4508;
+	Uncompress = 4509;
+	UncompressedLength = 4510;
+
+	/*info*/
+	Database = 4521;
+	FoundRows = 4522;
+	CurrentUser = 4523;
+	User = 4524;
+	ConnectionID = 4525;
+	LastInsertID = 4526;
+	LastInsertIDWithID = 4527;
+	Version = 4528;
+	TiDBVersion = 4529;
+	RowCount = 4530;
+
+	/*miscellaneous*/
+	Sleep = 4551;
+	Lock = 4552;
+	ReleaseLock = 4553;
+	DecimalAnyValue = 4554;
+	DurationAnyValue = 4555;
+	IntAnyValue = 4556;
+	JSONAnyValue = 4557;
+	RealAnyValue = 4558;
+	StringAnyValue = 4559;
+	TimeAnyValue = 4560;
+	InetAton = 4561;
+	InetNtoa = 4562;
+	Inet6Aton = 4563;
+	Inet6Ntoa = 4564;
+	IsIPv4 = 4565;
+	IsIPv4Compat = 4566;
+	IsIPv4Mapped = 4567;
+	IsIPv6 = 4568;
+	UUID = 4569;
+
+	/*like*/
+	LikeSig = 4310;
+	RegexpBinarySig = 4311;
+	RegexpSig = 4312;
+    
+	/*json*/
+	JsonExtractSig = 5001;
+	JsonUnquoteSig = 5002;
+	JsonTypeSig = 5003;
+	JsonSetSig = 5004;
+	JsonInsertSig = 5005;
+	JsonReplaceSig = 5006;
+	JsonRemoveSig = 5007;
+	JsonMergeSig = 5008;
+	JsonObjectSig = 5009;
+	JsonArraySig = 5010;
+	JsonValidJsonSig = 5011;
+	JsonContainsSig = 5012;
+	JsonArrayAppendSig = 5013;
+	JsonArrayInsertSig = 5014;
+	JsonMergePatchSig = 5015;
+	JsonMergePreserveSig = 5016;
+	JsonContainsPathSig = 5017;
+	JsonPrettySig = 5018;
+	JsonQuoteSig = 5019;
+	JsonSearchSig = 5020;
+	JsonStorageSizeSig = 5021;
+	JsonDepthSig = 5022;
+	JsonKeysSig = 5023;
+	JsonLengthSig = 5024;
+	JsonKeys2ArgsSig = 5025;
+	JsonValidStringSig = 5026;
+	JsonValidOthersSig = 5027;
+	
+	/*time*/
+	DateFormatSig = 6001;
+	DateLiteral = 6002;
+	DateDiff = 6003;
+	NullTimeDiff = 6004;
+	TimeStringTimeDiff = 6005;
+	DurationStringTimeDiff = 6006;
+	DurationDurationTimeDiff = 6007;
+	StringTimeTimeDiff = 6008;
+	StringDurationTimeDiff = 6009;
+	StringStringTimeDiff = 6010;
+	TimeTimeTimeDiff = 6011;
+	Date = 6012;
+	Hour = 6013;
+	Minute = 6014;
+	Second = 6015;
+	MicroSecond = 6016;
+	Month = 6017;
+	MonthName = 6018;
+	NowWithArg = 6019;
+	NowWithoutArg = 6020;
+	DayName = 6021;
+	DayOfMonth = 6022;
+	DayOfWeek = 6023;
+	DayOfYear = 6024;
+	WeekWithMode = 6025;
+	WeekWithoutMode = 6026;
+	WeekDay = 6027;
+	WeekOfYear = 6028;
+	Year = 6029;
+	YearWeekWithMode = 6030;
+	YearWeekWithoutMode = 6031;
+	GetFormat = 6032;
+	SysDateWithFsp = 6033;
+	SysDateWithoutFsp = 6034;
+	CurrentDate = 6035;
+	CurrentTime0Arg = 6036;
+	CurrentTime1Arg = 6037;
+	Time = 6038;
+	TimeLiteral = 6039;
+	UTCDate = 6040;
+	UTCTimestampWithArg = 6041;
+	UTCTimestampWithoutArg = 6042;
+	AddDatetimeAndDuration = 6043;
+	AddDatetimeAndString = 6044;
+	AddTimeDateTimeNull = 6045;
+	AddStringAndDuration = 6046;
+	AddStringAndString = 6047;
+	AddTimeStringNull = 6048;
+	AddDurationAndDuration = 6049;
+	AddDurationAndString = 6050;
+	AddTimeDurationNull = 6051;
+	AddDateAndDuration = 6052;
+	AddDateAndString = 6053;
+	SubDatetimeAndDuration = 6054;
+	SubDatetimeAndString = 6055;
+	SubTimeDateTimeNull = 6056;
+	SubStringAndDuration = 6057;
+	SubStringAndString = 6058;
+	SubTimeStringNull = 6059;
+	SubDurationAndDuration = 6060;
+	SubDurationAndString = 6061;
+	SubTimeDurationNull = 6062;
+	SubDateAndDuration = 6063;
+	SubDateAndString = 6064;
+	UnixTimestampCurrent = 6065;
+	UnixTimestampInt = 6066;
+	UnixTimestampDec = 6067;
+	ConvertTz = 6068;
+	MakeDate = 6069;
+	MakeTime = 6070;
+	PeriodAdd = 6071;
+	PeriodDiff = 6072;
+	Quarter = 6073;
+	SecToTime = 6074;
+	TimeToSec = 6075;
+	TimestampAdd = 6076;
+	ToDays = 6077;
+	ToSeconds = 6078;
+	UTCTimeWithArg = 6079;
+	UTCTimeWithoutArg = 6080;
+	Timestamp1Arg = 6081;
+	Timestamp2Args = 6082;
+	TimestampLiteral = 6083;
+	LastDay = 6084;
+	StrToDateDate = 6085;
+	StrToDateDatetime = 6086;
+	StrToDateDuration = 6087;
+	FromUnixTime1Arg = 6088;
+	FromUnixTime2Arg = 6089;
+	ExtractDatetime = 6090;
+	ExtractDuration = 6091;
+	AddDateStringString = 6092;
+	AddDateStringInt = 6093;
+	AddDateStringDecimal = 6094;
+	AddDateIntString = 6095;
+	AddDateIntInt = 6096;
+	AddDateDatetimeString = 6097;
+	AddDateDatetimeInt = 6098;
+	SubDateStringString = 6099;
+	SubDateStringInt = 6100;
+	SubDateStringDecimal = 6101;
+	SubDateIntString = 6102;
+	SubDateIntInt = 6103;
+	SubDateDatetimeString = 6104;
+	SubDateDatetimeInt = 6105;
+	FromDays = 6106;
+	TimeFormat = 6107;
+	TimestampDiff = 6108;
+
+	/* String functions */
+	BitLength = 7001;
+	Bin = 7002;
+	ASCII = 7003;
+	Char = 7004;
+	CharLength = 7005;
+	Concat = 7006;
+	ConcatWS = 7007;
+	Convert = 7008;
+	Elt = 7009;
+	ExportSet3Arg = 7010;
+	ExportSet4Arg = 7011;
+	ExportSet5Arg = 7012;
+	FieldInt = 7013;
+	FieldReal = 7014;
+	FieldString = 7015;
+	FindInSet = 7016;
+	Format = 7017;
+	FormatWithLocale = 7018;
+	FromBase64 = 7019;
+	HexIntArg = 7020;
+	HexStrArg = 7021;
+	Insert = 7022;
+	InsertBinary = 7023;
+	Instr = 7024;
+	InstrBinary = 7025;
+	LTrim = 7026;
+	Left = 7027;
+	LeftBinary = 7028;
+	Length = 7029;
+	Locate2Args = 7030;
+	Locate3Args = 7031;
+	LocateBinary2Args = 7032;
+	LocateBinary3Args = 7033;
+	Lower = 7034;
+	Lpad = 7035;
+	LpadBinary = 7036;
+	MakeSet = 7037;
+	OctInt = 7038;
+	OctString = 7039;
+	Ord = 7040;
+	Quote = 7041;
+	RTrim = 7042;
+	Repeat = 7043;
+	Replace = 7044;
+	Reverse = 7045;
+	ReverseBinary = 7046;
+	Right = 7047;
+	RightBinary = 7048;
+	Rpad = 7049;
+	RpadBinary = 7050;
+	Space = 7051;
+	Strcmp = 7052;
+	Substring2Args = 7053;
+	Substring3Args = 7054;
+	SubstringBinary2Args = 7055;
+	SubstringBinary3Args = 7056;
+	SubstringIndex = 7057;
+	ToBase64 = 7058;
+	Trim1Arg = 7059;
+	Trim2Args = 7060;
+	Trim3Args = 7061;
+	UnHex = 7062;
+	Upper = 7063;
+}
+
+// Evaluators should implement evaluation functions for every expression type.
+message Expr {
+	optional ExprType tp = 1 [(gogoproto.nullable) = false];
+	optional bytes val = 2;
+	repeated Expr children = 3;
+	optional ScalarFuncSig sig = 4 [(gogoproto.nullable) = false];
+	optional FieldType field_type = 5;
+}
+
+// ByItem type for group by and order by.
+message ByItem {
+	optional Expr expr = 1;
+	optional bool desc = 2 [(gogoproto.nullable) = false];
+}

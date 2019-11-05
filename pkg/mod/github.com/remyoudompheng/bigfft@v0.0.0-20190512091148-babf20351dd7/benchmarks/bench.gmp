@@ -1,0 +1,21 @@
+# These benchamrks were realised using gmpbench at
+# http://gmplib.org/gmpbench.html
+# and converted to the go test output format.
+# Numbers are for a Core i5-4590 with GMP 6.1.2
+BenchmarkMul_1kb        47143107	       175 ns/op
+BenchmarkMul_10kb	 1321291	      7573 ns/op
+BenchmarkMul_50kb	  125645	     79693 ns/op
+BenchmarkMul_100kb	   47298	    211500 ns/op
+BenchmarkMul_1Mb	    2950	   3344500 ns/op
+BenchmarkMul_5Mb	     413	  23920000 ns/op
+BenchmarkMul_10Mb	     164          60606000 ns/op
+BenchmarkMul_20Mb	      78	 127700000 ns/op
+BenchmarkMul_50Mb	       8	 352100000 ns/op
+BenchmarkMul_100Mb	       4	 746270000 ns/op
+
+BenchmarkMul_1x5Mb        884          11670000 ns/op
+BenchmarkMul_1x10Mb       337          27174000 ns/op
+BenchmarkMul_1x20Mb       195          52630000 ns/op
+BenchmarkMul_1x50Mb        70         131000000 ns/op
+BenchmarkMul_5x20Mb       134          74188000 ns/op
+BenchmarkMul_5x50Mb        49         207770000 ns/op

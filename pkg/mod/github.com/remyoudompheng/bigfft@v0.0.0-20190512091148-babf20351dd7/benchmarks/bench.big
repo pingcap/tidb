@@ -1,0 +1,19 @@
+# Benchmarks run on a Core i5-4590 (Go 1.8)
+BenchmarkMul_1kb      	 5000000	       298 ns/op
+BenchmarkMul_10kb     	  100000	     14562 ns/op
+BenchmarkMul_50kb     	   10000	    204698 ns/op
+BenchmarkMul_100kb    	    2000	    636230 ns/op
+BenchmarkMul_1Mb      	      50	  25950594 ns/op
+BenchmarkMul_5Mb      	       5	 314799939 ns/op
+BenchmarkMul_10Mb     	       2	 943065686 ns/op
+BenchmarkMul_20Mb     	       1	2837283743 ns/op
+BenchmarkMul_50Mb     	       1	14329431306 ns/op
+BenchmarkMul_100Mb    	       1	42590328264 ns/op
+
+BenchmarkMul_1x5Mb    	      10	 126106007 ns/op
+BenchmarkMul_1x10Mb   	       5	 248876061 ns/op
+BenchmarkMul_1x20Mb   	       3	 492849546 ns/op
+BenchmarkMul_1x50Mb   	       1	1249673962 ns/op
+BenchmarkMul_5x20Mb   	       1	1261943492 ns/op
+BenchmarkMul_5x50Mb   	       1	3098019651 ns/op
+

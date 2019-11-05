@@ -1,0 +1,20 @@
+# Benchmark of combined FFT and math/big (using threshold)
+# Run on a Core i5-4590 (Go 1.8)
+BenchmarkMul_1kb      	 3000000	       525 ns/op
+BenchmarkMul_10kb     	  100000	     19274 ns/op
+BenchmarkMul_50kb     	    5000	    213375 ns/op
+BenchmarkMul_100kb    	    2000	    651794 ns/op
+BenchmarkMul_1Mb      	     200	   8546244 ns/op
+BenchmarkMul_5Mb      	      30	  49127283 ns/op
+BenchmarkMul_10Mb     	      10	 109888838 ns/op
+BenchmarkMul_20Mb     	       5	 227088971 ns/op
+BenchmarkMul_50Mb     	       2	 731298339 ns/op
+BenchmarkMul_100Mb    	       1	1480340166 ns/op
+
+BenchmarkMul_1x5Mb    	      50	  28872973 ns/op
+BenchmarkMul_1x10Mb   	      20	  58841416 ns/op
+BenchmarkMul_1x20Mb   	      10	 124189252 ns/op
+BenchmarkMul_1x50Mb   	       3	 349402586 ns/op
+BenchmarkMul_5x20Mb   	      10	 153528843 ns/op
+BenchmarkMul_5x50Mb   	       3	 348753322 ns/op
+

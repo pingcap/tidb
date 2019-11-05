@@ -1,0 +1,10 @@
+Benchmarks on a Core i5-4590
+
+BenchmarkScan1k-4      	  200000	      9995 ns/op	      32 B/op	       1 allocs/op
+BenchmarkScan10k-4     	   10000	    175356 ns/op	      57 B/op	       1 allocs/op
+BenchmarkScan100k-4    	     200	   9427422 ns/op	  117499 B/op	       6 allocs/op
+BenchmarkScan1M-4      	       1	1776707489 ns/op	2197961776 B/op	   10386 allocs/op
+BenchmarkScan2M-4      	       1	6865499995 ns/op	8708998320 B/op	   20774 allocs/op
+BenchmarkScan5M-4      	       1	42641034189 ns/op	54105679664 B/op	   51925 allocs/op
+BenchmarkScan10M-4     	       1	151975273589 ns/op	215978795792 B/op	  103837 allocs/op
+

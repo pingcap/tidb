@@ -1,0 +1,39 @@
+codecov:
+  notify:
+    require_ci_to_pass: yes
+
+coverage:
+  precision: 4
+  round: down
+  range: "65...90"
+
+  status:
+    project:
+      default:
+        threshold: 20  #Allow the coverage to drop by threshold%, and posting a success status.
+    patch:
+      default:
+        target: 0% # trial operation
+    changes: no
+
+parsers:
+  gcov:
+    branch_detection:
+      conditional: yes
+      loop: yes
+      method: no
+      macro: no
+
+comment:
+  layout: "header, diff"
+  behavior: default
+  require_changes: no
+
+ignore:
+  - "LICENSES"
+  - "*_test.go"
+  - "marker.go" # This file only contains empty function stub
+  - "failpoint-ctl" # Ignore the `failpoint-ctl` command line tool
+  - ".git"
+  - "*.yml"
+  - "*.md"

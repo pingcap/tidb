@@ -1,0 +1,39 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+enum ChecksumScanOn {
+    Table = 0;
+    Index = 1;
+}
+
+enum ChecksumAlgorithm {
+    Crc64_Xor = 0;
+}
+
+message ChecksumRewriteRule {
+    optional bytes old_prefix = 1;
+    optional bytes new_prefix = 2;
+}
+
+message ChecksumRequest {
+    optional uint64 start_ts = 1 [(gogoproto.nullable) = false];
+    optional ChecksumScanOn scan_on = 2 [(gogoproto.nullable) = false];
+    optional ChecksumAlgorithm algorithm = 3 [(gogoproto.nullable) = false];
+    optional ChecksumRewriteRule rule = 4;
+}
+
+message ChecksumResponse {
+    optional uint64 checksum = 1 [(gogoproto.nullable) = false];
+    optional uint64 total_kvs = 2 [(gogoproto.nullable) = false];
+    optional uint64 total_bytes = 3 [(gogoproto.nullable) = false];
+}

@@ -1,0 +1,91 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "expression.proto";
+import "schema.proto";
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+enum ExecType {
+	TypeTableScan = 0;
+	TypeIndexScan = 1;
+	TypeSelection = 2;
+	TypeAggregation = 3; // TODO: Rename it to hash aggregation after support stream aggregation in TiKV.
+	TypeTopN = 4;
+	TypeLimit = 5;
+	TypeStreamAgg = 6;
+}
+
+// It represents a Executor.
+message Executor {
+	optional ExecType tp = 1 [(gogoproto.nullable) = false];
+	optional TableScan tbl_scan = 2;
+	optional IndexScan idx_scan = 3;
+	optional Selection selection = 4;
+	optional Aggregation aggregation = 5;
+	optional TopN topN = 6;
+	optional Limit limit = 7;
+	optional Aggregation stream_agg= 8;
+}
+
+message TableScan {
+	optional int64 table_id = 1 [(gogoproto.nullable) = false];
+	repeated ColumnInfo columns = 2;
+	optional bool desc = 3 [(gogoproto.nullable) = false];
+}
+
+message IndexScan {
+	optional int64 table_id = 1 [(gogoproto.nullable) = false];
+	optional int64 index_id = 2 [(gogoproto.nullable) = false];
+	repeated ColumnInfo columns = 3;
+	optional bool desc = 4 [(gogoproto.nullable) = false];
+	optional bool unique = 5; // check whether it is a unique index.
+}
+
+message Selection {
+	// Where conditions.
+	repeated Expr conditions = 1;
+}
+
+message Projection {
+	// Projection expressions.
+	repeated Expr exprs = 1;
+}
+
+message Aggregation {
+	// Group by clause.
+	repeated Expr group_by = 1;
+	// Aggregate functions.
+	repeated Expr agg_func = 2;
+	// If it is a stream aggregation.
+	optional bool streamed = 3 [(gogoproto.nullable) = false];
+}
+
+message TopN {
+	// Order by clause.
+	repeated ByItem order_by = 1;
+	optional uint64 limit = 2 [(gogoproto.nullable) = false];
+}
+
+message Limit {
+	// Limit the result to be returned.
+	optional uint64 limit = 1 [(gogoproto.nullable) = false];
+}
+
+message ExecutorExecutionSummary {
+	// Total time cost in this executor. Includes self time cost and children time cost.
+	optional uint64 time_processed_ns = 1;
+
+	// How many rows this executor produced totally.
+	optional uint64 num_produced_rows = 2;
+
+	// How many times executor's `next()` is called.
+	optional uint64 num_iterations = 3;
+}
