@@ -46,7 +46,10 @@ type twoPhaseCommitAction interface {
 type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
-type actionPessimisticLock struct{ killed *uint32 }
+type actionPessimisticLock struct {
+	killed       *uint32
+	lockWaitTime int64
+}
 type actionPessimisticRollback struct{}
 
 var (
@@ -66,7 +69,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64 = 10000 // 3s ~ 30s
+	PessimisticLockTTL uint64 = 20000 // 20s
 )
 
 func (actionPrewrite) String() string {
@@ -671,6 +674,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      elapsed + PessimisticLockTTL,
 		IsFirstLock:  c.isFirstLock,
+		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
@@ -686,7 +690,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -717,17 +721,25 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
+			// Check lock conflict error for nowait, if nowait set and key locked by others,
+			// report error immediately and do no more resolve locks.
+			// if the lock left behind whose related txn is already committed or rollbacked,
+			// (eg secondary locks not committed or rollbacked yet)
+			// we cant return "nowait conflict" directly
+			if action.lockWaitTime == kv.LockNoWait && lock.LockType == pb.Op_PessimisticLock {
+				// the pessimistic lock found could be lock left behind(timeout but not recycled yet)
+				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+					return ErrLockAcquireFailAndNoWaitSet
+				}
+			}
 			locks = append(locks, lock)
 		}
-		var expire int64
-		expire, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		// Because we already waited on tikv, no need to Backoff here.
+		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		if err1 := bo.BackoffWithMaxSleep(BoTxnLock, int(expire), errors.New(locks[0].String())); err1 != nil {
-			return err1
-		}
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
@@ -960,8 +972,9 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
+	keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
