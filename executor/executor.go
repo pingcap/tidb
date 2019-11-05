@@ -780,7 +780,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) erro
 		return err
 	}
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, keys...)
+	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, keys...)
 }
 
 // LimitExec represents limit executor

@@ -20,6 +20,7 @@ require (
 	github.com/golang/protobuf v1.2.0
 	github.com/golang/snappy v0.0.1
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
+	github.com/google/pprof v0.0.0-20190930153522-6ce02741cba3
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/context v1.1.1 // indirect
 	github.com/gorilla/mux v1.6.2
@@ -68,7 +69,6 @@ require (
 	golang.org/x/crypto v0.0.0-20190909091759-094676da4a83 // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
 	golang.org/x/sync v0.0.0-20190423024810-112230192c58 // indirect
-	golang.org/x/sys v0.0.0-20190909082730-f460065e899a // indirect
 	golang.org/x/text v0.3.0
 	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
@@ -77,5 +77,7 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-04dfd648ce8d
 
 go 1.13

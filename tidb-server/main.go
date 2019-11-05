@@ -173,15 +173,19 @@ func main() {
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
 	cleanup()
-	exit()
+	syncLog()
 }
 
 func exit() {
+	syncLog()
+	os.Exit(0)
+}
+
+func syncLog() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
-	os.Exit(0)
 }
 
 func registerStores() {

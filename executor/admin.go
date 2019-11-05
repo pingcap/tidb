@@ -431,7 +431,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		}
 
 		recordKey := e.table.RecordKey(row.handle)
-		err := txn.LockKeys(ctx, 0, recordKey)
+		err := txn.LockKeys(ctx, nil, 0, recordKey)
 		if err != nil {
 			return result, err
 		}
