@@ -389,7 +389,6 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		}
 
 		// Handle txnNotFound error.
-		// If the (secondary) lock TTL has expired, return rollbacked status.
 		time.Sleep(5 * time.Millisecond)
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
 			rollbackIfNotExist = true

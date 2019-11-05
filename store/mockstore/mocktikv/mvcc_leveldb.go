@@ -882,7 +882,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 		}
 		// If current transaction's lock exist.
 		if ok && dec.lock.startTS == startTS {
-			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+			if err = rollbackLock(batch, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
 			return nil
@@ -919,7 +919,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 	return nil
 }
 
-func rollbackLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS uint64) error {
+func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -980,7 +980,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		if ok && dec.lock.startTS == startTS {
 			// If the lock has already outdated, clean up it.
 			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+				if err = rollbackLock(batch, key, startTS); err != nil {
 					return err
 				}
 				return mvcc.db.Write(batch, nil)
@@ -1057,7 +1057,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 
 			// If the lock has already outdated, clean up it.
 			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, lock, primaryKey, lockTS); err != nil {
+				if err = rollbackLock(batch, primaryKey, lockTS); err != nil {
 					return 0, 0, errors.Trace(err)
 				}
 				if err = mvcc.db.Write(batch, nil); err != nil {
@@ -1119,7 +1119,13 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	// written before the primary lock.
 
 	if rollbackIfNotExist {
-		// ttl, commitTS = 0, 0 means rollback
+		batch := &leveldb.Batch{}
+		if err := rollbackLock(batch, primaryKey, lockTS); err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		if err := mvcc.db.Write(batch, nil); err != nil {
+			return 0, 0, errors.Trace(err)
+		}
 		return 0, 0, nil
 	}
 
@@ -1232,7 +1238,7 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 			if commitTS > 0 {
 				err = commitLock(batch, dec.lock, currKey, startTS, commitTS)
 			} else {
-				err = rollbackLock(batch, dec.lock, currKey, startTS)
+				err = rollbackLock(batch, currKey, startTS)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1272,7 +1278,7 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 				if commitTS > 0 {
 					err = commitLock(batch, dec.lock, currKey, dec.lock.startTS, commitTS)
 				} else {
-					err = rollbackLock(batch, dec.lock, currKey, dec.lock.startTS)
+					err = rollbackLock(batch, currKey, dec.lock.startTS)
 				}
 				if err != nil {
 					return errors.Trace(err)
