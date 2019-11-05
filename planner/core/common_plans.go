@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/texttree"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -598,7 +599,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
-	childIndent := e.getIndent4Child(indent, isLastChild)
+	childIndent := texttree.Indent4Child(indent, isLastChild)
 	for i, child := range p.Children() {
 		if e.explainedPlans[child.ID()] {
 			continue
@@ -623,7 +624,7 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
 	explainID := p.ExplainID().String()
-	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
@@ -644,70 +645,6 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		}
 	}
 	e.Rows = append(e.Rows, row)
-}
-
-const (
-	// treeBody indicates the current operator sub-tree is not finished, still
-	// has child operators to be attached on.
-	treeBody = '│'
-	// treeMiddleNode indicates this operator is not the last child of the
-	// current sub-tree rooted by its parent.
-	treeMiddleNode = '├'
-	// treeLastNode indicates this operator is the last child of the current
-	// sub-tree rooted by its parent.
-	treeLastNode = '└'
-	// treeGap is used to represent the gap between the branches of the tree.
-	treeGap = ' '
-	// treeNodeIdentifier is used to replace the treeGap once we need to attach
-	// a node to a sub-tree.
-	treeNodeIdentifier = '─'
-)
-
-func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
-	if len(indent) == 0 {
-		return id
-	}
-
-	indentBytes := []rune(indent)
-	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] != treeBody {
-			continue
-		}
-
-		// Here we attach a new node to the current sub-tree by changing
-		// the closest treeBody to a:
-		// 1. treeLastNode, if this operator is the last child.
-		// 2. treeMiddleNode, if this operator is not the last child..
-		if isLastChild {
-			indentBytes[i] = treeLastNode
-		} else {
-			indentBytes[i] = treeMiddleNode
-		}
-		break
-	}
-
-	// Replace the treeGap between the treeBody and the node to a
-	// treeNodeIdentifier.
-	indentBytes[len(indentBytes)-1] = treeNodeIdentifier
-	return string(indentBytes) + id
-}
-
-func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
-	if !isLastChild {
-		return string(append([]rune(indent), treeBody, treeGap))
-	}
-
-	// If the current node is the last node of the current operator tree, we
-	// need to end this sub-tree by changing the closest treeBody to a treeGap.
-	indentBytes := []rune(indent)
-	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] == treeBody {
-			indentBytes[i] = treeGap
-			break
-		}
-	}
-
-	return string(append(indentBytes, treeBody, treeGap))
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
