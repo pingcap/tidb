@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
@@ -50,11 +51,17 @@ func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinTiDBVersionSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	info := printer.GetTiDBInfo()
+	for i := 0; i < n; i++ {
+		result.AppendString(info)
+	}
+	return nil
 }
 
 func (b *builtinRowCountSig) vectorized() bool {
