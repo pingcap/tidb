@@ -49,7 +49,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
 	ast.DateDiff:    {},
 	ast.TimeDiff:    {},
-	ast.DateFormat:  {},
+	ast.DateFormat: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}},
+	},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},

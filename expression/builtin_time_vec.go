@@ -552,7 +552,9 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		return err
+		if err := handleInvalidTimeError(b.ctx, err); err != nil {
+			return err
+		}
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -979,11 +981,52 @@ func (b *builtinToDaysSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinDateFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		if err := handleInvalidTimeError(b.ctx, err); err != nil {
+			return err
+		}
+	}
+
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[1].VecEvalTime(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf0.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if ds[i].InvalidZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		str, err := ds[i].DateFormat(buf0.GetString(i))
+		result.AppendString(str)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinHourSig) vectorized() bool {
