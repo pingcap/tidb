@@ -117,8 +117,8 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.varArgs = make([]Expression, 1)
-	b.varArgs[0] = b.args[0]
+	b.varArgs = make([]Expression, 0, len(b.args))
+	b.varArgs = append(b.varArgs, b.args[0])
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem() {
