@@ -161,7 +161,11 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
-		logutil.BgLogger().Error("write binlog failed", zap.Error(err))
+		logutil.BgLogger().Error("write binlog failed",
+			zap.String("binlog_type", info.Data.Tp.String()),
+			zap.Uint64("binlog_start_ts", uint64(info.Data.StartTs)),
+			zap.Uint64("binlog_commit_ts", uint64(info.Data.CommitTs)),
+			zap.Error(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
 			logutil.BgLogger().Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
