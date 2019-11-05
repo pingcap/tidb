@@ -404,7 +404,8 @@ func (e txnNotFoundErr) Error() string {
 	return e.TxnNotFound.String()
 }
 
-// If nonBlockRead is true, the caller should handle the txnNotFoundErr.
+// getTxnStatus sends the CheckTxnStatus request to the TiKV server.
+// When rollbackIfNotExist is false, the caller should be careful with the txnNotFoundErr error.
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64, rollbackIfNotExist bool) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
@@ -412,7 +413,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
-	// CheckTxnStatus would meet the following cases:
+	// CheckTxnStatus may meet the following cases:
 	// 1. LOCK
 	// 1.1 Lock expired -- orphan lock, fail to update TTL, crash recovery etc.
 	// 1.2 Lock TTL -- active transaction holding the lock.
