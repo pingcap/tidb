@@ -66,7 +66,6 @@ type Config struct {
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
-	StoreLimit       uint32          `toml:"store-limit" json:"store-limit"`
 	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
@@ -377,6 +376,9 @@ type TiKVClient struct {
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
+	// If a store has been up to the limit, it will return error for successive request to
+	// prevent the store occupying too much token in dispatching level.
+	StoreLimit uint32 `toml:"store-limit" json:"store-limit"`
 }
 
 // Binlog is the config for binlog.
@@ -425,7 +427,6 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        "45s",
 	TokenLimit:                   1000,
-	StoreLimit:                   500,
 	OOMUseTmpStorage:             true,
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
@@ -507,6 +508,7 @@ var defaultConf = Config{
 		EnableChunkRPC: true,
 
 		RegionCacheTTL: 600,
+		StoreLimit:     500,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

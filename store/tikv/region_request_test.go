@@ -84,20 +84,24 @@ func (s *testRegionRequestSuite) TearDownTest(c *C) {
 	s.cache.Close()
 }
 
+func (s *testStoreLimitSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
 func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{}, kvrpcpb.Context{})
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	oldStoreLimit := config.GetGlobalConfig().StoreLimit
-	config.GetGlobalConfig().StoreLimit = 500
+	oldStoreLimit := config.GetGlobalConfig().TiKVClient.StoreLimit
+	config.GetGlobalConfig().TiKVClient.StoreLimit = 500
 	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount = 500
 	// cause there is only one region in this cluster, regionID maps this leader.
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 	c.Assert(err.Error(), Equals, "[tikv:1]store token error, can't get store token, pool is up to the limit")
-	config.GetGlobalConfig().StoreLimit = oldStoreLimit
+	config.GetGlobalConfig().TiKVClient.StoreLimit = oldStoreLimit
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
