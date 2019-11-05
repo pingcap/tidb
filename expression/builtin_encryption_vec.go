@@ -440,11 +440,59 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinUncompressSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals UNCOMPRESS(compressed_string).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		payload := buf.GetString(i)
+
+		if len(payload) == 0 {
+			result.AppendString("")
+			continue
+		}
+		if len(payload) <= 4 {
+			// corrupted
+			sc.AppendWarning(errZlibZData)
+			result.AppendNull()
+			continue
+		}
+		length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
+		bytes, err := inflate([]byte(payload[4:]))
+		if err != nil {
+			sc.AppendWarning(errZlibZData)
+			result.AppendNull()
+			continue
+		}
+		if length < uint32(len(bytes)) {
+			sc.AppendWarning(errZlibZBuf)
+			result.AppendNull()
+			continue
+		}
+
+		result.AppendBytes(bytes)
+	}
+
+	return nil
 }
 
 func (b *builtinUncompressedLengthSig) vectorized() bool {
