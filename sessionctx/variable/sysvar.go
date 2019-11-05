@@ -570,7 +570,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "basedir", "/usr/local/mysql"},
 	{ScopeGlobal, "innodb_old_blocks_time", "1000"},
 	{ScopeGlobal, "innodb_stats_method", "nulls_equal"},
-	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, "50"},
+	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, strconv.FormatInt(DefInnodbLockWaitTimeout, 10)},
 	{ScopeGlobal, LocalInFile, "1"},
 	{ScopeGlobal | ScopeSession, "myisam_stats_method", "nulls_unequal"},
 	{ScopeNone, "version_compile_os", "osx10.8"},
@@ -730,6 +730,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash"},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

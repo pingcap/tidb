@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"hash/crc32"
 	"math"
 	"strconv"
 
@@ -658,11 +659,28 @@ func (b *builtinRoundWithFracIntSig) vectorized() bool {
 	return true
 }
 func (b *builtinCRC32Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCRC32Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := range i64s {
+		if !buf.IsNull(i) {
+			i64s[i] = int64(crc32.ChecksumIEEE(buf.GetBytes(i)))
+		}
+	}
+	return nil
 }
 
 func (b *builtinPISig) vectorized() bool {
