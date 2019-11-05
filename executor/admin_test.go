@@ -504,6 +504,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustExec("admin check table admin_test")
 }
+
 func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
