@@ -71,6 +71,16 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
+// FindUsingBinding find bindings with status `Using` in BindRecord.
+func (br *BindRecord) FindUsingBinding(hint string) *Binding {
+	for _, binding := range br.Bindings {
+		if binding.Status == Using && binding.id == hint {
+			return &binding
+		}
+	}
+	return nil
+}
+
 func (br *BindRecord) prepareHintsForUsing(sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {

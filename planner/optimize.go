@@ -58,6 +58,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
+	// If the best bestPlan is in baselines, just use it.
+	if bindRecord.FindUsingBinding(bestPlanHint) != nil {
+		return bestPlan, names, nil
+	}
 	bestCostAmongHints := math.MaxFloat64
 	var bestPlanAmongHints plannercore.Plan
 	originHints := bindinfo.CollectHint(stmtNode)
@@ -78,16 +82,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			})
 			continue
 		}
-		// The best bestPlan is in baselines, just use it.
-		if bestPlanHint == plannercore.GenHintsFromPhysicalPlan(plan) {
-			bindinfo.BindHint(stmtNode, originHints)
-			return bestPlan, names, nil
-		}
 		if cost < bestCostAmongHints {
 			bestCostAmongHints = cost
 			bestPlanAmongHints = plan
 		}
 	}
+	// Restore the hint to avoid changing the stmt node.
 	bindinfo.BindHint(stmtNode, originHints)
 	// TODO: Evolve the plan baselines using best plan.
 	if bestPlanAmongHints != nil {
