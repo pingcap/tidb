@@ -103,8 +103,9 @@ func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
 	var res int64
-	if b.ctx.DDLOwnerChecker().IsOwner() {
+	if ddlOwnerChecker.IsOwner() {
 		res = 1
 	}
 	result.ResizeInt64(n, false)
