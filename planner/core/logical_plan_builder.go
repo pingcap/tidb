@@ -2263,12 +2263,14 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "")
 	}
 
+	oldSchema := p.Schema().Clone()
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
+
 	if sel.OrderBy != nil {
 		p, err = b.buildSort(p, sel.OrderBy.Items, nil)
 		if err != nil {
@@ -2280,6 +2282,13 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
+	if p.Schema().Len() != oldSchema.Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(oldSchema.Columns)}.init(b.ctx)
+		proj.SetSchema(oldSchema)
+		proj.SetChildren(p)
+		p = proj
 	}
 	orderedList, np, err := b.buildUpdateLists(tableList, update.List, p)
 	if err != nil {
