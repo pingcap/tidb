@@ -31,7 +31,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -53,7 +53,7 @@ func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -75,7 +75,7 @@ func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -97,7 +97,7 @@ func (b *builtinSqrtSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -119,7 +119,7 @@ func (b *builtinAcosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -141,7 +141,7 @@ func (b *builtinAsinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -163,7 +163,7 @@ func (b *builtinAtan1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -214,7 +214,7 @@ func (b *builtinCosSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -232,7 +232,7 @@ func (b *builtinCotSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -260,7 +260,7 @@ func (b *builtinDegreesSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -278,7 +278,7 @@ func (b *builtinExpSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -303,7 +303,7 @@ func (b *builtinRadiansSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -321,7 +321,7 @@ func (b *builtinSinSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -339,7 +339,7 @@ func (b *builtinTanSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -359,7 +359,7 @@ func (b *builtinAbsDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Colu
 	zero := new(types.MyDecimal)
 	buf := new(types.MyDecimal)
 	d64s := result.Decimals()
-	for i := range d64s {
+	for i := 0; i < len(d64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -383,7 +383,7 @@ func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Co
 	}
 	d64s := result.Decimals()
 	buf := new(types.MyDecimal)
-	for i := range d64s {
+	for i := 0; i < len(d64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -440,7 +440,7 @@ func (b *builtinFloorRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -491,7 +491,7 @@ func (b *builtinCeilRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -509,7 +509,7 @@ func (b *builtinRoundRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -587,7 +587,7 @@ func (b *builtinAbsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 	f64s := result.Float64s()
-	for i := range f64s {
+	for i := 0; i < len(f64s); i++ {
 		f64s[i] = math.Abs(f64s[i])
 	}
 	return nil
@@ -602,7 +602,7 @@ func (b *builtinAbsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	i64s := result.Int64s()
-	for i := range i64s {
+	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -770,7 +770,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	for i := range i64s {
+	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -928,7 +928,7 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := range i64s {
+	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
