@@ -195,6 +195,7 @@ func (s *RegionRequestSender) getStoreToken(store *Store) error {
 				return nil
 			}
 		} else {
+			metrics.GetStoreLimitErrorCounter.WithLabelValues(store.addr, string(store.storeID)).Inc()
 			return ErrTokenLimit.GenWithStackByArgs("can't get store token, pool is up to the limit")
 		}
 	}

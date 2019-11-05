@@ -77,6 +77,14 @@ var (
 			Help:      "Counter of storing query feedback.",
 		}, []string{LblType})
 
+	GetStoreLimitErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "get_store_token_error",
+			Help:      "can't get store token, it's up to the limit, single hot point will cause this up.",
+		}, []string{LblAddress, LblStore})
+
 	SignificantFeedbackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
