@@ -19,6 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -174,6 +176,15 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Left: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+		// need to add BinaryFlag for the Binary func
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{
+				&randLenStrGener{10, 20},
+				&rangeInt64Gener{begin: -10, end: 20},
+			},
+		},
 	},
 	ast.Space: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{-10, 2000}}},
