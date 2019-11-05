@@ -755,11 +755,29 @@ func (b *builtinLeftBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinReverseBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		reversed := reverseBytes([]byte(buf.GetString(i)))
+		result.AppendString(string(reversed))
+	}
+	return nil
 }
 
 func (b *builtinRTrimSig) vectorized() bool {
