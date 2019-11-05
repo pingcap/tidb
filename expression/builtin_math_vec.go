@@ -698,17 +698,11 @@ func (b *builtinPISig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) err
 }
 
 func (b *builtinRandSig) vectorized() bool {
-	return true
+	return false
 }
 
 func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	f64s := result.Float64s()
-	for i := range f64s {
-		b.mu.Lock()
-		f64s[i] = b.randGen.Float64()
-		b.mu.Unlock()
-	}
-	return nil
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinRandWithSeedSig) vectorized() bool {
