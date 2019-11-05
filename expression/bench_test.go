@@ -414,6 +414,18 @@ func (g *ipv4CompatByteGener) gen() interface{} {
 	return string(ip[:net.IPv6len])
 }
 
+// ipv4MappedByteGener is used to generate ipv4-mapped ipv6 bytes.
+type ipv4MappedByteGener struct {
+}
+
+func (g *ipv4MappedByteGener) gen() interface{} {
+	var ip = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
+	for i := 12; i < 16; i++ {
+		ip[i] = uint8(rand.Intn(256)) // reset the last 4 bytes
+	}
+	return string(ip[:net.IPv6len])
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int

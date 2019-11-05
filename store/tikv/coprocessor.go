@@ -781,10 +781,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
-		if resp.Range == nil {
-			return nil, errors.New("streaming response should contain a range entry")
+		if resp.Range != nil {
+			lastRange = resp.Range
 		}
-		lastRange = resp.Range
 	}
 }
 
