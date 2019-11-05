@@ -330,35 +330,11 @@ func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	return nil
 }
 
-func (b *builtinCoalesceDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinNullEQIntSig) vectorized() bool {
 	return false
 }
 
 func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -453,14 +429,6 @@ func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	return nil
 }
 
-func (b *builtinCoalesceDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinLTIntSig) vectorized() bool {
 	return true
 }
@@ -551,35 +519,11 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinCoalesceIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinGreatestTimeSig) vectorized() bool {
 	return false
 }
 
 func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
