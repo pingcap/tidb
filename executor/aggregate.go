@@ -984,8 +984,15 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 			return err
 		}
 
-		e.firstGroupKey = col.Encode(e.firstGroupKey, eType, 0)
-		e.lastGroupKey = col.Encode(e.firstGroupKey, eType, numRows-1)
+		e.firstGroupKey, err = col.Encode(e.firstGroupKey, eType, 0)
+		if err != nil {
+			return err
+		}
+
+		e.lastGroupKey, err = col.Encode(e.firstGroupKey, eType, numRows-1)
+		if err != nil {
+			return err
+		}
 		isNull := col.IsNull(0)
 		switch eType {
 		case types.ETInt:

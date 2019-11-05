@@ -14,11 +14,13 @@
 package chunk
 
 import (
+	"fmt"
 	"math/bits"
 	"reflect"
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -558,35 +560,68 @@ func (c *Column) SetRaw(rowID int, bs []byte) {
 	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
 }
 
+// First byte in the encoded value which specifies the encoding type.
+const (
+	NilFlag      byte = 0
+	intFlag      byte = 1
+	realFlag     byte = 2
+	decimalFlag  byte = 3
+	timeFlag     byte = 4
+	durationFlag byte = 5
+	stringFlag   byte = 6
+	jsonFlag     byte = 7
+)
+
 // Encode appends the data slice of one row in column to the buf
-func (c *Column) Encode(buf []byte, eType types.EvalType, rowID int) []byte {
+func (c *Column) Encode(buf []byte, eType types.EvalType, rowID int) ([]byte, error) {
 	var NilFlag byte = 0
 	if c.IsNull(rowID) {
 		buf = append(buf, NilFlag)
-		return buf
+		return buf, nil
 	}
-	var fixedTypeSize int
+	var (
+		typeFlag      byte
+		fixedTypeSize int
+		err           error
+	)
 	switch eType {
 	case types.ETInt:
+		typeFlag = intFlag
 		fixedTypeSize = sizeInt64
 	case types.ETReal:
+		typeFlag = realFlag
 		fixedTypeSize = sizeFloat64
 	case types.ETDecimal:
+		typeFlag = decimalFlag
 		fixedTypeSize = sizeMyDecimal
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
+		typeFlag = timeFlag
 		fixedTypeSize = sizeTime
 	case types.ETDuration:
+		typeFlag = durationFlag
 		fixedTypeSize = sizeGoDuration
+	case types.ETJson:
+		typeFlag = jsonFlag
+		fixedTypeSize = varElemLen
+	case types.ETString:
+		typeFlag = stringFlag
+		fixedTypeSize = varElemLen
 	default:
-		fixedTypeSize = 0
+		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	if fixedTypeSize == 0 {
+	buf = append(buf, typeFlag)
+	if fixedTypeSize == varElemLen {
+		length := c.offsets[rowID+1] - c.offsets[rowID]
+		buf = append(buf, byte(length))
 		buf = append(buf, c.data[c.offsets[rowID]:c.offsets[rowID+1]]...)
 	} else {
 		buf = append(buf, c.data[rowID*fixedTypeSize:(rowID+1)*fixedTypeSize]...)
 	}
-	return buf
+	return buf, nil
 }
 
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
