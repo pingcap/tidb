@@ -382,14 +382,16 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	for {
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist)
 		if err == nil {
-			return status, err
+			return status, nil
 		}
 		if _, ok := errors.Cause(err).(txnNotFoundErr); !ok {
-			return status, err
+			return TxnStatus{}, err
 		}
 
 		// Handle txnNotFound error.
-		time.Sleep(5 * time.Millisecond)
+		if err := bo.Backoff(boTxnNotFound, err); err != nil {
+			logutil.BgLogger().Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
+		}
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
 			rollbackIfNotExist = true
 		}
