@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -834,7 +836,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				if len(e.groupChecker.GroupByItems) == 0 {
 					equal = true
 				} else {
-					equal = remainGroupKey == e.groupChecker.groupRowsSringKey[0]
+					equal = remainGroupKey == string(hack.String(e.groupChecker.firstGroupKey))
 				}
 				if !equal {
 					err = e.appendResult2Chunk(chk)
@@ -860,8 +862,8 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				}
 				e.groupRows = e.groupRows[:0]
 			} else {
-				if e.groupChecker.groupRowsKey != nil {
-					remainGroupKey = e.groupChecker.groupRowsSringKey[end-1]
+				if e.groupChecker.lastGroupKey != nil {
+					remainGroupKey = string(hack.String(e.groupChecker.lastGroupKey))
 				}
 				remainGroup = true
 			}
@@ -930,21 +932,22 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 }
 
 type groupChecker struct {
-	ctx               sessionctx.Context
-	StmtCtx           *stmtctx.StatementContext
-	GroupByItems      []expression.Expression
-	groupRowsIndex    []int
-	groupRowsKey      [][]byte
-	groupRowsSringKey []string
+	ctx            sessionctx.Context
+	StmtCtx        *stmtctx.StatementContext
+	GroupByItems   []expression.Expression
+	groupRowsIndex []int
+	firstGroupKey  []byte
+	lastGroupKey   []byte
+	sameGroup      []bool
 }
 
 func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
-	groupRowsSringKey := make([]string, 1024)
+	sameGroup := make([]bool, 1024)
 	return &groupChecker{
-		ctx:               ctx,
-		StmtCtx:           stmtCtx,
-		GroupByItems:      items,
-		groupRowsSringKey: groupRowsSringKey,
+		ctx:          ctx,
+		StmtCtx:      stmtCtx,
+		GroupByItems: items,
+		sameGroup:    sameGroup,
 	}
 }
 
@@ -953,12 +956,21 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 	numRows := chk.NumRows()
 	e.groupRowsIndex = e.groupRowsIndex[:0]
+	e.firstGroupKey = e.firstGroupKey[:0]
+	e.lastGroupKey = e.lastGroupKey[:0]
 	if len(e.GroupByItems) == 0 {
 		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
 		return nil
 	}
-	if len(e.groupRowsSringKey) < numRows {
-		e.groupRowsSringKey = make([]string, numRows)
+
+	if len(e.sameGroup) < numRows {
+		e.sameGroup = make([]bool, numRows)
+	}
+	if numRows != 0 {
+		e.sameGroup[0] = false
+	}
+	for i := 1; i < numRows; i++ {
+		e.sameGroup[i] = true
 	}
 
 	for _, item := range e.GroupByItems {
@@ -971,29 +983,142 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 		if err != nil {
 			return err
 		}
-		e.groupRowsKey, err = col.EncodeTo(e.groupRowsKey, eType)
+
+		e.firstGroupKey = col.Encode(e.firstGroupKey, eType, 0)
+		e.lastGroupKey = col.Encode(e.firstGroupKey, eType, numRows-1)
+		isNull := col.IsNull(0)
+		switch eType {
+		case types.ETInt:
+			i64s := col.Int64s()
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if i64s[i] != i64s[i-1] {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+				}
+			}
+		case types.ETReal:
+			i64s := col.Float64s()
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if i64s[i] != i64s[i-1] {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+				}
+			}
+		case types.ETDecimal:
+			i64s := col.Decimals()
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if i64s[i] != i64s[i-1] {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+				}
+			}
+		case types.ETDatetime, types.ETTimestamp:
+			i64s := col.Times()
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if i64s[i] != i64s[i-1] {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+				}
+			}
+		case types.ETDuration:
+			i64s := col.GoDurations()
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if i64s[i] != i64s[i-1] {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+				}
+			}
+		case types.ETJson:
+			previousKey := col.GetJSON(0)
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					key := col.GetJSON(i)
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if json.CompareBinary(previousKey, key) != 0 {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+					previousKey = key
+				}
+			}
+		case types.ETString:
+			previousKey := col.GetString(0)
+			for i := 1; i < numRows; i++ {
+				if e.sameGroup[i] {
+					key := col.GetString(i)
+					if col.IsNull(i) != isNull {
+						isNull = !isNull
+						e.sameGroup[i] = false
+					} else {
+						if !isNull {
+							if previousKey != key {
+								e.sameGroup[i] = false
+							}
+						}
+					}
+					previousKey = key
+				}
+			}
+		default:
+			err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		}
 		if err != nil {
 			return err
 		}
 		expression.PutColumn(col)
 	}
 
-	for i := 0; i < numRows; i++ {
-		e.groupRowsSringKey[i] = string(hack.String(e.groupRowsKey[i]))
-	}
-
-	var match bool
-	for i := 0; i < numRows; {
-		j := i + 1
-		for ; j < numRows; j++ {
-			match = e.groupRowsSringKey[i] == e.groupRowsSringKey[j]
-			if !match {
-				break
-			}
+	for i := 1; i < numRows; i++ {
+		if !e.sameGroup[i] {
+			e.groupRowsIndex = append(e.groupRowsIndex, i)
 		}
-		e.groupRowsIndex = append(e.groupRowsIndex, j)
-		i = j
 	}
+	e.groupRowsIndex = append(e.groupRowsIndex, numRows)
 	return nil
 }
 
@@ -1001,13 +1126,7 @@ func (e *groupChecker) reset() {
 	if e.groupRowsIndex != nil {
 		e.groupRowsIndex = e.groupRowsIndex[:0]
 	}
-	if e.groupRowsKey != nil {
-		for i := 0; i < len(e.groupRowsKey); i++ {
-			e.groupRowsKey[i] = e.groupRowsKey[i][:0]
-		}
-		e.groupRowsKey = e.groupRowsKey[:0]
-	}
-	if e.groupRowsSringKey != nil {
-		e.groupRowsSringKey = e.groupRowsSringKey[:0]
+	if e.sameGroup != nil {
+		e.sameGroup = e.sameGroup[:0]
 	}
 }

@@ -410,61 +410,6 @@ func (c *Column) ReserveEnum(n int) {
 	c.reserve(n, 8)
 }
 
-// EncodeTo appends the column data slice to the buf
-func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) ([][]byte, error) {
-	n := c.length
-	if buf == nil {
-		buf = make([][]byte, n)
-	}
-	bufLen := len(buf)
-	if bufLen < n {
-		for i := 0; i < bufLen; i++ {
-			buf[i] = buf[i][:0]
-		}
-		for i := bufLen; i < n; i++ {
-			buf = append(buf, nil)
-		}
-
-	} else {
-		for i := 0; i < n; i++ {
-			buf[i] = buf[i][:0]
-		}
-	}
-
-	var fixedTypeSize int
-	switch eType {
-	case types.ETInt, types.ETReal:
-		fixedTypeSize = 8
-	case types.ETDecimal:
-		fixedTypeSize = sizeMyDecimal
-	case types.ETDatetime:
-		fixedTypeSize = sizeTime
-	case types.ETDuration:
-		fixedTypeSize = sizeGoDuration
-	default:
-		fixedTypeSize = 0
-	}
-	var NilFlag byte = 0
-	if fixedTypeSize != 0 {
-		for i := 0; i < n; i++ {
-			if c.IsNull(i) {
-				buf[i] = append(buf[i], NilFlag)
-			} else {
-				buf[i] = append(buf[i], c.data[i*fixedTypeSize:(i+1)*fixedTypeSize]...)
-			}
-		}
-	} else {
-		for i := 0; i < n; i++ {
-			if c.IsNull(i) {
-				buf[i] = append(buf[i], NilFlag)
-			} else {
-				buf[i] = append(buf[i], c.data[c.offsets[i]:c.offsets[i+1]]...)
-			}
-		}
-	}
-	return buf, nil
-}
-
 func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
 	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Data
 	header.Len = c.length
@@ -611,6 +556,37 @@ func (c *Column) GetRaw(rowID int) []byte {
 // 2. The length of the new element should be exactly the same as the old one.
 func (c *Column) SetRaw(rowID int, bs []byte) {
 	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
+}
+
+// Encode appends the data slice of one row in column to the buf
+func (c *Column) Encode(buf []byte, eType types.EvalType, rowId int) []byte {
+	var NilFlag byte = 0
+	if c.IsNull(rowId) {
+		buf = append(buf, NilFlag)
+		return buf
+	}
+	var fixedTypeSize int
+	switch eType {
+	case types.ETInt:
+		fixedTypeSize = sizeInt64
+	case types.ETReal:
+		fixedTypeSize = sizeFloat64
+	case types.ETDecimal:
+		fixedTypeSize = sizeMyDecimal
+	case types.ETDatetime:
+		fixedTypeSize = sizeTime
+	case types.ETDuration:
+		fixedTypeSize = sizeGoDuration
+	default:
+		fixedTypeSize = 0
+	}
+
+	if fixedTypeSize == 0 {
+		buf = append(buf, c.data[c.offsets[rowId]:c.offsets[rowId+1]]...)
+	} else {
+		buf = append(buf, c.data[rowId*fixedTypeSize:(rowId+1)*fixedTypeSize]...)
+	}
+	return buf
 }
 
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
