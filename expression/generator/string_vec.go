@@ -139,46 +139,6 @@ func BenchmarkVectorizedGeneratedBuiltinStringFunc(b *testing.B) {
 }
 `))
 
-
-const builtinStringVecTestHeader = `import (
-	"testing"
-
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/types"
-)
-
-var vecGeneratedBuiltinStringCases = map[string][]vecExprBenchCase{
-`
-
-var builtinStringVecTestFuncHeader = template.Must(template.New("").Parse(`	ast.{{ .CompareName }}: {
-`))
-
-var builtinStringVecTestCase = template.Must(template.New("").Parse(`		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ET{{ .ETName }}, types.ET{{ .ETName }}}},
-`))
-
-var builtinStringVecTestFuncTail = `	},
-`
-
-var builtinStringVecTestTail = `}
-
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinStringEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinStringCases)
-}
-
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinStringFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinStringCases)
-}
-
-func BenchmarkVectorizedGeneratedBuiltinStringEvalOneVec(b *testing.B) {
-	benchmarkVectorizedEvalOneVec(b, vecGeneratedBuiltinStringCases)
-}
-
-func BenchmarkVectorizedGeneratedBuiltinStringFunc(b *testing.B) {
-	benchmarkVectorizedBuiltinFunc(b, vecGeneratedBuiltinStringCases)
-}
-`
-
 var typesMap = []TypeContext{
 	TypeInt,
 	TypeReal,
@@ -209,25 +169,6 @@ func generateTestDotGo(fileName string, types []TypeContext) error {
 	w := new(bytes.Buffer)
 	w.WriteString(header)
 	w.WriteString(newLine)
-	//w.WriteString(header)
-	//w.WriteString(builtinStringVecTestHeader)
-
-/**
-	for _, compareCtx := range compares {
-		err := builtinStringVecTestFuncHeader.Execute(w, compareCtx)
-		if err != nil {
-			return err
-		}
-		for _, typeCtx := range types {
-			err := builtinStringVecTestCase.Execute(w, types)
-			if err != nil {
-				return err
-			}
-		}
-		w.WriteString(builtinStringVecTestFuncTail)
-	}
-	w.WriteString(builtinStringVecTestTail)
-*/
 
 	err := builtinStringVecTestTpl.Execute(w, types)
 	if err != nil {
