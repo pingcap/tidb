@@ -254,10 +254,21 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if err != nil {
 			return false, nil, err
 		}
+		if canSkipSchemaCheckerDDL(diff.Type) {
+			continue
+		}
 		tblIDs = append(tblIDs, ids...)
 	}
 	builder.Build()
 	return true, tblIDs, nil
+}
+
+func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+		return true
+	}
+	return false
 }
 
 // InfoSchema gets information schema from domain.
