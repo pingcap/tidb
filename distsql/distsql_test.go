@@ -479,41 +479,45 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 }
 
 func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
-	s := &testSuite{}
-	s.SetUpSuite(nil)
-	b.StopTimer()
-	selectResult, colTypes := createSelectNormal(4000, b.N*4000, s.sctx)
-	selectResult.Fetch(context.TODO())
-	chk := chunk.NewChunkWithCapacity(colTypes, 1024)
-	b.StartTimer()
-	for true {
-		err := selectResult.Next(context.TODO(), chk)
-		if err != nil {
-			panic(err)
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		s := &testSuite{}
+		s.SetUpSuite(nil)
+		selectResult, colTypes := createSelectNormal(4000, 20000, s.sctx)
+		selectResult.Fetch(context.TODO())
+		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
+		b.StartTimer()
+		for true {
+			err := selectResult.Next(context.TODO(), chk)
+			if err != nil {
+				panic(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk.Reset()
 		}
-		if chk.NumRows() == 0 {
-			return
-		}
-		chk.Reset()
 	}
 }
 
 func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
-	s := &testSuite{}
-	s.SetUpSuite(nil)
-	b.StopTimer()
-	selectResult, colTypes := createSelectNormal(32, b.N*32, s.sctx)
-	selectResult.Fetch(context.TODO())
-	chk := chunk.NewChunkWithCapacity(colTypes, 1024)
-	b.StartTimer()
-	for true {
-		err := selectResult.Next(context.TODO(), chk)
-		if err != nil {
-			panic(err)
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		s := &testSuite{}
+		s.SetUpSuite(nil)
+		selectResult, colTypes := createSelectNormal(32, 3200, s.sctx)
+		selectResult.Fetch(context.TODO())
+		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
+		b.StartTimer()
+		for true {
+			err := selectResult.Next(context.TODO(), chk)
+			if err != nil {
+				panic(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk.Reset()
 		}
-		if chk.NumRows() == 0 {
-			return
-		}
-		chk.Reset()
 	}
 }
