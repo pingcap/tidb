@@ -254,10 +254,21 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if err != nil {
 			return false, nil, err
 		}
+		if canSkipSchemaCheckerDDL(diff.Type) {
+			continue
+		}
 		tblIDs = append(tblIDs, ids...)
 	}
 	builder.Build()
 	return true, tblIDs, nil
+}
+
+func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+		return true
+	}
+	return false
 }
 
 // InfoSchema gets information schema from domain.
@@ -421,7 +432,7 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
-	ticker := time.NewTicker(time.Second * time.Duration(infosync.InfoSessionTTL) / 2)
+	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -850,7 +861,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
 					continue
 				}
-				do.bindHandle.CaptureBaselines(do.InfoSchema())
+				do.bindHandle.CaptureBaselines()
 			}
 		}
 	}()

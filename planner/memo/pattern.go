@@ -118,17 +118,30 @@ func (o Operand) Match(t Operand) bool {
 	return false
 }
 
-// Pattern defines the Match pattern for a rule.
-// It describes a piece of logical expression.
-// It's a tree-like structure and each node in the tree is an Operand.
+// Pattern defines the match pattern for a rule. It's a tree-like structure
+// which is a piece of a logical expression. Each node in the Pattern tree is
+// defined by an Operand and EngineType pair.
 type Pattern struct {
 	Operand
+	EngineTypeSet
 	Children []*Pattern
 }
 
-// NewPattern creats a pattern node according to the Operand.
-func NewPattern(operand Operand) *Pattern {
-	return &Pattern{Operand: operand}
+// Match checks whether the EngineTypeSet contains the given EngineType
+// and whether the two Operands match.
+func (p *Pattern) Match(o Operand, e EngineType) bool {
+	return p.EngineTypeSet.Contains(e) && p.Operand.Match(o)
+}
+
+// MatchOperandAny checks whether the pattern's Operand is OperandAny
+// and the EngineTypeSet contains the given EngineType.
+func (p *Pattern) MatchOperandAny(e EngineType) bool {
+	return p.EngineTypeSet.Contains(e) && p.Operand == OperandAny
+}
+
+// NewPattern creates a pattern node according to the Operand and EngineType.
+func NewPattern(operand Operand, engineTypeSet EngineTypeSet) *Pattern {
+	return &Pattern{Operand: operand, EngineTypeSet: engineTypeSet}
 }
 
 // SetChildren sets the Children information for a pattern node.
@@ -136,10 +149,10 @@ func (p *Pattern) SetChildren(children ...*Pattern) {
 	p.Children = children
 }
 
-// BuildPattern builds a Pattern from Operand and child Patterns.
+// BuildPattern builds a Pattern from Operand, EngineType and child Patterns.
 // Used in GetPattern() of Transformation interface to generate a Pattern.
-func BuildPattern(operand Operand, children ...*Pattern) *Pattern {
-	p := &Pattern{Operand: operand}
+func BuildPattern(operand Operand, engineTypeSet EngineTypeSet, children ...*Pattern) *Pattern {
+	p := &Pattern{Operand: operand, EngineTypeSet: engineTypeSet}
 	p.Children = children
 	return p
 }

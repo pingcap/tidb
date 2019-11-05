@@ -15,9 +15,10 @@ package implementation
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 )
 
-// ProjectionImpl implementation of PhysicalProjection.
+// ProjectionImpl is the implementation of PhysicalProjection.
 type ProjectionImpl struct {
 	baseImpl
 }
@@ -35,4 +36,63 @@ type ShowImpl struct {
 // NewShowImpl creates a new ShowImpl.
 func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
+}
+
+// TiDBSelectionImpl is the implementation of PhysicalSelection in TiDB layer.
+type TiDBSelectionImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (sel *TiDBSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CPUFactor + children[0].GetCost()
+	return sel.cost
+}
+
+// NewTiDBSelectionImpl creates a new TiDBSelectionImpl.
+func NewTiDBSelectionImpl(sel *plannercore.PhysicalSelection) *TiDBSelectionImpl {
+	return &TiDBSelectionImpl{baseImpl{plan: sel}}
+}
+
+// TiKVSelectionImpl is the implementation of PhysicalSelection in TiKV layer.
+type TiKVSelectionImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CopCPUFactor + children[0].GetCost()
+	return sel.cost
+}
+
+// NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
+func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
+	return &TiKVSelectionImpl{baseImpl{plan: sel}}
+}
+
+// TiDBHashAggImpl is the implementation of PhysicalHashAgg in TiDB layer.
+type TiDBHashAggImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true)
+	agg.cost = selfCost + children[0].GetCost()
+	return agg.cost
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg.SetChildren(children[0].GetPlan())
+	// Inject extraProjection if the AggFuncs or GroupByItems contain ScalarFunction.
+	plannercore.InjectProjBelowAgg(hashAgg, hashAgg.AggFuncs, hashAgg.GroupByItems)
+	return agg
+}
+
+// NewTiDBHashAggImpl creates a new TiDBHashAggImpl.
+func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
+	return &TiDBHashAggImpl{baseImpl{plan: agg}}
 }
