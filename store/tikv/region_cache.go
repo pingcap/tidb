@@ -1220,7 +1220,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.storeType = kv.TiKV
 		for _, label := range store.Labels {
 			if label.Key == "engine" {
-				if label.Value == "tiflash" {
+				if label.Value == kv.TiFlash.Name() {
 					s.storeType = kv.TiFlash
 				}
 				break
@@ -1265,7 +1265,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	storeType := kv.TiKV
 	for _, label := range store.Labels {
 		if label.Key == "engine" {
-			if label.Value == "tiflash" {
+			if label.Value == kv.TiFlash.Name() {
 				storeType = kv.TiFlash
 			}
 			break
