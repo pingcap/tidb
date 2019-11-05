@@ -123,7 +123,7 @@ select * from t;
 	reader = bufio.NewReader(slowLog)
 	_, err = infoschema.ParseSlowLog(loc, reader)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "parse slow log failed `Succ` error: strconv.ParseBool: parsing \"abc\": invalid syntax")
+	c.Assert(err.Error(), Equals, "parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
 
 func (s *testSuite) TestSlowLogParseTime(c *C) {
