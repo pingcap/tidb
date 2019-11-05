@@ -1028,10 +1028,10 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			continue
 		}
 		str, err := ds[i].DateFormat(buf0.GetString(i))
-		result.AppendString(str)
 		if err != nil {
 			return err
 		}
+		result.AppendString(str)
 	}
 	return nil
 }
