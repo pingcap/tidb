@@ -360,31 +360,6 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
-// AggregationType stands for the mode of aggregation plan.
-type AggregationType int
-
-const (
-	// StreamedAgg supposes its input is sorted by group by key.
-	StreamedAgg AggregationType = iota
-	// FinalAgg supposes its input is partial results.
-	FinalAgg
-	// CompleteAgg supposes its input is original results.
-	CompleteAgg
-)
-
-// String implements fmt.Stringer interface.
-func (at AggregationType) String() string {
-	switch at {
-	case StreamedAgg:
-		return "stream"
-	case FinalAgg:
-		return "final"
-	case CompleteAgg:
-		return "complete"
-	}
-	return "unsupported aggregation type"
-}
-
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
