@@ -672,12 +672,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
-				// err==io.EOF doesn't always means that the connection had close.
-				// Such as problem here https://github.com/pingcap/tidb/issues/10308.
-				// The problem in this issues is because this code before here
+				// err==io.EOF doesn't always means that the connection had closed.
+				// Such as this problem https://github.com/pingcap/tidb/issues/10308.
+				// The problem in this issues is because that the code before
 				// https://github.com/pingcap/tidb/blob/5340e177b6be541f2981a9e29b7bf7a3625f7826/types/time.go#L1181
 				// will make EOF err by code like `fmt.Sscanf("- -", "%1d%2d", &minute, &second)`.
-				// And, if the connection had close, call writeError with this err has no side effect.
+				//
+				// It is hard to cover all `io.EOF` error that isn't because of connection had closed,
+				// so problem like this https://github.com/pingcap/tidb/issues/10308 may happen when running some other sqls.
+				// Calling `writeError` here will help us avoiding such problem,
+				// and, it has no side effect if the connection had closed.
 				err = cc.writeError(err)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
