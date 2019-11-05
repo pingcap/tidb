@@ -493,23 +493,6 @@ func (c *Column) GetDecimal(rowID int) *types.MyDecimal {
 // EncodeTo appends the column data slice to the buf
 func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) ([][]byte, error) {
 	n := c.length
-	if buf == nil {
-		buf = make([][]byte, n)
-	}
-	bufLen := len(buf)
-	if bufLen < n {
-		for i := 0; i < bufLen; i++ {
-			buf[i] = buf[i][:0]
-		}
-		for i := bufLen; i < n; i++ {
-			buf = append(buf, nil)
-		}
-
-	} else {
-		for i := 0; i < n; i++ {
-			buf[i] = buf[i][:0]
-		}
-	}
 
 	var fixedTypeSize int
 	switch eType {
