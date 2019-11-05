@@ -1998,6 +1998,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					return errors.Trace(err)
 				}
 			}
+		case ast.AlterTableSetTiFlashReplica:
+			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		default:
 			// Nothing to do now.
 		}
@@ -2984,6 +2986,71 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		Args:       []interface{}{toCharset, toCollate},
 	}
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AlterTableSetTiFlashReplica sets the TiFlash replicas info.
+func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tbReplicaInfo := tb.Meta().TiFlashReplica
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
+		changed := false
+		for i, lable := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != lable {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return nil
+		}
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionSetTiFlashReplica,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{*replicaInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UpdateTableReplicaInfo updates the table flash replica infos.
+func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error {
+	is := d.infoHandle.Get()
+	tb, ok := is.TableByID(tid)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
+	}
+
+	if tb.Meta().TiFlashReplica == nil || (tb.Meta().TiFlashReplica.Available == available) {
+		return nil
+	}
+
+	db, ok := is.SchemaByTable(tb.Meta())
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+	}
+
+	job := &model.Job{
+		SchemaID:   db.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: db.Name.L,
+		Type:       model.ActionUpdateTiFlashReplicaStatus,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{available},
+	}
+	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

@@ -104,7 +104,9 @@ type LogicalPlan interface {
 	recursiveDeriveStats() (*property.StatsInfo, error)
 
 	// DeriveStats derives statistic info for current plan node given child stats.
-	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
+	// We need selfSchema, childSchema here because it makes this method can be used in
+	// cascades planner, where LogicalPlan might not record its children or schema.
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
