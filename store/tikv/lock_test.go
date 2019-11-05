@@ -364,6 +364,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 		TxnID:   txn.StartTS(),
 		TTL:     100000,
 	}
+	bo = NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	// Call getTxnStatusFromLock to cover the retry logic.
 	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS)
 	c.Assert(err, IsNil)
