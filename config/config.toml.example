@@ -283,8 +283,8 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data.
-enable-arrow = true
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-response = true
 
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
