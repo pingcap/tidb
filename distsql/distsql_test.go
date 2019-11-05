@@ -497,6 +497,7 @@ func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
 			}
 			chk.Reset()
 		}
+		s.TearDownSuite(nil)
 	}
 }
 
@@ -519,5 +520,6 @@ func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
 			}
 			chk.Reset()
 		}
+		s.TearDownSuite(nil)
 	}
 }
