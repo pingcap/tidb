@@ -702,6 +702,8 @@ func (b *builtinRandSig) vectorized() bool {
 }
 
 func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
 	for i := range f64s {
 		b.mu.Lock()
