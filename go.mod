@@ -39,13 +39,14 @@ require (
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
+	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190910074005-0e61b6f435c1
+	github.com/pingcap/kvproto v0.0.0-20191101062931-76b56d6eb466
 	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
-	github.com/pingcap/parser v0.0.0-20191025082927-f8adf1670b97
+	github.com/pingcap/parser v0.0.0-20191031081038-bfb0c3adf567
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
-	github.com/pingcap/tipb v0.0.0-20191022094114-a2e8c3fa634b
+	github.com/pingcap/tipb v0.0.0-20191029074152-e6f0f14af644
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
@@ -66,9 +67,9 @@ require (
 	go.uber.org/atomic v1.4.0
 	go.uber.org/multierr v1.2.0 // indirect
 	go.uber.org/zap v1.10.0
-	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7 // indirect
+	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20191010194322-b09406accb47
+	golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	golang.org/x/tools v0.0.0-20190911022129-16c5e0f7d110
