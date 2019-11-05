@@ -3345,6 +3345,38 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
+func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	// Test skip schema checker for ActionSetTiFlashReplica.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tk2.MustExec("alter table t1 set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("commit")
+
+	// Test skip schema checker for ActionUpdateTiFlashReplicaStatus.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tb := testGetTableByName(c, s.tk.Se, "test", "t1")
+	err := domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("commit")
+
+	// Test can't skip schema checker.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tk2.MustExec("alter table t1 add column b int;")
+	_, err = tk.Exec("commit")
+	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
+}
+
 func (s *testDBSuite2) TestLockTables(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("skip race test")
