@@ -51,6 +51,7 @@ const (
 	rulePushSelDownTableGather
 	rulePushSelDownSort
 	rulePushSelDownProjection
+	rulePushSelDownAggregation
 	ruleEnumeratePaths
 	rulePushAggDownGather
 )
@@ -60,6 +61,7 @@ var transformationRuleList = []Transformation{
 	&PushSelDownTableGather{},
 	&PushSelDownSort{},
 	&PushSelDownProjection{},
+	&PushSelDownAggregation{},
 	&EnumeratePaths{},
 	&PushAggDownGather{},
 }
@@ -70,6 +72,7 @@ var defaultTransformationMap = map[memo.Operand][]TransformationID{
 		rulePushSelDownTableGather,
 		rulePushSelDownSort,
 		rulePushSelDownProjection,
+		rulePushSelDownAggregation,
 	},
 	memo.OperandDataSource: {
 		ruleEnumeratePaths,
@@ -410,4 +413,89 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	newTopSelExpr := memo.NewGroupExpr(newTopSel)
 	newTopSelExpr.SetChildren(newProjGroup)
 	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
+}
+
+// PushSelDownAggregation pushes Selection down to the child of Aggregation.
+type PushSelDownAggregation struct {
+}
+
+// GetPattern implements Transformation interface.
+// The pattern of this rule is `Selection -> Aggregation`.
+func (r *PushSelDownAggregation) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandAggregation, memo.EngineAll),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownAggregation) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `sel->agg->x` to `agg->sel->x` or `sel->agg->sel->x`
+// or just keep the selection unchanged.
+func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	agg := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	var pushedExprs []expression.Expression
+	var remainedExprs []expression.Expression
+	exprsOriginal := make([]expression.Expression, 0, len(agg.AggFuncs))
+	for _, aggFunc := range agg.AggFuncs {
+		exprsOriginal = append(exprsOriginal, aggFunc.Args[0])
+	}
+	groupByColumns := expression.NewSchema(agg.GetGroupByCols()...)
+	for _, cond := range sel.Conditions {
+		switch cond.(type) {
+		case *expression.Constant:
+			// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
+			// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
+			// with value 0 rather than an empty query result.
+			pushedExprs = append(pushedExprs, cond)
+			remainedExprs = append(remainedExprs, cond)
+		case *expression.ScalarFunction:
+			extractedCols := expression.ExtractColumns(cond)
+			canPush := true
+			for _, col := range extractedCols {
+				if !groupByColumns.Contains(col) {
+					canPush = false
+					break
+				}
+			}
+			if canPush {
+				// TODO: Don't substitute since they should be the same column.
+				newCond := expression.ColumnSubstitute(cond, agg.Schema(), exprsOriginal)
+				pushedExprs = append(pushedExprs, newCond)
+			} else {
+				remainedExprs = append(remainedExprs, cond)
+			}
+		default:
+			remainedExprs = append(remainedExprs, cond)
+		}
+	}
+	// If no condition can be pushed, keep the selection unchanged.
+	if len(pushedExprs) == 0 {
+		return nil, false, false, nil
+	}
+	sctx := sel.SCtx()
+	childGroup := old.Children[0].GetExpr().Children[0]
+	pushedSel := plannercore.LogicalSelection{Conditions: pushedExprs}.Init(sctx, sel.SelectBlockOffset())
+	pushedGroupExpr := memo.NewGroupExpr(pushedSel)
+	pushedGroupExpr.SetChildren(childGroup)
+	pushedGroup := memo.NewGroupWithSchema(pushedGroupExpr, childGroup.Prop.Schema)
+
+	aggGroupExpr := memo.NewGroupExpr(agg)
+	aggGroupExpr.SetChildren(pushedGroup)
+
+	if len(remainedExprs) == 0 {
+		return []*memo.GroupExpr{aggGroupExpr}, true, false, nil
+	}
+
+	aggGroup := memo.NewGroupWithSchema(aggGroupExpr, agg.Schema())
+	remainedSel := plannercore.LogicalSelection{Conditions: remainedExprs}.Init(sctx, sel.SelectBlockOffset())
+	remainedGroupExpr := memo.NewGroupExpr(remainedSel)
+	remainedGroupExpr.SetChildren(aggGroup)
+	return []*memo.GroupExpr{remainedGroupExpr}, true, false, nil
 }
