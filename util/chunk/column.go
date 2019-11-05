@@ -496,8 +496,10 @@ func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) ([][]byte, error) 
 
 	var fixedTypeSize int
 	switch eType {
-	case types.ETInt, types.ETReal:
-		fixedTypeSize = 8
+	case types.ETInt:
+		fixedTypeSize = sizeInt64
+	case types.ETReal:
+		fixedTypeSize = sizeFloat64
 	case types.ETDecimal:
 		fixedTypeSize = sizeMyDecimal
 	case types.ETDatetime:
@@ -505,10 +507,10 @@ func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) ([][]byte, error) 
 	case types.ETDuration:
 		fixedTypeSize = sizeGoDuration
 	default:
-		fixedTypeSize = 0
+		fixedTypeSize = varElemLen
 	}
 	var NilFlag byte = 0
-	if fixedTypeSize != 0 {
+	if fixedTypeSize != -1 {
 		for i := 0; i < n; i++ {
 			if c.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
