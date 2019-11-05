@@ -81,3 +81,5 @@ require (
 replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-04dfd648ce8d
 
 go 1.13
+
+replace github.com/pingcap/kvproto => github.com/cfzjywxk/kvproto v0.0.0-20191105105343-583f67aeb982

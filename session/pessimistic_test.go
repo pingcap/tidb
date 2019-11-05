@@ -420,3 +420,91 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	c.Assert(terror.ErrorEqual(err, tikv.ErrQueryInterrupted), IsTrue)
 	tk.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	// tk set global
+	tk.MustExec("set global innodb_lock_wait_timeout = 3")
+	tk.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 50"))
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
+	tk2.MustExec("set innodb_lock_wait_timeout = 2")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 2"))
+
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
+	tk3.MustExec("set innodb_lock_wait_timeout = 1")
+	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+
+	tk2.MustExec("set @@autocommit = 0")
+	tk3.MustExec("set @@autocommit = 0")
+
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk4.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
+	tk4.MustExec("set @@autocommit = 0")
+
+	// tk2 lock c1 = 1
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("select * from tk where c1 = 1 for update") // lock succ c1 = 1
+
+	// tk3 try lock c1 = 1 timeout 1sec
+	tk3.MustExec("begin pessimistic")
+	start := time.Now()
+	_, err := tk3.Exec("select * from tk where c1 = 1 for update")
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+
+	tk4.MustExec("begin pessimistic")
+	tk4.MustExec("update tk set c2 = c2 + 1 where c1 = 2") // lock succ c1 = 2 by update
+	start = time.Now()
+	_, err = tk2.Exec("update tk set c2 = c2 - 1 where c1 = 2")
+	c.Check(time.Since(start), GreaterEqual, time.Duration(2000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(2100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+	start = time.Now()
+	_, err = tk2.Exec("delete from tk where c1 = 2")
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+
+	tk2.MustExec("commit")
+	tk3.MustExec("commit")
+	tk4.MustExec("commit")
+
+	tk.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 50"))
+	tk.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 3")) // tk4 update commit work, tk2 delete should be rollbacked
+
+	// test stmtRollBack caused by timeout but not the whole transaction
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update tk set c2 = c2 + 2 where c1 = 2")                    // tk2 lock succ c1 = 2 by update
+	tk2.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 5")) // tk2 update c2 succ
+
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("select * from tk where c1 = 3 for update") // tk3  lock c1 = 3 succ
+
+	start = time.Now()
+	_, err = tk2.Exec("delete from tk where c1 = 3") // tk2 tries to lock c1 = 3 fail, this delete should be rollback, but previous update should be keeped
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+
+	tk2.MustExec("commit")
+	tk3.MustExec("commit")
+
+	tk.MustQuery(`select * from tk where c1 = 1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 5")) // tk2 update succ
+	tk.MustQuery(`select * from tk where c1 = 3`).Check(testkit.Rows("3 3")) // tk2 delete should fail
+	tk.MustQuery(`select * from tk where c1 = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from tk where c1 = 5`).Check(testkit.Rows("5 5"))
+
+	// clean
+	tk.MustExec("drop table if exists tk")
+}

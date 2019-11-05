@@ -769,10 +769,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return doLockKeys(ctx, e.ctx, e.keys...)
+	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
+	return doLockKeys(ctx, e.ctx, lockWaitTime, e.keys...)
 }
 
-func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
@@ -780,7 +781,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) erro
 		return err
 	}
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, keys...)
+	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, lockWaitTime, keys...)
 }
 
 // LimitExec represents limit executor
