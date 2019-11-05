@@ -245,7 +245,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 				// TiFlash only support full range scan for the region, ignore the real ranges
 				// does not affect the correctness because we already merge the access range condition
 				// into filter condition in `getOriginalPhysicalTableScan`
-				ranges : &copRanges{mid: [] kv.KeyRange {fullRange}},
+				ranges: &copRanges{mid: []kv.KeyRange{fullRange}},
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
