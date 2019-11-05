@@ -1005,7 +1005,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[1].VecEvalTime(b.ctx, input, buf0); err != nil {
+	if err := b.args[1].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
 
