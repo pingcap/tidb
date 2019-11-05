@@ -674,11 +674,9 @@ func (b *builtinCRC32Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
+	result.MergeNulls(buf)
 	for i := range i64s {
-		if buf.IsNull(i) {
-			i64s[i] = 0
-			result.SetNull(i, true)
-		} else {
+		if !buf.IsNull(i) {
 			i64s[i] = int64(crc32.ChecksumIEEE(buf.GetBytes(i)))
 		}
 	}
