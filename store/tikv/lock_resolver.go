@@ -358,7 +358,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, false)
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true)
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
