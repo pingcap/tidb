@@ -77,7 +77,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{ if .type.Fixed }}
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
 	arg1 := buf1.{{ .type.TypeNameInColumn }}s()
-{{ end }}
+{{- end }}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -85,19 +85,19 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 		if result.IsNull(i) {
 			continue
 		}
-{{ if eq .type.ETName "Json" }}
+{{- if eq .type.ETName "Json" }}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-{{ else if eq .type.ETName "Real" }}
+{{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-{{ else if eq .type.ETName "String" }}
+{{- else if eq .type.ETName "String" }}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
-{{ else if eq .type.ETName "Duration" }}
+{{- else if eq .type.ETName "Duration" }}
 		val := types.CompareDuration(arg0[i], arg1[i])
-{{ else if eq .type.ETName "Datetime" }}
+{{- else if eq .type.ETName "Datetime" }}
 		val := arg0[i].Compare(arg1[i])
-{{ else if eq .type.ETName "Decimal" }}
+{{- else if eq .type.ETName "Decimal" }}
 		val := arg0[i].Compare(&arg1[i])
-{{ end }}
+{{- end }}
 		if val {{ .compare.Operator }} 0 {
 			i64s[i] = 1
 		} else {
@@ -135,7 +135,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{ if .type.Fixed }}
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
 	arg1 := buf1.{{ .type.TypeNameInColumn }}s()
-{{ end }}
+{{- end }}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
@@ -146,19 +146,19 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-{{ if eq .type.ETName "Json" }}
+{{- if eq .type.ETName "Json" }}
 		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
-{{ else if eq .type.ETName "Real" }}
+{{- else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
-{{ else if eq .type.ETName "String" }}
+{{- else if eq .type.ETName "String" }}
 		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
-{{ else if eq .type.ETName "Duration" }}
+{{- else if eq .type.ETName "Duration" }}
 		case types.CompareDuration(arg0[i], arg1[i]) == 0:
-{{ else if eq .type.ETName "Datetime" }}
+{{- else if eq .type.ETName "Datetime" }}
 		case arg0[i].Compare(arg1[i]) == 0:
-{{ else if eq .type.ETName "Decimal" }}
+{{- else if eq .type.ETName "Decimal" }}
 		case arg0[i].Compare(&arg1[i]) == 0:
-{{ end }}
+{{- end }}
 			i64s[i] = 1
 		}
 	}
