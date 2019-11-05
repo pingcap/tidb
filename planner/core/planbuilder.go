@@ -1765,7 +1765,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.names = insertPlan.names4OnDuplicate
 
-	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
+	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
 		expr, err := b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
 		if err != nil {
 			return nil, err
@@ -1785,7 +1785,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-func (p *Insert) ResolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(node ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
+func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(node ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
 	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
 	for _, col := range p.Table.Cols() {
