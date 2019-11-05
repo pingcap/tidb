@@ -39,4 +39,4 @@ desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and 
 id	count	task	operator info
 TableReader_7	44.00	root	data:Selection_6
 └─Selection_6	44.00	cop[tiflash]	or(and(gt(Column#1, 1), lt(Column#1, 20)), and(ge(Column#1, 30), lt(Column#1, 55)))
-  └─TableScan_5	44.00	cop[tiflash]	table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo
+  └─TableScan_5	44.00	cop[tiflash]	table:tt, range:[-inf,+inf], keep order:false, stats:pseudo
