@@ -798,6 +798,16 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 		}
 		return ErrRetryable("txn not found")
 	}
+	// Reject the commit request whose commitTS is less than minCommiTS.
+	if dec.lock.minCommitTS > commitTS {
+		return &ErrCommitTSExpired{
+			kvrpcpb.CommitTsExpired{
+				StartTs:           startTS,
+				AttemptedCommitTs: commitTS,
+				Key:               key,
+				MinCommitTs:       dec.lock.minCommitTS,
+			}}
+	}
 
 	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
 		return errors.Trace(err)

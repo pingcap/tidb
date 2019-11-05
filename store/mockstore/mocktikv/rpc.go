@@ -92,6 +92,11 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			Retryable: retryable.Error(),
 		}
 	}
+	if expired, ok := errors.Cause(err).(*ErrCommitTSExpired); ok {
+		return &kvrpcpb.KeyError{
+			CommitTsExpired: &expired.CommitTsExpired,
+		}
+	}
 	return &kvrpcpb.KeyError{
 		Abort: err.Error(),
 	}

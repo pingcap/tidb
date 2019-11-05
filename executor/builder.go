@@ -998,11 +998,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		concurrency:   v.Concurrency,
-		joinType:      v.JoinType,
-		isOuterJoin:   v.JoinType.IsOuterJoin(),
-		innerEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
+		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		concurrency:       v.Concurrency,
+		joinType:          v.JoinType,
+		isOuterJoin:       v.JoinType.IsOuterJoin(),
+		buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
 	}
 
 	defaultValues := v.DefaultValues
@@ -1012,26 +1012,26 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
-		e.innerExec = leftExec
-		e.outerExec = rightExec
-		e.outerFilter = v.RightConditions
-		e.innerKeys = v.LeftJoinKeys
-		e.outerKeys = v.RightJoinKeys
+		e.buildSideExec = leftExec
+		e.probeSideExec = rightExec
+		e.probeSideFilter = v.RightConditions
+		e.buildKeys = v.LeftJoinKeys
+		e.probeKeys = v.RightJoinKeys
 		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
+			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	} else {
 		if len(v.RightConditions) > 0 {
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
-		e.innerExec = rightExec
-		e.outerExec = leftExec
-		e.outerFilter = v.LeftConditions
-		e.innerKeys = v.RightJoinKeys
-		e.outerKeys = v.LeftJoinKeys
+		e.buildSideExec = rightExec
+		e.probeSideExec = leftExec
+		e.probeSideFilter = v.LeftConditions
+		e.buildKeys = v.RightJoinKeys
+		e.probeKeys = v.LeftJoinKeys
 		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
+			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
 	e.joiners = make([]joiner, e.concurrency)

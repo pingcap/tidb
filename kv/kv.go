@@ -237,6 +237,14 @@ const (
 	TiFlash
 )
 
+// Name returns the name of store type.
+func (t StoreType) Name() string {
+	if t == TiFlash {
+		return "tiflash"
+	}
+	return "tikv"
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
