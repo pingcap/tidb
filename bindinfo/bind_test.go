@@ -138,7 +138,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bind.UpdateTime, NotNil)
 
 	// Test fields with quotes or slashes.
-	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and "x"`
+	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`
 	tk.MustExec(sql)
 	tk.MustExec(`DROP global binding for select * from t use index(idx) where i BETWEEN "a\nb\rc\td\0e" and "x"`)
 }
