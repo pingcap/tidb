@@ -24,6 +24,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -535,13 +536,39 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, keys...)
+		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout, keys...)
 		if err == nil {
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			return err
+		}
+	}
+}
+
+// GetTimestampWithRetry tries to get timestamp using retry and backoff mechanism
+func (a *ExecStmt) GetTimestampWithRetry(ctx context.Context) (uint64, error) {
+	tsoMaxBackoff := 15000
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("ExecStmt.GetTimestampWithRetry", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	bo := tikv.NewBackoffer(ctx, tsoMaxBackoff)
+	for {
+		ts, err := a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
+		// mock get ts fail
+		failpoint.Inject("ExecStmtGetTsError", func() (uint64, error) {
+			return 0, errors.New("ExecStmtGetTsError")
+		})
+
+		if err == nil {
+			return ts, nil
+		}
+		err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("ExecStmt get timestamp failed: %v", err))
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
 	}
 }
@@ -573,6 +600,19 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		if conflictCommitTS > forUpdateTS {
 			newForUpdateTS = conflictCommitTS
 		}
+	} else if terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet) {
+		// for nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn
+		// the select for updateTs must be updated, otherwise there maybe rollback problem.
+		// begin;  select for update key1(here ErrLocked or other errors(or max_execution_time like util),
+		//         key1 lock not get and async rollback key1 is raised)
+		//         select for update key1 again(this time lock succ(maybe lock released by others))
+		//         the async rollback operation rollbacked the lock just acquired
+		newForUpdateTS, tsErr := a.GetTimestampWithRetry(ctx)
+		if tsErr != nil {
+			return nil, tsErr
+		}
+		txnCtx.SetForUpdateTS(newForUpdateTS)
+		return nil, err
 	} else {
 		return nil, err
 	}

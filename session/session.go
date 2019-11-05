@@ -1793,6 +1793,7 @@ var builtinGlobalVariable = []string{
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
+	variable.InnodbLockWaitTimeout,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
