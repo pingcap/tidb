@@ -5067,3 +5067,49 @@ func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.timestampliteral does not exist")
 
 }
+
+func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk (a int,b varchar(20))")
+	for i := 0; i < 200; i++ {
+		if i%5 == 0 {
+			tk.MustExec(fmt.Sprintf("insert chk values (NULL,NULL)"))
+			continue
+		}
+		tk.MustExec(fmt.Sprintf("insert chk values (%d,'%s')", i, strconv.Itoa(i)))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.MustExec("set tidb_init_chunk_size = 2")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+	}()
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	req := rs.NewChunk()
+	var count int
+	for {
+		err = rs.Next(context.TODO(), req)
+		c.Assert(err, IsNil)
+		numRows := req.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			if count%5 == 0 {
+				c.Assert(req.GetRow(i).IsNull(0), Equals, true)
+				c.Assert(req.GetRow(i).IsNull(1), Equals, true)
+			} else {
+				c.Assert(req.GetRow(i).IsNull(0), Equals, false)
+				c.Assert(req.GetRow(i).IsNull(1), Equals, false)
+				c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
+				c.Assert(req.GetRow(i).GetString(1), Equals, strconv.Itoa(count))
+			}
+			count++
+		}
+	}
+	c.Assert(count, Equals, 200)
+	rs.Close()
+}
