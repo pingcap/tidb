@@ -134,7 +134,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta)
-		if meta.FirstUsingBinding() != nil {
+		if meta.HasUsingBinding() {
 			newCache.setBindRecord(hash, newRecord)
 		} else {
 			newCache.removeDeletedBindRecord(hash, oldRecord)
@@ -480,7 +480,7 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		normalizedSQL, digiest := parser.NormalizeDigest(sqls[i])
-		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.FirstUsingBinding() != nil {
+		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		h.sctx.Lock()
