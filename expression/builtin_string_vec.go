@@ -1720,8 +1720,8 @@ func (b *builtinCharLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetBytes(i)
-		i64s[i] = int64(len(str))
+		str := buf.GetString(i)
+		i64s[i] = int64(len([]rune(str)))
 	}
 	return nil
 }
