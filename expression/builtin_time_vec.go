@@ -945,11 +945,42 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinToDaysSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals a builtinToDaysSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		arg := ds[i]
+		ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
+		if ret == 0 {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		i64s[i] = ret
+	}
+	return nil
 }
 
 func (b *builtinDateFormatSig) vectorized() bool {
