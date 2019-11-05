@@ -60,6 +60,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
 			MockResponse: &mockResponse{
+				ctx:   ctx,
 				batch: 1,
 				total: 2,
 			},
@@ -77,6 +78,7 @@ func (s *testSuite) SetUpTest(c *C) {
 	store := ctx.Store.(*mock.Store)
 	store.Client = &mock.Client{
 		MockResponse: &mockResponse{
+			ctx:   ctx,
 			batch: 1,
 			total: 2,
 		},
