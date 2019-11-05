@@ -355,7 +355,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	errCh := make(chan error)
 	go func() {
-		errCh <- committer.prewriteKeys(bo, [][]byte{[]byte("key")})
+		errCh <- committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{[]byte("key")})
 	}()
 
 	lock := &Lock{
@@ -364,7 +364,6 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 		TxnID:   txn.StartTS(),
 		TTL:     100000,
 	}
-	bo = NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	// Call getTxnStatusFromLock to cover the retry logic.
 	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS)
 	c.Assert(err, IsNil)
