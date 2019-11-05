@@ -1,6 +1,7 @@
 bin
 /tidb-server/tidb-server
 /tidb-server/debug
+/wasm-dist
 /wasm/main.css
 coverage.out
 .idea/

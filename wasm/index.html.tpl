@@ -2,6 +2,8 @@
 
 <head>
     <meta charset="utf-8" />
+    <title>TiDB Playground</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
     <script type="text/javascript" src="jquery.console.js"></script>
     <script src="wasm_exec.js"></script>
@@ -122,11 +124,6 @@
     }
     function unimplemented1(_1, callback) { unimplemented(callback); }
     function unimplemented2(_1, _2, callback) { unimplemented(callback); }
-    fs.stat = unimplemented1;
-    fs.lstat = unimplemented1;
-    fs.unlink = unimplemented1; 
-    fs.rmdir = unimplemented1;
-    fs.mkdir = unimplemented2;
     function bootstrapGo() {
         const go = new Go();
         fetch("main.css")
@@ -134,6 +131,11 @@
             .then(r => r.arrayBuffer())
             .then(buffer => WebAssembly.instantiate(buffer, go.importObject))
             .then(result => {
+                fs.stat = unimplemented1;
+                fs.lstat = unimplemented1;
+                fs.unlink = unimplemented1;
+                fs.rmdir = unimplemented1;
+                fs.mkdir = unimplemented2;
                 go.run(result.instance);
                 document.getElementById("loading").style.display = "none";
                 bootstrapTerm();
@@ -213,7 +215,8 @@
             throw Error('ReadableStream not yet supported in this browser.')
         }
 
-        const total = 76 * 1024 * 1024 // hardcode since some CDN does NOT return content-length for compressed content
+        // hardcode since some CDN does NOT return content-length for compressed content
+        const total = 82837504 
         let loaded = 0;
 
         return new Response(

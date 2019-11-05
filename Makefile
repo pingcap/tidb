@@ -1,5 +1,6 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
+GOROOT ?= $(shell go env GOROOT)
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -12,7 +13,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p 8
 OVERALLS        := GO111MODULE=on overalls
@@ -46,7 +47,7 @@ VB_FILE =
 VB_FUNC =
 
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all build update clean todo test gotest interpreter server wasm dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -223,6 +224,14 @@ benchdb:
 
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
+
+wasm:
+	mkdir -p wasm-dist
+	GOOS=js GOARCH=wasm $(GOBUILD) -ldflags '$(LDFLAGS)' -o wasm-dist/main.css wasm/*.go
+	cp "$(GOROOT)/misc/wasm/wasm_exec.js" wasm-dist/wasm_exec.js
+	cp wasm/favicon.ico wasm-dist/favicon.ico
+	cp wasm/jquery.console.js wasm-dist/jquery.console.js
+	sed 's/82837504/$(shell stat -f%z wasm-dist/main.css)/g' wasm/index.html.tpl > wasm-dist/index.html
 
 checklist:
 	cat checklist.md
