@@ -483,6 +483,8 @@ func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
 		b.StopTimer()
 		s := &testSuite{}
 		s.SetUpSuite(nil)
+		s.sctx.GetSessionVars().InitChunkSize = 32
+		s.sctx.GetSessionVars().MaxChunkSize = 1024
 		selectResult, colTypes := createSelectNormal(4000, 20000, s.sctx)
 		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
@@ -506,6 +508,8 @@ func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
 		b.StopTimer()
 		s := &testSuite{}
 		s.SetUpSuite(nil)
+		s.sctx.GetSessionVars().InitChunkSize = 32
+		s.sctx.GetSessionVars().MaxChunkSize = 1024
 		selectResult, colTypes := createSelectNormal(32, 3200, s.sctx)
 		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
