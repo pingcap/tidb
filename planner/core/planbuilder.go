@@ -1772,6 +1772,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return expr, nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	// Calculate generated columns.
 	mockTablePlan.schema = insertPlan.tableSchema
@@ -1785,7 +1788,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(node ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
+func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
 	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
 	for _, col := range p.Table.Cols() {
