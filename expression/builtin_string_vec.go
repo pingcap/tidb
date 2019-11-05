@@ -1605,11 +1605,44 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinRightBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRightBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	right := buf2.Int64s()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		rightLength, str := int(right[i]), buf.GetString(i)
+		strLength := len(str)
+		if rightLength > strLength {
+			rightLength = strLength
+		} else if rightLength < 0 {
+			rightLength = 0
+		}
+		result.AppendString(str[strLength-rightLength:])
+	}
+	return nil
 }
 
 func (b *builtinSubstringBinary3ArgsSig) vectorized() bool {
