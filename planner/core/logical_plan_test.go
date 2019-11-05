@@ -955,6 +955,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
 		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.c)->Update",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
