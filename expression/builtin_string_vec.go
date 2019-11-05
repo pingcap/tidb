@@ -1400,7 +1400,7 @@ func (b *builtinRightBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.
 	right := buf2.Int64s()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf2.IsNull(i){
+		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
