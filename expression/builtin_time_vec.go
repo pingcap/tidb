@@ -1012,7 +1012,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	result.ReserveString(n)
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf0.IsNull(i) {
+		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
@@ -1021,6 +1021,10 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 				return err
 			}
 			result.SetNull(i, true)
+			continue
+		}
+		if buf0.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
 		str, err := ds[i].DateFormat(buf0.GetString(i))
