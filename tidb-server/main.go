@@ -345,7 +345,7 @@ func loadConfig() string {
 		// is not the default behavior of TiDB. The warning message must be deferred until
 		// logging has been set up. After strict config checking is the default behavior,
 		// This should all be removed.
-		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configCheck && !*configStrict {
+		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configStrict {
 			return err.Error()
 		}
 		terror.MustNil(err)
