@@ -178,7 +178,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
-func (s *testSuite1) TestAnalyzeFastSample(c *C) {
+func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := mockstore.NewMockTikvStore(
