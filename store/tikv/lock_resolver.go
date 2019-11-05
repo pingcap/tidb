@@ -204,7 +204,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		tikvLockResolverCountWithExpired.Inc()
 
 		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true)
 		if err != nil {
 			return false, err
 		}
@@ -358,7 +358,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS)
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true)
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
@@ -378,8 +378,9 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		}
 	}
 
+	rollbackIfNotExist := false
 	for {
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
+		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist)
 		if err == nil {
 			return status, err
 		}
@@ -389,10 +390,10 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 
 		// Handle txnNotFound error.
 		// If the (secondary) lock TTL has expired, return rollbacked status.
-		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
-			return status, nil
-		}
 		time.Sleep(5 * time.Millisecond)
+		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
+			rollbackIfNotExist = true
+		}
 	}
 }
 
@@ -405,7 +406,7 @@ func (e txnNotFoundErr) Error() string {
 }
 
 // If nonBlockRead is true, the caller should handle the txnNotFoundErr.
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64, rollbackIfNotExist bool) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -427,7 +428,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		LockTs:             txnID,
 		CallerStartTs:      callerStartTS,
 		CurrentTs:          currentTS,
-		RollbackIfNotExist: false,
+		RollbackIfNotExist: rollbackIfNotExist,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)

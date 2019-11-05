@@ -208,7 +208,12 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
+	c.Assert(err, IsNil)
+	// Increase lock TTL to make CI more stable.
+	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 200*1024*1024)
+	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
+	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	lr := newLockResolver(s.store)
@@ -287,7 +292,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
-	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -308,20 +313,20 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
 	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)
 }
 
-func (s *testLockSuite) TestCheckTxnStatusNoBlockRead(c *C) {
+func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
@@ -342,28 +347,43 @@ func (s *testLockSuite) TestCheckTxnStatusNoBlockRead(c *C) {
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	resolver := newLockResolver(s.store)
 
-	// Call getTxnStatus with non-block reading flag.
-	_, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
+	// Call getTxnStatus for the TxnNotFound case.
+	_, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, false)
 	c.Assert(err, NotNil)
 	_, ok := errors.Cause(err).(txnNotFoundErr)
 	c.Assert(ok, IsTrue)
 
 	errCh := make(chan error)
 	go func() {
-		errCh <- committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{[]byte("key")})
+		errCh <- committer.prewriteKeys(bo, [][]byte{[]byte("key")})
 	}()
 
 	lock := &Lock{
 		Key:     []byte("second"),
 		Primary: []byte("key"),
 		TxnID:   txn.StartTS(),
-		TTL:     100000, // Not zero.
+		TTL:     100000,
 	}
-	// Call getTxnStatus with non-block reading flag, this time with retry to cover more code.
+	// Call getTxnStatusFromLock to cover the retry logic.
 	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(<-errCh, IsNil)
+	c.Assert(committer.cleanupKeys(bo, committer.keys), IsNil)
+
+	// Call getTxnStatusFromLock to cover TxnNotFound and retry timeout.
+	startTS, err := oracle.GetTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	lock = &Lock{
+		Key:     []byte("second"),
+		Primary: []byte("key"),
+		TxnID:   startTS,
+		TTL:     1000,
+	}
+	status, err = resolver.getTxnStatusFromLock(bo, lock, currentTS)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, Equals, uint64(0))
+	c.Assert(status.commitTS, Equals, uint64(0))
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
