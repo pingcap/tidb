@@ -24,7 +24,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -128,6 +127,7 @@ func (s *testSuite) TestSelectMemTracker(c *C) {
 }
 
 func (s *testSuite) TestSelectNormalChunkSize(c *C) {
+	s.sctx.GetSessionVars().EnableArrow = false
 	response, colTypes := s.createSelectNormal(100, 1000000, c, nil)
 	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
@@ -289,6 +289,7 @@ func (s *testSuite) testChunkSize(response SelectResult, colTypes []*types.Field
 }
 
 func (s *testSuite) TestAnalyze(c *C) {
+	s.sctx.GetSessionVars().EnableArrow = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
@@ -314,6 +315,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 }
 
 func (s *testSuite) TestChecksum(c *C) {
+	s.sctx.GetSessionVars().EnableArrow = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetChecksumRequest(&tipb.ChecksumRequest{}).
 		Build()
@@ -343,6 +345,7 @@ type mockResponse struct {
 	count int
 	total int
 	batch int
+	ctx   sessionctx.Context
 	sync.Mutex
 }
 
@@ -367,7 +370,7 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp.count += numRows
 
 	var chunks []tipb.Chunk
-	if !config.GetGlobalConfig().TiKVClient.EnableArrow {
+	if !enableTypeArrow(resp.ctx) {
 		datum := types.NewIntDatum(1)
 		bytes := make([]byte, 0, 100)
 		bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
@@ -405,8 +408,10 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 		Chunks:       chunks,
 		OutputCounts: []int64{1},
 	}
-	if config.GetGlobalConfig().TiKVClient.EnableArrow {
+	if enableTypeArrow(resp.ctx) {
 		respPB.EncodeType = tipb.EncodeType_TypeArrow
+	} else {
+		respPB.EncodeType = tipb.EncodeType_TypeDefault
 	}
 	respBytes, err := respPB.Marshal()
 	if err != nil {
