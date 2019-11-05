@@ -1404,9 +1404,9 @@ func (b *builtinRightBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		str ,rightLength:= buf.GetString(i), int(right[i])
-		strLength := len(str);
-		if rightLength > strLength  {
+		str, rightLength := buf.GetString(i), int(right[i])
+		strLength := len(str)
+		if rightLength > strLength {
 			rightLength = strLength
 		} else if rightLength < 0 {
 			rightLength = 0
