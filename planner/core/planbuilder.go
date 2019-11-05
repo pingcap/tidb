@@ -1766,11 +1766,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.names = insertPlan.names4OnDuplicate
 
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		expr, err := b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
-		if err != nil {
-			return nil, err
-		}
-		return expr, nil
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
 	})
 	if err != nil {
 		return nil, err
