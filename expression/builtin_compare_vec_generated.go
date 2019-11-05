@@ -1756,3 +1756,224 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 func (b *builtinNullEQJSONSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeInt64(n, true)
+	i64s := result.Int64s()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	for j := 0; j < len(b.args); j++ {
+
+		if err := b.args[j].VecEvalInt(b.ctx, input, buf1); err != nil {
+			return err
+		}
+		args := buf1.Int64s()
+		for i := 0; i < n; i++ {
+			if !buf1.IsNull(i) && result.IsNull(i) {
+				i64s[i] = args[i]
+				result.SetNull(i, false)
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeFloat64(n, true)
+	i64s := result.Float64s()
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	for j := 0; j < len(b.args); j++ {
+
+		if err := b.args[j].VecEvalReal(b.ctx, input, buf1); err != nil {
+			return err
+		}
+		args := buf1.Float64s()
+		for i := 0; i < n; i++ {
+			if !buf1.IsNull(i) && result.IsNull(i) {
+				i64s[i] = args[i]
+				result.SetNull(i, false)
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceRealSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeDecimal(n, true)
+	i64s := result.Decimals()
+	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	for j := 0; j < len(b.args); j++ {
+
+		if err := b.args[j].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+			return err
+		}
+		args := buf1.Decimals()
+		for i := 0; i < n; i++ {
+			if !buf1.IsNull(i) && result.IsNull(i) {
+				i64s[i] = args[i]
+				result.SetNull(i, false)
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceDecimalSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	argLen := len(b.args)
+
+	bufs := make([]*chunk.Column, argLen)
+
+	for i := 0; i < argLen; i++ {
+		buf, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(buf)
+		err = b.args[i].VecEvalString(b.ctx, input, buf)
+		if err != nil {
+			return err
+		}
+		bufs[i] = buf
+	}
+	result.ReserveString(n)
+
+	for i := 0; i < n; i++ {
+		for j := 0; j < argLen; j++ {
+			if !bufs[j].IsNull(i) {
+				result.AppendString(bufs[j].GetString(i))
+				break
+			}
+			if j == argLen-1 && bufs[j].IsNull(i) {
+				result.AppendNull()
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceStringSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeTime(n, true)
+	i64s := result.Times()
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	for j := 0; j < len(b.args); j++ {
+
+		if err := b.args[j].VecEvalTime(b.ctx, input, buf1); err != nil {
+			return err
+		}
+		args := buf1.Times()
+		for i := 0; i < n; i++ {
+			if !buf1.IsNull(i) && result.IsNull(i) {
+				i64s[i] = args[i]
+				result.SetNull(i, false)
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, true)
+	i64s := result.GoDurations()
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	for j := 0; j < len(b.args); j++ {
+
+		if err := b.args[j].VecEvalDuration(b.ctx, input, buf1); err != nil {
+			return err
+		}
+		args := buf1.GoDurations()
+		for i := 0; i < n; i++ {
+			if !buf1.IsNull(i) && result.IsNull(i) {
+				i64s[i] = args[i]
+				result.SetNull(i, false)
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	argLen := len(b.args)
+
+	bufs := make([]*chunk.Column, argLen)
+
+	for i := 0; i < argLen; i++ {
+		buf, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(buf)
+		err = b.args[i].VecEvalJSON(b.ctx, input, buf)
+		if err != nil {
+			return err
+		}
+		bufs[i] = buf
+	}
+	result.ReserveJSON(n)
+
+	for i := 0; i < n; i++ {
+		for j := 0; j < argLen; j++ {
+			if !bufs[j].IsNull(i) {
+				result.AppendJSON(bufs[j].GetJSON(i))
+				break
+			}
+			if j == argLen-1 && bufs[j].IsNull(i) {
+				result.AppendNull()
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinCoalesceJSONSig) vectorized() bool {
+	return true
+}

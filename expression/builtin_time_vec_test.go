@@ -77,6 +77,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.Day: {},
+	ast.ToDays: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
@@ -89,8 +92,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.PeriodAdd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
 	},
-	ast.PeriodDiff: {},
-	ast.Quarter:    {},
+	ast.PeriodDiff: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
+	},
+	ast.Quarter: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
@@ -154,6 +161,14 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.UTCDate: {
 		{retEvalType: types.ETDatetime},
+	},
+	ast.UTCTimestamp: {
+		{retEvalType: types.ETTimestamp},
+		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
+	},
+	ast.UTCTime: {
+		{retEvalType: types.ETDuration},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 	ast.Weekday: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
