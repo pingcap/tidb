@@ -1020,7 +1020,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
+			result.AppendNull(i, true)
 			continue
 		}
 		if buf0.IsNull(i) {
