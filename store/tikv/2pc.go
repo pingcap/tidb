@@ -69,7 +69,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64 = 10000 // 3s ~ 30s
+	PessimisticLockTTL uint64 = 20000 // 20s
 )
 
 func (actionPrewrite) String() string {
