@@ -141,8 +141,8 @@ func GetStatus() BinlogStatus {
 	return BinlogStatusOn
 }
 
-// StatusOnChange registers a listener function to watch binlog status
-func StatusOnChange(listener func(BinlogStatus) error) {
+// RegisterStatusListener registers a listener function to watch binlog status
+func RegisterStatusListener(listener func(BinlogStatus) error) {
 	statusListener = listener
 }
 

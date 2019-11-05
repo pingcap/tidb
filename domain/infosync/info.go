@@ -265,7 +265,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-	binloginfo.StatusOnChange(func(status binloginfo.BinlogStatus) error {
+	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
 		is.info.BinlogStatus = status.String()
 		err := is.storeServerInfo(ctx)
 		return errors.Trace(err)
