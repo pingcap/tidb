@@ -172,4 +172,6 @@ func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
 	g.Delete(oldExpr)
 	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
 	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, newExpr)
+	g.Delete(newExpr)
+	c.Assert(g.GetFirstElem(OperandLimit), IsNil)
 }
