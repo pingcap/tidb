@@ -263,7 +263,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 }
 
 // ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset,
-// and it will also resolve collate by the order: table collate > database collate > server default collate.
+// and it will also resolve the collate by the order: table collate > database collate > server default collate.
 func ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate string) (string, string, error) {
 	if len(tblCharset) != 0 {
 		// tblCollate is not specified by user.
