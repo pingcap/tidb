@@ -24,43 +24,47 @@ import (
 )
 
 func TestString(t *testing.T) {
-	detail := &ExecDetails{
+	copDetail := &CopExecDetails{
 		ProcessTime:   2*time.Second + 5*time.Millisecond,
 		WaitTime:      time.Second,
 		BackoffTime:   time.Second,
 		RequestCount:  1,
 		TotalKeys:     100,
 		ProcessedKeys: 10,
-		CommitDetail: &CommitDetails{
-			GetCommitTsTime:   time.Second,
-			PrewriteTime:      time.Second,
-			CommitTime:        time.Second,
-			LocalLatchTime:    time.Second,
-			CommitBackoffTime: int64(time.Second),
-			Mu: struct {
-				sync.Mutex
-				BackoffTypes []fmt.Stringer
-			}{BackoffTypes: []fmt.Stringer{
-				stringutil.MemoizeStr(func() string {
-					return "backoff1"
-				}),
-				stringutil.MemoizeStr(func() string {
-					return "backoff2"
-				}),
-			}},
-			ResolveLockTime:   1000000000, // 10^9 ns = 1s
-			WriteKeys:         1,
-			WriteSize:         1,
-			PrewriteRegionNum: 1,
-			TxnRetry:          1,
-		},
 	}
-	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
-		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
+	commitDetail := &CommitExecDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		LocalLatchTime:    time.Second,
+		CommitBackoffTime: int64(time.Second),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff2"
+			}),
+		}},
+		ResolveLockTime:   1000000000, // 10^9 ns = 1s
+		WriteKeys:         1,
+		WriteSize:         1,
+		PrewriteRegionNum: 1,
+		TxnRetry:          1,
+	}
+	detail := SQLExecDetails{
+		CopExecDetails: copDetail,
+		CommitDetail:   commitDetail,
+	}
+	expected := "Cop{ Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 }" +
+		" Commit{ Prewrite_time: 1 Commit_time: 1 Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 }"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
-	detail = &ExecDetails{}
+	detail = SQLExecDetails{}
 	if str := detail.String(); str != "" {
 		t.Errorf("got:\n%s\nexpected:\n", str)
 	}

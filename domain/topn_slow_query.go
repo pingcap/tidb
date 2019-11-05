@@ -216,7 +216,7 @@ type SlowQueryInfo struct {
 	SQL        string
 	Start      time.Time
 	Duration   time.Duration
-	Detail     execdetails.ExecDetails
+	Detail     execdetails.SQLExecDetails
 	ConnID     uint64
 	TxnTS      uint64
 	User       string

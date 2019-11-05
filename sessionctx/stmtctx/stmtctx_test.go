@@ -34,7 +34,7 @@ var _ = Suite(&stmtctxSuit{})
 func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 	ctx := new(stmtctx.StatementContext)
 	for i := 0; i < 100; i++ {
-		d := &execdetails.ExecDetails{
+		d := &execdetails.CopExecDetails{
 			CalleeAddress: fmt.Sprintf("%v", i+1),
 			ProcessTime:   time.Second * time.Duration(i+1),
 			WaitTime:      time.Millisecond * time.Duration(i+1),

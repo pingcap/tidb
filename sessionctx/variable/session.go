@@ -1207,7 +1207,7 @@ type SlowQueryLogItems struct {
 	IndexNames     string
 	StatsInfos     map[string]uint64
 	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     execdetails.ExecDetails
+	ExecDetail     execdetails.SQLExecDetails
 	MemMax         int64
 	Succ           bool
 	Prepared       bool

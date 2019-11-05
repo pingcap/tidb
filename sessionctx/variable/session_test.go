@@ -131,7 +131,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	seVar.InRestrictedSQL = true
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
-	execDetail := execdetails.ExecDetails{
+	execDetail := &execdetails.CopExecDetails{
 		ProcessTime:   time.Second * time.Duration(2),
 		WaitTime:      time.Minute,
 		BackoffTime:   time.Millisecond,
@@ -159,7 +159,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
-# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
+# Cop{ Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001 }
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
@@ -185,7 +185,7 @@ select * from t;`
 		IndexNames:     "[t1:a,t2:b]",
 		StatsInfos:     statsInfos,
 		CopTasks:       copTasks,
-		ExecDetail:     execDetail,
+		ExecDetail:     execdetails.SQLExecDetails{CopExecDetails: execDetail},
 		MemMax:         memMax,
 		Prepared:       true,
 		HasMoreResults: true,

@@ -106,8 +106,8 @@ type StatementContext struct {
 		warnings          []SQLWarn
 		errorCount        uint16
 		histogramsNotLoad bool
-		execDetails       execdetails.ExecDetails
-		allExecDetails    []*execdetails.ExecDetails
+		execDetails       execdetails.SQLExecDetails
+		allExecDetails    []*execdetails.CopExecDetails
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -425,8 +425,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.message = ""
 	sc.mu.errorCount = 0
 	sc.mu.warnings = nil
-	sc.mu.execDetails = execdetails.ExecDetails{}
-	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
+	sc.mu.execDetails = execdetails.SQLExecDetails{}
+	sc.mu.allExecDetails = make([]*execdetails.CopExecDetails, 0, 4)
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
@@ -434,24 +434,27 @@ func (sc *StatementContext) ResetForRetry() {
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
-func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
+func (sc *StatementContext) MergeExecDetails(copDetails *execdetails.CopExecDetails, commitDetails *execdetails.CommitExecDetails) {
 	sc.mu.Lock()
-	if details != nil {
-		sc.mu.execDetails.ProcessTime += details.ProcessTime
-		sc.mu.execDetails.WaitTime += details.WaitTime
-		sc.mu.execDetails.BackoffTime += details.BackoffTime
-		sc.mu.execDetails.RequestCount++
-		sc.mu.execDetails.TotalKeys += details.TotalKeys
-		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
-		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
+	if copDetails != nil {
+		if sc.mu.execDetails.CopExecDetails == nil {
+			sc.mu.execDetails.CopExecDetails = &execdetails.CopExecDetails{}
+		}
+		sc.mu.execDetails.CopExecDetails.ProcessTime += copDetails.ProcessTime
+		sc.mu.execDetails.CopExecDetails.WaitTime += copDetails.WaitTime
+		sc.mu.execDetails.CopExecDetails.BackoffTime += copDetails.BackoffTime
+		sc.mu.execDetails.CopExecDetails.RequestCount++
+		sc.mu.execDetails.CopExecDetails.TotalKeys += copDetails.TotalKeys
+		sc.mu.execDetails.CopExecDetails.ProcessedKeys += copDetails.ProcessedKeys
+		sc.mu.allExecDetails = append(sc.mu.allExecDetails, copDetails)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
 	sc.mu.Unlock()
 }
 
 // GetExecDetails gets the execution details for the statement.
-func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
-	var details execdetails.ExecDetails
+func (sc *StatementContext) GetExecDetails() execdetails.SQLExecDetails {
+	var details execdetails.SQLExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
 	sc.mu.Unlock()
@@ -518,9 +521,10 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	if n == 0 {
 		return d
 	}
-	d.AvgProcessTime = sc.mu.execDetails.ProcessTime / time.Duration(n)
-	d.AvgWaitTime = sc.mu.execDetails.WaitTime / time.Duration(n)
-
+	if sc.mu.execDetails.CopExecDetails != nil {
+		d.AvgProcessTime = sc.mu.execDetails.CopExecDetails.ProcessTime / time.Duration(n)
+		d.AvgWaitTime = sc.mu.execDetails.CopExecDetails.WaitTime / time.Duration(n)
+	}
 	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
 		return sc.mu.allExecDetails[i].ProcessTime < sc.mu.allExecDetails[j].ProcessTime
 	})

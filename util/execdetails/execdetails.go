@@ -31,36 +31,6 @@ type commitDetailCtxKeyType struct{}
 // CommitDetailCtxKey presents CommitDetail info key in context.
 var CommitDetailCtxKey = commitDetailCtxKeyType{}
 
-// ExecDetails contains execution detail information.
-type ExecDetails struct {
-	CalleeAddress string
-	ProcessTime   time.Duration
-	WaitTime      time.Duration
-	BackoffTime   time.Duration
-	RequestCount  int
-	TotalKeys     int64
-	ProcessedKeys int64
-	CommitDetail  *CommitDetails
-}
-
-// CommitDetails contains commit detail information.
-type CommitDetails struct {
-	GetCommitTsTime   time.Duration
-	PrewriteTime      time.Duration
-	CommitTime        time.Duration
-	LocalLatchTime    time.Duration
-	CommitBackoffTime int64
-	Mu                struct {
-		sync.Mutex
-		BackoffTypes []fmt.Stringer
-	}
-	ResolveLockTime   int64
-	WriteKeys         int
-	WriteSize         int
-	PrewriteRegionNum int32
-	TxnRetry          int
-}
-
 const (
 	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
 	ProcessTimeStr = "Process_time"
@@ -98,9 +68,56 @@ const (
 	TxnRetryStr = "Txn_retry"
 )
 
-// String implements the fmt.Stringer interface.
-func (d ExecDetails) String() string {
-	parts := make([]string, 0, 6)
+// SQLExecDetails contains SQL execution detail information.
+type SQLExecDetails struct {
+	CopExecDetails *CopExecDetails
+	SnapshotDetail *SnapshotExecDetails
+	CommitDetail   *CommitExecDetails
+}
+
+func (s *SQLExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
+	if s.CopExecDetails != nil {
+		fields = s.CopExecDetails.ToZapFields(fields)
+	}
+	if s.SnapshotDetail != nil {
+		fields = s.SnapshotDetail.ToZapFields(fields)
+	}
+	if s.CommitDetail != nil {
+		fields = s.CommitDetail.ToZapFields(fields)
+	}
+	return fields
+}
+
+func (s *SQLExecDetails) String() string {
+	var details []string
+	if s.CopExecDetails != nil {
+		details = append(details, "Cop{")
+		details = s.CopExecDetails.append(details)
+		details = append(details, "}")
+	}
+	if s.SnapshotDetail != nil {
+		details = append(details, "KV{"+s.SnapshotDetail.String()+"}")
+	}
+	if s.CommitDetail != nil {
+		details = append(details, "Commit{")
+		details = s.CommitDetail.append(details)
+		details = append(details, "}")
+	}
+	return strings.Join(details, " ")
+}
+
+// CopExecDetails contains execution detail information.
+type CopExecDetails struct {
+	CalleeAddress string
+	ProcessTime   time.Duration
+	WaitTime      time.Duration
+	BackoffTime   time.Duration
+	RequestCount  int
+	TotalKeys     int64
+	ProcessedKeys int64
+}
+
+func (d *CopExecDetails) append(parts []string) []string {
 	if d.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
 	}
@@ -119,53 +136,11 @@ func (d ExecDetails) String() string {
 	if d.ProcessedKeys > 0 {
 		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
-	commitDetails := d.CommitDetail
-	if commitDetails != nil {
-		if commitDetails.PrewriteTime > 0 {
-			parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64))
-		}
-		if commitDetails.CommitTime > 0 {
-			parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64))
-		}
-		if commitDetails.GetCommitTsTime > 0 {
-			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
-		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
-		if commitBackoffTime > 0 {
-			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
-		}
-		commitDetails.Mu.Lock()
-		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
-		}
-		commitDetails.Mu.Unlock()
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
-		if resolveLockTime > 0 {
-			parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
-		}
-		if commitDetails.LocalLatchTime > 0 {
-			parts = append(parts, LocalLatchWaitTimeStr+": "+strconv.FormatFloat(commitDetails.LocalLatchTime.Seconds(), 'f', -1, 64))
-		}
-		if commitDetails.WriteKeys > 0 {
-			parts = append(parts, WriteKeysStr+": "+strconv.FormatInt(int64(commitDetails.WriteKeys), 10))
-		}
-		if commitDetails.WriteSize > 0 {
-			parts = append(parts, WriteSizeStr+": "+strconv.FormatInt(int64(commitDetails.WriteSize), 10))
-		}
-		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
-		if prewriteRegionNum > 0 {
-			parts = append(parts, PrewriteRegionStr+": "+strconv.FormatInt(int64(prewriteRegionNum), 10))
-		}
-		if commitDetails.TxnRetry > 0 {
-			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
-		}
-	}
-	return strings.Join(parts, " ")
+	return parts
 }
 
-// ToZapFields wraps the ExecDetails as zap.Fields.
-func (d ExecDetails) ToZapFields() (fields []zap.Field) {
-	fields = make([]zap.Field, 0, 16)
+// ToZapFields wraps the CopExecDetails as zap.Fields.
+func (d CopExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	if d.ProcessTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
@@ -184,48 +159,126 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.ProcessedKeys > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
 	}
-	commitDetails := d.CommitDetail
-	if commitDetails != nil {
-		if commitDetails.PrewriteTime > 0 {
-			fields = append(fields, zap.String("prewrite_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64)+"s")))
-		}
-		if commitDetails.CommitTime > 0 {
-			fields = append(fields, zap.String("commit_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64)+"s")))
-		}
-		if commitDetails.GetCommitTsTime > 0 {
-			fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
-		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
-		if commitBackoffTime > 0 {
-			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
-		}
-		commitDetails.Mu.Lock()
-		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
-		}
-		commitDetails.Mu.Unlock()
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
-		if resolveLockTime > 0 {
-			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
-		}
-		if commitDetails.LocalLatchTime > 0 {
-			fields = append(fields, zap.String("local_latch_wait_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.LocalLatchTime.Seconds(), 'f', -1, 64)+"s")))
-		}
-		if commitDetails.WriteKeys > 0 {
-			fields = append(fields, zap.Int("write_keys", commitDetails.WriteKeys))
-		}
-		if commitDetails.WriteSize > 0 {
-			fields = append(fields, zap.Int("write_size", commitDetails.WriteSize))
-		}
-		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
-		if prewriteRegionNum > 0 {
-			fields = append(fields, zap.Int32("prewrite_region", prewriteRegionNum))
-		}
-		if commitDetails.TxnRetry > 0 {
-			fields = append(fields, zap.Int("txn_retry", commitDetails.TxnRetry))
-		}
+	return fields
+}
+
+// CommitExecDetails contains commit detail information.
+type CommitExecDetails struct {
+	GetCommitTsTime   time.Duration
+	PrewriteTime      time.Duration
+	CommitTime        time.Duration
+	LocalLatchTime    time.Duration
+	CommitBackoffTime int64
+	Mu                struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
+	ResolveLockTime   int64
+	WriteKeys         int
+	WriteSize         int
+	PrewriteRegionNum int32
+	TxnRetry          int
+}
+
+// ToZapFields wraps the CommitExecDetails as zap.Fields.
+func (c *CommitExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
+	if c.PrewriteTime > 0 {
+		fields = append(fields, zap.String("prewrite_time", fmt.Sprintf("%v", strconv.FormatFloat(c.PrewriteTime.Seconds(), 'f', -1, 64)+"s")))
+	}
+	if c.CommitTime > 0 {
+		fields = append(fields, zap.String("commit_time", fmt.Sprintf("%v", strconv.FormatFloat(c.CommitTime.Seconds(), 'f', -1, 64)+"s")))
+	}
+	if c.GetCommitTsTime > 0 {
+		fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(c.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
+	}
+	commitBackoffTime := atomic.LoadInt64(&c.CommitBackoffTime)
+	if commitBackoffTime > 0 {
+		fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
+	}
+	c.Mu.Lock()
+	if len(c.Mu.BackoffTypes) > 0 {
+		fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", c.Mu.BackoffTypes)))
+	}
+	c.Mu.Unlock()
+	resolveLockTime := atomic.LoadInt64(&c.ResolveLockTime)
+	if resolveLockTime > 0 {
+		fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
+	}
+	if c.LocalLatchTime > 0 {
+		fields = append(fields, zap.String("local_latch_wait_time", fmt.Sprintf("%v", strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64)+"s")))
+	}
+	if c.WriteKeys > 0 {
+		fields = append(fields, zap.Int("write_keys", c.WriteKeys))
+	}
+	if c.WriteSize > 0 {
+		fields = append(fields, zap.Int("write_size", c.WriteSize))
+	}
+	prewriteRegionNum := atomic.LoadInt32(&c.PrewriteRegionNum)
+	if prewriteRegionNum > 0 {
+		fields = append(fields, zap.Int32("prewrite_region", prewriteRegionNum))
+	}
+	if c.TxnRetry > 0 {
+		fields = append(fields, zap.Int("txn_retry", c.TxnRetry))
 	}
 	return fields
+}
+
+func (c *CommitExecDetails) append(parts []string) []string {
+	if c.PrewriteTime > 0 {
+		parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(c.PrewriteTime.Seconds(), 'f', -1, 64))
+	}
+	if c.CommitTime > 0 {
+		parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(c.CommitTime.Seconds(), 'f', -1, 64))
+	}
+	if c.GetCommitTsTime > 0 {
+		parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(c.GetCommitTsTime.Seconds(), 'f', -1, 64))
+	}
+	commitBackoffTime := atomic.LoadInt64(&c.CommitBackoffTime)
+	if commitBackoffTime > 0 {
+		parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
+	}
+	c.Mu.Lock()
+	if len(c.Mu.BackoffTypes) > 0 {
+		parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", c.Mu.BackoffTypes))
+	}
+	c.Mu.Unlock()
+	resolveLockTime := atomic.LoadInt64(&c.ResolveLockTime)
+	if resolveLockTime > 0 {
+		parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
+	}
+	if c.LocalLatchTime > 0 {
+		parts = append(parts, LocalLatchWaitTimeStr+": "+strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64))
+	}
+	if c.WriteKeys > 0 {
+		parts = append(parts, WriteKeysStr+": "+strconv.FormatInt(int64(c.WriteKeys), 10))
+	}
+	if c.WriteSize > 0 {
+		parts = append(parts, WriteSizeStr+": "+strconv.FormatInt(int64(c.WriteSize), 10))
+	}
+	prewriteRegionNum := atomic.LoadInt32(&c.PrewriteRegionNum)
+	if prewriteRegionNum > 0 {
+		parts = append(parts, PrewriteRegionStr+": "+strconv.FormatInt(int64(prewriteRegionNum), 10))
+	}
+	if c.TxnRetry > 0 {
+		parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(c.TxnRetry), 10))
+	}
+	return parts
+}
+
+// SnapshotExecDetails contains snapshot execution detail information.
+type SnapshotExecDetails struct {
+	GetTotalTime    int64
+	GetCnt          uint32
+	BatchGetCnt     uint32
+	ResolveLockTime time.Duration
+}
+
+func (s *SnapshotExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
+	return fields
+}
+
+func (s *SnapshotExecDetails) String() string {
+	return ""
 }
 
 // CopRuntimeStats collects cop tasks' execution info.

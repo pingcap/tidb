@@ -288,7 +288,7 @@ type ResultSubset interface {
 	// GetStartKey gets the start key.
 	GetStartKey() Key
 	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
+	GetExecDetails() *execdetails.CopExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.

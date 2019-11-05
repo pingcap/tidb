@@ -94,7 +94,7 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
-	logFields = append(logFields, execDetail.ToZapFields()...)
+	logFields = execDetail.ToZapFields(logFields)
 	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
 		logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	}
