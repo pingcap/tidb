@@ -4559,6 +4559,11 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testRecoverTable) TearDownSuite(c *C) {
+	s.store.Close()
+	s.dom.Close()
+}
+
 func (s *testRecoverTable) TestRecoverTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
