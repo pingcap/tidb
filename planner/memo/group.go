@@ -144,21 +144,23 @@ func (g *Group) Delete(e *GroupExpr) {
 		return // Can not find the target GroupExpr.
 	}
 
+	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
+	if g.FirstExpr[operand] == equiv {
+		// The target GroupExpr is the first Element of the same Operand.
+		// We need to change the FirstExpr to the next Expr, or delete the FirstExpr.
+		nextElem := equiv.Next()
+		if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
+			g.FirstExpr[operand] = nextElem
+		} else {
+			// It is the only one of the Operand in this Group, so we should delete it
+			// from the FirstExpr.
+			delete(g.FirstExpr, operand)
+		}
+	}
+
 	g.Equivalents.Remove(equiv)
 	delete(g.Fingerprints, fingerprint)
 	e.Group = nil
-
-	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
-	if g.FirstExpr[operand] != equiv {
-		return // The target GroupExpr is not the first Element of the same Operand.
-	}
-
-	nextElem := equiv.Next()
-	if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
-		g.FirstExpr[operand] = nextElem
-		return // The first Element of the same Operand has been changed.
-	}
-	delete(g.FirstExpr, operand)
 }
 
 // Exists checks whether a Group expression existed in a Group.
