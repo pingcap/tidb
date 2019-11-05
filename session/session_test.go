@@ -2018,7 +2018,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	c.Assert(count, Equals, 100)
 	// FIXME: revert this result to new group value after distsql can handle initChunkSize.
-	c.Assert(numChunks, Equals, 10)
+	c.Assert(numChunks, Equals, 1)
 	rs.Close()
 }
 

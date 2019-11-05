@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -154,11 +155,16 @@ func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinVersionSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		result.AppendString(mysql.ServerVersion)
+	}
+	return nil
 }
 
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
