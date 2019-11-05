@@ -19,11 +19,26 @@ import (
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinDatabaseSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	currentDB := b.ctx.GetSessionVars().CurrentDB
+	result.ReserveString(n)
+	if currentDB == "" {
+		for i := 0; i < n; i++ {
+			result.AppendNull()
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			result.AppendString(currentDB)
+		}
+	}
+	return nil
 }
 
 func (b *builtinConnectionIDSig) vectorized() bool {
@@ -99,11 +114,18 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinLastInsertIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLastInsertIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	res := int64(b.ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinLastInsertIDWithIDSig) vectorized() bool {

@@ -638,6 +638,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, WarningCount, "0"},
 	{ScopeSession, ErrorCount, "0"},
 	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400"},
+	{ScopeGlobal, "thread_pool_size", "16"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -656,6 +657,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBOptNetworkFactor, strconv.FormatFloat(DefOptNetworkFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptScanFactor, strconv.FormatFloat(DefOptScanFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptDescScanFactor, strconv.FormatFloat(DefOptDescScanFactor, 'f', -1, 64)},
+	{ScopeGlobal | ScopeSession, TiDBOptSeekFactor, strconv.FormatFloat(DefOptSeekFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptMemoryFactor, strconv.FormatFloat(DefOptMemoryFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptConcurrencyFactor, strconv.FormatFloat(DefOptConcurrencyFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
@@ -703,6 +705,7 @@ var defaultSysVars = []*SysVar{
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
 	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
@@ -725,6 +728,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
+	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
+	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash"},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -980,6 +986,8 @@ const (
 	CollationServer = "collation_server"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
+	// ThreadPoolSize is the name of 'thread_pool_size' variable.
+	ThreadPoolSize = "thread_pool_size"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

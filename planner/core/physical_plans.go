@@ -52,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
+	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -204,6 +205,8 @@ type PhysicalTableScan struct {
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
 
+	StoreType kv.StoreType
+
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
@@ -299,14 +302,16 @@ type PhysicalIndexMergeJoin struct {
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
-	// keepOuterOrder indicates whether keeping the output result order as the
+	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
-	keepOuterOrder bool
+	KeepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -336,17 +341,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
-	// IsPointGetUnion indicates all the children are PointGet and
-	// all of them reference the same table and use the same `unique key`
-	IsPointGetUnion bool
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PhysicalUnionAll) OutputNames() []*types.FieldName {
-	if p.IsPointGetUnion {
-		return p.children[0].OutputNames()
-	}
-	return p.physicalSchemaProducer.OutputNames()
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -408,6 +402,15 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+}
+
+// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
+func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
+	return agg
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
@@ -474,8 +477,13 @@ type PhysicalTableDual struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 	return p.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // PhysicalWindow is the physical operator of window function.
@@ -516,6 +524,13 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+}
+
+// PhysicalShowDDLJobs is for showing DDL job list.
+type PhysicalShowDDLJobs struct {
+	physicalSchemaProducer
+
+	JobNumber int64
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.

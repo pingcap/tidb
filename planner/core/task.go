@@ -14,18 +14,18 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -130,7 +130,10 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -611,8 +614,16 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
-		splitCopAvg2CountAndSum(t.tablePlan)
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		tp := t.tablePlan
+		splitCopAvg2CountAndSum(tp)
+		for len(tp.Children()) > 0 {
+			tp = tp.Children()[0]
+		}
+		ts := tp.(*PhysicalTableScan)
+		p := PhysicalTableReader{
+			tablePlan: t.tablePlan,
+			StoreType: ts.StoreType,
+		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
@@ -856,11 +867,19 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
+func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
+		if copToFlash {
+			if !aggregation.CheckAggPushFlash(aggFunc) {
+				return nil, p.self
+			}
+			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, p.GroupByItems...)); len(remain) > 0 {
+				return nil, p.self
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return nil, p.self
@@ -888,7 +907,6 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
 				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  ft,
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -897,7 +915,6 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
 				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -911,10 +928,9 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 
 	// add group by columns
 	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
-	for i, gbyExpr := range p.GroupByItems {
+	for _, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
 			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
@@ -925,7 +941,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	p.removeUnnecessaryFirstRow(finalAggFuncs, groupByItems)
 
 	// Create physical "final" aggregation.
-	if p.tp == TypeStreamAgg {
+	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,
@@ -981,21 +997,31 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
-		if partialAgg != nil {
-			if cop.tablePlan != nil {
-				cop.finishIndexPlan()
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
+		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
+		// whether the following plan is double read with order reserved.
+		if cop.extraHandleCol == nil {
+			copToFlash := isFlashCopTask(cop)
+			partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
+				cop.addCost(p.GetCost(inputRows, false))
 			}
-			cop.addCost(p.GetCost(inputRows, false))
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(finalAgg, t)
+		} else {
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(p, t)
 		}
-		t = finishCopTask(p.ctx, cop)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}
@@ -1036,11 +1062,27 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
+func isFlashCopTask(cop *copTask) bool {
+	if cop.tablePlan == nil {
+		return false
+	}
+	tp := cop.tablePlan
+	for len(tp.Children()) > 0 {
+		tp = tp.Children()[0]
+	}
+	if ts, ok := tp.(*PhysicalTableScan); ok {
+		return ts.StoreType == kv.TiFlash
+	}
+	return false
+}
+
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
+		// copToFlash means whether the cop task is running on flash storage
+		copToFlash := isFlashCopTask(cop)
+		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()

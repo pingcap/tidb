@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -300,10 +299,12 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV.
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
 	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
 	DescScanFactor float64
+	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
@@ -428,6 +429,9 @@ type SessionVars struct {
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
+	// UsePlanBaselines indicates whether we will use plan baselines to adjust plan.
+	UsePlanBaselines bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -439,7 +443,10 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
-	PlannerSelectBlockAsName []model.CIStr
+	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	isolationReadEngines map[kv.StoreType]struct{}
+
+	PlannerSelectBlockAsName []ast.HintTable
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -500,6 +507,7 @@ func NewSessionVars() *SessionVars {
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
@@ -514,6 +522,8 @@ func NewSessionVars() *SessionVars {
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -608,6 +618,11 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 // GetSplitRegionTimeout gets split region timeout.
 func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
+}
+
+// GetIsolationReadEngines gets isolation read engines.
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -819,6 +834,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
 	case TiDBOptDescScanFactor:
 		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+	case TiDBOptSeekFactor:
+		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
 	case TiDBOptConcurrencyFactor:
@@ -883,6 +900,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBRecordPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -944,6 +963,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	// It's a global variable, but it also wants to be cached in server.
 	case TiDBMaxDeltaSchemaCount:
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
+	case TiDBUsePlanBaselines:
+		s.UsePlanBaselines = TiDBOptOn(val)
+	case TiDBIsolationReadEngines:
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiKV.Name():
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
+			case kv.TiFlash.Name():
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}
 	}
 	s.systems[name] = val
 	return nil
@@ -1146,6 +1177,12 @@ const (
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPlan is used to record the query plan.
+	SlowLogPlan = "Plan"
+	// SlowLogPlanPrefix is the prefix of the plan value.
+	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogPlanSuffix is the suffix of the plan value.
+	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
@@ -1168,6 +1205,7 @@ type SlowQueryLogItems struct {
 	Prepared       bool
 	HasMoreResults bool
 	PrevStmt       string
+	Plan           string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1271,6 +1309,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	if len(logItems.Plan) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)

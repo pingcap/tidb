@@ -14,9 +14,13 @@
 package infoschema
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +28,8 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
@@ -81,6 +87,8 @@ const (
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
+	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
+	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
 )
 
 type columnInfo struct {
@@ -646,6 +654,16 @@ var tableTiKVRegionPeersCols = []columnInfo{
 	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
 }
 
+var tableTiDBServersInfoCols = []columnInfo{
+	{"DDL_ID", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STATUS_PORT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEASE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1000,6 +1018,16 @@ var filesCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
+var tableTiDBClusterInfoCols = []columnInfo{
+	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(schemas))
@@ -1066,7 +1094,7 @@ func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, erro
 	return colLengthMap, nil
 }
 
-func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
+func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
 	columnLength := make(map[string]uint64)
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
@@ -1076,7 +1104,7 @@ func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthM
 		if length != types.VarStorageLen {
 			columnLength[col.Name.L] = rowCount * uint64(length)
 		} else {
-			length := columnLengthMap[tableHistID{tableID: info.ID, histID: col.ID}]
+			length := columnLengthMap[tableHistID{tableID: physicalID, histID: col.ID}]
 			columnLength[col.Name.L] = length
 		}
 	}
@@ -1234,8 +1262,18 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					}
 				}
 
-				rowCount := tableRowsMap[table.ID]
-				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+				var rowCount, dataLength, indexLength uint64
+				if table.GetPartitionInfo() == nil {
+					rowCount = tableRowsMap[table.ID]
+					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				} else {
+					for _, pi := range table.GetPartitionInfo().Definitions {
+						rowCount += tableRowsMap[pi.ID]
+						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+						dataLength += parDataLen
+						indexLength += parIndexLen
+					}
+				}
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1784,6 +1822,143 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 	return
 }
 
+func dataForServersInfo() ([][]types.Datum, error) {
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]types.Datum, 0, len(serversInfo))
+	for _, info := range serversInfo {
+		row := types.MakeDatums(
+			info.ID,              // DDL_ID
+			info.IP,              // IP
+			int(info.Port),       // PORT
+			int(info.StatusPort), // STATUS_PORT
+			info.Lease,           // LEASE
+			info.Version,         // VERSION
+			info.GitHash,         // GIT_HASH
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	// Get TiDB servers info.
+	tidbNodes, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	rows := make([][]types.Datum, 0, len(tidbNodes))
+	for _, node := range tidbNodes {
+		tp := "tidb"
+		name := fmt.Sprintf("%s-%d", tp, len(rows))
+		addr := fmt.Sprintf("%s:%d", node.IP, node.Port)
+		statusAddr := fmt.Sprintf("%s:%d", node.IP, node.StatusPort)
+		row := types.MakeDatums(
+			len(rows)+1,
+			tp,
+			name,
+			addr,
+			statusAddr,
+			node.Version,
+			node.GitHash,
+		)
+		rows = append(rows, row)
+	}
+
+	// Get PD servers info.
+	store := ctx.GetStore()
+	etcd, ok := store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.Errorf("%T not an etcd backend", store)
+	}
+	for i, addr := range etcd.EtcdAddrs() {
+		addr = strings.TrimSpace(addr)
+
+		// Get PD version
+		url := fmt.Sprintf("http://%s%s", addr, pdapi.ClusterVersion)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pdVersion, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		terror.Log(resp.Body.Close())
+		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
+
+		// Get PD git_hash
+		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
+		req, err = http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var content = struct {
+			GitHash string `json:"git_hash"`
+		}{}
+		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
+			return nil, errors.Trace(err)
+		}
+		terror.Log(resp.Body.Close())
+
+		tp := "pd"
+		name := fmt.Sprintf("%s-%d", tp, i)
+		row := types.MakeDatums(
+			len(rows)+1,
+			tp,
+			name,
+			addr,
+			addr,
+			version,
+			content.GitHash,
+		)
+		rows = append(rows, row)
+	}
+
+	// Get TiKV servers info.
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil, errors.Errorf("%T is not an TiKV store instance", store)
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	storesStat, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, storeStat := range storesStat.Stores {
+		tp := "tikv"
+		name := fmt.Sprintf("%s-%d", tp, i)
+		row := types.MakeDatums(
+			len(rows)+1,
+			tp,
+			name,
+			storeStat.Store.Address,
+			storeStat.Store.StatusAddress,
+			storeStat.Store.Version,
+			storeStat.Store.GitHash,
+		)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -1824,6 +1999,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
+	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
+	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1927,6 +2104,10 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiKVRegionPeers:
 		fullRows, err = dataForTikVRegionPeers(ctx)
+	case tableTiDBServersInfo:
+		fullRows, err = dataForServersInfo()
+	case tableTiDBClusterInfo:
+		fullRows, err = dataForTiDBClusterInfo(ctx)
 	}
 	if err != nil {
 		return nil, err

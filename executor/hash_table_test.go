@@ -144,7 +144,7 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
-	tracker.SetLabel(innerResultLabel)
+	tracker.SetLabel(buildSideResultLabel)
 	if spill {
 		rowContainer.ActionSpill().Action(tracker)
 		tracker.SetBytesLimit(1)

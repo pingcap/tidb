@@ -312,12 +312,12 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
 		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
@@ -596,16 +596,16 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
-		cols, lengths := expression.IndexInfo2PrefixCols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
@@ -717,16 +717,16 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
-		cols, lengths := expression.IndexInfo2PrefixCols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
@@ -1048,14 +1048,14 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds, ok := sel.Children()[0].(*plannercore.DataSource)
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		for _, cond := range sel.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(sel.Conditions))
+		for i, cond := range sel.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
@@ -1085,9 +1085,9 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"Union_11 2.00 root ",
 		"├─IndexReader_14 1.00 root index:IndexScan_13",
-		"│ └─IndexScan_13 1.00 cop table:t, index:a, b, range:(0,+inf], keep order:false",
+		"│ └─IndexScan_13 1.00 cop[tikv] table:t, index:a, b, range:(0,+inf], keep order:false",
 		"└─IndexReader_17 1.00 root index:IndexScan_16",
-		"  └─IndexScan_16 1.00 cop table:t, index:a, b, range:(0,+inf], keep order:false",
+		"  └─IndexScan_16 1.00 cop[tikv] table:t, index:a, b, range:(0,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",

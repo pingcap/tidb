@@ -82,14 +82,18 @@ func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
-	tk.Se.Execute(ctx, "select * from t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
+		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
+	})
+	_, err := tk.Se.Execute(ctx, "select * from t")
+	c.Assert(err, NotNil)
 
 	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write
 	// affected by this fail flag.
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
 }
 
 func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {

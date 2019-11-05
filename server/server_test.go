@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -684,6 +685,58 @@ func runTestLoadData(c *C, server *Server) {
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
 	server.capability |= tmysql.ClientLocalFiles
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test OPTIONALLY
+	_, err = fp.WriteString(
+		`1,2` + "\n" +
+			`3,4` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 3)
+		dbt.Check(b, Equals, 4)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		// fail error processing test
+		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"), IsNil)
+		_, err1 = dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		mysqlErr, ok := err1.(*mysql.MySQLError)
+		dbt.Assert(ok, IsTrue)
+		dbt.Assert(mysqlErr.Message, Equals, "mock commit one task error")
+		dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"), IsNil)
+
+		dbt.mustExec("drop table if exists pn")
+	})
 }
 
 func runTestConcurrentUpdate(c *C) {
