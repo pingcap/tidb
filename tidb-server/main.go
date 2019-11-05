@@ -334,6 +334,20 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
+var deprecatedConfig = map[string]struct{}{
+	"pessimistic-txn.ttl": struct{}{},
+	"log.rotate":          struct{}{},
+}
+
+func isDeprecatedConfigItem(items []string) bool {
+	for _, item := range items {
+		if _, ok := deprecatedConfig[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
@@ -341,13 +355,24 @@ func loadConfig() string {
 		config.SetConfReloader(*configPath, reloadConfig, hotReloadConfigItems...)
 
 		err := cfg.Load(*configPath)
-		// This block is to accommodate an interim situation where strict config checking
-		// is not the default behavior of TiDB. The warning message must be deferred until
-		// logging has been set up. After strict config checking is the default behavior,
-		// This should all be removed.
-		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configStrict {
-			return err.Error()
+		if err == nil {
+			return ""
 		}
+
+		// Unused config item erro turns to warnings.
+		if tmp, ok := err.(*config.ErrConfigValidationFailed); ok {
+			if isDeprecatedConfigItem(tmp.UndecodedItems) {
+				return err.Error()
+			}
+			// This block is to accommodate an interim situation where strict config checking
+			// is not the default behavior of TiDB. The warning message must be deferred until
+			// logging has been set up. After strict config checking is the default behavior,
+			// This should all be removed.
+			if !*configCheck && !*configStrict {
+				return err.Error()
+			}
+		}
+
 		terror.MustNil(err)
 	} else {
 		// configCheck should have the config file specified.
