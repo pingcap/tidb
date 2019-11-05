@@ -508,7 +508,7 @@ var defaultConf = Config{
 		EnableChunkRPC: true,
 
 		RegionCacheTTL: 600,
-		StoreLimit:     500,
+		StoreLimit:     0,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

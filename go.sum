@@ -1,4 +1,6 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
+github.com/AilinKid/parser v0.0.0-20191105095401-27d4a82f034d h1:TNwpRi99FVs5n5T/Vh0Q8ivvW+oMGk0fZ3Xq1HrSj/c=
+github.com/AilinKid/parser v0.0.0-20191105095401-27d4a82f034d/go.mod h1:DATcvDXNjaLSyDly2lwqImcFNhCebc4zbM0R7lo9KGI=
 github.com/BurntSushi/toml v0.3.1 h1:WXkYYl6Yr3qBf1K79EBnL4mak0OimBfB0XUf9Vl28OQ=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f h1:5ZfJxyXo8KyX8DgGXC5B7ILL8y51fci/qYz2B4j8iLY=
