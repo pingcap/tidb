@@ -351,11 +351,39 @@ func (b *builtinSubDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result 
 }
 
 func (b *builtinPeriodDiffSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals PERIOD_DIFF(P1,P2).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	periods := buf.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if !validPeriod(i64s[i]) || !validPeriod(periods[i]) {
+			return errIncorrectArgs.GenWithStackByArgs("period_diff")
+		}
+		i64s[i] = int64(period2Month(uint64(i64s[i])) - period2Month(uint64(periods[i])))
+	}
+	return nil
 }
 
 func (b *builtinTimeTimeTimeDiffSig) vectorized() bool {
