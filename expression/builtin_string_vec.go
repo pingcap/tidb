@@ -434,14 +434,6 @@ func (b *builtinLTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinFieldStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFieldStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinQuoteSig) vectorized() bool {
 	return false
 }
@@ -947,14 +939,6 @@ func (b *builtinInstrSig) vectorized() bool {
 }
 
 func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinFieldRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFieldRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -1607,14 +1591,6 @@ func (b *builtinHexIntArgSig) vectorized() bool {
 }
 
 func (b *builtinHexIntArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinFieldIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
