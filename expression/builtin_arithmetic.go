@@ -426,7 +426,7 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case !isLHSUnsigned && !isRHSUnsigned:
-		// Because -(math.MinInt64) == math.MinInt64, so we need `(a >= 0 && b == math.MinInt64)`.
+		// We need `(a >= 0 && b == math.MinInt64)` because of -(math.MinInt64) == math.MinInt64.
 		// If a<0 && b<=0, then no matter whether b==math.MinInt64, a-b will not overflow.
 		// If a<0 && b>0, then a-b<0, so we need `math.MinInt64<=a-b`, which means `-b >= math.MinInt64 -a`,
 		// no matte whether a==math.MinInt64.
