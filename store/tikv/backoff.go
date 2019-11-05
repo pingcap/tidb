@@ -138,7 +138,6 @@ const (
 	boTiKVRPC backoffType = iota
 	BoTxnLock
 	boTxnLockFast
-	boTxnNotFound
 	BoPDRPC
 	BoRegionMiss
 	BoUpdateLeader
@@ -158,8 +157,6 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
 	case BoPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
-	case boTxnNotFound:
-		return NewBackoffFn(5, 1000, EqualJitter)
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
 		return NewBackoffFn(2, 500, NoJitter)
@@ -187,8 +184,6 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
-	case boTxnNotFound:
-		return "txnNotFound"
 	}
 	return ""
 }

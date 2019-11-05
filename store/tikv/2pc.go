@@ -557,7 +557,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks, false)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -735,7 +735,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			locks = append(locks, lock)
 		}
 		// Because we already waited on tikv, no need to Backoff here.
-		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks, false)
+		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}

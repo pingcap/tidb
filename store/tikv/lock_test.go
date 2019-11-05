@@ -287,7 +287,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
-	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, false)
+	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -295,27 +295,27 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
-	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock}, false)
+	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(timeBeforeExpire > int64(0), IsTrue)
 
 	// Force rollback the lock using lock.TTL = 0.
 	lock.TTL = uint64(0)
-	timeBeforeExpire, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock}, false)
+	timeBeforeExpire, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(timeBeforeExpire, Equals, int64(0))
 
 	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, false)
+	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
 
 	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS, false)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)
@@ -341,8 +341,9 @@ func (s *testLockSuite) TestCheckTxnStatusNoBlockRead(c *C) {
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	resolver := newLockResolver(s.store)
+
 	// Call getTxnStatus with non-block reading flag.
-	_, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
+	_, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS)
 	c.Assert(err, NotNil)
 	_, ok := errors.Cause(err).(txnNotFoundErr)
 	c.Assert(ok, IsTrue)
@@ -359,7 +360,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoBlockRead(c *C) {
 		TTL:     100000, // Not zero.
 	}
 	// Call getTxnStatus with non-block reading flag, this time with retry to cover more code.
-	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS, true)
+	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(<-errCh, IsNil)

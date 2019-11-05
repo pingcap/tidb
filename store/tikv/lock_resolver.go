@@ -204,7 +204,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		tikvLockResolverCountWithExpired.Inc()
 
 		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, false)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64)
 		if err != nil {
 			return false, err
 		}
@@ -271,8 +271,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-// If noWait is true, ResolveLocks would not wait the secondary lock TTL to expire.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, noWait bool) (int64, error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil
@@ -280,26 +279,11 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 	tikvLockResolverCountWithResolve.Inc()
 
-	var expiredLocks []*Lock
-	if noWait {
-		// Check all locks status.
-		expiredLocks = locks
-	} else {
-		for _, l := range locks {
-			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
-			if msBeforeLockExpired <= 0 {
-				expiredLocks = append(expiredLocks, l)
-			} else {
-				msBeforeTxnExpired.update(int64(l.TTL))
-				tikvLockResolverCountWithNotExpired.Inc()
-			}
-		}
-	}
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
-	for _, l := range expiredLocks {
-		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS, noWait)
+	for _, l := range locks {
+		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
@@ -374,10 +358,10 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, false)
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS)
 }
 
-func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, nonBlockRead bool) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
 	var currentTS uint64
 	var err error
 	var status TxnStatus
@@ -395,17 +379,20 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	}
 
 	for {
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, nonBlockRead)
+		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
 		if err == nil {
 			return status, err
 		}
 		if _, ok := errors.Cause(err).(txnNotFoundErr); !ok {
 			return status, err
 		}
-		err = bo.Backoff(boTxnNotFound, err)
-		if err != nil {
-			return status, errors.Trace(err)
+
+		// Handle txnNotFound error.
+		// If the (secondary) lock TTL has expired, return rollbacked status.
+		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
+			return status, nil
 		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -418,7 +405,7 @@ func (e txnNotFoundErr) Error() string {
 }
 
 // If nonBlockRead is true, the caller should handle the txnNotFoundErr.
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64, nonBlockRead bool) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -434,18 +421,13 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	// 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
 	// 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
 
-	// When we are using nonBlockRead, we must take care of the concurrence prewrite case.
-	// The secondary lock is written while the primary lock doesn't exist (the packet may be ongoing).
-	// CheckTxnStatus should not rollback the transaction in this case.
-	rollbackIfNotExist := !nonBlockRead
-
 	var status TxnStatus
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
 		PrimaryKey:         primary,
 		LockTs:             txnID,
 		CallerStartTs:      callerStartTS,
 		CurrentTs:          currentTS,
-		RollbackIfNotExist: rollbackIfNotExist,
+		RollbackIfNotExist: false,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
@@ -473,8 +455,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			txnNotFound := keyErr.GetTxnNotFound()
-			// Only when nonBlockRead is true should this happen, otherwise there're bugs.
-			if nonBlockRead && txnNotFound != nil {
+			if txnNotFound != nil {
 				return status, txnNotFoundErr{txnNotFound}
 			}
 
