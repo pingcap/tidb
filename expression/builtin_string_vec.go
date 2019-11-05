@@ -644,42 +644,11 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinLeftBinarySig) vectorized() bool {
-	return true
+	return false
 }
 
 func (b *builtinLeftBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return err
-	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf2)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
-		return err
-	}
-	left := buf2.Int64s()
-	result.ReserveString(n)
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			continue
-		}
-		leftLength, str := int(left[i]), buf.GetString(i)
-		if strLength := len(str); leftLength > strLength {
-			leftLength = strLength
-		} else if leftLength < 0 {
-			leftLength = 0
-		}
-		result.AppendString(str[:leftLength])
-	}
-	return nil
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinReverseBinarySig) vectorized() bool {
