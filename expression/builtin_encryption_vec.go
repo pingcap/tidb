@@ -496,9 +496,39 @@ func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinUncompressedLengthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sc := b.ctx.GetSessionVars().StmtCtx
+	nr := input.NumRows()
+	payloadBuf, err := b.bufAllocator.get(types.ETString, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(payloadBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, payloadBuf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(nr, false)
+	result.MergeNulls(payloadBuf)
+	i64s := result.Int64s()
+	for i := 0; i < nr; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := payloadBuf.GetString(i)
+		if len(str) == 0 {
+			i64s[i] = 0
+			continue
+		}
+		if len(str) == 4 {
+			sc.AppendWarning(errZlibZData)
+			i64s[i] = 0
+			continue
+		}
+		i64s[i] = int64(binary.LittleEndian.Uint32([]byte(str)[0:4]))
+	}
+	return nil
 }
