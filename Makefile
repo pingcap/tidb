@@ -231,7 +231,7 @@ wasm:
 	cp "$(GOROOT)/misc/wasm/wasm_exec.js" wasm-dist/wasm_exec.js
 	cp wasm/favicon.ico wasm-dist/favicon.ico
 	cp wasm/jquery.console.js wasm-dist/jquery.console.js
-	sed 's/82837504/$(shell stat -f%z wasm-dist/main.css)/g' wasm/index.html.tpl > wasm-dist/index.html
+	sed 's/82837504/$(shell wc -c < wasm-dist/main.css)/g' wasm/index.html.tpl > wasm-dist/index.html
 
 checklist:
 	cat checklist.md

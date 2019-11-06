@@ -216,7 +216,7 @@
         }
 
         // hardcode since some CDN does NOT return content-length for compressed content
-        const total = 82837504 
+        const total = 82837504; 
         let loaded = 0;
 
         return new Response(
