@@ -39,6 +39,7 @@ type WindowExec struct {
 	resultChunks []*chunk.Chunk
 	// remainingRowsInChunk indicates how many rows the resultChunks[i] is not prepared.
 	remainingRowsInChunk []int
+	groupRows            []chunk.Row
 
 	numWindowFuncs int
 	processor      windowProcessor
@@ -73,38 +74,38 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
-	var groupRows []chunk.Row
-	for {
+	inputChk := e.inputIter.GetChunk()
+	numRows := inputChk.NumRows()
+	begin, end := e.groupChecker.getOneGroup()
+	e.groupRows = e.groupRows[:0]
+	for i := begin; i < end; i++ {
+		e.groupRows = append(e.groupRows, inputChk.GetRow(i))
+	}
+
+	if end == numRows {
 		eof, err := e.fetchChildIfNecessary(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if eof {
 			e.executed = true
-			return e.consumeGroupRows(groupRows)
+			return e.consumeGroupRows(e.groupRows)
 		}
 
-		inputChk := e.inputIter.GetChunk()
-		err = e.groupChecker.meetNewGroup(inputChk)
+		flag, err := e.groupChecker.splitChunk(inputChk)
 		if err != nil {
 			return err
 		}
 
-		numGroups := len(e.groupChecker.groupRowsIndex)
-		begin := 0
-		for k := 0; k < numGroups; k++ {
-			groupRows = groupRows[:0]
-			end := e.groupChecker.groupRowsIndex[k]
+		if flag {
+			begin, end = e.groupChecker.getOneGroup()
+			e.groupRows = e.groupRows[:0]
 			for i := begin; i < end; i++ {
-				groupRows = append(groupRows, inputChk.GetRow(i))
-			}
-			begin = end
-			err := e.consumeGroupRows(groupRows)
-			if err != nil {
-				return err
+				e.groupRows = append(e.groupRows, inputChk.GetRow(i))
 			}
 		}
 	}
+	return e.consumeGroupRows(e.groupRows)
 }
 
 func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {

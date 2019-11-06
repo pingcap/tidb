@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -811,63 +810,42 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
-	remainGroup := false
-	var remainGroupKey string
+func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
+	numRows := e.childResult.NumRows()
+
+	begin, end := e.groupChecker.getOneGroup()
 	e.groupRows = e.groupRows[:0]
-	for !e.executed {
-		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
+	for i := begin; i < end; i++ {
+		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
+	}
+
+	if end == numRows {
+		if err = e.fetchChildIfNecessary(ctx, chk); err != nil || !e.executed {
 			return err
 		}
-		if e.executed {
-			break
-		}
-		inputChk := e.inputIter.GetChunk()
-		err := e.groupChecker.meetNewGroup(inputChk)
+
+		flag, err := e.groupChecker.splitChunk(e.childResult)
 		if err != nil {
 			return err
 		}
 
-		numGroups := len(e.groupChecker.groupRowsIndex)
-		begin := 0
-		for k := 0; k < numGroups; k++ {
-			if k == 0 && remainGroup {
-				var equal bool
-				if len(e.groupChecker.GroupByItems) == 0 {
-					equal = true
-				} else {
-					equal = remainGroupKey == string(hack.String(e.groupChecker.firstGroupKey))
-				}
-				if !equal {
-					err = e.appendResult2Chunk(chk)
-					if err != nil {
-						return err
-					}
-					e.groupRows = e.groupRows[:0]
-				}
-			}
-			end := e.groupChecker.groupRowsIndex[k]
+		if flag {
+			begin, end = e.groupChecker.getOneGroup()
+			e.groupRows = e.groupRows[:0]
 			for i := begin; i < end; i++ {
-				e.groupRows = append(e.groupRows, inputChk.GetRow(i))
-			}
-			begin = end
-			if k != numGroups-1 {
-				err := e.consumeGroupRows()
-				if err != nil {
-					return err
-				}
-				err = e.appendResult2Chunk(chk)
-				if err != nil {
-					return err
-				}
-				e.groupRows = e.groupRows[:0]
-			} else {
-				if e.groupChecker.lastGroupKey != nil {
-					remainGroupKey = string(hack.String(e.groupChecker.lastGroupKey))
-				}
-				remainGroup = true
+				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 			}
 		}
+	}
+
+	err = e.consumeGroupRows()
+	if err != nil {
+		return err
+	}
+
+	err = e.appendResult2Chunk(chk)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -932,13 +910,15 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 }
 
 type groupChecker struct {
-	ctx            sessionctx.Context
-	StmtCtx        *stmtctx.StatementContext
-	GroupByItems   []expression.Expression
-	groupRowsIndex []int
-	firstGroupKey  []byte
-	lastGroupKey   []byte
-	sameGroup      []bool
+	ctx                  sessionctx.Context
+	StmtCtx              *stmtctx.StatementContext
+	GroupByItems         []expression.Expression
+	groupRowsIndex       []int
+	curGroupId           int
+	previousLastGroupKey []byte
+	firstGroupKey        []byte
+	lastGroupKey         []byte
+	sameGroup            []bool
 }
 
 func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
@@ -951,16 +931,16 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 	}
 }
 
-// meetNewGroup divide the chunk into more groups which the row in the same group have the same groupKey
+// splitChunk divide the chunk into more groups which the row in the same group have the same groupKey
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
+func (e *groupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	numRows := chk.NumRows()
 	e.groupRowsIndex = e.groupRowsIndex[:0]
 	e.firstGroupKey = e.firstGroupKey[:0]
 	e.lastGroupKey = e.lastGroupKey[:0]
 	if len(e.GroupByItems) == 0 {
 		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
-		return nil
+		return true, nil
 	}
 
 	if len(e.sameGroup) < numRows {
@@ -977,21 +957,21 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 		eType := item.GetType().EvalType()
 		col, err := expression.GetColumn(eType, numRows)
 		if err != nil {
-			return err
+			return false, err
 		}
 		err = expression.VecEval(e.ctx, item, chk, col)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		e.firstGroupKey, err = col.Encode(e.firstGroupKey, eType, 0)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		e.lastGroupKey, err = col.Encode(e.firstGroupKey, eType, numRows-1)
 		if err != nil {
-			return err
+			return false, err
 		}
 		isNull := col.IsNull(0)
 		switch eType {
@@ -1115,10 +1095,23 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 			err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
 		expression.PutColumn(col)
 	}
+
+	if e.previousLastGroupKey == nil {
+		flag = false
+	} else {
+		groupKey0 := string(e.previousLastGroupKey)
+		groupKey1 := string(e.firstGroupKey)
+		if groupKey0 == groupKey1 {
+			flag = true
+		} else {
+			flag = false
+		}
+	}
+	e.previousLastGroupKey = e.lastGroupKey
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
@@ -1126,7 +1119,18 @@ func (e *groupChecker) meetNewGroup(chk *chunk.Chunk) (err error) {
 		}
 	}
 	e.groupRowsIndex = append(e.groupRowsIndex, numRows)
-	return nil
+	return flag, nil
+}
+
+func (e *groupChecker) getOneGroup() (begin, end int) {
+	if e.curGroupId == 0 {
+		begin = 0
+	} else {
+		begin = e.groupRowsIndex[e.curGroupId-1]
+	}
+	end = e.groupRowsIndex[e.curGroupId]
+	e.curGroupId++
+	return begin, end
 }
 
 func (e *groupChecker) reset() {
@@ -1135,5 +1139,14 @@ func (e *groupChecker) reset() {
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]
+	}
+	if e.previousLastGroupKey != nil {
+		e.previousLastGroupKey = e.previousLastGroupKey[:0]
+	}
+	if e.firstGroupKey != nil {
+		e.firstGroupKey = e.firstGroupKey[:0]
+	}
+	if e.lastGroupKey != nil {
+		e.lastGroupKey = e.lastGroupKey[:0]
 	}
 }
