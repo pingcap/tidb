@@ -947,14 +947,12 @@ func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
 			baseFuncName = tmp[len(tmp)-1]
 			// do not forget to implement the vectorized method.
 			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
-			var vecWarnCnt uint16
 			switch testCase.retEvalType {
 			case types.ETReal:
 				err := baseFunc.vecEvalReal(input, output)
 				c.Assert(err, IsNil)
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				// check result
 				res := output.Float64s()
 				for _, v := range res {
@@ -962,14 +960,6 @@ func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
 				}
 			default:
 				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
-			}
-
-			// check warnings
-			totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
-			c.Assert(2*vecWarnCnt, Equals, totalWarns)
-			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
-			for i := 0; i < int(vecWarnCnt); i++ {
-				c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
 			}
 		}
 	}
