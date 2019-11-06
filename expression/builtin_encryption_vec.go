@@ -399,10 +399,10 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	for i := 0; i < n; i++ {
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
 			result.AppendNull()
-			if isWarning {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
-			}
 			continue
+		}
+		if isWarning {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
 		key := encrypt.DeriveKeyMySQL([]byte(keyBuf.GetString(i)), b.keySize)
 		cipherText, err := encrypt.AESEncryptWithECB([]byte(strBuf.GetString(i)), key)

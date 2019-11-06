@@ -23,7 +23,8 @@ import (
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.AesEncrypt: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &constStrGener{"iv"}}},
 	},
 	ast.Uncompress: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
