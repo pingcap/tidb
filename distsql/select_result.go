@@ -147,7 +147,7 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	// Check the returned data is default/arrow format.
+	// Check the returned data is default/chunk format.
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 		err := r.getSelectResp()
 		if err != nil || r.selectResp == nil {
@@ -158,8 +158,8 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	switch r.selectResp.GetEncodeType() {
 	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
-	case tipb.EncodeType_TypeArrow:
-		return r.readFromArrow(ctx, chk)
+	case tipb.EncodeType_TypeChunk:
+		return r.readFromChunk(ctx, chk)
 	}
 	return errors.Errorf("unsupported encode type:%v", r.encodeType)
 }
@@ -183,7 +183,7 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 	return nil
 }
 
-func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if r.respChunkDecoder == nil {
 		r.respChunkDecoder = chunk.NewDecoder(
 			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
