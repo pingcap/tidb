@@ -53,17 +53,17 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bo
 	return used, nil
 }
 
-// exprHasSetVar checks if the expression has SetVar function.
-func exprHasSetVar(expr expression.Expression) bool {
+// exprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
+func exprHasSetVarOrSleep(expr expression.Expression) bool {
 	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
 	if !isScalaFunc {
 		return false
 	}
-	if scalaFunc.FuncName.L == ast.SetVar {
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
 		return true
 	}
 	for _, arg := range scalaFunc.GetArgs() {
-		if exprHasSetVar(arg) {
+		if exprHasSetVarOrSleep(arg) {
 			return true
 		}
 	}
@@ -71,7 +71,7 @@ func exprHasSetVar(expr expression.Expression) bool {
 }
 
 // PruneColumns implements LogicalPlan interface.
-// If any expression has SetVar functions, we do not prune it.
+// If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
 	used, err := getUsedList(parentUsedCols, p.schema)
@@ -80,7 +80,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 	}
 
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !exprHasSetVar(p.Exprs[i]) {
+		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
