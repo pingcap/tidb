@@ -447,6 +447,7 @@ func (sc *StatementContext) MergeExecDetails(copDetails *execdetails.CopExecDeta
 		sc.mu.execDetails.CopExecDetails.RequestCount++
 		sc.mu.execDetails.CopExecDetails.TotalKeys += copDetails.TotalKeys
 		sc.mu.execDetails.CopExecDetails.ProcessedKeys += copDetails.ProcessedKeys
+		sc.mu.execDetails.CopExecDetails.WaitLockTime += copDetails.WaitLockTime
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, copDetails)
 	}
 	if snapDetails != nil {

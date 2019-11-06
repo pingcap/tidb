@@ -782,6 +782,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
+		start := time.Now()
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, worker.req.StartTs, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
@@ -791,6 +792,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				return nil, errors.Trace(err)
 			}
 		}
+		if resp.detail == nil {
+			resp.detail = new(execdetails.CopExecDetails)
+		}
+		resp.detail.WaitLockTime += time.Since(start)
 		return worker.buildCopTasksFromRemain(bo, lastRange, task)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {

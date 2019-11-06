@@ -61,8 +61,10 @@ const (
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
 	BackoffTypesStr = "Backoff_types"
-	// WaitLockTimeStr means the time of resolving lock.
-	WaitLockTimeStr = "Wait_lock_time"
+	// CommitWaitLockTimeStr means the time of resolving lock in commit.
+	CommitWaitLockTimeStr = "Commit_wait_lock_time"
+	// CopWaitLockTimeStr means the time of resolving lock in cop.
+	CopWaitLockTimeStr = "Cop_wait_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
 	LocalLatchWaitTimeStr = "Local_latch_wait_time"
 	// WriteKeysStr means the count of keys in the transaction.
@@ -78,7 +80,7 @@ const (
 	// SnapshotGetKeyStr means the count of keys be get.
 	SnapshotGetKeyStr = "Get_key"
 	// SnapshotWaitLockStr means the time of waiting in resolving lock.
-	SnapshotWaitLockStr = "Wait_lock_time"
+	SnapshotWaitLockStr = "Get_wait_lock_time"
 	// SnapshotRPCCountStr means the RPC count used to get.
 	SnapshotRPCCountStr = "RPC_count"
 )
@@ -140,6 +142,7 @@ type CopExecDetails struct {
 	RequestCount  int
 	TotalKeys     int64
 	ProcessedKeys int64
+	WaitLockTime  time.Duration
 }
 
 func (d *CopExecDetails) append(parts []string) []string {
@@ -160,6 +163,9 @@ func (d *CopExecDetails) append(parts []string) []string {
 	}
 	if d.ProcessedKeys > 0 {
 		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
+	}
+	if d.WaitLockTime > 0 {
+		parts = append(parts, CopWaitLockTimeStr+": "+strconv.FormatFloat(d.WaitLockTime.Seconds(), 'f', -1, 64))
 	}
 	return parts
 }
@@ -183,6 +189,9 @@ func (d CopExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	}
 	if d.ProcessedKeys > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+	}
+	if d.WaitLockTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(CopWaitLockTimeStr), strconv.FormatFloat(d.WaitLockTime.Seconds(), 'f', -1, 64)))
 	}
 	return fields
 }
@@ -208,42 +217,42 @@ type CommitExecDetails struct {
 // ToZapFields wraps the CommitExecDetails as zap.Fields.
 func (c *CommitExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	if c.PrewriteTime > 0 {
-		fields = append(fields, zap.String("prewrite_time", fmt.Sprintf("%v", strconv.FormatFloat(c.PrewriteTime.Seconds(), 'f', -1, 64)+"s")))
+		fields = append(fields, zap.String(strings.ToLower(PreWriteTimeStr), fmt.Sprintf("%v", strconv.FormatFloat(c.PrewriteTime.Seconds(), 'f', -1, 64)+"s")))
 	}
 	if c.CommitTime > 0 {
-		fields = append(fields, zap.String("commit_time", fmt.Sprintf("%v", strconv.FormatFloat(c.CommitTime.Seconds(), 'f', -1, 64)+"s")))
+		fields = append(fields, zap.String(strings.ToLower(CommitTimeStr), fmt.Sprintf("%v", strconv.FormatFloat(c.CommitTime.Seconds(), 'f', -1, 64)+"s")))
 	}
 	if c.GetCommitTsTime > 0 {
-		fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(c.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
+		fields = append(fields, zap.String(strings.ToLower(GetCommitTSTimeStr), fmt.Sprintf("%v", strconv.FormatFloat(c.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
 	}
 	commitBackoffTime := atomic.LoadInt64(&c.CommitBackoffTime)
 	if commitBackoffTime > 0 {
-		fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
+		fields = append(fields, zap.String(strings.ToLower(CommitBackoffTimeStr), fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 	}
 	c.Mu.Lock()
 	if len(c.Mu.BackoffTypes) > 0 {
-		fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", c.Mu.BackoffTypes)))
+		fields = append(fields, zap.String(strings.ToLower(BackoffTypesStr), fmt.Sprintf("%v", c.Mu.BackoffTypes)))
 	}
 	c.Mu.Unlock()
 	waitLockTime := atomic.LoadInt64(&c.WaitLockTime)
 	if waitLockTime > 0 {
-		fields = append(fields, zap.String("wait_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(waitLockTime).Seconds(), 'f', -1, 64)+"s")))
+		fields = append(fields, zap.String(strings.ToLower(CommitWaitLockTimeStr), fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(waitLockTime).Seconds(), 'f', -1, 64)+"s")))
 	}
 	if c.LocalLatchTime > 0 {
-		fields = append(fields, zap.String("local_latch_wait_time", fmt.Sprintf("%v", strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64)+"s")))
+		fields = append(fields, zap.String(strings.ToLower(LocalLatchWaitTimeStr), fmt.Sprintf("%v", strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64)+"s")))
 	}
 	if c.WriteKeys > 0 {
-		fields = append(fields, zap.Int("write_keys", c.WriteKeys))
+		fields = append(fields, zap.Int(strings.ToLower(WriteKeysStr), c.WriteKeys))
 	}
 	if c.WriteSize > 0 {
-		fields = append(fields, zap.Int("write_size", c.WriteSize))
+		fields = append(fields, zap.Int(strings.ToLower(WriteSizeStr), c.WriteSize))
 	}
 	prewriteRegionNum := atomic.LoadInt32(&c.PrewriteRegionNum)
 	if prewriteRegionNum > 0 {
-		fields = append(fields, zap.Int32("prewrite_region", prewriteRegionNum))
+		fields = append(fields, zap.Int32(strings.ToLower(PrewriteRegionStr), prewriteRegionNum))
 	}
 	if c.TxnRetry > 0 {
-		fields = append(fields, zap.Int("txn_retry", c.TxnRetry))
+		fields = append(fields, zap.Int(strings.ToLower(TxnRetryStr), c.TxnRetry))
 	}
 	return fields
 }
@@ -269,7 +278,7 @@ func (c *CommitExecDetails) append(parts []string) []string {
 	c.Mu.Unlock()
 	waitLockTime := atomic.LoadInt64(&c.WaitLockTime)
 	if waitLockTime > 0 {
-		parts = append(parts, WaitLockTimeStr+": "+strconv.FormatFloat(time.Duration(waitLockTime).Seconds(), 'f', -1, 64))
+		parts = append(parts, CommitWaitLockTimeStr+": "+strconv.FormatFloat(time.Duration(waitLockTime).Seconds(), 'f', -1, 64))
 	}
 	if c.LocalLatchTime > 0 {
 		parts = append(parts, LocalLatchWaitTimeStr+": "+strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64))
@@ -302,16 +311,16 @@ type SnapshotExecDetails struct {
 // ToZapFields wraps the SnapshotExecDetails as zap.Fields.
 func (s *SnapshotExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	if s.GetTime > 0 {
-		fields = append(fields, zap.String("get_time", strconv.FormatFloat(s.GetTime.Seconds(), 'f', -1, 64)))
+		fields = append(fields, zap.String(strings.ToLower(SnapshotGetTimeStr), strconv.FormatFloat(s.GetTime.Seconds(), 'f', -1, 64)))
 	}
 	if s.GetKey > 0 {
-		fields = append(fields, zap.String("get_key", strconv.FormatInt(int64(s.GetKey), 10)))
+		fields = append(fields, zap.String(strings.ToLower(SnapshotGetKeyStr), strconv.FormatInt(int64(s.GetKey), 10)))
 	}
 	if s.WaitLockTime > 0 {
-		fields = append(fields, zap.String("wait_lock_time", strconv.FormatFloat(time.Duration(s.WaitLockTime).Seconds(), 'f', -1, 64)))
+		fields = append(fields, zap.String(strings.ToLower(SnapshotWaitLockStr), strconv.FormatFloat(time.Duration(s.WaitLockTime).Seconds(), 'f', -1, 64)))
 	}
 	if s.RPCCount > 0 {
-		fields = append(fields, zap.String("rpc_count", strconv.FormatInt(int64(s.RPCCount), 10)))
+		fields = append(fields, zap.String(strings.ToLower(SnapshotRPCCountStr), strconv.FormatInt(int64(s.RPCCount), 10)))
 	}
 	return fields
 }
