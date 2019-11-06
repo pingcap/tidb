@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/ngaut/log"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1136,7 +1135,6 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 				return nil, err
 			}
 			if len(constr.Keys) == 1 && config.GetGlobalConfig().EnablePKIsHandle {
-				log.Errorf("------- idx %v", constr.Name)
 				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
@@ -1146,7 +1144,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 				}
 			}
 		}
-		log.Errorf("------- idx %v", constr.Name)
+
 		if constr.Tp == ast.ConstraintFulltext {
 			sc := ctx.GetSessionVars().StmtCtx
 			sc.AppendWarning(ErrTableCantHandleFt)
@@ -2742,7 +2740,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
+		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -3355,7 +3353,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return errors.Trace(err)
 	}
 	if tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, true); err != nil {
 			return err
 		}
 	}
@@ -3387,17 +3385,6 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	err = d.doDDLJob(ctx, job)
-	var warnings []string
-	if !sqlMode.HasStrictMode() {
-		historyJob, err := d.getHistoryDDLJob(job.ID)
-		if err == nil {
-			err = historyJob.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, &sqlMode, &warnings)
-		}
-		for _, w := range warnings {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(w))
-		}
-		log.Warnf("============================ warnings:%v", warnings)
-	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -3444,7 +3431,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, false); err != nil {
 			return err
 		}
 	}
@@ -3630,7 +3617,9 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	if isPK {
 		if config.GetGlobalConfig().EnablePKIsHandle || t.Meta().PKIsHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("unsupported drop primary key, enable-pk-is-handle is true")
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack(fmt.Sprintf(
+				"unsupported drop primary key, enable-pk-is-handle is %v, the table's pk-is-handle is %v",
+				config.GetGlobalConfig().EnablePKIsHandle, t.Meta().PKIsHandle))
 		}
 		if indexInfo == nil {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
@@ -3645,7 +3634,6 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 		return err
 	}
 
-	// TODO:
 	// Check for drop index on auto_increment column.
 	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
 	if err != nil {

@@ -67,6 +67,8 @@ delay-clean-table-lock = 0
 split-region-max-num = 1000
 
 # enable-pk-is-handle is used to control alter primary key feature. Default is true, indicate the alter primary key feature is disabled.
+# If it is false, we can add the primary key by "alter table", but we may not be able to drop the primary key.
+# In order to support "drop primary key" operation , this flag must be false and the table does not have the pkIsHandle Flag.
 enable-pk-is-handle = true
 
 [log]

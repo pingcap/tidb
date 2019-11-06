@@ -25,7 +25,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -323,14 +322,6 @@ LOOP:
 	sessionExec(c, store, addIdxSQL)
 	tk.MustExec("drop table t1")
 }
-
-// TODO:
-// func (s *testDBSuite5) TestCancelAddPrimaryNullSQLMode(c *C) {
-// 	idxName := "primary"
-// 	addIdxSQL := "alter table t1 add primary key idx_c2 (c1, c2);"
-// 	sqlModeSQL := "set @@sql_mode= ''"
-// 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, sqlModeSQL)
-// }
 
 func (s *testDBSuite2) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
@@ -1206,7 +1197,6 @@ func testDropIndex(c *C, store kv.Storage, lease time.Duration, createSQL, dropI
 	t := testGetTableByName(c, ctx, "test_db", "test_drop_index")
 	var c3idx table.Index
 	for _, tidx := range t.Indices() {
-		log.Error("************************************************************** 111", tidx.Meta().Name)
 		if tidx.Meta().Name.L == idxName {
 			c3idx = tidx
 			break
@@ -1390,7 +1380,8 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 
 	// for generated columns
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key(d);", tmysql.ErrUnsupportedOnGeneratedColumn)
-	s.tk.MustExec("alter table test_add_pk add primary key(e)")
+	// The primary key name is the same as the existing index name.
+	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 
 	// for the limit of name
@@ -1404,6 +1395,10 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 	// for not existing primary key
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
+
+	// for too many key parts specified
+	s.tk.MustGetErrCode("alter table test_add_pk add primary key idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);",
+		mysql.ErrTooManyKeyParts)
 
 	// for the limit of comment's length
 	validComment := "'" + strings.Repeat("a", ddl.MaxCommentLength) + "'"
@@ -1425,34 +1420,11 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	// for null values in primary key
 	s.tk.MustExec("insert into test_add_pk set a = 0, b = 0, c = 0")
 	s.tk.MustExec("insert into test_add_pk set a = 1")
+	s.tk.ExecToErr("alter table test_add_pk add primary key (b)", tmysql.ErrInvalidUseOfNull)
 	s.tk.MustExec("insert into test_add_pk set a = 2, b = 2")
+	s.tk.ExecToErr("alter table test_add_pk add primary key (a, c)", tmysql.ErrInvalidUseOfNull)
 	s.tk.MustExec("insert into test_add_pk set a = 3, c = 3")
-	s.tk.ExecToErr("alter table test_add_pk add primary key (a, b)", tmysql.ErrInvalidUseOfNull)
-	// for empty sql_mode
-	s.tk.MustExec("set @@sql_mode=''")
-	defer s.tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
-	s.tk.MustExec("alter table test_add_pk add primary key (c, b, a)")
-	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning 1105 [ddl:1265]Data truncated for column 'c' at row 0",
-		"Warning 1105 [ddl:1265]Data truncated for column 'b' at row 0"))
-	ctx := s.s.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_add_pk"))
-	c.Assert(err, IsNil)
-	tblInfo := tbl.Meta()
-	hasNotNull := tmysql.HasNotNullFlag(tblInfo.Columns[0].Flag)
-	c.Assert(hasNotNull, IsTrue)
-	hasNotNull = tmysql.HasNotNullFlag(tblInfo.Columns[1].Flag)
-	c.Assert(hasNotNull, IsTrue)
-	hasNotNull = tmysql.HasNotNullFlag(tblInfo.Columns[1].Flag)
-	c.Assert(hasNotNull, IsTrue)
-	r = s.tk.MustQuery("select b from test_add_pk use index(idx)")
-	r.Check(testkit.Rows("0", "0", "0", "2"))
-	r = s.tk.MustQuery("select c, b, a from test_add_pk use index(primary)")
-	r.Check(testkit.Rows(" 0 1", " 2 2", "0 0 0", "3 0 3"))
-	r = s.tk.MustQuery("select * from test_add_pk use index(primary)")
-	r.Check(testkit.Rows("0 0 0 0 1", "1 0  1 2", "2 2  4 3", "3 0 3 3 4"))
+	s.tk.ExecToErr("alter table test_add_pk add primary key (c, b, a)", tmysql.ErrInvalidUseOfNull)
 }
 
 func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
@@ -3231,15 +3203,20 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
-	_, err := tk.Exec("alter table employ add unique index  p_a (a);")
+	_, err := tk.Exec("alter table employ add unique index p_a (a);")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	_, err = tk.Exec("alter table employ add primary key p_a (a);")
+	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
 
 	tk.MustExec("create table issue9100t1 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col2)) partition by range( col1 ) (partition p1 values less than (11))")
-	tk.MustExec("alter table issue9100t1 add unique index  p_col1 (col1)")
+	tk.MustExec("alter table issue9100t1 add unique index p_col1 (col1)")
+	tk.MustExec("alter table issue9100t1 add primary key p_col1 (col1)")
 
 	tk.MustExec("create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11))")
-	_, err = tk.Exec("alter table issue9100t2 add unique index  p_col1 (col1)")
+	_, err = tk.Exec("alter table issue9100t2 add unique index p_col1 (col1)")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	_, err = tk.Exec("alter table issue9100t2 add primary key p_col1 (col1)")
+	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
 }
 
 func (s *testDBSuite1) TestModifyColumnCharset(c *C) {

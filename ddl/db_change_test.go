@@ -627,7 +627,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil> YES BTREE  "))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  "))
 		}
 	}
 
@@ -641,7 +641,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil> YES BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 

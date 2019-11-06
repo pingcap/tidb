@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -159,7 +158,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	var jobs []*model.Job
 	var err error
 	switch curJob.Type {
-	case model.ActionAddIndex:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	default:
 		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
@@ -307,12 +306,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
-	log.Warnf("args:%v", job.Args)
-	updateRawArgs := true
-	if job.Type == model.ActionAddPrimaryKey {
-		updateRawArgs = false
-	}
-	err = t.AddHistoryDDLJob(job, updateRawArgs)
+	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }
 
@@ -351,7 +345,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 }
 
 func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
-	if tp == model.AddIndexStr {
+	if tp == model.AddIndexStr || tp == model.AddPrimaryKeyStr {
 		return meta.NewMeta(txn, meta.AddIndexJobListKey)
 	}
 	return meta.NewMeta(txn)
@@ -459,7 +453,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
-		log.Warnf("---------------- job:%v, args:%v", job, job.Args)
 	}
 }
 

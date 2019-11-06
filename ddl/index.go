@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -47,8 +46,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxPrefixLength = 3072
-const MaxCommentLength = 1024
+const (
+	maxPrefixLength = 3072
+	// MaxCommentLength is exported for testing.
+	MaxCommentLength = 1024
+)
 
 func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColName) ([]*model.IndexColumn, error) {
 	// Build offsets.
@@ -276,7 +278,6 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	for _, colName := range indexInfo.Columns {
 		col := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
 		if !mysql.HasNotNullFlag(col.Flag) || mysql.HasPreventNullInsertFlag(col.Flag) {
-			log.Warnf("------------------------- 111 col:%v", col.Name)
 			nullCols = append(nullCols, col)
 		}
 	}
@@ -284,7 +285,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 }
 
 func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
-	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]string, error) {
+	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
 	}
@@ -297,22 +298,18 @@ func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job 
 	if err != nil {
 		return nil, err
 	}
-	warnings := make([]string, 0, len(nullCols))
-	for _, oldCol := range nullCols {
-		// TODO: check columns together
-		err = modifyColumnFromNull2NotNull(w, dbInfo, tblInfo, job, false, oldCol, oldCol)
-		if err != nil {
-			if sqlMode.HasStrictMode() {
-				_, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
-				log.Errorf("error:%v", err)
-				return nil, err
-			}
-			warnings = append(warnings, ErrWarnDataTruncated.GenWithStackByArgs(oldCol.Name.L, 0).Error())
-		}
-		log.Warnf("col:%v", oldCol.Name)
+	if len(nullCols) == 0 {
+		return nil, nil
 	}
 
-	return warnings, nil
+	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols)
+	if err == nil {
+		return nil, nil
+	}
+	_, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
+	// TODO: Support non-strict mode.
+	// warnings = append(warnings, ErrWarnDataTruncated.GenWithStackByArgs(oldCol.Name.L, 0).Error())
+	return nil, err
 }
 
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
@@ -340,10 +337,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		sqlMode     mysql.SQLMode
 		warnings    []string
 	)
-	log.Infof("========================== add idx, job %d, is pk %t", job.ID, isPK)
 	if isPK {
+		// Notice: sqlMode and warnings is used to support non-strict mode.
 		err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, &sqlMode, &warnings)
-		logutil.BgLogger().Warn("================================== ", zap.Int64("job", job.ID), zap.Strings("warnings", warnings))
 	} else {
 		err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	}
@@ -383,6 +379,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Primary = false
 		if isPK {
 			if _, err = checkPKOnGeneratedColumn(tblInfo, idxColNames); err != nil {
+				job.State = model.JobStateCancelled
 				return ver, err
 			}
 			indexInfo.Primary = true
@@ -404,24 +401,18 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
-		warnings, err1 := checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
-		if err1 != nil {
-			return ver, errors.Trace(err1)
-		}
-		if len(warnings) != 0 {
-			job.Args = append(job.Args, warnings)
+		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
+		if err != nil {
+			break
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		indexInfo.State = model.StateWriteReorganization
-		warnings, err1 := checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
-		if err1 != nil {
-			return ver, errors.Trace(err1)
-		}
-		if len(warnings) != 0 {
-			job.Args = append(job.Args, warnings)
+		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
+		if err != nil {
+			break
 		}
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
@@ -450,7 +441,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
 				}
 			}()
-			return w.addTableIndex(sqlMode, tbl, indexInfo, reorgInfo)
+			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -636,17 +627,16 @@ type indexRecord struct {
 }
 
 type addIndexWorker struct {
-	id         int
-	ddlWorker  *worker
-	batchCnt   int
-	sessCtx    sessionctx.Context
-	reqSQLMode mysql.SQLMode // reqSQLMode is the sql_mode when the DDL statement is received.
-	taskCh     chan *reorgIndexTask
-	resultCh   chan *addIndexResult
-	index      table.Index
-	table      table.Table
-	closed     bool
-	priority   int
+	id        int
+	ddlWorker *worker
+	batchCnt  int
+	sessCtx   sessionctx.Context
+	taskCh    chan *reorgIndexTask
+	resultCh  chan *addIndexResult
+	index     table.Index
+	table     table.Table
+	closed    bool
+	priority  int
 
 	// The following attributes are used to reduce memory allocation.
 	defaultVals        []types.Datum
@@ -655,8 +645,6 @@ type addIndexWorker struct {
 	rowDecoder         *decoder.RowDecoder
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
-	batchZeroVals      map[string]int64
-	IdxColumns         []*table.Column
 	distinctCheckFlags []bool
 }
 
@@ -701,42 +689,22 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 	result.scanCount += taskCtx.scanCount
 }
 
-func getIndexColumns(t table.PhysicalTable, indexInfo *model.IndexInfo) []*table.Column {
-	cols := make([]*table.Column, 0, len(indexInfo.Columns))
-	for _, ic := range indexInfo.Columns {
-		col := table.FindCol(t.Cols(), ic.Name.L)
-		cols = append(cols, col)
-	}
-	log.Errorf("====================== %v", cols)
-	return cols
-}
-
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, reqSQLMode mysql.SQLMode, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
-	var batchZeroVals map[string]int64
-	var cols []*table.Column
-	if indexInfo.Primary && !reqSQLMode.HasStrictMode() {
-		batchZeroVals = make(map[string]int64)
-		cols = getIndexColumns(t, indexInfo)
-		log.Errorf("====================== %v", cols)
-	}
 	return &addIndexWorker{
-		id:            id,
-		ddlWorker:     worker,
-		batchCnt:      int(variable.GetDDLReorgBatchSize()),
-		sessCtx:       sessCtx,
-		reqSQLMode:    reqSQLMode,
-		taskCh:        make(chan *reorgIndexTask, 1),
-		resultCh:      make(chan *addIndexResult, 1),
-		index:         index,
-		table:         t,
-		rowDecoder:    rowDecoder,
-		priority:      kv.PriorityLow,
-		defaultVals:   make([]types.Datum, len(t.Cols())),
-		batchZeroVals: batchZeroVals,
-		IdxColumns:    cols,
-		rowMap:        make(map[int64]types.Datum, len(decodeColMap)),
+		id:          id,
+		ddlWorker:   worker,
+		batchCnt:    int(variable.GetDDLReorgBatchSize()),
+		sessCtx:     sessCtx,
+		taskCh:      make(chan *reorgIndexTask, 1),
+		resultCh:    make(chan *addIndexResult, 1),
+		index:       index,
+		table:       t,
+		rowDecoder:  rowDecoder,
+		priority:    kv.PriorityLow,
+		defaultVals: make([]types.Datum, len(t.Cols())),
+		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 	}
 }
 
@@ -894,26 +862,6 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
 }
 
-func (w *addIndexWorker) replaceNullWithZeroInIdx(record *indexRecord, idxKeyBuf []byte) ([]byte, error) {
-	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-	vals := make([]types.Datum, len(record.vals))
-	copy(vals, record.vals)
-	for i, v := range record.vals {
-		log.Warnf("xxxxx00000----------------------------%d, key: %s, v: %v, tp: %v", i, v, record.handle,
-			w.IdxColumns[i].ToInfo().Tp)
-		if v.IsNull() {
-			vals[i] = table.GetZeroValue(w.IdxColumns[i].ToInfo())
-		}
-		log.Warnf("11111----------------------------%d, key: %s, v: %v", i, vals[i], record.handle)
-	}
-	idxKey, _, err := w.index.GenIndexKey(stmtCtx, vals, record.handle, idxKeyBuf)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return idxKey, nil
-}
-
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
@@ -941,13 +889,12 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		return errors.Trace(err)
 	}
 
-	isPK := w.index.Meta().Primary
 	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
-			if w.distinctCheckFlags[i] || isPK {
+			if w.distinctCheckFlags[i] {
 				handle, err1 := tables.DecodeHandle(val)
 				if err1 != nil {
 					return errors.Trace(err1)
@@ -959,18 +906,10 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			}
 			idxRecords[i].skip = true
 		} else {
-			log.Errorf("xxxxx0---------------------------- no.%d, v %v, distinct %v", i, idxRecords[i].handle, w.distinctCheckFlags[i])
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			if w.distinctCheckFlags[i] || isPK {
+			if w.distinctCheckFlags[i] {
 				batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
-			}
-			if isPK && !w.distinctCheckFlags[i] && !w.reqSQLMode.HasStrictMode() {
-				newKey, err := w.replaceNullWithZeroInIdx(idxRecords[i], w.idxKeyBufs[i])
-				if err != nil {
-					return errors.Trace(err)
-				}
-				w.batchZeroVals[string(newKey)] = idxRecords[i].handle
 			}
 		}
 	}
@@ -1321,84 +1260,6 @@ func loadDDLReorgVars(w *worker) error {
 	return ddlutil.LoadDDLReorgVars(ctx)
 }
 
-func checkForNullValues(batchZeroVals map[string]int64, ws []*addIndexWorker) error {
-	for _, w := range ws {
-		log.Error("=============================== 111111, vals:", len(w.batchZeroVals))
-		for key, val := range w.batchZeroVals {
-			if _, found := batchZeroVals[string(key)]; found {
-				return errors.Trace(kv.ErrKeyExists)
-			}
-			batchZeroVals[key] = val
-			log.Errorf("xxxxx1---------------------------- key %s, v %v", key, val)
-		}
-	}
-	return nil
-}
-
-func replaceNullWithZeroInRows(tbl table.PhysicalTable, idxInfo *model.IndexInfo, reorgInfo *reorgInfo,
-	batchZeroVals map[string]int64) error {
-	sessCtx := newContext(reorgInfo.d.store)
-	idxColumns := getIndexColumns(tbl, idxInfo)
-
-	batchKeys := make([]kv.Key, 0, len(batchZeroVals))
-	for key, _ := range batchZeroVals {
-		batchKeys = append(batchKeys, kv.Key(key))
-	}
-
-	//return kv.RunInNewTxn(sessCtx.GetStore(), true, func(txn kv.Transaction) error {
-	if err := sessCtx.NewTxn(context.Background()); err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := sessCtx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	batchVals, err := txn.BatchGet(context.Background(), batchKeys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, key := range batchKeys {
-		val, found := batchVals[string(key)]
-		if !found {
-			continue
-		}
-		handle, err := tables.DecodeHandle(val)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if handle != batchZeroVals[string(key)] {
-			return errors.Trace(kv.ErrKeyExists)
-		}
-	}
-
-	for _, h := range batchZeroVals {
-		oldRow, err := tbl.RowWithCols(sessCtx, h, tbl.Cols())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newRow := make([]types.Datum, len(oldRow))
-		copy(newRow, oldRow)
-		modified := make([]bool, len(oldRow))
-		for i, col := range idxInfo.Columns {
-			if newRow[col.Offset].IsNull() {
-				newRow[col.Offset] = table.GetZeroValue(idxColumns[i].ToInfo())
-				modified[col.Offset] = true
-				log.Warnf("11111----------------------------%d, col: %s, offset: %d, key: %s, v: %v",
-					i, idxColumns[i].ToInfo().Name, col.Offset, newRow[col.Offset], h)
-			}
-		}
-		log.Errorf("xxxxxz---------------------------- key %d, v1: %v, v2: %v, v3: %v", h, newRow[0], newRow[1], newRow[2])
-		if err = tbl.UpdateRecord(sessCtx, h, oldRow, newRow, modified); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return txn.Commit(context.Background())
-	//})
-}
-
 // addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
 //
@@ -1413,7 +1274,7 @@ func replaceNullWithZeroInRows(tbl table.PhysicalTable, idxInfo *model.IndexInfo
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addPhysicalTableIndex(reqSQLMode mysql.SQLMode, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) (map[string]int64, error) {
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
@@ -1422,7 +1283,7 @@ func (w *worker) addPhysicalTableIndex(reqSQLMode mysql.SQLMode, t table.Physica
 	sessCtx := newContext(reorgInfo.d.store)
 	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
@@ -1432,11 +1293,10 @@ func (w *worker) addPhysicalTableIndex(reqSQLMode mysql.SQLMode, t table.Physica
 		closeAddIndexWorkers(idxWorkers)
 	}()
 
-	batchZeroVals := make(map[string]int64)
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		// For dynamic adjust add index worker number.
@@ -1451,7 +1311,7 @@ func (w *worker) addPhysicalTableIndex(reqSQLMode mysql.SQLMode, t table.Physica
 		// Enlarge the worker size.
 		for i := len(idxWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
-			idxWorker := newAddIndexWorker(sessCtx, w, reqSQLMode, i, t, indexInfo, decodeColMap)
+			idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
 			idxWorker.priority = job.Priority
 			idxWorkers = append(idxWorkers, idxWorker)
 			go idxWorkers[i].run(reorgInfo.d)
@@ -1469,10 +1329,10 @@ func (w *worker) addPhysicalTableIndex(reqSQLMode mysql.SQLMode, t table.Physica
 				if num != 0 {
 					if num > len(kvRanges) {
 						if len(idxWorkers) != len(kvRanges) {
-							failpoint.Return(nil, errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+							failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
 						}
 					} else if num != len(idxWorkers) {
-						failpoint.Return(nil, errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+						failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
 					}
 					TestCheckWorkerNumCh <- struct{}{}
 				}
@@ -1483,33 +1343,23 @@ func (w *worker) addPhysicalTableIndex(reqSQLMode mysql.SQLMode, t table.Physica
 			zap.Int("regionCnt", len(kvRanges)), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
-		if indexInfo.Primary && !reqSQLMode.HasStrictMode() {
-			if err = checkForNullValues(batchZeroVals, idxWorkers); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 		if len(remains) == 0 {
 			break
 		}
 		startHandle, _, err = decodeHandleRange(remains[0])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	if indexInfo.Primary && !reqSQLMode.HasStrictMode() {
-		return batchZeroVals, nil
-	}
-
-	return nil, nil
+	return nil
 }
 
 // addTableIndex handles the add index reorganization state for a table.
-func (w *worker) addTableIndex(sqlMode mysql.SQLMode, t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
 	var err error
-	var batchZeroVals map[string]int64
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
 		for !finish {
@@ -1517,14 +1367,9 @@ func (w *worker) addTableIndex(sqlMode mysql.SQLMode, t table.Table, idx *model.
 			if p == nil {
 				return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			batchZeroVals, err = w.addPhysicalTableIndex(sqlMode, p, idx, reorgInfo)
+			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
 			if err != nil {
 				break
-			}
-			if idx.Primary && !sqlMode.HasStrictMode() {
-				if err = replaceNullWithZeroInRows(p, idx, reorgInfo, batchZeroVals); err != nil {
-					return errors.Trace(err)
-				}
 			}
 			finish, err = w.updateReorgInfo(tbl, reorgInfo)
 			if err != nil {
@@ -1532,12 +1377,7 @@ func (w *worker) addTableIndex(sqlMode mysql.SQLMode, t table.Table, idx *model.
 			}
 		}
 	} else {
-		batchZeroVals, err = w.addPhysicalTableIndex(sqlMode, t.(table.PhysicalTable), idx, reorgInfo)
-		if idx.Primary && !sqlMode.HasStrictMode() {
-			if err = replaceNullWithZeroInRows(t.(table.PhysicalTable), idx, reorgInfo, batchZeroVals); err != nil {
-				return errors.Trace(err)
-			}
-		}
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
 	}
 	return errors.Trace(err)
 }

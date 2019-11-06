@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -380,7 +379,6 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg && !job.IsRollingback() {
-		log.Errorf("job %v", job)
 		errs, err := admin.CancelJobs(txn, test.jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
@@ -821,7 +819,6 @@ func (s *testDDLSuite) TestCancelJobx(c *C) {
 			Length: -1,
 		}}, nil}
 	cancelState = model.StateNone
-	log.Errorf("is not null %v", mysql.HasNotNullFlag(tblInfo.Columns[0].Flag))
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)

@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/ngaut/log"
 	"math"
 	"math/rand"
 	"strings"
@@ -1357,7 +1356,6 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 			return
 		}
 		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
-		log.Warnf("test111 ---------------------------- job %v", job)
 		if first {
 			first = false
 			return
@@ -1379,7 +1377,6 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 			return
 		}
 		errs, err := admin.CancelJobs(txn, jobIDs)
-		log.Warnf("test111 ---------------------------- err %v, job %v", err, job)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -1402,7 +1399,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
-func (s *testIntegrationSuite) TestPartitionAddPrimaryKey(c *C) {
+func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testPartitionAddIndexOrPK(c, tk, "primary key")
 }

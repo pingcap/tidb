@@ -171,7 +171,7 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
-func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
+func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
@@ -271,10 +271,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
-		ver, err = rollingbackAddindex(w, d, t, job, false)
-		// TODO:
+		ver, err = rollingbackAddIndex(w, d, t, job, false)
 	case model.ActionAddPrimaryKey:
-		ver, err = rollingbackAddindex(w, d, t, job, true)
+		ver, err = rollingbackAddIndex(w, d, t, job, true)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
