@@ -42,7 +42,7 @@ var perfSchemaTables = []string{
 	tableTiDBProfileMutex,
 	tableTiDBAllocsProfile,
 	tableTiDBProfileBlock,
-	tableTiDBGoroutine,
+	tableTiDBProfileGoroutines,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -440,8 +440,8 @@ const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBGoroutine contains the columns name definitions for table events_goroutine
-const tableTiDBGoroutine = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBGoroutines + " (" +
+// tableTiDBProfileGoroutines contains the columns name definitions for table events_goroutine
+const tableTiDBProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileGoroutines + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
