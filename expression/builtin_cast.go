@@ -755,6 +755,12 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		uintVal, err = types.ConvertFloatToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = int64(uintVal)
 	}
+<<<<<<< HEAD
+=======
+	if types.ErrOverflow.Equal(err) {
+		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+	}
+>>>>>>> c01006a... expression: fix incorrect proto fields and add missing overflow handling for arithmatic functions (#12858)
 	return res, isNull, err
 }
 
