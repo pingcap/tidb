@@ -413,6 +413,7 @@ const (
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
 	DefTiDBUsePlanBaselines            = true
+	DefInnodbLockWaitTimeout           = 50 // 50s
 )
 
 // Process global variables.
