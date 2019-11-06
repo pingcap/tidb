@@ -384,11 +384,16 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		if err == nil {
 			return status, nil
 		}
+		// If the error is something other than txnNotFoundErr, throw the error (network
+		// unavailable, tikv down, backoff timeout etc) to the caller.
 		if _, ok := errors.Cause(err).(txnNotFoundErr); !ok {
 			return TxnStatus{}, err
 		}
 
 		// Handle txnNotFound error.
+		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
+		// This is likely to happen in the concurrently prewrite when secondary regions
+		// success before the primary region.
 		if err := bo.Backoff(boTxnNotFound, err); err != nil {
 			logutil.BgLogger().Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
