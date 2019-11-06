@@ -133,12 +133,8 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
-	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
-	if err != nil || hasNull {
-		return
-	}
-	innerPtrs := c.hashTable.Get(key)
+func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
+	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
 	}
