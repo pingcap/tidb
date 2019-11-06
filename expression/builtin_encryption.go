@@ -286,6 +286,7 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 	}
+
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
 	var cipherText []byte
 	switch b.modeName {
