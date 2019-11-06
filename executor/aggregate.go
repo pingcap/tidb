@@ -923,7 +923,7 @@ type groupChecker struct {
 	StmtCtx              *stmtctx.StatementContext
 	GroupByItems         []expression.Expression
 	groupRowsIndex       []int
-	curGroupId           int
+	curGroupID           int
 	previousLastGroupKey []byte
 	firstGroupKey        []byte
 	lastGroupKey         []byte
@@ -936,7 +936,7 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 		ctx:          ctx,
 		StmtCtx:      stmtCtx,
 		GroupByItems: items,
-		curGroupId:   0,
+		curGroupID:   0,
 		sameGroup:    sameGroup,
 	}
 }
@@ -945,7 +945,7 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *groupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	numRows := chk.NumRows()
-	e.curGroupId = 0
+	e.curGroupID = 0
 	e.groupRowsIndex = e.groupRowsIndex[:0]
 	e.firstGroupKey = e.firstGroupKey[:0]
 	e.lastGroupKey = e.lastGroupKey[:0]
@@ -1134,13 +1134,13 @@ func (e *groupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 }
 
 func (e *groupChecker) getOneGroup() (begin, end int) {
-	if e.curGroupId == 0 {
+	if e.curGroupID == 0 {
 		begin = 0
 	} else {
-		begin = e.groupRowsIndex[e.curGroupId-1]
+		begin = e.groupRowsIndex[e.curGroupID-1]
 	}
-	end = e.groupRowsIndex[e.curGroupId]
-	e.curGroupId++
+	end = e.groupRowsIndex[e.curGroupID]
+	e.curGroupID++
 	return begin, end
 }
 
