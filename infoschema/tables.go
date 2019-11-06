@@ -662,6 +662,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"LEASE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1837,6 +1838,7 @@ func dataForServersInfo() ([][]types.Datum, error) {
 			info.Lease,           // LEASE
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
+			info.BinlogStatus,    // BINLOG_STATUS
 		)
 		rows = append(rows, row)
 	}
