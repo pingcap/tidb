@@ -1593,6 +1593,7 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a varchar(20), b int, c int)")
 	tk.MustExec("create table t2(a varchar(20), b int, c int, primary key(a, b))")
 	tk.MustExec("insert into t1 values(\"abcd\", 1, 1), (\"bacd\", 2, 2), (\"cbad\", 3, 3)")

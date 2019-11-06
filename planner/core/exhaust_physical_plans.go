@@ -396,7 +396,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		}
 		// If join keys is not prefix of inner index. The order of merge join can't be granted.
 		// So index merge join can't be constructed in this case
-		var idxOff2KeyOff map[int]int
+		idxOff2KeyOff := map[int]int{}
 		isKeyPrefixIndex := true
 		for keyOff, idxOff := range join.KeyOff2IdxOff {
 			if idxOff >= len(join.OuterJoinKeys) {
