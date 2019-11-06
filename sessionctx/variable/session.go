@@ -1223,7 +1223,7 @@ type SlowQueryLogItems struct {
 // # User: root@127.0.0.1
 // # Conn_ID: 6
 // # Query_time: 4.895492
-// # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
+// # Cop_process_time: 0.161 Cop_request_count: 1 Cop_total_keys: 100001 Cop_processed_keys: 100000
 // # DB: test
 // # Index_names: [t1.idx1,t2.idx2]
 // # Is_internal: false

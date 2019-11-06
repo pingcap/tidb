@@ -46,19 +46,19 @@ var slowQueryCols = []columnInfo{
 	{execdetails.CommitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.BackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{execdetails.CommitBackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{execdetails.CommitWaitLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.LocalLatchWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.WriteKeysStr, mysql.TypeLonglong, 22, 0, nil, nil},
 	{execdetails.WriteSizeStr, mysql.TypeLonglong, 22, 0, nil, nil},
 	{execdetails.PrewriteRegionStr, mysql.TypeLonglong, 22, 0, nil, nil},
 	{execdetails.TxnRetryStr, mysql.TypeLonglong, 22, 0, nil, nil},
-	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.CopProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CopWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CopBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CopRequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.CopTotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.CopProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 100, 0, nil, nil},
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
@@ -272,7 +272,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.getCommitTSTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.CommitBackoffTimeStr:
 		st.commitBackoffTime, err = strconv.ParseFloat(value, 64)
-	case execdetails.BackoffTypesStr:
+	case execdetails.CommitBackoffTypesStr:
 		st.backoffTypes = value
 	case execdetails.CommitWaitLockTimeStr:
 		st.resolveLockTime, err = strconv.ParseFloat(value, 64)
@@ -286,17 +286,17 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.prewriteRegion, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TxnRetryStr:
 		st.txnRetry, err = strconv.ParseUint(value, 10, 64)
-	case execdetails.ProcessTimeStr:
+	case execdetails.CopProcessTimeStr:
 		st.processTime, err = strconv.ParseFloat(value, 64)
-	case execdetails.WaitTimeStr:
+	case execdetails.CopWaitTimeStr:
 		st.waitTime, err = strconv.ParseFloat(value, 64)
-	case execdetails.BackoffTimeStr:
+	case execdetails.CopBackoffTimeStr:
 		st.backOffTime, err = strconv.ParseFloat(value, 64)
-	case execdetails.RequestCountStr:
+	case execdetails.CopRequestCountStr:
 		st.requestCount, err = strconv.ParseUint(value, 10, 64)
-	case execdetails.TotalKeysStr:
+	case execdetails.CopTotalKeysStr:
 		st.totalKeys, err = strconv.ParseUint(value, 10, 64)
-	case execdetails.ProcessKeysStr:
+	case execdetails.CopProcessKeysStr:
 		st.processKeys, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value

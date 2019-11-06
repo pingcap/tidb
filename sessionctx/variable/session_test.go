@@ -184,8 +184,8 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
-# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
-# Get_time: 0.000000001 Get_key: 3 Get_wait_lock_time: 0.000000001 RPC_count: 2
+# Cop_process_time: 2 Cop_wait_time: 60 Cop_backoff_time: 0.001 Cop_request_count: 2 Cop_total_keys: 10000 Cop_process_keys: 20001
+# Get_time: 0.000000001 Get_key: 3 Get_wait_lock_time: 0.000000001 Get_rpc_count: 2
 # Prewrite_time: 0.000000002 Commit_time: 0.000000003 Get_commit_ts_time: 0.000000001 Commit_backoff_time: 0.000000005 Commit_wait_lock_time: 0.000000002 Local_latch_wait_time: 0.000000004 Write_keys: 3 Write_size: 4 Prewrite_region: 5 Txn_retry: 6
 # DB: test
 # Index_names: [t1:a,t2:b]

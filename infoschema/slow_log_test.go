@@ -30,7 +30,7 @@ func (s *testSuite) TestParseSlowLogFile(c *C) {
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
-# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Cop_process_time: 0.021 Cop_request_count: 1 Cop_total_keys: 637 Cop_processed_keys: 436
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:1,t2:2
@@ -65,7 +65,7 @@ select a# from t;
 # Time: 2019-01-24T22:32:29.313255+08:00
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
-# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Cop_process_time: 0.021 Cop_request_count: 1 Cop_total_keys: 637 Cop_processed_keys: 436
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:1,t2:2
@@ -148,7 +148,7 @@ func (s *testSuite) TestFixParseSlowLogFile(c *C) {
 		`# Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
-# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Cop_process_time: 0.021 Cop_request_count: 1 Cop_total_keys: 637 Cop_processed_keys: 436
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:1,t2:2
@@ -159,7 +159,7 @@ select * from t
 # Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
-# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Cop_process_time: 0.021 Cop_request_count: 1 Cop_total_keys: 637 Cop_processed_keys: 436
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:1,t2:2

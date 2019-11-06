@@ -39,18 +39,20 @@ var (
 )
 
 const (
-	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
-	ProcessTimeStr = "Process_time"
-	// WaitTimeStr means the time of all coprocessor wait.
-	WaitTimeStr = "Wait_time"
-	// BackoffTimeStr means the time of all back-off.
-	BackoffTimeStr = "Backoff_time"
-	// RequestCountStr means the request count.
-	RequestCountStr = "Request_count"
-	// TotalKeysStr means the total scan keys.
-	TotalKeysStr = "Total_keys"
-	// ProcessKeysStr means the total processed keys.
-	ProcessKeysStr = "Process_keys"
+	// CopProcessTimeStr represents the sum of process time of all the coprocessor tasks.
+	CopProcessTimeStr = "Cop_process_time"
+	// CopWaitTimeStr means the time of all coprocessor wait.
+	CopWaitTimeStr = "Cop_wait_time"
+	// CopBackoffTimeStr means the time of all back-off.
+	CopBackoffTimeStr = "Cop_backoff_time"
+	// CopRequestCountStr means the request count.
+	CopRequestCountStr = "Cop_request_count"
+	// CopTotalKeysStr means the total scan keys.
+	CopTotalKeysStr = "Cop_total_keys"
+	// CopProcessKeysStr means the total processed keys.
+	CopProcessKeysStr = "Cop_process_keys"
+	// CopWaitLockTimeStr means the time of resolving lock in cop.
+	CopWaitLockTimeStr = "Cop_wait_lock_time"
 	// PreWriteTimeStr means the time of pre-write.
 	PreWriteTimeStr = "Prewrite_time"
 	// CommitTimeStr means the time of commit.
@@ -59,12 +61,10 @@ const (
 	GetCommitTSTimeStr = "Get_commit_ts_time"
 	// CommitBackoffTimeStr means the time of commit backoff.
 	CommitBackoffTimeStr = "Commit_backoff_time"
-	// BackoffTypesStr means the backoff type.
-	BackoffTypesStr = "Backoff_types"
+	// CommitBackoffTypesStr means the backoff type.
+	CommitBackoffTypesStr = "Commit_backoff_types"
 	// CommitWaitLockTimeStr means the time of resolving lock in commit.
 	CommitWaitLockTimeStr = "Commit_wait_lock_time"
-	// CopWaitLockTimeStr means the time of resolving lock in cop.
-	CopWaitLockTimeStr = "Cop_wait_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
 	LocalLatchWaitTimeStr = "Local_latch_wait_time"
 	// WriteKeysStr means the count of keys in the transaction.
@@ -82,7 +82,7 @@ const (
 	// SnapshotWaitLockStr means the time of waiting in resolving lock.
 	SnapshotWaitLockStr = "Get_wait_lock_time"
 	// SnapshotRPCCountStr means the RPC count used to get.
-	SnapshotRPCCountStr = "RPC_count"
+	SnapshotRPCCountStr = "Get_rpc_count"
 )
 
 // SQLExecDetails contains SQL execution detail information.
@@ -147,22 +147,22 @@ type CopExecDetails struct {
 
 func (d *CopExecDetails) append(parts []string) []string {
 	if d.ProcessTime > 0 {
-		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
+		parts = append(parts, CopProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
 	}
 	if d.WaitTime > 0 {
-		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
+		parts = append(parts, CopWaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
-		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
+		parts = append(parts, CopBackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
 	}
 	if d.RequestCount > 0 {
-		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
+		parts = append(parts, CopRequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
 	}
 	if d.TotalKeys > 0 {
-		parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
+		parts = append(parts, CopTotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
 	}
 	if d.ProcessedKeys > 0 {
-		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
+		parts = append(parts, CopProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
 	if d.WaitLockTime > 0 {
 		parts = append(parts, CopWaitLockTimeStr+": "+strconv.FormatFloat(d.WaitLockTime.Seconds(), 'f', -1, 64))
@@ -173,22 +173,22 @@ func (d *CopExecDetails) append(parts []string) []string {
 // ToZapFields wraps the CopExecDetails as zap.Fields.
 func (d CopExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	if d.ProcessTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+		fields = append(fields, zap.String(strings.ToLower(CopProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+		fields = append(fields, zap.String(strings.ToLower(CopWaitTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
+		fields = append(fields, zap.String(strings.ToLower(CopBackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.RequestCount > 0 {
-		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
+		fields = append(fields, zap.String(strings.ToLower(CopRequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
 	if d.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
+		fields = append(fields, zap.String(strings.ToLower(CopTotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
 	}
 	if d.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+		fields = append(fields, zap.String(strings.ToLower(CopProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
 	}
 	if d.WaitLockTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopWaitLockTimeStr), strconv.FormatFloat(d.WaitLockTime.Seconds(), 'f', -1, 64)))
@@ -231,7 +231,7 @@ func (c *CommitExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	}
 	c.Mu.Lock()
 	if len(c.Mu.BackoffTypes) > 0 {
-		fields = append(fields, zap.String(strings.ToLower(BackoffTypesStr), fmt.Sprintf("%v", c.Mu.BackoffTypes)))
+		fields = append(fields, zap.String(strings.ToLower(CommitBackoffTypesStr), fmt.Sprintf("%v", c.Mu.BackoffTypes)))
 	}
 	c.Mu.Unlock()
 	waitLockTime := atomic.LoadInt64(&c.WaitLockTime)
@@ -273,7 +273,7 @@ func (c *CommitExecDetails) append(parts []string) []string {
 	}
 	c.Mu.Lock()
 	if len(c.Mu.BackoffTypes) > 0 {
-		parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", c.Mu.BackoffTypes))
+		parts = append(parts, CommitBackoffTypesStr+": "+fmt.Sprintf("%v", c.Mu.BackoffTypes))
 	}
 	c.Mu.Unlock()
 	waitLockTime := atomic.LoadInt64(&c.WaitLockTime)
