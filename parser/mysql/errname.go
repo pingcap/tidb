@@ -959,6 +959,15 @@ var MySQLErrName = map[uint16]string{
 	ErrIncorrectDatetimeValue:     "Incorrect datetime value: '%s'",
 	ErrInvalidTimeFormat:          "invalid time format: '%v'",
 	ErrInvalidWeekModeFormat:      "invalid week mode format: '%v'",
+	ErrFieldGetDefaultFailed:      "Field '%s' get default value fail",
+	ErrIndexOutBound:              "Index column %s offset out of bound, offset: %d, row: %v",
+	ErrUnsupportedOp:              "operation not supported",
+	ErrRowNotFound:                "can not find the row: %s",
+	ErrTableStateCantNone:         "table %s can't be in none state",
+	ErrColumnStateCantNone:        "column %s can't be in none state",
+	ErrColumnStateNonPublic:       "can not use non-public column",
+	ErrIndexStateCantNone:         "index %s can't be in none state",
+	ErrInvalidRecordKey:           "invalid record key",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",
