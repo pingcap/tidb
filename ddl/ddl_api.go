@@ -227,7 +227,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 }
 
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint, tblCharset, dbCharset string) ([]*table.Column, []*ast.Constraint, error) {
+	constraints []*ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
@@ -239,7 +239,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 		}
 	}
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, dbCharset)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate, dbCharset, dbCollate)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -255,23 +255,32 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	return cols, constraints, nil
 }
 
-// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset.
-func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, error) {
+// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset,
+// and it will also resolve the collate by the order: table collate > database collate > server default collate.
+func ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate string) (string, string, error) {
 	if len(tblCharset) != 0 {
-		defCollate, err := charset.GetDefaultCollation(tblCharset)
-		if err != nil {
-			// return terror is better.
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+		// tblCollate is not specified by user.
+		if len(tblCollate) == 0 {
+			defCollate, err := charset.GetDefaultCollation(tblCharset)
+			if err != nil {
+				// return terror is better.
+				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+			}
+			return tblCharset, defCollate, nil
 		}
-		return tblCharset, defCollate, nil
+		return tblCharset, tblCollate, nil
 	}
 
 	if len(dbCharset) != 0 {
-		defCollate, err := charset.GetDefaultCollation(dbCharset)
-		if err != nil {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+		// dbCollate is not specified by user.
+		if len(dbCollate) == 0 {
+			defCollate, err := charset.GetDefaultCollation(dbCharset)
+			if err != nil {
+				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+			}
+			return dbCharset, defCollate, nil
 		}
-		return dbCharset, defCollate, errors.Trace(err)
+		return dbCharset, dbCollate, nil
 	}
 
 	charset, collate := charset.GetDefaultCharsetAndCollate()
@@ -288,7 +297,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset string, dbCharset string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset, tblCollate, dbCharset, dbCollate string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
@@ -296,7 +305,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 			if len(specifiedCollates) == 0 {
 				// Both the charset and collate are not specified.
 				var err error
-				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -366,11 +375,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) (*table.Column, []*ast.Constraint, error) {
 	// specifiedCollates refers to collates in colDef.Options, should handle them together.
 	specifiedCollates := extractCollateFromOption(colDef)
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, dbCharset); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, tblCollate, dbCharset, dbCollate); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -1134,9 +1143,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	tableCharset := findTableOptionCharset(s.Options)
+	tableCharset, tableCollate := findTableOptionCharsetAndCollate(s.Options)
 	// The column charset haven't been resolved here.
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, schema.Charset)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1211,7 +1220,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if err = resolveDefaultTableCharsetAndCollation(tbInfo, schema.Charset); err != nil {
+	if err = resolveDefaultTableCharsetAndCollation(tbInfo, schema.Charset, schema.Collate); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1287,8 +1296,8 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset string) (err error) {
-	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, dbCharset)
+func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, dbCollate string) (err error) {
+	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, tbInfo.Collate, dbCharset, dbCollate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1300,6 +1309,32 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset s
 		tbInfo.Collate = collate
 	}
 	return
+}
+
+func findTableOptionCharsetAndCollate(options []*ast.TableOption) (tableCharset, tableCollate string) {
+	var findCnt int
+	for i := len(options) - 1; i >= 0; i-- {
+		op := options[i]
+		if len(tableCharset) == 0 && op.Tp == ast.TableOptionCharset {
+			// find the last one.
+			tableCharset = op.StrValue
+			findCnt++
+			if findCnt == 2 {
+				break
+			}
+			continue
+		}
+		if len(tableCollate) == 0 && op.Tp == ast.TableOptionCollate {
+			// find the last one.
+			tableCollate = op.StrValue
+			findCnt++
+			if findCnt == 2 {
+				break
+			}
+			continue
+		}
+	}
+	return tableCharset, tableCollate
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -1640,7 +1675,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, schema.Charset)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2082,7 +2117,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// should take the collate in colDef.Option into consideration rather than handling it separately
 	specifiedCollates := extractCollateFromOption(specNewColumn)
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, schema.Charset)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2340,7 +2375,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	if len(origCharset) == 0 {
 		// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 		// This DDL will update the table charset to default charset.
-		origCharset, origCollate, err = ResolveCharsetCollation("", dbInfo.Charset)
+		origCharset, origCollate, err = ResolveCharsetCollation("", "", dbInfo.Charset, dbInfo.Collate)
 		if err != nil {
 			return doNothing, err
 		}

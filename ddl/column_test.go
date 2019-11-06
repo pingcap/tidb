@@ -955,7 +955,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, "", "")
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, "", "", "", "")
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }
