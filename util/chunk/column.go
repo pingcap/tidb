@@ -89,7 +89,6 @@ func (c *Column) typeSize() int {
 	return varElemLen
 }
 
-// isFixed is used to check whether the type of element in column is fixed type
 func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
@@ -106,9 +105,9 @@ func (c *Column) Reset() {
 }
 
 // IsNull returns if this row is null.
-func (c *Column) IsNull(rowIDx int) bool {
-	nullByte := c.nullBitmap[rowIDx/8]
-	return nullByte&(1<<(uint(rowIDx)&7)) == 0
+func (c *Column) IsNull(rowIdx int) bool {
+	nullByte := c.nullBitmap[rowIdx/8]
+	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
 // CopyConstruct copies this Column to dst.
@@ -310,12 +309,12 @@ func (c *Column) reserve(n, estElemSize int) {
 	c.length = 0
 }
 
-// SetNull sets the rowIDx to null.
-func (c *Column) SetNull(rowIDx int, isNull bool) {
+// SetNull sets the rowIdx to null.
+func (c *Column) SetNull(rowIdx int, isNull bool) {
 	if isNull {
-		c.nullBitmap[rowIDx>>3] &= ^(1 << uint(rowIDx&7))
+		c.nullBitmap[rowIdx>>3] &= ^(1 << uint(rowIdx&7))
 	} else {
-		c.nullBitmap[rowIDx>>3] |= 1 << uint(rowIDx&7)
+		c.nullBitmap[rowIdx>>3] |= 1 << uint(rowIdx&7)
 	}
 }
 
@@ -552,7 +551,7 @@ func (c *Column) GetRaw(rowID int) []byte {
 	return data
 }
 
-// SetRaw sets the raw bytes for the rowIDx-th element.
+// SetRaw sets the raw bytes for the rowIdx-th element.
 // NOTE: Two conditions must be satisfied before calling this function:
 // 1. The column should be stored with variable-length elements.
 // 2. The length of the new element should be exactly the same as the old one.
