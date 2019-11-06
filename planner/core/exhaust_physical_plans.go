@@ -433,7 +433,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if canKeepOuterOrder || isOuterKeysPrefix {
 			indexMergeJoin := PhysicalIndexMergeJoin{
 				PhysicalIndexJoin: *join,
-				idxOff2KeyOff:     idxOff2KeyOff,
+				IdxOff2KeyOff:     idxOff2KeyOff,
 				NeedOuterSort:     !isOuterKeysPrefix,
 				CompareFuncs:      compareFuncs,
 				OuterCompareFuncs: outerCompareFuncs,
