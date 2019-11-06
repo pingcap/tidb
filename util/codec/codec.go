@@ -1074,6 +1074,7 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 	}
 }
 
+// EncodeColumnTo encodes each row of this column and append encoded data into buf.
 func EncodeColumnTo(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldType) ([][]byte, error) {
 	var err error
 	switch ft.EvalType() {
