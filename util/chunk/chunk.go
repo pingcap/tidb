@@ -25,7 +25,8 @@ import (
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
-// Chunk stores multiple rows of data.
+// Chunk stores multiple rows of data in Apache Arrow format.
+// See https://arrow.apache.org/docs/memory_layout.html
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {

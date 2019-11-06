@@ -55,7 +55,8 @@ func (c *Column) AppendSet(set types.Set) {
 	c.appendNameValue(set.Name, set.Value)
 }
 
-// Column stores one column of data.
+// Column stores one column of data in Apache Arrow format.
+// See https://arrow.apache.org/docs/memory_layout.html
 type Column struct {
 	length     int
 	nullBitmap []byte // bit 0 is null, 1 is not null
