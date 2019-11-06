@@ -14,13 +14,11 @@
 package chunk
 
 import (
-	"fmt"
 	"math/bits"
 	"reflect"
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -679,76 +677,4 @@ func (c *Column) MergeNulls(cols ...*Column) {
 			c.nullBitmap[i] &= col.nullBitmap[i]
 		}
 	}
-}
-
-// First byte in the encoded value which specifies the encoding type.
-const (
-	NilFlag      byte = 0
-	intFlag      byte = 1
-	realFlag     byte = 2
-	decimalFlag  byte = 3
-	timeFlag     byte = 4
-	durationFlag byte = 5
-	stringFlag   byte = 6
-	jsonFlag     byte = 7
-)
-
-// EncodeTo appends the column data slice to the buf
-func (c *Column) EncodeTo(buf [][]byte, eType types.EvalType) ([][]byte, error) {
-	n := c.length
-	var (
-		typeFlag      byte
-		fixedTypeSize int
-		err           error
-	)
-	switch eType {
-	case types.ETInt:
-		typeFlag = intFlag
-		fixedTypeSize = sizeInt64
-	case types.ETReal:
-		typeFlag = realFlag
-		fixedTypeSize = sizeFloat64
-	case types.ETDecimal:
-		typeFlag = decimalFlag
-		fixedTypeSize = sizeMyDecimal
-	case types.ETDatetime, types.ETTimestamp:
-		typeFlag = timeFlag
-		fixedTypeSize = sizeTime
-	case types.ETDuration:
-		typeFlag = durationFlag
-		fixedTypeSize = sizeGoDuration
-	case types.ETJson:
-		typeFlag = jsonFlag
-		fixedTypeSize = varElemLen
-	case types.ETString:
-		typeFlag = stringFlag
-		fixedTypeSize = varElemLen
-	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
-	}
-	if err != nil {
-		return nil, err
-	}
-	if fixedTypeSize != -1 {
-		for i := 0; i < n; i++ {
-			if c.IsNull(i) {
-				buf[i] = append(buf[i], NilFlag)
-			} else {
-				buf[i] = append(buf[i], typeFlag)
-				buf[i] = append(buf[i], c.data[i*fixedTypeSize:(i+1)*fixedTypeSize]...)
-			}
-		}
-	} else {
-		for i := 0; i < n; i++ {
-			if c.IsNull(i) {
-				buf[i] = append(buf[i], NilFlag)
-			} else {
-				buf[i] = append(buf[i], typeFlag)
-				length := c.offsets[i+1] - c.offsets[i]
-				buf[i] = append(buf[i], byte(length))
-				buf[i] = append(buf[i], c.data[c.offsets[i]:c.offsets[i+1]]...)
-			}
-		}
-	}
-	return buf, nil
 }

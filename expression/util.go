@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/codec"
 	"strconv"
 	"strings"
 	"time"
@@ -778,5 +779,5 @@ func VectorizedGetGroupKey(ctx sessionctx.Context, groupKey [][]byte, item Expre
 			d64s[i].SetPrecision(0)
 		}
 	}
-	return buf.EncodeTo(groupKey, tp.EvalType())
+	return codec.EncodeColumnTo(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
 }
