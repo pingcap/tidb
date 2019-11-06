@@ -3574,6 +3574,39 @@ func (s *testIntegrationSuite) TestJSONBuiltin(c *C) {
 	tk.MustExec("CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`))")
 	_, err := tk.Exec("UPDATE `test`.`my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');")
 	c.Assert(err, NotNil)
+
+	r := tk.MustQuery("select json_valid(null);")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery(`select json_valid("null");`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid(0);")
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid("0");`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid("hello");`)
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid('"hello"');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid('{"a":1}');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid('{}');")
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid('[]');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid('2019-8-19');")
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid('"2019-8-19"');`)
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
