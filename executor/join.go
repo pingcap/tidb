@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/bitmap"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -412,9 +413,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 	}
 }
 
-func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeSideRow chunk.Row, hCtx *hashContext,
+func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, rowsPtrs, err := e.rowContainer.GetMatchedRowsAndPtrs(probeSideRow, hCtx)
+	buildSideRows, rowsPtrs, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -444,9 +445,9 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 	}
 	return true, joinResult
 }
-func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeSideRow chunk.Row, hCtx *hashContext,
+func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeSideRow, hCtx)
+	buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -501,11 +502,22 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 		joinResult.err = err
 		return false, joinResult
 	}
+
+	hCtx.initHash(probeSideChk.NumRows())
+	for _, i := range hCtx.keyColIdx {
+		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+	}
+
 	for i := range selected {
-		if !selected[i] { // process unmatched probe side rows
+		if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
 			e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 		} else { // process matched probe side rows
-			ok, joinResult = e.joinMatchedProbeSideRow2Chunk(workerID, probeSideChk.GetRow(i), hCtx, joinResult)
+			probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
+			ok, joinResult = e.joinMatchedProbeSideRow2Chunk(workerID, probeKey, probeRow, hCtx, joinResult)
 			if !ok {
 				return false, joinResult
 			}
@@ -522,7 +534,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 }
 func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
 	for i := 0; i < probeSideChk.NumRows(); i++ {
-		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeSideChk.GetRow(i), hCtx, joinResult)
+		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
+		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeKey, probeRow, hCtx, joinResult)
 		if !ok {
 			return false, joinResult
 		}

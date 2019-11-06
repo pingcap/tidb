@@ -2018,7 +2018,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	c.Assert(count, Equals, 100)
 	// FIXME: revert this result to new group value after distsql can handle initChunkSize.
-	c.Assert(numChunks, Equals, 10)
+	c.Assert(numChunks, Equals, 1)
 	rs.Close()
 }
 
@@ -2813,6 +2813,21 @@ func (s *testSessionSuite) TestReplicaRead(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+}
+
+func (s *testSessionSuite) TestIsolationRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 2)
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
+	engines := tk.Se.GetSessionVars().GetIsolationReadEngines()
+	c.Assert(len(engines), Equals, 1)
+	_, hasTiFlash := engines[kv.TiFlash]
+	_, hasTiKV := engines[kv.TiKV]
+	c.Assert(hasTiFlash, Equals, true)
+	c.Assert(hasTiKV, Equals, false)
 }
 
 func (s *testSessionSuite) TestStmtHints(c *C) {
