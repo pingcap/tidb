@@ -194,7 +194,6 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chun
 		return err
 	}
 	result.ReserveString(n)
-
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -202,6 +201,5 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chun
 		}
 		result.AppendString(decodeKey(b.ctx, buf.GetString(i)))
 	}
-
 	return nil
 }
