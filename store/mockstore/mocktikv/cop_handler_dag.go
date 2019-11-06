@@ -571,10 +571,10 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	switch dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
-	case tipb.EncodeType_TypeArrow:
+	case tipb.EncodeType_TypeChunk:
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
-		err := h.encodeArrow(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
+		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
 		if err != nil {
 			return err
 		}
@@ -620,7 +620,7 @@ func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte
 	selResp.EncodeType = tipb.EncodeType_TypeDefault
 }
 
-func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+func (h *rpcHandler) encodeChunk(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
 	var chunks []tipb.Chunk
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
@@ -650,7 +650,7 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 		chk.Reset()
 	}
 	selResp.Chunks = chunks
-	selResp.EncodeType = tipb.EncodeType_TypeArrow
+	selResp.EncodeType = tipb.EncodeType_TypeChunk
 	return nil
 }
 
