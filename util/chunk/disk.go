@@ -138,6 +138,11 @@ func (l *ListInDisk) NumChunks() int {
 	return len(l.offsets)
 }
 
+// NumChunks returns the number of chunks in the ListInDisk.
+func (l *ListInDisk) NumRowsOfChunk(chkID int) int {
+	return len(l.offsets[chkID])
+}
+
 // Close releases the disk resource.
 func (l *ListInDisk) Close() error {
 	if l.disk != nil {
