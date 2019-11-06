@@ -138,8 +138,21 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 		return uint64(int64(val)), overflow(val, tp)
 	}
 
+<<<<<<< HEAD
 	if val > float64(upperBound) {
 		return upperBound, overflow(val, tp)
+=======
+	ubf := float64(upperBound)
+	// Because math.MaxUint64 can not be represented precisely in iee754(64bit),
+	// so `float64(math.MaxUint64)` will make a num bigger than math.MaxUint64,
+	// which can not be represented by 64bit integer.
+	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
+	if val == ubf {
+		return uint64(math.MaxInt64), nil
+	}
+	if val > ubf {
+		return uint64(math.MaxInt64), overflow(val, tp)
+>>>>>>> c01006a... expression: fix incorrect proto fields and add missing overflow handling for arithmatic functions (#12858)
 	}
 	return uint64(val), nil
 }
@@ -529,20 +542,28 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 	case json.TypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
+<<<<<<< HEAD
 			lBound := SignedLowerBound[mysql.TypeLonglong]
 			uBound := SignedUpperBound[mysql.TypeLonglong]
 			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+=======
+			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
+			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
+			u, e := ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			return u, sc.HandleOverflow(e, e)
+>>>>>>> c01006a... expression: fix incorrect proto fields and add missing overflow handling for arithmatic functions (#12858)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
-		return int64(u), errors.Trace(err)
+		return int64(u), sc.HandleOverflow(err, err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
 		if !unsigned {
-			return StrToInt(sc, str)
+			r, e := StrToInt(sc, str)
+			return r, sc.HandleOverflow(e, e)
 		}
 		u, err := StrToUint(sc, str)
-		return int64(u), errors.Trace(err)
+		return int64(u), sc.HandleOverflow(err, err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }

@@ -40,6 +40,7 @@ var (
 
 func init() {
 	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
+<<<<<<< HEAD
 		mysql.ErrTiKVServerTimeout:   mysql.ErrTiKVServerTimeout,
 		mysql.ErrResolveLockTimeout:  mysql.ErrResolveLockTimeout,
 		mysql.ErrPDServerTimeout:     mysql.ErrPDServerTimeout,
@@ -47,6 +48,19 @@ func init() {
 		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
 		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
 		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
+=======
+		mysql.ErrTiKVServerTimeout:           mysql.ErrTiKVServerTimeout,
+		mysql.ErrResolveLockTimeout:          mysql.ErrResolveLockTimeout,
+		mysql.ErrPDServerTimeout:             mysql.ErrPDServerTimeout,
+		mysql.ErrRegionUnavailable:           mysql.ErrRegionUnavailable,
+		mysql.ErrTiKVServerBusy:              mysql.ErrTiKVServerBusy,
+		mysql.ErrGCTooEarly:                  mysql.ErrGCTooEarly,
+		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
+		mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
+		mysql.ErrLockAcquireFailAndNoWaitSet: mysql.ErrLockAcquireFailAndNoWaitSet,
+		mysql.ErrDataOutOfRange:              mysql.ErrDataOutOfRange,
+		mysql.ErrLockWaitTimeout:             mysql.ErrLockWaitTimeout,
+>>>>>>> c01006a... expression: fix incorrect proto fields and add missing overflow handling for arithmatic functions (#12858)
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }
