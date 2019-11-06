@@ -963,6 +963,15 @@ const (
 	ErrIncorrectDatetimeValue     = 8034
 	ErrInvalidTimeFormat          = 8036
 	ErrInvalidWeekModeFormat      = 8037
+	ErrFieldGetDefaultFailed      = 8038
+	ErrIndexOutBound              = 8039
+	ErrUnsupportedOp              = 8040
+	ErrRowNotFound                = 8041
+	ErrTableStateCantNone         = 8042
+	ErrColumnStateNonPublic       = 8043
+	ErrIndexStateCantNone         = 8044
+	ErrInvalidRecordKey           = 8045
+	ErrColumnStateCantNone        = 8046
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
