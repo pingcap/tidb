@@ -191,7 +191,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+	if err = prefetchDataCache(ctx, e.ctx.GetSessionVars().StmtCtx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 

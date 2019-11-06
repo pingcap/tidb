@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb/util/execdetails"
 	"io"
 	"unicode/utf8"
 
@@ -262,7 +263,12 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	}
 
 	var value []byte
+	var snapDetail *execdetails.SnapshotExecDetails
+	ctx = context.WithValue(ctx, execdetails.SnapshotDetailCtxKey, &snapDetail)
 	value, err = rm.Get(ctx, key)
+	if snapDetail != nil {
+		sctx.GetSessionVars().StmtCtx.MergeExecDetails(nil, snapDetail, nil)
+	}
 	if kv.IsErrNotFound(err) {
 		v := EncodeHandle(h)
 		err = rm.Set(key, v)

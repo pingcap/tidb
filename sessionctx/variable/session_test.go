@@ -14,6 +14,8 @@
 package variable_test
 
 import (
+	"fmt"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -139,6 +141,29 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		TotalKeys:     10000,
 		ProcessedKeys: 20001,
 	}
+	commitDetail := &execdetails.CommitExecDetails{
+		GetCommitTsTime:   1,
+		PrewriteTime:      2,
+		CommitTime:        3,
+		LocalLatchTime:    4,
+		CommitBackoffTime: 5,
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{},
+		WaitLockTime:      2,
+		WriteKeys:         3,
+		WriteSize:         4,
+		PrewriteRegionNum: 5,
+		TxnRetry:          6,
+	}
+	snapshotDetail := &execdetails.SnapshotExecDetails{
+		ReqCount:     2,
+		GetTime:      1,
+		GetKey:       3,
+		WaitLockTime: 1,
+		RPCCount:     2,
+	}
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 0
 	copTasks := &stmtctx.CopTasksDetails{
@@ -159,7 +184,9 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
-# Cop{ Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001 }
+# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
+# Get_time: 0.000000001 Get_key: 3 Wait_lock_time: 0.000000001 RPC_count: 2
+# Prewrite_time: 0.000000002 Commit_time: 0.000000003 Get_commit_ts_time: 0.000000001 Commit_backoff_time: 0.000000005 Wait_lock_time: 0.000000002 Local_latch_wait_time: 0.000000004 Write_keys: 3 Write_size: 4 Prewrite_region: 5 Txn_retry: 6
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
@@ -176,16 +203,20 @@ select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
 	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
-		TxnTS:          txnTS,
-		SQL:            sql,
-		Digest:         digest,
-		TimeTotal:      costTime,
-		TimeParse:      time.Duration(10),
-		TimeCompile:    time.Duration(10),
-		IndexNames:     "[t1:a,t2:b]",
-		StatsInfos:     statsInfos,
-		CopTasks:       copTasks,
-		ExecDetail:     execdetails.SQLExecDetails{CopExecDetails: execDetail},
+		TxnTS:       txnTS,
+		SQL:         sql,
+		Digest:      digest,
+		TimeTotal:   costTime,
+		TimeParse:   time.Duration(10),
+		TimeCompile: time.Duration(10),
+		IndexNames:  "[t1:a,t2:b]",
+		StatsInfos:  statsInfos,
+		CopTasks:    copTasks,
+		ExecDetail: execdetails.SQLExecDetails{
+			CopExecDetails: execDetail,
+			SnapshotDetail: snapshotDetail,
+			CommitDetail:   commitDetail,
+		},
 		MemMax:         memMax,
 		Prepared:       true,
 		HasMoreResults: true,

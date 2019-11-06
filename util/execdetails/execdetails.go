@@ -26,10 +26,17 @@ import (
 	"go.uber.org/zap"
 )
 
-type commitDetailCtxKeyType struct{}
+type (
+	commitDetailCtxKeyType   struct{}
+	snapshotDetailCtxKeyType struct{}
+)
 
-// CommitDetailCtxKey presents CommitDetail info key in context.
-var CommitDetailCtxKey = commitDetailCtxKeyType{}
+var (
+	// CommitDetailCtxKey presents CommitDetail info key in context.
+	CommitDetailCtxKey = commitDetailCtxKeyType{}
+	// SnapshotDetailCtxKey presents SnapshotDetail info key in context.
+	SnapshotDetailCtxKey = snapshotDetailCtxKeyType{}
+)
 
 const (
 	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
@@ -54,8 +61,8 @@ const (
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
 	BackoffTypesStr = "Backoff_types"
-	// ResolveLockTimeStr means the time of resolving lock.
-	ResolveLockTimeStr = "Resolve_lock_time"
+	// WaitLockTimeStr means the time of resolving lock.
+	WaitLockTimeStr = "Wait_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
 	LocalLatchWaitTimeStr = "Local_latch_wait_time"
 	// WriteKeysStr means the count of keys in the transaction.
@@ -66,6 +73,14 @@ const (
 	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
+	// SnapshotGetTimeStr means the time of total get/batch-get.
+	SnapshotGetTimeStr = "Get_time"
+	// SnapshotGetKeyStr means the count of keys be get.
+	SnapshotGetKeyStr = "Get_key"
+	// SnapshotWaitLockStr means the time of waiting in resolving lock.
+	SnapshotWaitLockStr = "Wait_lock_time"
+	// SnapshotRPCCountStr means the RPC count used to get.
+	SnapshotRPCCountStr = "RPC_count"
 )
 
 // SQLExecDetails contains SQL execution detail information.
@@ -75,6 +90,7 @@ type SQLExecDetails struct {
 	CommitDetail   *CommitExecDetails
 }
 
+// ToZapFields wraps the SQLExecDetails as zap.Fields.
 func (s *SQLExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	if s.CopExecDetails != nil {
 		fields = s.CopExecDetails.ToZapFields(fields)
@@ -88,20 +104,29 @@ func (s *SQLExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 	return fields
 }
 
-func (s *SQLExecDetails) String() string {
+// ReadCopStr returns cop read phase exec details.
+func (s *SQLExecDetails) ReadCopStr() string {
 	var details []string
 	if s.CopExecDetails != nil {
-		details = append(details, "Cop{")
 		details = s.CopExecDetails.append(details)
-		details = append(details, "}")
 	}
+	return strings.Join(details, " ")
+}
+
+// ReadSnapshotStr returns snapshot read phase exec details.
+func (s *SQLExecDetails) ReadSnapshotStr() string {
+	var details []string
 	if s.SnapshotDetail != nil {
-		details = append(details, "KV{"+s.SnapshotDetail.String()+"}")
+		details = s.SnapshotDetail.append(details)
 	}
+	return strings.Join(details, " ")
+}
+
+// WriteStr returns write phase exec details.
+func (s *SQLExecDetails) WriteStr() string {
+	var details []string
 	if s.CommitDetail != nil {
-		details = append(details, "Commit{")
 		details = s.CommitDetail.append(details)
-		details = append(details, "}")
 	}
 	return strings.Join(details, " ")
 }
@@ -173,7 +198,7 @@ type CommitExecDetails struct {
 		sync.Mutex
 		BackoffTypes []fmt.Stringer
 	}
-	ResolveLockTime   int64
+	WaitLockTime      int64
 	WriteKeys         int
 	WriteSize         int
 	PrewriteRegionNum int32
@@ -200,9 +225,9 @@ func (c *CommitExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
 		fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", c.Mu.BackoffTypes)))
 	}
 	c.Mu.Unlock()
-	resolveLockTime := atomic.LoadInt64(&c.ResolveLockTime)
-	if resolveLockTime > 0 {
-		fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
+	waitLockTime := atomic.LoadInt64(&c.WaitLockTime)
+	if waitLockTime > 0 {
+		fields = append(fields, zap.String("wait_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(waitLockTime).Seconds(), 'f', -1, 64)+"s")))
 	}
 	if c.LocalLatchTime > 0 {
 		fields = append(fields, zap.String("local_latch_wait_time", fmt.Sprintf("%v", strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64)+"s")))
@@ -242,9 +267,9 @@ func (c *CommitExecDetails) append(parts []string) []string {
 		parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", c.Mu.BackoffTypes))
 	}
 	c.Mu.Unlock()
-	resolveLockTime := atomic.LoadInt64(&c.ResolveLockTime)
-	if resolveLockTime > 0 {
-		parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
+	waitLockTime := atomic.LoadInt64(&c.WaitLockTime)
+	if waitLockTime > 0 {
+		parts = append(parts, WaitLockTimeStr+": "+strconv.FormatFloat(time.Duration(waitLockTime).Seconds(), 'f', -1, 64))
 	}
 	if c.LocalLatchTime > 0 {
 		parts = append(parts, LocalLatchWaitTimeStr+": "+strconv.FormatFloat(c.LocalLatchTime.Seconds(), 'f', -1, 64))
@@ -267,18 +292,44 @@ func (c *CommitExecDetails) append(parts []string) []string {
 
 // SnapshotExecDetails contains snapshot execution detail information.
 type SnapshotExecDetails struct {
-	GetTotalTime    int64
-	GetCnt          uint32
-	BatchGetCnt     uint32
-	ResolveLockTime time.Duration
+	ReqCount     int
+	GetTime      time.Duration
+	GetKey       int
+	WaitLockTime int64
+	RPCCount     uint32
 }
 
+// ToZapFields wraps the SnapshotExecDetails as zap.Fields.
 func (s *SnapshotExecDetails) ToZapFields(fields []zap.Field) []zap.Field {
+	if s.GetTime > 0 {
+		fields = append(fields, zap.String("get_time", strconv.FormatFloat(s.GetTime.Seconds(), 'f', -1, 64)))
+	}
+	if s.GetKey > 0 {
+		fields = append(fields, zap.String("get_key", strconv.FormatInt(int64(s.GetKey), 10)))
+	}
+	if s.WaitLockTime > 0 {
+		fields = append(fields, zap.String("wait_lock_time", strconv.FormatFloat(time.Duration(s.WaitLockTime).Seconds(), 'f', -1, 64)))
+	}
+	if s.RPCCount > 0 {
+		fields = append(fields, zap.String("rpc_count", strconv.FormatInt(int64(s.RPCCount), 10)))
+	}
 	return fields
 }
 
-func (s *SnapshotExecDetails) String() string {
-	return ""
+func (s *SnapshotExecDetails) append(parts []string) []string {
+	if s.GetTime > 0 {
+		parts = append(parts, SnapshotGetTimeStr+": "+strconv.FormatFloat(s.GetTime.Seconds(), 'f', -1, 64))
+	}
+	if s.GetKey > 0 {
+		parts = append(parts, SnapshotGetKeyStr+": "+strconv.FormatInt(int64(s.GetKey), 10))
+	}
+	if s.WaitLockTime > 0 {
+		parts = append(parts, SnapshotWaitLockStr+": "+strconv.FormatFloat(time.Duration(s.WaitLockTime).Seconds(), 'f', -1, 64))
+	}
+	if s.RPCCount > 0 {
+		parts = append(parts, SnapshotRPCCountStr+": "+strconv.FormatInt(int64(s.RPCCount), 10))
+	}
+	return parts
 }
 
 // CopRuntimeStats collects cop tasks' execution info.

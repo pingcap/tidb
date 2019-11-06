@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser"
@@ -434,7 +435,7 @@ func (sc *StatementContext) ResetForRetry() {
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
-func (sc *StatementContext) MergeExecDetails(copDetails *execdetails.CopExecDetails, commitDetails *execdetails.CommitExecDetails) {
+func (sc *StatementContext) MergeExecDetails(copDetails *execdetails.CopExecDetails, snapDetails *execdetails.SnapshotExecDetails, commitDetails *execdetails.CommitExecDetails) {
 	sc.mu.Lock()
 	if copDetails != nil {
 		if sc.mu.execDetails.CopExecDetails == nil {
@@ -448,7 +449,19 @@ func (sc *StatementContext) MergeExecDetails(copDetails *execdetails.CopExecDeta
 		sc.mu.execDetails.CopExecDetails.ProcessedKeys += copDetails.ProcessedKeys
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, copDetails)
 	}
-	sc.mu.execDetails.CommitDetail = commitDetails
+	if snapDetails != nil {
+		if sc.mu.execDetails.SnapshotDetail == nil {
+			sc.mu.execDetails.SnapshotDetail = &execdetails.SnapshotExecDetails{}
+		}
+		sc.mu.execDetails.SnapshotDetail.ReqCount += snapDetails.ReqCount
+		sc.mu.execDetails.SnapshotDetail.GetTime += snapDetails.GetTime
+		sc.mu.execDetails.SnapshotDetail.GetKey += snapDetails.GetKey
+		sc.mu.execDetails.SnapshotDetail.RPCCount += atomic.LoadUint32(&snapDetails.RPCCount)
+		sc.mu.execDetails.SnapshotDetail.WaitLockTime += atomic.LoadInt64(&snapDetails.WaitLockTime)
+	}
+	if commitDetails != nil {
+		sc.mu.execDetails.CommitDetail = commitDetails
+	}
 	sc.mu.Unlock()
 }
 

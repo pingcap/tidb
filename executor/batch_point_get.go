@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/execdetails"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -99,9 +100,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles from snapshot
+		var snapDetail *execdetails.SnapshotExecDetails
+		ctx = context.WithValue(ctx, execdetails.SnapshotDetailCtxKey, &snapDetail)
 		handleVals, err1 := e.snapshot.BatchGet(ctx, keys)
 		if err1 != nil {
 			return err1
+		}
+		if snapDetail != nil {
+			e.ctx.GetSessionVars().StmtCtx.MergeExecDetails(nil, snapDetail, nil)
 		}
 
 		e.handles = make([]int64, 0, len(keys))
@@ -139,9 +145,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 
 	// Fetch all values from snapshot
+	var snapDetail *execdetails.SnapshotExecDetails
+	ctx = context.WithValue(ctx, execdetails.SnapshotDetailCtxKey, &snapDetail)
 	values, err1 := e.snapshot.BatchGet(ctx, keys)
 	if err1 != nil {
 		return err1
+	}
+	if snapDetail != nil {
+		e.ctx.GetSessionVars().StmtCtx.MergeExecDetails(nil, snapDetail, nil)
 	}
 	handles := make([]int64, 0, len(values))
 	e.values = make([][]byte, 0, len(values))

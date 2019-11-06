@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/execdetails"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
@@ -89,7 +91,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return nil
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func prefetchUniqueIndices(ctx context.Context, sctx *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("prefetchUniqueIndices", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -112,10 +114,16 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 			batchKeys = append(batchKeys, k.newKV.key)
 		}
 	}
-	return txn.BatchGet(ctx, batchKeys)
+	var snapDetail *execdetails.SnapshotExecDetails
+	ctx = context.WithValue(ctx, execdetails.SnapshotDetailCtxKey, &snapDetail)
+	keys, err := txn.BatchGet(ctx, batchKeys)
+	if snapDetail != nil {
+		sctx.MergeExecDetails(nil, snapDetail, nil)
+	}
+	return keys, err
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+func prefetchConflictedOldRows(ctx context.Context, sctx *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("prefetchConflictedOldRows", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -134,21 +142,26 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 			}
 		}
 	}
+	var snapDetail *execdetails.SnapshotExecDetails
+	ctx = context.WithValue(ctx, execdetails.SnapshotDetailCtxKey, &snapDetail)
 	_, err := txn.BatchGet(ctx, batchKeys)
+	if snapDetail != nil {
+		sctx.MergeExecDetails(nil, snapDetail, nil)
+	}
 	return err
 }
 
-func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) error {
+func prefetchDataCache(ctx context.Context, sctx *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("prefetchDataCache", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	values, err := prefetchUniqueIndices(ctx, txn, rows)
+	values, err := prefetchUniqueIndices(ctx, sctx, txn, rows)
 	if err != nil {
 		return err
 	}
-	return prefetchConflictedOldRows(ctx, txn, rows, values)
+	return prefetchConflictedOldRows(ctx, sctx, txn, rows, values)
 }
 
 // updateDupRow updates a duplicate row to a new row.
@@ -181,7 +194,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+	if err = prefetchDataCache(ctx, e.ctx.GetSessionVars().StmtCtx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 

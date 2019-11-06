@@ -39,7 +39,7 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 			ProcessTime:   time.Second * time.Duration(i+1),
 			WaitTime:      time.Millisecond * time.Duration(i+1),
 		}
-		ctx.MergeExecDetails(d, nil)
+		ctx.MergeExecDetails(d, nil, nil)
 	}
 	d := ctx.CopTasksDetails()
 	c.Assert(d.NumCopTasks, Equals, 100)

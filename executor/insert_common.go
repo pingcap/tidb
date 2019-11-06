@@ -814,7 +814,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
-	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
+	if _, err = prefetchUniqueIndices(ctx, e.ctx.GetSessionVars().StmtCtx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 

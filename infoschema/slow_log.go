@@ -47,7 +47,7 @@ var slowQueryCols = []columnInfo{
 	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.BackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{execdetails.ResolveLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.WaitLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.LocalLatchWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.WriteKeysStr, mysql.TypeLonglong, 22, 0, nil, nil},
 	{execdetails.WriteSizeStr, mysql.TypeLonglong, 22, 0, nil, nil},
@@ -274,7 +274,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.commitBackoffTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.BackoffTypesStr:
 		st.backoffTypes = value
-	case execdetails.ResolveLockTimeStr:
+	case execdetails.WaitLockTimeStr:
 		st.resolveLockTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.LocalLatchWaitTimeStr:
 		st.localLatchWaitTime, err = strconv.ParseFloat(value, 64)

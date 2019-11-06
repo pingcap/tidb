@@ -514,7 +514,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
-		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
+		s.sessionVars.StmtCtx.MergeExecDetails(nil, nil, commitDetail)
 	}
 
 	failpoint.Inject("keepHistory", func(val failpoint.Value) {

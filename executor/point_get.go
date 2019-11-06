@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -166,6 +166,13 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 	if err != nil {
 		return nil, err
 	}
+	var snapDetail *execdetails.SnapshotExecDetails
+	ctx = context.WithValue(ctx, execdetails.SnapshotDetailCtxKey, &snapDetail)
+	defer func() {
+		if snapDetail != nil {
+			e.ctx.GetSessionVars().StmtCtx.MergeExecDetails(nil, snapDetail, nil)
+		}
+	}()
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.

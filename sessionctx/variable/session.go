@@ -1250,8 +1250,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
 
-	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
+	if readPhaseDetailStr := logItems.ExecDetail.ReadCopStr(); len(readPhaseDetailStr) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + readPhaseDetailStr + "\n")
+	}
+
+	if readPhaseDetailStr := logItems.ExecDetail.ReadSnapshotStr(); len(readPhaseDetailStr) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + readPhaseDetailStr + "\n")
+	}
+
+	if writePhaseDetailStr := logItems.ExecDetail.WriteStr(); len(writePhaseDetailStr) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + writePhaseDetailStr + "\n")
 	}
 
 	if len(s.CurrentDB) > 0 {

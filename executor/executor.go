@@ -741,7 +741,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			Fsp:  types.MaxFsp,
 		})
 		req.AppendDuration(2, types.Duration{Duration: slow.Duration, Fsp: types.MaxFsp})
-		req.AppendString(3, slow.Detail.String())
+		req.AppendString(3, slow.Detail.ReadCopStr())
 		if slow.Succ {
 			req.AppendInt64(4, 1)
 		} else {

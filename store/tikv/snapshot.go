@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -61,6 +63,7 @@ type tikvSnapshot struct {
 	vars            *kv.Variables
 	replicaRead     kv.ReplicaReadType
 	replicaReadSeed uint32
+	snapDetail      execdetails.SnapshotExecDetails
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
@@ -117,7 +120,19 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	}
 	tikvTxnCmdCounterWithBatchGet.Inc()
 	start := time.Now()
-	defer func() { tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		costTime := time.Since(start)
+		tikvTxnCmdHistogramWithBatchGet.Observe(costTime.Seconds())
+		ctxValue := ctx.Value(execdetails.SnapshotDetailCtxKey)
+		if ctxValue != nil {
+			snapDetail := ctxValue.(**execdetails.SnapshotExecDetails)
+			s.snapDetail.ReqCount++
+			s.snapDetail.GetKey += len(keys)
+			s.snapDetail.GetTime += costTime
+			*snapDetail = &s.snapDetail
+		}
+
+	}()
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
@@ -206,6 +221,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 		})
+		atomic.AddUint32(&s.snapDetail.RPCCount, 1)
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -244,6 +260,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
+			start := time.Now()
 			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, locks)
 			if err != nil {
 				return errors.Trace(err)
@@ -254,6 +271,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 					return errors.Trace(err)
 				}
 			}
+			atomic.AddInt64(&s.snapDetail.WaitLockTime, int64(time.Since(start)))
 			pending = lockedKeys
 			continue
 		}
@@ -268,7 +286,17 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
+	start := time.Now()
+	defer func() {
+		ctxValue := ctx.Value(execdetails.SnapshotDetailCtxKey)
+		if ctxValue != nil {
+			snapDetail := ctxValue.(**execdetails.SnapshotExecDetails)
+			s.snapDetail.ReqCount++
+			s.snapDetail.GetKey++
+			s.snapDetail.GetTime = time.Since(start)
+			*snapDetail = &s.snapDetail
+		}
+	}()
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
 	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
@@ -332,6 +360,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			start := time.Now()
 			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -339,9 +368,11 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if msBeforeExpired > 0 {
 				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
+					atomic.AddInt64(&s.snapDetail.WaitLockTime, int64(time.Since(start)))
 					return nil, errors.Trace(err)
 				}
 			}
+			atomic.AddInt64(&s.snapDetail.WaitLockTime, int64(time.Since(start)))
 			continue
 		}
 		return val, nil

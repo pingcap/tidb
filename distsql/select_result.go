@@ -252,7 +252,7 @@ func (r *selectResult) getSelectResp() error {
 		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress, re.result.RespTime())
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
-		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
+		sc.MergeExecDetails(re.result.GetExecDetails(), nil, nil)
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}

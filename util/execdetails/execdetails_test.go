@@ -49,24 +49,35 @@ func TestString(t *testing.T) {
 				return "backoff2"
 			}),
 		}},
-		ResolveLockTime:   1000000000, // 10^9 ns = 1s
+		WaitLockTime:      1000000000, // 10^9 ns = 1s
 		WriteKeys:         1,
 		WriteSize:         1,
 		PrewriteRegionNum: 1,
 		TxnRetry:          1,
 	}
+	snapDetail := &SnapshotExecDetails{
+		ReqCount:     2,
+		GetTime:      3,
+		GetKey:       4,
+		WaitLockTime: 5,
+		RPCCount:     1,
+	}
 	detail := SQLExecDetails{
 		CopExecDetails: copDetail,
+		SnapshotDetail: snapDetail,
 		CommitDetail:   commitDetail,
 	}
-	expected := "Cop{ Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 }" +
-		" Commit{ Prewrite_time: 1 Commit_time: 1 Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 }"
-	if str := detail.String(); str != expected {
+	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10"
+	if str := detail.ReadCopStr(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
-	detail = SQLExecDetails{}
-	if str := detail.String(); str != "" {
-		t.Errorf("got:\n%s\nexpected:\n", str)
+	expected = "Get_time: 0.000000003 Get_key: 4 Wait_lock_time: 0.000000005 RPC_count: 1"
+	if str := detail.ReadSnapshotStr(); str != expected {
+		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
+	}
+	expected = "Prewrite_time: 1 Commit_time: 1 Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Wait_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
+	if str := detail.WriteStr(); str != expected {
+		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
 }
 
