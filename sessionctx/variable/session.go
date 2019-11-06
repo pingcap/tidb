@@ -443,7 +443,14 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
+	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	isolationReadEngines map[kv.StoreType]struct{}
+
 	PlannerSelectBlockAsName []ast.HintTable
+
+	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
+	// negative value means nowait, 0 means default behavior, others means actual wait time
+	LockWaitTimeout int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -520,6 +527,8 @@ func NewSessionVars() *SessionVars {
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -614,6 +623,11 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 // GetSplitRegionTimeout gets split region timeout.
 func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
+}
+
+// GetIsolationReadEngines gets isolation read engines.
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -803,6 +817,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
+	case InnodbLockWaitTimeout:
+		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
+		s.LockWaitTimeout = int64(lockWaitSec * 1000)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -956,6 +973,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
+	case TiDBIsolationReadEngines:
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiKV.Name():
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
+			case kv.TiFlash.Name():
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}
 	}
 	s.systems[name] = val
 	return nil
