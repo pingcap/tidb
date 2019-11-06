@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -430,7 +429,7 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 	}
 	for i := 0; i < numRows; i++ {
 		var ok bool
-		groupStringKey := string(hack.String(groupKey[i]))
+		groupStringKey := string(groupKey[i])
 		partialResults[i], ok = mapper[groupStringKey]
 		if ok {
 			continue
@@ -502,7 +501,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	}
 	w.groupKeys = w.groupKeys[:0]
 	for groupKey := range w.groupSet {
-		w.groupKeys = append(w.groupKeys, hack.Slice(groupKey))
+		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
 	for i := 0; i < len(w.groupSet); i++ {
@@ -732,7 +731,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		}
 
 		for j := 0; j < e.childResult.NumRows(); j++ {
-			groupKey := string(hack.String(e.groupKeyBuffer[j]))
+			groupKey := string(e.groupKeyBuffer[j])
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
