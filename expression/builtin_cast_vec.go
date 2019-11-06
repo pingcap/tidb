@@ -437,7 +437,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
 	times := result.Times()
-	stmt := b.ctx.GetSessionVars().StmtCtx
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	fsp := int8(b.tp.Decimal)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -447,7 +447,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if err != nil {
 			return err
 		}
-		tm, err := types.ParseTime(stmt, s, b.tp.Tp, fsp)
+		tm, err := types.ParseTime(stmtCtx, s, b.tp.Tp, fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
