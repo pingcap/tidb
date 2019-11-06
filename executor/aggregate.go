@@ -731,15 +731,15 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
-		for i := 0; i < e.childResult.NumRows(); i++ {
-			groupKey := string(hack.String(e.groupKeyBuffer[i]))
+		for j := 0; j < e.childResult.NumRows(); j++ {
+			groupKey := string(hack.String(e.groupKeyBuffer[j]))
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
-				err = af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(i)}, partialResults[i])
+				err = af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
 				if err != nil {
 					return err
 				}
