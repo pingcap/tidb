@@ -309,7 +309,6 @@ func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	for i := 0; i < input.NumRows(); i++ {
 		if result.IsNull(i) {
 			continue
@@ -774,11 +773,21 @@ func (b *builtinLeftBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinReverseBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	for i := 0; i < input.NumRows(); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		reversed := reverseBytes(result.GetBytes(i))
+		result.SetRaw(i, reversed)
+	}
+	return nil
 }
 
 func (b *builtinRTrimSig) vectorized() bool {
