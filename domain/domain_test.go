@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/integration"
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"go.etcd.io/etcd/integration"
 )
 
 func TestT(t *testing.T) {
