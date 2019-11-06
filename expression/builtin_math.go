@@ -1028,9 +1028,11 @@ func (b *builtinRandWithSeedSig) evalReal(row chunk.Row) (float64, bool, error) 
 	// b.args[0] is promised to be a non-constant(such as a column name) in
 	// builtinRandWithSeedSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	randGen := rand.New(rand.NewSource(time.Now().UnixNano()))
+	var randGen *rand.Rand
 	if !isNull {
 		randGen = rand.New(rand.NewSource(seed))
+	} else {
+		randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	return randGen.Float64(), false, nil
 }
