@@ -331,6 +331,9 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Ceiling,
 		ast.Floor,
 
+		// mathematical functions.
+		ast.PI,
+
 		// control flow functions.
 		ast.Case,
 		ast.If,
