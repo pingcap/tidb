@@ -955,6 +955,14 @@ const (
 	ErrNotImplemented             = 8026
 	ErrInfoSchemaExpired          = 8027
 	ErrInfoSchemaChanged          = 8028
+	ErrBadNumber                  = 8029
+	ErrCastAsSignedOverflow       = 8030
+	ErrCastNegIntAsUnsigned       = 8031
+	ErrInvalidYearFormat          = 8032
+	ErrInvalidYear                = 8033
+	ErrIncorrectDatetimeValue     = 8034
+	ErrInvalidTimeFormat          = 8036
+	ErrInvalidWeekModeFormat      = 8037
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
