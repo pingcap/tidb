@@ -15,7 +15,9 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
@@ -50,11 +52,17 @@ func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinTiDBVersionSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	info := printer.GetTiDBInfo()
+	for i := 0; i < n; i++ {
+		result.AppendString(info)
+	}
+	return nil
 }
 
 func (b *builtinRowCountSig) vectorized() bool {
@@ -90,11 +98,22 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
+	var res int64
+	if ddlOwnerChecker.IsOwner() {
+		res = 1
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinFoundRowsSig) vectorized() bool {
@@ -147,11 +166,16 @@ func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinVersionSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		result.AppendString(mysql.ServerVersion)
+	}
+	return nil
 }
 
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
