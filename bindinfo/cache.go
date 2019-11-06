@@ -31,6 +31,8 @@ const (
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
 	Invalid = "invalid"
+	// PendingVerify means the bind info need to verified.
+	PendingVerify = "pending verify"
 )
 
 // Binding stores the basic bind hint info.
@@ -47,6 +49,7 @@ type Binding struct {
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *HintsSet
 	// id is the string form of all hints. It is used to uniquely identify different hints.
+	// It would be non-empty only when the status is `Using` or `PendingVerify`.
 	id string
 }
 
@@ -71,10 +74,10 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
-// FindUsingBinding find bindings with status `Using` in BindRecord.
-func (br *BindRecord) FindUsingBinding(hint string) *Binding {
+// FindBinding find bindings in BindRecord.
+func (br *BindRecord) FindBinding(hint string) *Binding {
 	for _, binding := range br.Bindings {
-		if binding.Status == Using && binding.id == hint {
+		if binding.id == hint {
 			return &binding
 		}
 	}
