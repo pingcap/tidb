@@ -78,9 +78,11 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum, retType *typ
 		if int(dec.GetDigitsFrac()) > frac {
 			to := new(types.MyDecimal)
 			err := dec.Round(to, frac, types.ModeHalfEven)
-			terror.Log(err)
 			data = types.Datum{}
 			data.SetMysqlDecimal(to)
+			if err != nil {
+				return data, err
+			}
 		} else {
 			data = types.CloneDatum(v)
 		}
