@@ -732,7 +732,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		}
 
 		for j := 0; j < e.childResult.NumRows(); j++ {
-			groupKey := string(hack.String(e.groupKeyBuffer[j]))
+			groupKey := string(e.groupKeyBuffer[j])
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
