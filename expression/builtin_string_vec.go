@@ -1607,11 +1607,110 @@ func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
+func (b *builtinFormatSig) vecEvalStringDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	buf0.MergeNulls(buf1)
+	d64s := buf0.Decimals()
+	i64s := buf1.Int64s()
+	var (
+		d            int64
+		xStr         string
+		dStr         string
+		formatString string
+	)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		d = i64s[i]
+		xStr = roundFormatArgs(d64s[i].String(), int(d))
+		dStr = strconv.FormatInt(d, 10)
+		formatString, err = mysql.GetLocaleFormatFunction("en_US")(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
+}
+
+func (b *builtinFormatSig) vecEvalStringReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	buf0.MergeNulls(buf1)
+	f64s := buf0.Float64s()
+	i64s := buf1.Int64s()
+	var (
+		d            int64
+		xStr         string
+		dStr         string
+		formatString string
+	)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		d = i64s[i]
+		xStr = roundFormatArgs(strconv.FormatFloat(f64s[i], 'f', -1, 64), int(d))
+		dStr = strconv.FormatInt(d, 10)
+		formatString, err = mysql.GetLocaleFormatFunction("en_US")(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
+}
+
+// evalString evals FORMAT(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if b.args[0].GetType().EvalType() == types.ETDecimal {
+		return b.vecEvalStringDecimal(input, result)
+	}
+	return b.vecEvalStringReal(input, result)
 }
 
 func (b *builtinRightBinarySig) vectorized() bool {
