@@ -1078,10 +1078,14 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 		tm, err := res.RoundFrac(stmt, fsp)
+		if err != nil {
+			return err
+		}
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
 			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+			res.Type = b.tp.Tp
 		}
 	}
 	return nil
