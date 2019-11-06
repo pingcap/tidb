@@ -121,7 +121,7 @@ func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 	data, err := json.Marshal(stat)
 	c.Assert(err, IsNil)
-	c.Assert(string(data), Equals, `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}]},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
+	c.Assert(string(data), Equals, `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":""},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
 }
 
 func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
