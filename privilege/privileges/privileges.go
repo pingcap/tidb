@@ -51,6 +51,11 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// Skip check for INFORMATION_SCHEMA database.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		switch priv {
+		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			return false
+		}
 		return true
 	}
 

@@ -267,8 +267,8 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	tk.MustExec("set tidb_slow_log_threshold = 0")
 	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_slow_log_threshold = 1")
-	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_slow_log_threshold = 30000")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("30000"))
 	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
 	c.Assert(err, NotNil)
 

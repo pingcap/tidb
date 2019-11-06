@@ -226,7 +226,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate for key PRIMARY"
+	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -243,8 +243,19 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate for key c3_index"
+	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
+}
+
+func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
+	dml := fmt.Sprintf("insert into %s values", tbl)
+	for i := start; i < end; i++ {
+		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+		if i != end-1 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
 }
 
 func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration,
@@ -257,9 +268,7 @@ func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration,
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
-	for i := 0; i < count; i++ {
-		tk.MustExec("insert into t1 values (?, ?, ?)", i, i, i)
-	}
+	batchInsert(tk, "t1", 0, count)
 	// add some null rows
 	if hasNullValsInKey {
 		for i := count - 10; i < count; i++ {
@@ -1528,9 +1537,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 
 	num := defaultBatchSize + 10
 	// add some rows
-	for i := 0; i < num; i++ {
-		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
-	}
+	batchInsert(s.tk, "t2", 0, num)
 
 	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
@@ -1717,15 +1724,22 @@ func (s *testDBSuite2) TestDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("create database drop_col_db")
 	s.tk.MustExec("use drop_col_db")
-	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
-	num := 50
+	num := 25
+	multiDDL := make([]string, 0, num)
+	sql := "create table t2 (c1 int, c2 int, c3 int, "
+	for i := 4; i < 4+num; i++ {
+		multiDDL = append(multiDDL, fmt.Sprintf("alter table t2 drop column c%d", i))
+
+		if i != 3+num {
+			sql += fmt.Sprintf("c%d int, ", i)
+		} else {
+			sql += fmt.Sprintf("c%d int)", i)
+		}
+	}
+	s.tk.MustExec(sql)
 	dmlDone := make(chan error, num)
 	ddlDone := make(chan error, num)
 
-	multiDDL := make([]string, 0, num)
-	for i := 0; i < num/2; i++ {
-		multiDDL = append(multiDDL, "alter table t2 add column c4 int", "alter table t2 drop column c4")
-	}
 	testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
 	for i := 0; i < num; i++ {
 		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
@@ -1935,7 +1949,21 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
 
+	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	c.Assert(err, IsNil)
+	result := s.tk.MustQuery("show create table collateTest")
+	got := result.Rows()[0][1]
+	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+
+	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
+	s.tk.MustExec("use test2")
+	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
+	result = s.tk.MustQuery("show create table dbCollateTest")
+	got = result.Rows()[0][1]
+	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+
 	// test for enum column
+	s.tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('e','E'));"
@@ -2586,16 +2614,17 @@ func (s *testDBSuite2) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 				return
 			default:
 			}
-			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = b + 1")
+			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = values(b) + 1")
 			if tk2Err != nil {
 				return
 			}
 		}
 	}()
-	tk1.MustExec("alter table nn add column c int not null default 0")
+	tk1.MustExec("alter table nn add column c int not null default 3 after a")
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
+	tk1.MustQuery("select * from nn").Check(testkit.Rows("1 3 2"))
 }
 
 func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
@@ -3241,6 +3270,27 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
+func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t_flash;")
+	s.tk.MustExec("create table t_flash(a int, b int)")
+	defer s.mustExec(c, "drop table t_flash;")
+
+	t := s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica, IsNil)
+
+	s.tk.MustExec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica, NotNil)
+	c.Assert(t.Meta().TiFlashReplica.Count, Equals, uint64(2))
+	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
+
+	s.tk.MustExec("alter table t_flash set tiflash replica 0")
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica, IsNil)
+}
+
 func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
@@ -3413,6 +3463,38 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
+}
+
+func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	// Test skip schema checker for ActionSetTiFlashReplica.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tk2.MustExec("alter table t1 set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("commit")
+
+	// Test skip schema checker for ActionUpdateTiFlashReplicaStatus.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tb := testGetTableByName(c, s.tk.Se, "test", "t1")
+	err := domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("commit")
+
+	// Test can't skip schema checker.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tk2.MustExec("alter table t1 add column b int;")
+	_, err = tk.Exec("commit")
+	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
 }
 
 func (s *testDBSuite2) TestLockTables(c *C) {

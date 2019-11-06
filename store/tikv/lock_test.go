@@ -273,7 +273,12 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	txn.Set(kv.Key("second"), []byte("xxx"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
+	c.Assert(err, IsNil)
+	// Increase lock TTL to make CI more stable.
+	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 200*1024*1024)
+	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
+	c.Assert(err, IsNil)
 
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
@@ -291,7 +296,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	lock := s.mustGetLock(c, []byte("second"))
 	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
-	c.Assert(timeBeforeExpire >= int64(0), IsTrue)
+	c.Assert(timeBeforeExpire > int64(0), IsTrue)
 
 	// Force rollback the lock using lock.TTL = 0.
 	lock.TTL = uint64(0)
@@ -384,6 +389,28 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
+}
+
+func (s *testLockSuite) TestBatchResolveLocks(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l := s.mustGetLock(c, []byte("key"))
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
+	c.Assert(msBeforeLockExpired, Greater, int64(0))
+
+	lr := newLockResolver(s.store)
+	bo := NewBackoffer(context.Background(), GcResolveLockMaxBackoff)
+	loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Primary)
+	c.Assert(err, IsNil)
+	// Check BatchResolveLocks resolve the lock even the ttl is not expired.
+	succ, err := lr.BatchResolveLocks(bo, []*Lock{l}, loc.Region)
+	c.Assert(succ, IsTrue)
+	c.Assert(err, IsNil)
+
+	err = txn.Commit(context.Background())
+	c.Assert(err, NotNil)
 }
 
 func (s *testLockSuite) TestNewLockZeroTTL(c *C) {

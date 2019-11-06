@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +28,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -106,9 +106,9 @@ func (h *benchHelper) init() {
 	cols := make([]*Column, 0, len(h.inputTypes))
 	for i := 0; i < len(h.inputTypes); i++ {
 		cols = append(cols, &Column{
-			ColName: model.NewCIStr(fmt.Sprintf("col_%v", i)),
-			RetType: h.inputTypes[i],
-			Index:   i,
+			UniqueID: int64(i),
+			RetType:  h.inputTypes[i],
+			Index:    i,
 		})
 	}
 
@@ -360,6 +360,70 @@ type numStrGener struct {
 
 func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
+}
+
+// ipv6StrGener is used to generate ipv6 strings.
+type ipv6StrGener struct {
+}
+
+func (g *ipv6StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
+// ipv6ByteGener is used to generate ipv6 address in 16 bytes string.
+type ipv6ByteGener struct {
+}
+
+func (g *ipv6ByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return string(ip[:net.IPv6len])
+}
+
+// ipv4ByteGener is used to generate ipv4 address in 4 bytes string.
+type ipv4ByteGener struct {
+}
+
+func (g *ipv4ByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv4len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return string(ip[:net.IPv4len])
+}
+
+// ipv4Compat is used to generate ipv4 compatible ipv6 strings
+type ipv4CompatByteGener struct {
+}
+
+func (g *ipv4CompatByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv6len)
+	for i := range ip {
+		if i < 12 {
+			ip[i] = 0
+		} else {
+			ip[i] = uint8(rand.Intn(256))
+		}
+	}
+	return string(ip[:net.IPv6len])
+}
+
+// ipv4MappedByteGener is used to generate ipv4-mapped ipv6 bytes.
+type ipv4MappedByteGener struct {
+}
+
+func (g *ipv4MappedByteGener) gen() interface{} {
+	var ip = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
+	for i := 12; i < 16; i++ {
+		ip[i] = uint8(rand.Intn(256)) // reset the last 4 bytes
+	}
+	return string(ip[:net.IPv6len])
 }
 
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).

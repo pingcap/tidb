@@ -83,6 +83,12 @@ func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
+
+	old := config.GetGlobalConfig()
+	new := *old
+	new.Log.SlowThreshold = 30000 // 30s
+	config.StoreGlobalConfig(&new)
+
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
@@ -96,8 +102,13 @@ var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
 var _ = Suite(&testSuite5{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
+var _ = Suite(&testSuiteAgg{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
+var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -1407,7 +1418,7 @@ func (s *testSuiteP1) TestTablePKisHandleScan(c *C) {
 	}
 }
 
-func (s *testSuiteP1) TestIndexScan(c *C) {
+func (s *testSuite8) TestIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2076,7 +2087,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -2388,7 +2399,7 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
-func (s *testSuiteP2) TestLowResolutionTSORead(c *C) {
+func (s *testSuite2) TestLowResolutionTSORead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@autocommit=1")
 	tk.MustExec("use test")
@@ -2828,7 +2839,7 @@ func (s *testSuite1) TearDownTest(c *C) {
 	}
 }
 
-func (s *testSuite1) TestAddIndexPriority(c *C) {
+func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -3815,11 +3826,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'test.view_t.a' in 'field list'")
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view2")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'test.view_t.a' in 'field list'")
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view3")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'field list'")
+	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(a int,b int,c int)")
 	tk.MustExec("insert into view_t values(1,2,3)")
@@ -3942,6 +3953,24 @@ type testSuite7 struct {
 }
 
 func (s *testSuite7) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
+type testSuite8 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite8) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show full tables")
@@ -4436,9 +4465,10 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 }
 
 func setOOMAction(action string) {
-	newConf := config.NewConfig()
+	old := config.GetGlobalConfig()
+	newConf := *old
 	newConf.OOMAction = action
-	config.StoreGlobalConfig(newConf)
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
@@ -4527,6 +4557,11 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+}
+
+func (s *testRecoverTable) TearDownSuite(c *C) {
+	s.store.Close()
+	s.dom.Close()
 }
 
 func (s *testRecoverTable) TestRecoverTable(c *C) {
