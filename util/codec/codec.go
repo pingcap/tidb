@@ -1088,7 +1088,7 @@ func EncodeColumnTo(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf 
 		}
 	case types.ETReal:
 		f64s := col.Float64s()
-		for i := 0; i < n; i ++ {
+		for i := 0; i < n; i++ {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1116,7 +1116,7 @@ func EncodeColumnTo(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf 
 		}
 	case types.ETDatetime, types.ETTimestamp:
 		ts := col.Times()
-		for i := 0; i < n; i ++ {
+		for i := 0; i < n; i++ {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1129,7 +1129,7 @@ func EncodeColumnTo(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf 
 		}
 	case types.ETDuration:
 		ds := col.GoDurations()
-		for i := 0; i < n; i ++ {
+		for i := 0; i < n; i++ {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
