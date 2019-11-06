@@ -1666,9 +1666,27 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCharLengthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, true)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			continue
+		}
+		result.SetNull(i, false)
+		i64s[i] = int64(len([]rune(buf.GetString(i))))
+	}
+	return nil
 }
