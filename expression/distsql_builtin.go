@@ -462,7 +462,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	case tipb.ScalarFuncSig_InInt:
 		inInt := builtinInIntSig{baseBuiltinFunc: base}
-		inInt.buildHashMapForConstArgs(inInt.ctx)
+		err := inInt.buildHashMapForConstArgs(inInt.ctx)
+		if err!=nil{
+			return &inInt, err
+		}
 		f = &inInt
 	case tipb.ScalarFuncSig_InReal:
 		f = &builtinInRealSig{base}
