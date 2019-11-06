@@ -82,3 +82,19 @@ func BenchmarkVectorizedBuiltinMiscellaneousCasesEvalOneVec(b *testing.B) {
 func BenchmarkVectorizedBuiltinMiscellaneousCasesFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinMiscellaneousCases)
 }
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousEvalOneVec(c *C) {
+	testVectorizedEvalOneVec(c, vecBuiltinMiscellaneousCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousFunc(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinMiscellaneousCases)
+}
+
+func BenchmarkVectorizedBuiltinMiscellaneousEvalOneVec(b *testing.B) {
+	benchmarkVectorizedEvalOneVec(b, vecBuiltinMiscellaneousCases)
+}
+
+func BenchmarkVectorizedBuiltinMiscellaneousFunc(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinMiscellaneousCases)
+}
