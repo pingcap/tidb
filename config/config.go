@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -35,9 +36,7 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize    = 4096 // MB
-	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 120
+	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -100,24 +99,110 @@ type Config struct {
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
+// nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
+// conflict options at the same time.
+type nullableBool struct {
+	IsValid bool
+	IsTrue  bool
+}
+
+var (
+	nbUnset = nullableBool{false, false}
+	nbFalse = nullableBool{true, false}
+	nbTrue  = nullableBool{true, true}
+)
+
+func (b *nullableBool) toBool() bool {
+	return b.IsValid && b.IsTrue
+}
+
+func (b nullableBool) MarshalJSON() ([]byte, error) {
+	switch b {
+	case nbTrue:
+		return json.Marshal(true)
+	case nbFalse:
+		return json.Marshal(false)
+	default:
+		return json.Marshal(nil)
+	}
+}
+
+func (b *nullableBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = nbUnset
+		return nil
+	case "true":
+		*b = nbTrue
+	case "false":
+		*b = nbFalse
+	default:
+		*b = nbUnset
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
+func (b *nullableBool) UnmarshalJSON(data []byte) error {
+	var err error
+	var v interface{}
+	if err = json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	switch v.(type) {
+	case bool:
+		*b = nullableBool{true, v.(bool)}
+	default:
+		*b = nbUnset
+	}
+	return err
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
 	// Log format. one of json, text, or console.
 	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
-	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
+	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// EnableTimestamp enables automatic timestamps in log output.
+	EnableTimestamp nullableBool `toml:"enable-timestamp" json:"enable-timestamp"`
 	// DisableErrorStack stops annotating logs with the full stack error
+	// message. Deprecated: use EnableErrorStack instead.
+	DisableErrorStack nullableBool `toml:"disable-error-stack" json:"disable-error-stack"`
+	// EnableErrorStack enables annotating logs with the full stack error
 	// message.
-	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
+	EnableErrorStack nullableBool `toml:"enable-error-stack" json:"enable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+}
+
+func (l *Log) getDisableTimestamp() bool {
+	if l.EnableTimestamp == nbUnset && l.DisableTimestamp == nbUnset {
+		return false
+	}
+	if l.EnableTimestamp == nbUnset {
+		return l.DisableTimestamp.toBool()
+	}
+	return !l.EnableTimestamp.toBool()
+}
+
+func (l *Log) getDisableErrorStack() bool {
+	if l.EnableErrorStack == nbUnset && l.DisableErrorStack == nbUnset {
+		return true
+	}
+	if l.EnableErrorStack == nbUnset {
+		return l.DisableErrorStack.toBool()
+	}
+	return !l.EnableErrorStack.toBool()
 }
 
 // Security is the security section of the config.
@@ -316,8 +401,6 @@ type PessimisticTxn struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-	// The pessimistic lock ttl.
-	TTL string `toml:"ttl" json:"ttl"`
 }
 
 // StmtSummary is the config for statement summary.
@@ -354,14 +437,18 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		DisableErrorStack:  true,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+		Level:               "info",
+		Format:              "text",
+		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
+		SlowQueryFile:       "tidb-slow.log",
+		SlowThreshold:       logutil.DefaultSlowThreshold,
+		ExpensiveThreshold:  10000,
+		DisableErrorStack:   nbUnset,
+		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
+		EnableTimestamp:     nbUnset,
+		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -402,7 +489,7 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  16,
+		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
@@ -423,7 +510,6 @@ var defaultConf = Config{
 	PessimisticTxn: PessimisticTxn{
 		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "40s",
 	},
 	StmtSummary: StmtSummary{
 		MaxStmtCount: 100,
@@ -559,6 +645,12 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
+		return fmt.Errorf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead", c.Log.EnableErrorStack, c.Log.DisableErrorStack)
+	}
+	if c.Log.EnableTimestamp == c.Log.DisableTimestamp && c.Log.EnableTimestamp != nbUnset {
+		return fmt.Errorf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp)
+	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
@@ -595,16 +687,6 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
-	if c.PessimisticTxn.TTL != "" {
-		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
-		if err != nil {
-			return err
-		}
-		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
-				dur, MinPessimisticTTL, MaxPessimisticTTL)
-		}
-	}
 	return nil
 }
 
@@ -624,7 +706,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

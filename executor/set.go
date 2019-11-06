@@ -199,6 +199,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 
 	if name == variable.TiDBEnableStmtSummary {
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+	} else if name == variable.TiDBCapturePlanBaseline {
+		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
 
 	return nil

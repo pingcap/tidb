@@ -69,6 +69,11 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 0
 
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.Log.SlowThreshold = 10000
+	config.StoreGlobalConfig(&newCfg)
+
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()

@@ -103,7 +103,7 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
-			columns = append(columns, v.Col.ColName.O)
+			columns = append(columns, v.ColName.O)
 		}
 		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)

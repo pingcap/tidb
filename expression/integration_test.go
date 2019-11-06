@@ -41,16 +41,20 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = Suite(&testIntegrationSuite2{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
+}
+
+type testIntegrationSuite2 struct {
+	testIntegrationSuite
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -65,7 +69,6 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
@@ -74,7 +77,6 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -240,7 +242,7 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
 }
 
-func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	ctx := context.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -568,7 +570,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
 
-func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -987,7 +989,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 }
 
-func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestEncryptionBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1152,7 +1154,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	originSQLMode := s.ctx.GetSessionVars().StrictSQLMode
 	s.ctx.GetSessionVars().StrictSQLMode = true
 	defer func() {
@@ -2146,7 +2148,7 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2229,6 +2231,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	last := msg[len(msg)-1]
 	c.Assert(last, Equals, "bigint")
 	tk.MustExec(`drop table tb5;`)
+
+	tk.MustExec(`create table tb5(a double(64));`)
+	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
+	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
+	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
+	result.Check(testkit.Rows("9223372036854775807", "9223372036854775807"))
+	tk.MustExec(`drop table tb5`)
 
 	// test builtinCastIntAsDecimalSig
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
@@ -3501,7 +3510,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
-func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestOtherBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4128,12 +4137,12 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
@@ -4154,6 +4163,25 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 		ret = 1
 	}
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
+}
+
+func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustQuery("select tidb_decode_plan('')").Check(testkit.Rows(""))
+	tk.MustQuery("select tidb_decode_plan('7APIMAk1XzEzCTAJMQlmdW5jczpjb3VudCgxKQoxCTE3XzE0CTAJMAlpbm5lciBqb2luLCBp" +
+		"AQyQOlRhYmxlUmVhZGVyXzIxLCBlcXVhbDpbZXEoQ29sdW1uIzEsIA0KCDkpIBkXADIVFywxMCldCjIJMzJfMTgFZXhkYXRhOlNlbGVjdGlvbl" +
+		"8xNwozCTFfMTcJMQkwCWx0HVlATlVMTCksIG5vdChpc251bGwVHAApUhcAUDIpKQo0CTEwXzE2CTEJMTAwMDAJdAHB2Dp0MSwgcmFuZ2U6Wy1p" +
+		"bmYsK2luZl0sIGtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkbwoFtgAyAZcEMAk6tgAEMjAFtgQyMDq2AAg5LCBmtgAAMFa3AAA5FbcAO" +
+		"T63AAAyzrcA')").Check(testkit.Rows("" +
+		"\tStreamAgg_13        \troot\t1    \tfuncs:count(1)\n" +
+		"\t└─HashLeftJoin_14   \troot\t0    \tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
+		"\t  ├─TableReader_18  \troot\t0    \tdata:Selection_17\n" +
+		"\t  │ └─Selection_17  \tcop \t0    \tlt(Column#1, NULL), not(isnull(Column#1)), not(isnull(Column#2))\n" +
+		"\t  │   └─TableScan_16\tcop \t10000\ttable:t1, range:[-inf,+inf], keep order:false, stats:pseudo\n" +
+		"\t  └─TableReader_21  \troot\t0    \tdata:Selection_20\n" +
+		"\t    └─Selection_20  \tcop \t0    \tlt(Column#9, NULL), not(isnull(Column#10)), not(isnull(Column#9))\n" +
+		"\t      └─TableScan_19\tcop \t10000\ttable:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
@@ -4998,4 +5026,54 @@ func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	_, err = tk.Exec("SELECT yyy()")
 	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
 
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT timestampliteral(rand())")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.timestampliteral does not exist")
+
+}
+
+func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk (a int,b varchar(20))")
+	for i := 0; i < 200; i++ {
+		if i%5 == 0 {
+			tk.MustExec(fmt.Sprintf("insert chk values (NULL,NULL)"))
+			continue
+		}
+		tk.MustExec(fmt.Sprintf("insert chk values (%d,'%s')", i, strconv.Itoa(i)))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.MustExec("set tidb_init_chunk_size = 2")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+	}()
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	req := rs.NewChunk()
+	var count int
+	for {
+		err = rs.Next(context.TODO(), req)
+		c.Assert(err, IsNil)
+		numRows := req.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			if count%5 == 0 {
+				c.Assert(req.GetRow(i).IsNull(0), Equals, true)
+				c.Assert(req.GetRow(i).IsNull(1), Equals, true)
+			} else {
+				c.Assert(req.GetRow(i).IsNull(0), Equals, false)
+				c.Assert(req.GetRow(i).IsNull(1), Equals, false)
+				c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
+				c.Assert(req.GetRow(i).GetString(1), Equals, strconv.Itoa(count))
+			}
+			count++
+		}
+	}
+	c.Assert(count, Equals, 200)
+	rs.Close()
 }

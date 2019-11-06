@@ -325,6 +325,17 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	tk.MustExec("admin check table t2")
 }
 
+func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
+	dml := fmt.Sprintf("insert into %s values", tbl)
+	for i := start; i < end; i++ {
+		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+		if i != end-1 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+}
+
 func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_db")
@@ -334,11 +345,9 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 
 	done := make(chan error, 1)
 	start := -10
-	num := 4096
 	// first add some rows
-	for i := start; i < num; i++ {
-		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
-		tk.MustExec(sql)
+	for i := start; i < 4090; i += 100 {
+		batchInsert(tk, "test_add_index", i, i+100)
 	}
 
 	is := s.dom.InfoSchema()

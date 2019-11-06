@@ -129,11 +129,12 @@ var ttlFactor = 6000
 
 // Lock represents a lock from tikv server.
 type Lock struct {
-	Key     []byte
-	Primary []byte
-	TxnID   uint64
-	TTL     uint64
-	TxnSize uint64
+	Key      []byte
+	Primary  []byte
+	TxnID    uint64
+	TTL      uint64
+	TxnSize  uint64
+	LockType kvrpcpb.Op
 }
 
 func (l *Lock) String() string {
@@ -143,11 +144,12 @@ func (l *Lock) String() string {
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	return &Lock{
-		Key:     l.GetKey(),
-		Primary: l.GetPrimaryLock(),
-		TxnID:   l.GetLockVersion(),
-		TTL:     l.GetLockTtl(),
-		TxnSize: l.GetTxnSize(),
+		Key:      l.GetKey(),
+		Primary:  l.GetPrimaryLock(),
+		TxnID:    l.GetLockVersion(),
+		TTL:      l.GetLockTtl(),
+		TxnSize:  l.GetTxnSize(),
+		LockType: l.LockType,
 	}
 }
 
@@ -184,23 +186,11 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	tikvLockResolverCountWithBatchResolve.Inc()
 
-	expiredLocks := make([]*Lock, 0, len(locks))
-	for _, l := range locks {
-		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
-			tikvLockResolverCountWithExpired.Inc()
-			expiredLocks = append(expiredLocks, l)
-		} else {
-			tikvLockResolverCountWithNotExpired.Inc()
-		}
-	}
-	if len(expiredLocks) != len(locks) {
-		logutil.BgLogger().Error("BatchResolveLocks: maybe safe point is wrong!",
-			zap.Int("get locks", len(locks)),
-			zap.Int("expired locks", len(expiredLocks)))
-		return false, nil
-	}
+	// The GCWorker kill all ongoing transactions, because it must make sure all
+	// locks have been cleaned before GC.
+	expiredLocks := locks
 
-	startTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -211,19 +201,17 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if _, ok := txnInfos[l.TxnID]; ok {
 			continue
 		}
+		tikvLockResolverCountWithExpired.Inc()
 
-		currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
-		if err != nil {
-			return false, err
-		}
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, startTS, currentTS)
+		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64)
 		if err != nil {
 			return false, err
 		}
 
 		if status.ttl > 0 {
-			// Do not clean lock that is not expired.
-			continue
+			logutil.BgLogger().Error("BatchResolveLocks fail to clean locks, this result is not expected!")
+			return false, errors.New("TiDB ask TiKV to rollback locks but it doesn't, the protocol maybe wrong")
 		}
 
 		txnInfos[l.TxnID] = uint64(status.commitTS)

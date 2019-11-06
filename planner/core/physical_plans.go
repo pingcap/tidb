@@ -309,9 +309,9 @@ type PhysicalIndexMergeJoin struct {
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
 	PhysicalIndexJoin
-	// keepOuterOrder indicates whether keeping the output result order as the
+	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
-	keepOuterOrder bool
+	KeepOuterOrder bool
 }
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
@@ -341,31 +341,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
-}
-
-// AggregationType stands for the mode of aggregation plan.
-type AggregationType int
-
-const (
-	// StreamedAgg supposes its input is sorted by group by key.
-	StreamedAgg AggregationType = iota
-	// FinalAgg supposes its input is partial results.
-	FinalAgg
-	// CompleteAgg supposes its input is original results.
-	CompleteAgg
-)
-
-// String implements fmt.Stringer interface.
-func (at AggregationType) String() string {
-	switch at {
-	case StreamedAgg:
-		return "stream"
-	case FinalAgg:
-		return "final"
-	case CompleteAgg:
-		return "complete"
-	}
-	return "unsupported aggregation type"
 }
 
 type basePhysicalAgg struct {
@@ -402,6 +377,15 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+}
+
+// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
+func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
+	return agg
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
@@ -468,8 +452,13 @@ type PhysicalTableDual struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() []*types.FieldName {
+func (p *PhysicalTableDual) OutputNames() types.NameSlice {
 	return p.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // PhysicalWindow is the physical operator of window function.

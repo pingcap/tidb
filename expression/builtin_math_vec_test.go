@@ -93,11 +93,14 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, geners: nil},
 	},
 	ast.Ceil: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
 	},
 	ast.PI: {
 		{retEvalType: types.ETReal},
@@ -109,6 +112,8 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 	ast.Rand: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&defaultGener{0, types.ETInt}}},
+	ast.CRC32: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
 }
 

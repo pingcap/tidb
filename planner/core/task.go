@@ -14,12 +14,10 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -27,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -131,7 +130,10 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -905,7 +907,6 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
 				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  ft,
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -914,7 +915,6 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
 				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -928,10 +928,9 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 
 	// add group by columns
 	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
-	for i, gbyExpr := range p.GroupByItems {
+	for _, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
 			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
@@ -942,7 +941,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 	p.removeUnnecessaryFirstRow(finalAggFuncs, groupByItems)
 
 	// Create physical "final" aggregation.
-	if p.tp == TypeStreamAgg {
+	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,

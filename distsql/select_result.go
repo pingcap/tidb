@@ -66,9 +66,10 @@ type selectResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
-	selectResp     *tipb.SelectResponse
-	selectRespSize int // record the selectResp.Size() when it is initialized.
-	respChkIdx     int
+	selectResp       *tipb.SelectResponse
+	selectRespSize   int // record the selectResp.Size() when it is initialized.
+	respChkIdx       int
+	respChunkDecoder *chunk.Decoder
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
@@ -154,7 +155,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	// TODO(Shenghui Wu): add metrics
-	switch r.selectResp.EncodeType {
+	switch r.selectResp.GetEncodeType() {
 	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
 	case tipb.EncodeType_TypeArrow:
@@ -183,10 +184,39 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
-	rowBatchData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	codec := chunk.NewCodec(r.fieldTypes)
-	_ = codec.DecodeToChunk(rowBatchData, chk)
-	r.respChkIdx++
+	if r.respChunkDecoder == nil {
+		r.respChunkDecoder = chunk.NewDecoder(
+			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
+			r.fieldTypes,
+		)
+	}
+
+	for !chk.IsFull() {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
+			err := r.getSelectResp()
+			if err != nil || r.selectResp == nil {
+				return err
+			}
+		}
+
+		if r.respChunkDecoder.IsFinished() {
+			r.respChunkDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
+		}
+		// If the next chunk size is greater than required rows * 0.8, reuse the memory of the next chunk and return
+		// immediately. Otherwise, splice the data to one chunk and wait the next chunk.
+		if r.respChunkDecoder.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
+			if chk.NumRows() > 0 {
+				return nil
+			}
+			r.respChunkDecoder.ReuseIntermChk(chk)
+			r.respChkIdx++
+			return nil
+		}
+		r.respChunkDecoder.Decode(chk)
+		if r.respChunkDecoder.IsFinished() {
+			r.respChkIdx++
+		}
+	}
 	return nil
 }
 

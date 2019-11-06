@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +28,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -106,9 +106,9 @@ func (h *benchHelper) init() {
 	cols := make([]*Column, 0, len(h.inputTypes))
 	for i := 0; i < len(h.inputTypes); i++ {
 		cols = append(cols, &Column{
-			ColName: model.NewCIStr(fmt.Sprintf("col_%v", i)),
-			RetType: h.inputTypes[i],
-			Index:   i,
+			UniqueID: int64(i),
+			RetType:  h.inputTypes[i],
+			Index:    i,
 		})
 	}
 
@@ -252,6 +252,16 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+type jsonStringGener struct{}
+
+func (g *jsonStringGener) gen() interface{} {
+	j := new(json.BinaryJSON)
+	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int()))); err != nil {
+		panic(err)
+	}
+	return j.String()
+}
+
 type rangeDurationGener struct {
 	nullRation float64
 }
@@ -352,6 +362,70 @@ func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
 }
 
+// ipv6StrGener is used to generate ipv6 strings.
+type ipv6StrGener struct {
+}
+
+func (g *ipv6StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
+// ipv6ByteGener is used to generate ipv6 address in 16 bytes string.
+type ipv6ByteGener struct {
+}
+
+func (g *ipv6ByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return string(ip[:net.IPv6len])
+}
+
+// ipv4ByteGener is used to generate ipv4 address in 4 bytes string.
+type ipv4ByteGener struct {
+}
+
+func (g *ipv4ByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv4len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return string(ip[:net.IPv4len])
+}
+
+// ipv4Compat is used to generate ipv4 compatible ipv6 strings
+type ipv4CompatByteGener struct {
+}
+
+func (g *ipv4CompatByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv6len)
+	for i := range ip {
+		if i < 12 {
+			ip[i] = 0
+		} else {
+			ip[i] = uint8(rand.Intn(256))
+		}
+	}
+	return string(ip[:net.IPv6len])
+}
+
+// ipv4MappedByteGener is used to generate ipv4-mapped ipv6 bytes.
+type ipv4MappedByteGener struct {
+}
+
+func (g *ipv4MappedByteGener) gen() interface{} {
+	var ip = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
+	for i := 12; i < 16; i++ {
+		ip[i] = uint8(rand.Intn(256)) // reset the last 4 bytes
+	}
+	return string(ip[:net.IPv6len])
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -434,6 +508,15 @@ func (g *dataStrGener) gen() interface{} {
 	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
 }
 
+// constStrGener always returns the given string
+type constStrGener struct {
+	s string
+}
+
+func (g *constStrGener) gen() interface{} {
+	return g.s
+}
+
 type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
@@ -462,11 +545,16 @@ type vecExprBenchCase struct {
 type vecExprBenchCases map[string][]vecExprBenchCase
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
-	batchSize := 1024
 	var gen dataGenerator
 	if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
 		gen = testCase.geners[colIdx]
-	} else {
+	}
+	fillColumnWithGener(eType, chk, colIdx, gen)
+}
+
+func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
+	batchSize := 1024
+	if gen == nil {
 		gen = &defaultGener{0.2, eType}
 	}
 
@@ -1147,8 +1235,8 @@ func generateRandomSel() []int {
 func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 10; numCols++ {
-		for round := 0; round < 64; round++ {
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
 			c.Assert(err, IsNil)
@@ -1171,7 +1259,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for numCols := 1; numCols <= 3; numCols++ {
+	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
 		combFunc = func(nCols int) {
@@ -1221,8 +1309,8 @@ func BenchmarkVecEvalBool(b *testing.B) {
 func (s *testEvaluatorSuite) TestRowBasedFilterAndVectorizedFilter(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 10; numCols++ {
-		for round := 0; round < 64; round++ {
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
@@ -1319,8 +1407,8 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 	ctx := mock.NewContext()
 	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 10; numCols++ {
-		for round := 0; round < 64; round++ {
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
