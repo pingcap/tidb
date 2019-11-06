@@ -136,6 +136,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
 		},
 	},
+	ast.CharLength: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.BitLength: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
@@ -173,6 +176,15 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Right: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+		// need to add BinaryFlag for the Binary func
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{
+				&randLenStrGener{10, 20},
+				&rangeInt64Gener{begin: -10, end: 20},
+			},
+		},
 	},
 	ast.Left: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},

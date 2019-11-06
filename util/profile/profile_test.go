@@ -63,5 +63,5 @@ func (s *profileSuite) TestProfiles(c *C) {
 	tk.MustExec("select * from performance_schema.tidb_profile_allocs")
 	tk.MustExec("select * from performance_schema.tidb_profile_mutex")
 	tk.MustExec("select * from performance_schema.tidb_profile_block")
-	tk.MustExec("select * from performance_schema.tidb_goroutines")
+	tk.MustExec("select * from performance_schema.tidb_profile_goroutines")
 }

@@ -1587,11 +1587,44 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinRightBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRightBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	right := buf2.Int64s()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str, rightLength := buf.GetString(i), int(right[i])
+		strLength := len(str)
+		if rightLength > strLength {
+			rightLength = strLength
+		} else if rightLength < 0 {
+			rightLength = 0
+		}
+		result.AppendString(str[strLength-rightLength:])
+	}
+	return nil
 }
 
 func (b *builtinSubstringBinary3ArgsSig) vectorized() bool {
@@ -1666,9 +1699,29 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCharLengthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		i64s[i] = int64(len([]rune(str)))
+	}
+	return nil
 }
