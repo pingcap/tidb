@@ -399,7 +399,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 		for i := range join.OuterJoinKeys {
-			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[join.KeyOff2IdxOff[i]]) {
 				isOuterKeysPrefix = false
 			}
 			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
@@ -408,7 +408,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
 		for i := 0; canKeepOuterOrder && i < len(prop.Items); i++ {
-			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[join.KeyOff2IdxOff[i]]) {
 				canKeepOuterOrder = false
 			}
 		}
