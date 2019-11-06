@@ -149,7 +149,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
-	case SemiJoin, AntiSemiJoin, InnerJoin:
+	case SemiJoin, InnerJoin:
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
@@ -158,13 +158,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
-		// Return table dual when filter is constant false or null. Not applicable to AntiSemiJoin.
-		// TODO: For AntiSemiJoin, we can use outer plan to substitute LogicalJoin actually.
-		if p.JoinType != AntiSemiJoin {
-			dual := conds2TableDual(p, tempCond)
-			if dual != nil {
-				return ret, dual
-			}
+		// Return table dual when filter is constant false or null.
+		dual := conds2TableDual(p, tempCond)
+		if dual != nil {
+			return ret, dual
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
@@ -173,6 +170,24 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
+	case AntiSemiJoin:
+		predicates = expression.PropagateConstant(p.ctx, predicates)
+		// Return table dual when filter is constant false or null.
+		dual := conds2TableDual(p, predicates)
+		if dual != nil {
+			return ret, dual
+		}
+		// `predicates` should only contain left conditions or constant filters.
+		_, leftPushCond, rightPushCond, _ = p.extractOnCondition(predicates, true, true)
+		// Do not derive `is not null` for anti join, since it may cause wrong results.
+		// For example:
+		// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
+		// `select * from t t1 where t1.a not in (select a from t t2 where t1.b = t2.b` does not imply `t1.b is not null`,
+		// `select * from t t1 where not exists (select * from t t2 where t2.a = t1.a)` does not imply `t1.a is not null`,
+		leftCond = leftPushCond
+		rightCond = append(p.RightConditions, rightPushCond...)
+		p.RightConditions = nil
+
 	}
 	leftCond = expression.RemoveDupExprs(p.ctx, leftCond)
 	rightCond = expression.RemoveDupExprs(p.ctx, rightCond)

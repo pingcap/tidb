@@ -601,6 +601,12 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {

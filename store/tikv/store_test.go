@@ -23,7 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -191,7 +191,7 @@ func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error
 	return nil
 }
 
-func (c *mockPDClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
 	return nil, nil, nil
 }
 

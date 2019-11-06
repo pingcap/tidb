@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -113,7 +113,7 @@ func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
 }
 
-func (c *pdClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *pdClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
 	return nil, nil, nil
 }
 

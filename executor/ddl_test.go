@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -224,6 +225,33 @@ func (s *testSuite3) TestCreateView(c *C) {
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
 	tk.MustExec("execute stmt")
+
+	// create view on union
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop view if exists v")
+	_, err = tk.Exec("create view v as select * from t1 union select * from t2")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1,2), (1,1), (1,2)")
+	tk.MustExec("insert into t2 values(1,1),(1,3)")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 union select * from t2")
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 2", "1 3"))
+	tk.MustExec("alter table t1 drop column a")
+	_, err = tk.Exec("select * from v")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
+	tk.MustExec("alter table t1 add column a int")
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
+	tk.MustExec("alter table t1 drop column a")
+	tk.MustExec("alter table t2 drop column b")
+	_, err = tk.Exec("select * from v")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
+	tk.MustExec("drop view v")
+
+	tk.MustExec("create view v as (select * from t1)")
+	tk.MustExec("drop view v")
+	tk.MustExec("create view v as (select * from t1 union select * from t2)")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {

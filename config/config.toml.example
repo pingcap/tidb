@@ -122,14 +122,16 @@ report-status = true
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
+## API for prometheus: http://${status-host}:${status_port}/metrics
+## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
-# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+# Prometheus client push interval in second, set \"0\" to disable push to pushgateway.
 metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
@@ -266,6 +268,10 @@ overload-threshold = 200
 max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
+
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when

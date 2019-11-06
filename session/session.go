@@ -98,7 +98,7 @@ var (
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 )
 
-// Session context
+// Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context
 	Status() uint16                                               // Flag of current status, such as autocommit.
