@@ -934,34 +934,19 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 // testVectorizedBuiltinFuncForRand is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
-	testFunc := make(map[string]bool)
-	argList := removeTestOptions(flag.Args())
-	testAll := len(argList) == 0
-	for _, arg := range argList {
-		testFunc[arg] = true
-	}
 	for funcName, testCases := range vecExprCases {
+		c.Assert(strings.EqualFold("rand", funcName), Equals, true)
+
 		for _, testCase := range testCases {
+			c.Assert(len(testCase.childrenTypes), Equals, 0)
+
 			ctx := mock.NewContext()
-			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
-			fmt.Printf("== %d\n", len(testCase.childrenTypes))
-			if !strings.EqualFold("rand", funcName) || len(testCase.childrenTypes) != 0 {
-				continue
-			}
+			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
-
-			if !testAll && testFunc[baseFuncName] != true {
-				continue
-			}
 			// do not forget to implement the vectorized method.
 			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
-			commentf := func(row int) CommentInterface {
-				return Commentf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
-			}
-			it := chunk.NewIterator4Chunk(input)
-			i := 0
 			var vecWarnCnt uint16
 			switch testCase.retEvalType {
 			case types.ETReal:
@@ -970,18 +955,10 @@ func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				f64s := output.Float64s()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalReal(row)
-					c.Assert(err, IsNil)
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(val, Less, float64(1))
-						c.Assert(val, GreaterEqual, float64(0))
-						c.Assert(f64s[i], Less, float64(1))
-						c.Assert(f64s[i], GreaterEqual, float64(0))
-					}
-					i++
+				// check result
+				res := output.Float64s()
+				for _, v := range res {
+					c.Assert((0 <= v) && (v < 1), Equals, true)
 				}
 			default:
 				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
