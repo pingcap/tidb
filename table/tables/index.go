@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"github.com/pingcap/tidb/util/execdetails"
 	"io"
 	"unicode/utf8"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // EncodeHandle encodes handle in data.
