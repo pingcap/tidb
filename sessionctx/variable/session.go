@@ -366,8 +366,8 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
-	// EnableChunkResponse indicates whether the coprocessor request can use chunk API.
-	EnableChunkResponse bool
+	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
+	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -566,13 +566,13 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
-	var enableChunkResponse string
-	if config.GetGlobalConfig().TiKVClient.EnableChunkResponse {
-		enableChunkResponse = "1"
+	var enableChunkRPC string
+	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+		enableChunkRPC = "1"
 	} else {
-		enableChunkResponse = "0"
+		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableChunkResponse, enableChunkResponse))
+	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 
@@ -920,8 +920,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBEnableChunkResponse:
-		s.EnableChunkResponse = TiDBOptOn(val)
+	case TiDBEnableChunkRPC:
+		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:

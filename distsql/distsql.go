@@ -76,7 +76,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}, nil
 	}
 	encodetype := tipb.EncodeType_TypeDefault
-	if enableTypeChunk(sctx) {
+	if canUseChunkRPC(sctx) {
 		encodetype = tipb.EncodeType_TypeChunk
 	}
 	return &selectResult{
@@ -155,15 +155,15 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 // 1. TypeChunk: the result is encoded using the Chunk format, refer util/chunk/chunk.go
 // 2. TypeDefault: the result is encoded row by row
 func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
-	if enableTypeChunk(ctx) {
+	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
 }
 
-func enableTypeChunk(ctx sessionctx.Context) bool {
-	if !ctx.GetSessionVars().EnableChunkResponse {
+func canUseChunkRPC(ctx sessionctx.Context) bool {
+	if !ctx.GetSessionVars().EnableChunkRPC {
 		return false
 	}
 	if ctx.GetSessionVars().EnableStreaming {

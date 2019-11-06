@@ -127,7 +127,7 @@ func (s *testSuite) TestSelectMemTracker(c *C) {
 }
 
 func (s *testSuite) TestSelectNormalChunkSize(c *C) {
-	s.sctx.GetSessionVars().EnableChunkResponse = false
+	s.sctx.GetSessionVars().EnableChunkRPC = false
 	response, colTypes := s.createSelectNormal(100, 1000000, c, nil)
 	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
@@ -289,7 +289,7 @@ func (s *testSuite) testChunkSize(response SelectResult, colTypes []*types.Field
 }
 
 func (s *testSuite) TestAnalyze(c *C) {
-	s.sctx.GetSessionVars().EnableChunkResponse = false
+	s.sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
@@ -315,7 +315,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 }
 
 func (s *testSuite) TestChecksum(c *C) {
-	s.sctx.GetSessionVars().EnableChunkResponse = false
+	s.sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetChecksumRequest(&tipb.ChecksumRequest{}).
 		Build()
@@ -370,7 +370,7 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp.count += numRows
 
 	var chunks []tipb.Chunk
-	if !enableTypeChunk(resp.ctx) {
+	if !canUseChunkRPC(resp.ctx) {
 		datum := types.NewIntDatum(1)
 		bytes := make([]byte, 0, 100)
 		bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
@@ -408,7 +408,7 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 		Chunks:       chunks,
 		OutputCounts: []int64{1},
 	}
-	if enableTypeChunk(resp.ctx) {
+	if canUseChunkRPC(resp.ctx) {
 		respPB.EncodeType = tipb.EncodeType_TypeChunk
 	} else {
 		respPB.EncodeType = tipb.EncodeType_TypeDefault
