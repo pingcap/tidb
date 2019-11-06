@@ -1137,7 +1137,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	tableCharset, tableCollate := findTableOptionCharsetAndCollate(s.Options)
 	// The column charset haven't been resolved here.
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, dbCharset, dbCollate)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1288,8 +1288,8 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset string) (err error) {
-	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, dbCharset)
+func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, dbCollate string) (err error) {
+	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, tbInfo.Collate, dbCharset, dbCollate)
 	if err != nil {
 		return errors.Trace(err)
 	}

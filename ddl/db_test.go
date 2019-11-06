@@ -4666,8 +4666,8 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 	result := s.tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
-			"  `a` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
-			"  `b` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("alter table t_mcc modify column a varchar(8);")
@@ -4680,7 +4680,7 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
 			"  `a` varchar(8) DEFAULT NULL,\n" +
-			"  `b` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 }

@@ -730,7 +730,7 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
 		""+
 			"different_charset CREATE TABLE `different_charset` (\n"+
-			"  `ch1` varchar(10) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
