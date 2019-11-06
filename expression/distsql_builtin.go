@@ -461,7 +461,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONValidOthersSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
-		f = &builtinInIntSig{baseBuiltinFunc: base}
+		inInt := builtinInIntSig{baseBuiltinFunc: base}
+		inInt.buildHashMapForConstArgs(inInt.ctx)
+		f = &inInt
 	case tipb.ScalarFuncSig_InReal:
 		f = &builtinInRealSig{base}
 	case tipb.ScalarFuncSig_InDecimal:
