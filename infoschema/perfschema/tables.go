@@ -21,11 +21,18 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 const (
 	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
+	tableNameTiDBProfileCPU                  = "tidb_profile_cpu"
+	tableNameTiDBProfileMemory               = "tidb_profile_memory"
+	tableNameTiDBProfileMutex                = "tidb_profile_mutex"
+	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
+	tableNameTiDBProfileBlock                = "tidb_profile_block"
+	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -90,6 +97,21 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
 		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
+	case tableNameTiDBProfileCPU:
+		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
+	case tableNameTiDBProfileMemory:
+		fullRows, err = (&profile.Collector{}).ProfileGraph("heap")
+	case tableNameTiDBProfileMutex:
+		fullRows, err = (&profile.Collector{}).ProfileGraph("mutex")
+	case tableNameTiDBProfileAllocs:
+		fullRows, err = (&profile.Collector{}).ProfileGraph("allocs")
+	case tableNameTiDBProfileBlock:
+		fullRows, err = (&profile.Collector{}).ProfileGraph("block")
+	case tableNameTiDBProfileGoroutines:
+		fullRows, err = (&profile.Collector{}).Goroutines()
+	}
+	if err != nil {
+		return
 	}
 	if len(cols) == len(vt.cols) {
 		return

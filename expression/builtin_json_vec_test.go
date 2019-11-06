@@ -28,10 +28,18 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONArrayAppend:  {},
 	ast.JSONContainsPath: {},
 	ast.JSONExtract:      {},
-	ast.JSONLength:       {},
-	ast.JSONType:         {{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}}},
-	ast.JSONArray:        {},
-	ast.JSONArrayInsert:  {},
+	ast.JSONLength: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.abc"}}},
+	},
+	ast.JSONType: {{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}}},
+	ast.JSONArray: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson}},
+	},
+	ast.JSONArrayInsert: {},
 	ast.JSONContains: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETString}, geners: []dataGenerator{nil, nil, &constStrGener{"$.abc"}}},
@@ -78,7 +86,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
 	},
 	ast.JSONRemove: {},
-	ast.JSONMerge:  {},
+	ast.JSONMerge:  {{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson, types.ETJson, types.ETJson}}},
 	ast.JSONInsert: {},
 	ast.JSONQuote: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},

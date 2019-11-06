@@ -36,9 +36,7 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize    = 4096 // MB
-	MinPessimisticTTL = time.Second * 3
-	MaxPessimisticTTL = time.Second * 30
+	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -371,8 +369,8 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
-	// EnableArrow indicate the data encode in arrow format.
-	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
+	// EnableChunkRPC indicate the data encode in chunk format for coprocessor requests.
+	EnableChunkRPC bool `toml:"enable-chunk-rpc" json:"enable-chunk-rpc"`
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
@@ -403,8 +401,6 @@ type PessimisticTxn struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-	// The pessimistic lock ttl.
-	TTL string `toml:"ttl" json:"ttl"`
 }
 
 // StmtSummary is the config for statement summary.
@@ -503,7 +499,7 @@ var defaultConf = Config{
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
 
-		EnableArrow: true,
+		EnableChunkRPC: true,
 
 		RegionCacheTTL: 600,
 	},
@@ -514,7 +510,6 @@ var defaultConf = Config{
 	PessimisticTxn: PessimisticTxn{
 		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "10s",
 	},
 	StmtSummary: StmtSummary{
 		MaxStmtCount: 100,
@@ -691,16 +686,6 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
-	}
-	if c.PessimisticTxn.TTL != "" {
-		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
-		if err != nil {
-			return err
-		}
-		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
-				dur, MinPessimisticTTL, MaxPessimisticTTL)
-		}
 	}
 	return nil
 }

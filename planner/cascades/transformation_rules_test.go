@@ -56,6 +56,8 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 			rulePushSelDownTableScan,
 			rulePushSelDownTableGather,
 			rulePushSelDownSort,
+			rulePushSelDownProjection,
+			rulePushSelDownAggregation,
 		},
 		memo.OperandDataSource: {
 			ruleEnumeratePaths,

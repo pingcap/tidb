@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlock"
@@ -464,7 +465,8 @@ func reverse(values []mvccValue) {
 }
 
 // PessimisticLock writes the pessimistic lock.
-func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error {
+func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
+	forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -476,6 +478,11 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
+		}
+		if lockWaitTime == kv.LockNoWait {
+			if _, ok := err.(*ErrLocked); ok {
+				break
+			}
 		}
 	}
 	if anyError {
@@ -797,6 +804,16 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 			return nil
 		}
 		return ErrRetryable("txn not found")
+	}
+	// Reject the commit request whose commitTS is less than minCommiTS.
+	if dec.lock.minCommitTS > commitTS {
+		return &ErrCommitTSExpired{
+			kvrpcpb.CommitTsExpired{
+				StartTs:           startTS,
+				AttemptedCommitTs: commitTS,
+				Key:               key,
+				MinCommitTs:       dec.lock.minCommitTS,
+			}}
 	}
 
 	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
