@@ -366,11 +366,54 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinAesEncryptSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+		return err
+	}
+
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(keyBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+		return err
+	}
+
+	if b.modeName != "ecb" {
+		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
+	}
+
+	isWarning := !b.ivRequired && len(b.args) == 3
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
+			result.AppendNull()
+			if isWarning {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+			}
+			continue
+		}
+		key := encrypt.DeriveKeyMySQL([]byte(keyBuf.GetString(i)), b.keySize)
+		cipherText, err := encrypt.AESEncryptWithECB([]byte(strBuf.GetString(i)), key)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(cipherText))
+	}
+
+	return nil
 }
 
 func (b *builtinPasswordSig) vectorized() bool {

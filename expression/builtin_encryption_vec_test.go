@@ -22,7 +22,9 @@ import (
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
-	ast.AesEncrypt: {},
+	ast.AesEncrypt: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+	},
 	ast.Uncompress: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},

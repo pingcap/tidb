@@ -273,6 +273,10 @@ func NewContext() *Context {
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
+	// to test aesEncryptFunctionClass
+	if err := sctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb"); err != nil {
+		panic(err)
+	}
 	return sctx
 }
 
