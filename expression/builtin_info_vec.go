@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -179,9 +180,28 @@ func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(decodeKey(b.ctx, buf.GetString(i)))
+	}
+
+	return nil
 }
