@@ -684,7 +684,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TIDBMemQuotaIndexLookupJoin, strconv.FormatInt(DefTiDBMemQuotaIndexLookupJoin, 10)},
 	{ScopeSession, TIDBMemQuotaNestedLoopApply, strconv.FormatInt(DefTiDBMemQuotaNestedLoopApply, 10)},
 	{ScopeSession, TiDBEnableStreaming, "0"},
-	{ScopeSession, TiDBEnableArrow, "1"},
+	{ScopeSession, TiDBEnableChunkRPC, "1"},
 	{ScopeSession, TxnIsolationOneShot, ""},
 	{ScopeSession, TiDBEnableTablePartition, "auto"},
 	{ScopeGlobal | ScopeSession, TiDBHashJoinConcurrency, strconv.Itoa(DefTiDBHashJoinConcurrency)},
