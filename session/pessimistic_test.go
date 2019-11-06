@@ -499,11 +499,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk2.MustExec("commit")
 	tk3.MustExec("commit")
 
-	tk.MustQuery(`select * from tk where c1 = 1`).Check(testkit.Rows("1 1"))
-	tk.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 5")) // tk2 update succ
-	tk.MustQuery(`select * from tk where c1 = 3`).Check(testkit.Rows("3 3")) // tk2 delete should fail
-	tk.MustQuery(`select * from tk where c1 = 4`).Check(testkit.Rows("4 4"))
-	tk.MustQuery(`select * from tk where c1 = 5`).Check(testkit.Rows("5 5"))
+	// tk2 update succ, tk2 delete should fail
+	tk.MustQuery(`select * from tk`).Check(testkit.Rows("1 1", "2 5", "3 3", "4 4", "5 5"))
 
 	// clean
 	tk.MustExec("drop table if exists tk")
