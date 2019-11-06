@@ -798,10 +798,19 @@ func (e *StreamAggExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
+	if err = e.fetchChildIfNecessary(ctx, req); err != nil {
+		return err
+	}
+	if !e.executed {
+		_, err := e.groupChecker.splitChunk(e.childResult)
+		if err != nil {
+			return err
+		}
+	}
 	for !e.executed && !req.IsFull() {
-		err := e.consumeOneGroup(ctx, req)
+		err = e.consumeOneGroup(ctx, req)
 		if err != nil {
 			e.executed = true
 			return err
@@ -820,7 +829,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 	}
 
 	if end == numRows {
-		if err = e.fetchChildIfNecessary(ctx, chk); err != nil || !e.executed {
+		if err = e.fetchChildIfNecessary(ctx, chk); err != nil || e.executed {
 			return err
 		}
 
@@ -927,6 +936,7 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 		ctx:          ctx,
 		StmtCtx:      stmtCtx,
 		GroupByItems: items,
+		curGroupId:   0,
 		sameGroup:    sameGroup,
 	}
 }
@@ -935,6 +945,7 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *groupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	numRows := chk.NumRows()
+	e.curGroupId = 0
 	e.groupRowsIndex = e.groupRowsIndex[:0]
 	e.firstGroupKey = e.firstGroupKey[:0]
 	e.lastGroupKey = e.lastGroupKey[:0]
