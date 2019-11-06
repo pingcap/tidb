@@ -32,7 +32,8 @@ type ErrLocked struct {
 
 // Error formats the lock to a string.
 func (e *ErrLocked) Error() string {
-	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v", e.Key, e.Primary, e.StartTS)
+	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v, LockType: %v",
+		e.Key, e.Primary, e.StartTS, e.LockType)
 }
 
 // ErrKeyAlreadyExist is returned when key exists but this key has a constraint that
