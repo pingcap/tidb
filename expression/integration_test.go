@@ -2255,7 +2255,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	// test builtinCastRealAsIntSig
 	tk.MustExec(`create table tb5(a double, b float);`)
 	tk.MustExec(`insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);`)
-	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=0;`)
+	tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=0;`).Check(testkit.Rows())
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
 	_ = tk.MustQuery(`select * from tb5 where cast(b as unsigned int)=0;`)
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
