@@ -14,12 +14,34 @@
 package expression
 
 import (
+	"encoding/hex"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 )
+
+type tidbKeyGener struct {
+	inner *defaultGener
+}
+
+func (g *tidbKeyGener) gen() interface{} {
+	tableID := g.inner.gen().(int64)
+	var result []byte
+	if rand.Intn(2) == 1 {
+		// Generate a record key
+		handle := g.inner.gen().(int64)
+		result = tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	} else {
+		// Generate an index key
+		idx := g.inner.gen().(int64)
+		result = tablecodec.EncodeTableIndexPrefix(tableID, idx)
+	}
+	return hex.EncodeToString(result)
+}
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.Version: {
@@ -35,7 +57,16 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	},
 	ast.User: {},
 	ast.TiDBDecodeKey: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString},
+			geners: []dataGenerator{&tidbKeyGener{
+				inner: &defaultGener{
+					nullRation: 0,
+					eType:      types.ETInt,
+				},
+			}},
+		},
 	},
 	ast.RowCount:    {},
 	ast.CurrentRole: {},
