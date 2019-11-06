@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -110,7 +109,9 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool) singleBatchResp {
 	failpoint.Inject("MockSplitRegionTimeout", func(val failpoint.Value) {
 		if val.(bool) {
-			time.Sleep(time.Second*1 + time.Millisecond*10)
+			if _, ok := bo.ctx.Deadline(); ok {
+				<-bo.ctx.Done()
+			}
 		}
 	})
 
