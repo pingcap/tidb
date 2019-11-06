@@ -423,18 +423,20 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 	if len(buildSideRows) == 0 {
 		return true, joinResult
 	}
-	for i := range rowsPtrs {
-		e.outerMatchedStatus[rowsPtrs[i].ChkIdx].Set(int(rowsPtrs[i].RowIdx))
-	}
+
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
 	for iter.Begin(); iter.Current() != iter.End(); {
-		_, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
+		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
 		}
-
+		for i := range outerMatchStatus {
+			if outerMatchStatus[i] == outerRowMatched {
+				e.outerMatchedStatus[rowsPtrs[i].ChkIdx].Set(int(rowsPtrs[i].RowIdx))
+			}
+		}
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult := e.getNewJoinResult(workerID)
@@ -533,6 +535,14 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	return true, joinResult
 }
 func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
+	hCtx.initHash(probeSideChk.NumRows())
+	for _, i := range hCtx.keyColIdx {
+		err := codec.HashChunkColumns(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
 		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeKey, probeRow, hCtx, joinResult)

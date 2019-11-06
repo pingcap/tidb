@@ -598,6 +598,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
 	return e
 }
+
 func prepare4OuterJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
 	// reverse
 	innerExec, outerExec = outerExec, innerExec
@@ -642,6 +643,8 @@ func benchmarkOuterHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase)
 				return int64(row)
 			case mysql.TypeVarString:
 				return rawData
+			case mysql.TypeDouble:
+				return float64(row)
 			default:
 				panic("not implement")
 			}

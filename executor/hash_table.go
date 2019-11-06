@@ -236,15 +236,33 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 	return nil
 }
 func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
-	chkIdx := uint32(c.records.NumChunks())
+	var chkIdx uint32
+	if c.alreadySpilled() {
+		// append chk to disk.
+		chkIdx = uint32(c.recordsInDisk.NumChunks())
+		err := c.recordsInDisk.Add(chk)
+		if err != nil {
+			return err
+		}
+	} else {
+		chkIdx = uint32(c.records.NumChunks())
+		c.records.Add(chk)
+		if atomic.LoadUint32(&c.exceeded) != 0 {
+			err := c.spillToDisk()
+			if err != nil {
+				return err
+			}
+			c.records = nil // GC its internal chunks.
+			c.memTracker.Consume(-c.memTracker.BytesConsumed())
+			atomic.StoreUint32(&c.spilled, 1)
+		}
+	}
 	numRows := chk.NumRows()
-
-	c.records.Add(chk)
 	c.hCtx.initHash(numRows)
 
 	hCtx := c.hCtx
 	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
