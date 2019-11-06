@@ -332,12 +332,12 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dbName:       v.DBName,
-		tblInfo:      v.TblInfo,
-		indices:      v.Indices,
+		table:        v.Table,
+		indexInfos:   v.IndexInfos,
 		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
-		retCh:        make(chan error, len(v.Indices)),
+		retCh:        make(chan error, len(readerExecs)),
 	}
 	return e
 }
@@ -1769,12 +1769,17 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, errors.Trace(err)
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	table, _ := b.is.TableByID(ts.Table.ID)
+	tbl, _ := b.is.TableByID(ts.Table.ID)
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
 	e := &TableReaderExecutor{
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:           dagReq,
 		physicalTableID: ts.Table.ID,
-		table:           table,
+		table:           tbl,
 		keepOrder:       ts.KeepOrder,
 		desc:            ts.Desc,
 		columns:         ts.Columns,
