@@ -1841,6 +1841,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			compareFuncs:  v.CompareFuncs,
 			colLens:       v.IdxColLens,
 			desc:          v.Desc,
+			idxOff2KeyOff: v.IdxOff2KeyOff,
 		},
 		workerWg:      new(sync.WaitGroup),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),

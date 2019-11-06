@@ -394,12 +394,27 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if hasPrefixCol {
 			continue
 		}
+		// If join keys is not prefix of inner index. The order of merge join can't be granted.
+		// So index merge join can't be constructed in this case
+		var idxOff2KeyOff map[int]int
+		isKeyPrefixIndex := true
+		for keyOff, idxOff := range join.KeyOff2IdxOff {
+			if idxOff >= len(join.OuterJoinKeys) {
+				isKeyPrefixIndex = false
+				break
+			}
+			idxOff2KeyOff[idxOff] = keyOff
+		}
+		if !isKeyPrefixIndex {
+			continue
+		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
 		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
-		for i := range join.OuterJoinKeys {
-			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[join.KeyOff2IdxOff[i]]) {
+
+		for i := range join.KeyOff2IdxOff {
+			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[idxOff2KeyOff[i]]) {
 				isOuterKeysPrefix = false
 			}
 			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
@@ -408,7 +423,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
 		for i := 0; canKeepOuterOrder && i < len(prop.Items); i++ {
-			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[join.KeyOff2IdxOff[i]]) {
+			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[idxOff2KeyOff[i]]) {
 				canKeepOuterOrder = false
 			}
 		}
@@ -418,6 +433,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if canKeepOuterOrder || isOuterKeysPrefix {
 			indexMergeJoin := PhysicalIndexMergeJoin{
 				PhysicalIndexJoin: *join,
+				idxOff2KeyOff:     idxOff2KeyOff,
 				NeedOuterSort:     !isOuterKeysPrefix,
 				CompareFuncs:      compareFuncs,
 				OuterCompareFuncs: outerCompareFuncs,

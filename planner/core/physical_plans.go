@@ -295,6 +295,8 @@ type PhysicalIndexJoin struct {
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
 
+	// IdxOff2KeyOff maps the offsets in index to the offsets in join key.
+	IdxOff2KeyOff map[int]int
 	// NeedOuterSort means whether outer rows should be sorted to build range.
 	NeedOuterSort bool
 	// CompareFuncs store the compare functions for outer join keys and inner join key.
