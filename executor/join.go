@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -362,9 +363,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 	}
 }
 
-func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeSideRow chunk.Row, hCtx *hashContext,
+func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, err := e.rowContainer.GetMatchedRows(probeSideRow, hCtx)
+	buildSideRows, err := e.rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -419,11 +420,22 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 		joinResult.err = err
 		return false, joinResult
 	}
+
+	hCtx.initHash(probeSideChk.NumRows())
+	for _, i := range hCtx.keyColIdx {
+		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected)
+		if err != nil {
+			joinResult.err = err
+			return false, joinResult
+		}
+	}
+
 	for i := range selected {
-		if !selected[i] { // process unmatched probe side rows
+		if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
 			e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 		} else { // process matched probe side rows
-			ok, joinResult = e.joinMatchedProbeSideRow2Chunk(workerID, probeSideChk.GetRow(i), hCtx, joinResult)
+			probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
+			ok, joinResult = e.joinMatchedProbeSideRow2Chunk(workerID, probeKey, probeRow, hCtx, joinResult)
 			if !ok {
 				return false, joinResult
 			}
