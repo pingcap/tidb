@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -118,7 +117,6 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	fmt.Println("enter buildHashMapForConstArgs")
 	b.varArgs = make([]Expression, 0, len(b.args))
 	b.varArgs = append(b.varArgs, b.args[0])
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
@@ -138,45 +136,29 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 		}
 	}
 
-	for k, v := range b.hashSet {
-		fmt.Println(k, ", ", v)
-	}
-	fmt.Println("len(v.varArgs) is ", len(b.varArgs))
-	fmt.Println("leave buildHashMapForConstArgs")
 	return nil
 }
 
 func (b *builtinInIntSig) Clone() builtinFunc {
-	fmt.Println("Clone begin!")
 	newSig := &builtinInIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.varArgs = make([]Expression, 0, len(b.varArgs))
-	fmt.Println("len(b.varArgs)", len(b.varArgs))
 	for _, arg := range b.varArgs {
 		newSig.varArgs = append(newSig.varArgs, arg)
 	}
-	fmt.Println("len(newSig.varArgs)", len(newSig.varArgs))
 	newSig.hasNull = b.hasNull
 	newSig.hashSet = b.hashSet
-	fmt.Println("Clone end!")
 	return newSig
 }
 
 func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	fmt.Println("len(b.args) is ", len(b.args))
-	fmt.Println("len(b.varArgs) is ", len(b.varArgs))
-	fmt.Println(b.hashSet)
-
 	arg0, isNull0, err := b.varArgs[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	fmt.Println("arg0 is ", arg0)
-
 	if isUnsigned, ok := b.hashSet[arg0]; ok {
-		fmt.Println("find arg0 in hashset")
 		if isUnsigned0 && isUnsigned {
 			return 1, false, nil
 		} else if !isUnsigned0 && !isUnsigned {
@@ -202,7 +184,6 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		fmt.Println("evaledArg is ", evaledArg)
 		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().Flag)
 		if isUnsigned0 && isUnsigned {
 			if evaledArg == arg0 {
