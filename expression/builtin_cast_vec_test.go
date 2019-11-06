@@ -61,7 +61,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETDecimal}},
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&randJSONDateTime{}}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&datetimeJSONGener{}}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
@@ -97,9 +97,9 @@ func (g *randJSONDuration) gen() interface{} {
 	return json.CreateBinary(d.String())
 }
 
-type randJSONDateTime struct{}
+type datetimeJSONGener struct{}
 
-func (g *randJSONDateTime) gen() interface{} {
+func (g *datetimeJSONGener) gen() interface{} {
 	year := rand.Intn(2200)
 	month := rand.Intn(10) + 1
 	day := rand.Intn(20) + 1
