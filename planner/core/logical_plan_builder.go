@@ -2996,7 +2996,7 @@ func (b *PlanBuilder) buildUpdateLists(
 	error error,
 ) {
 	b.curClause = fieldList
-	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
+	modifyColumns := make(map[string]bool, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
@@ -3007,7 +3007,13 @@ func (b *PlanBuilder) buildUpdateLists(
 		}
 		name := p.OutputNames()[idx]
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
-		modifyColumns[columnFullName] = struct{}{}
+		// We save a flag for the column in map `modifyColumns`
+		// This flag indicated if assign keyword `DEFAULT` to the column
+		if _, ok := extractDefaultExpr(assign.Expr); ok {
+			modifyColumns[columnFullName] = true
+		} else {
+			modifyColumns[columnFullName] = false
+		}
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -3027,7 +3033,8 @@ func (b *PlanBuilder) buildUpdateLists(
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
-			if _, ok := modifyColumns[columnFullName]; ok {
+			// These is one exception: assign `DEFAULT` to generated column is allowed
+			if isDefault, ok := modifyColumns[columnFullName]; ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			for _, asName := range tableAsName[tableInfo] {
@@ -3057,6 +3064,10 @@ func (b *PlanBuilder) buildUpdateLists(
 		var newExpr expression.Expression
 		var np LogicalPlan
 		if i < len(list) {
+			// If assign `DEFAULT` to column, fill the `defaultExpr.Name` before rewrite expression
+			if expr, ok := extractDefaultExpr(assign.Expr); ok {
+				expr.Name = assign.Column
+			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
 		} else {
 			// rewrite with generation expression
@@ -3094,6 +3105,17 @@ func (b *PlanBuilder) buildUpdateLists(
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}
 	return newList, p, allAssignmentsAreConstant, nil
+}
+
+// extractDefaultExpr extract a `DefaultExpr` without any parameter from a `ExprNode`
+// return it and if successful extract it
+// Note the sql function `DEFAULT(a)` is not same with keyword `DEFAULT`
+// Sql function `DEFAULT(a)` will return `false`
+func extractDefaultExpr(node ast.ExprNode) (*ast.DefaultExpr, bool) {
+	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
+		return expr, true
+	}
+	return nil, false
 }
 
 // extractTableAsNameForUpdate extracts tables' alias names for update.
