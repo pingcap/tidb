@@ -35,12 +35,24 @@ func boolToInt64(v bool) int64 {
 	return 0
 }
 
-// IsCurrentTimestampExpr returns whether e is CurrentTimestamp expression.
-func IsCurrentTimestampExpr(e ast.ExprNode) bool {
-	if fn, ok := e.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.CurrentTimestamp {
-		return true
+// IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
+// Here `valid` means it is consistent with the given fieldType's Decimal.
+func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
+	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
+	if !isFuncCall || fn.FnName.L != ast.CurrentTimestamp {
+		return false
 	}
-	return false
+
+	containsArg := len(fn.Args) > 0
+	// Fsp represents fractional seconds precision.
+	containsFsp := fieldType != nil && fieldType.Decimal > 0
+	var isConsistent bool
+	if containsArg {
+		v, ok := fn.Args[0].(*driver.ValueExpr)
+		isConsistent = ok && fieldType != nil && v.Datum.GetInt64() == int64(fieldType.Decimal)
+	}
+
+	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
 }
 
 // GetTimeValue gets the time value with type tp.
