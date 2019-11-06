@@ -730,7 +730,7 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
 		""+
 			"different_charset CREATE TABLE `different_charset` (\n"+
-			"  `ch1` varchar(10) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
@@ -828,6 +828,22 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
+
+	//for issue #11831
+	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
+	tk.MustQuery("show create table `ttt4`").Check(testutil.RowsWithSep("|",
+		""+
+			"ttt4 CREATE TABLE `ttt4` (\n"+
+			"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+	))
+	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustQuery("show create table `ttt5`").Check(testutil.RowsWithSep("|",
+		""+
+			"ttt5 CREATE TABLE `ttt5` (\n"+
+			"  `a` varchar(123) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testSuite) TestShowEscape(c *C) {
