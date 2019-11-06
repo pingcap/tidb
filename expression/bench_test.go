@@ -643,7 +643,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(testCase.retEvalType)}, 1024, 1024)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, 1024, 1024)
 	return expr, fts, input, output
 }
 
@@ -663,7 +663,7 @@ func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 			c.Assert(evalOneColumn(ctx, expr, it, output2, 0), IsNil)
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch testCase.retEvalType {
+			switch expr.GetType().EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
