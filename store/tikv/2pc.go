@@ -808,9 +808,8 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// we cant return "nowait conflict" directly
 			if lock.LockType == pb.Op_PessimisticLock {
 				if action.lockWaitTime == kv.LockNoWait {
-					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						return ErrLockAcquireFailAndNoWaitSet
-					}
+					// 3.0 release not supported yet
+					return kv.ErrNotImplemented
 				} else if action.lockWaitTime == kv.LockAlwaysWait {
 					// do nothing but keep wait
 				} else {

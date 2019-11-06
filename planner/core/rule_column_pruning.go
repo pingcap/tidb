@@ -364,7 +364,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
+	if p.Lock != ast.SelectLockForUpdate {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 

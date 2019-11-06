@@ -310,8 +310,7 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(),
-		req.GetForUpdateTs(), req.GetLockTtl(), req.WaitTimeout)
+	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
 
 	if req.WaitTimeout == kv.LockAlwaysWait {
 		// TODO: remove this when implement sever side wait.
