@@ -523,7 +523,7 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *ch
 			i64s[i] = 0
 			continue
 		}
-		if len(str) == 4 {
+		if len(str) <= 4 {
 			sc.AppendWarning(errZlibZData)
 			i64s[i] = 0
 			continue
