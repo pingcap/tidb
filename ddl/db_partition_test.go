@@ -533,13 +533,6 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p2 values less than (-1) );`)
 	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p3 values less than (5-1) );`)
 
-	// Test add partition for the table partition by range columns.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a datetime) partition by range columns (a) (partition p1 values less than ('2019-06-01'), partition p2 values less than ('2019-07-01'));")
-	sql := "alter table t add partition ( partition p3 values less than ('2019-07-01'));"
-	assertErrorCode(c, tk, sql, tmysql.ErrRangeNotIncreasing)
-	tk.MustExec("alter table t add partition ( partition p3 values less than ('2019-08-01'));")
-
 	// Add partition value's type should be the same with the column's type.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (
@@ -547,7 +540,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
                 partition by range columns (col) (
 		PARTITION p0 VALUES LESS THAN ('20190905'),
 		PARTITION p1 VALUES LESS THAN ('20190906'));`)
-	sql = "alter table t add partition (partition p2 values less than (20190907));"
+	sql := "alter table t add partition (partition p2 values less than (20190907));"
 	assertErrorCode(c, tk, sql, tmysql.ErrWrongTypeColumnValue)
 }
 
