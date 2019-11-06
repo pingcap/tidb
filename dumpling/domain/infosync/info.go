@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
@@ -67,11 +68,12 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID         string `json:"ddl_id"`
-	IP         string `json:"ip"`
-	Port       uint   `json:"listening_port"`
-	StatusPort uint   `json:"status_port"`
-	Lease      string `json:"lease"`
+	ID           string `json:"ddl_id"`
+	IP           string `json:"ip"`
+	Port         uint   `json:"listening_port"`
+	StatusPort   uint   `json:"status_port"`
+	Lease        string `json:"lease"`
+	BinlogStatus string `json:"binlog_status"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -263,7 +265,11 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-
+	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
+		is.info.BinlogStatus = status.String()
+		err := is.storeServerInfo(ctx)
+		return errors.Trace(err)
+	})
 	err = is.storeServerInfo(ctx)
 	return err
 }
@@ -289,7 +295,9 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			info := &ServerInfo{}
+			info := &ServerInfo{
+				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
+			}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
@@ -307,11 +315,12 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
-		ID:         id,
-		IP:         cfg.AdvertiseAddress,
-		Port:       cfg.Port,
-		StatusPort: cfg.Status.StatusPort,
-		Lease:      cfg.Lease,
+		ID:           id,
+		IP:           cfg.AdvertiseAddress,
+		Port:         cfg.Port,
+		StatusPort:   cfg.Status.StatusPort,
+		Lease:        cfg.Lease,
+		BinlogStatus: binloginfo.GetStatus().String(),
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
