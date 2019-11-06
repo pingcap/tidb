@@ -118,12 +118,22 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	},
 }
 
+var vecBuiltinMathCases1 = map[string][]vecExprBenchCase{
+	ast.Rand: {
+		{retEvalType: types.ETReal},
+	},
+}
+
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
 	testVectorizedEvalOneVec(c, vecBuiltinMathCases)
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFuncForRand(c *C) {
+	testVectorizedBuiltinFuncForRand(c, vecBuiltinMathCases1)
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {
