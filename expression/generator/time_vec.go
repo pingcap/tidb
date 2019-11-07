@@ -325,6 +325,9 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 				rhs    types.Duration
 			)
 		{{- end }}
+		{{- if (or $AIsString $BIsString) }} 
+			stmtCtx := b.ctx.GetSessionVars().StmtCtx
+		{{- end }}
 	for i:=0; i<n ; i++{
 		{{- if and .TypeA.Fixed .TypeB.Fixed }} 
 			if result.IsNull(i) {
@@ -343,7 +346,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
 			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
 			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
-			{{- end }}  err := convertStringToDuration(b.ctx.GetSessionVars().StmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+			{{- end }}  err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
 			if err != nil  {
 				return err
 			}
@@ -369,7 +372,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
 			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
 			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
-			{{- end}}  err := convertStringToDuration(b.ctx.GetSessionVars().StmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+			{{- end}}  err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
 			if err != nil  {
 				return err
 			}
@@ -403,12 +406,12 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			if lhsIsDuration {
 				d, isNull, err = calculateDurationTimeDiff(b.ctx, lhsDur, rhsDur)
 			} else {
-				d, isNull, err = calculateTimeDiff(b.ctx.GetSessionVars().StmtCtx, lhsTime, rhsTime)
+				d, isNull, err = calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
 			}
 		{{- else if or $AIsDuration $BIsDuration }}
 			d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
 		{{- else if or $AIsTime $BIsTime }}
-			d, isNull, err := calculateTimeDiff(b.ctx.GetSessionVars().StmtCtx, lhsTime, rhsTime)
+			d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
 		{{- end }}
 		if err != nil {
 			return err
