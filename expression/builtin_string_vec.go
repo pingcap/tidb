@@ -340,6 +340,7 @@ func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 
 	strs := make([][]byte, n)
 	isNulls := make([]bool, n)
+	result.ReserveString(n)
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
 			return err
