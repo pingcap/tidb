@@ -324,6 +324,8 @@ var tokenMap = map[string]int{
 	"INDEXES":                  indexes,
 	"INFILE":                   infile,
 	"INL_JOIN":                 hintINLJ,
+	"INL_HASH_JOIN":            hintINLHJ,
+	"INL_MERGE_JOIN":           hintINLMJ,
 	"INNER":                    inner,
 	"INPLACE":                  inplace,
 	"INSTANT":                  instant,
