@@ -21,14 +21,9 @@ import (
 	"github.com/pingcap/parser/terror"
 )
 
-const (
-	codeCollationCharsetMismatch = terror.ErrCode(mysql.ErrCollationCharsetMismatch)
-	codeUnknownCollation         = terror.ErrCode(mysql.ErrUnknownCollation)
-)
-
 var (
-	ErrUnknownCollation         = terror.ClassDDL.New(codeUnknownCollation, mysql.MySQLErrName[mysql.ErrUnknownCollation])
-	ErrCollationCharsetMismatch = terror.ClassDDL.New(codeCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
+	ErrUnknownCollation         = terror.ClassDDL.New(mysql.ErrUnknownCollation, mysql.MySQLErrName[mysql.ErrUnknownCollation])
+	ErrCollationCharsetMismatch = terror.ClassDDL.New(mysql.ErrCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
 )
 
 // Charset is a charset.
