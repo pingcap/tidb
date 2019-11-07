@@ -2712,7 +2712,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
-	// Check insert error when column has prevent null flag.
+	// Check insert error when column has PreventNullInsertFlag.
 	s.tk.MustExec("delete from t1")
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
@@ -2721,10 +2721,8 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		if job.State != model.JobStateRunning {
 			return
 		}
-		c2 := getModifyColumn()
-		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, checkErr = tk2.Exec("insert into t1 values ();")
-		}
+		// now c2 has PreventNullInsertFlag, an error is expected.
+		_, checkErr = tk2.Exec("insert into t1 values ();")
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	s.tk.MustExec("alter table t1 change c2 c2 bigint not null;")
