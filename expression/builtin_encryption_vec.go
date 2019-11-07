@@ -369,6 +369,8 @@ func (b *builtinAesEncryptSig) vectorized() bool {
 	return true
 }
 
+// evalString evals AES_ENCRYPT(str, key_str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	strBuf, err := b.bufAllocator.get(types.ETString, n)
@@ -390,6 +392,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 
 	if b.modeName != "ecb" {
+		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
@@ -397,6 +400,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
+		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -404,13 +408,17 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		if isWarning {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
-		key := encrypt.DeriveKeyMySQL([]byte(keyBuf.GetString(i)), b.keySize)
-		cipherText, err := encrypt.AESEncryptWithECB([]byte(strBuf.GetString(i)), key)
+		key := encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+
+		// we can't use GetBytes, because in AESEncryptWithECB padding is automatically
+		// added to str and this will damange the data layout in chunk.Column
+		str := []byte(strBuf.GetString(i))
+		cipherText, err := encrypt.AESEncryptWithECB(str, key)
 		if err != nil {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(string(cipherText))
+		result.AppendBytes(cipherText)
 	}
 
 	return nil
