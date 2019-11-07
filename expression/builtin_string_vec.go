@@ -1076,7 +1076,7 @@ func (b *builtinEltSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinEltSig.
+// vecEvalString evals a ELT(N,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
 func (b *builtinEltSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
