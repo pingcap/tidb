@@ -55,8 +55,12 @@ const (
 	HintSMJ = "sm_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
-	// HintINLJ is hint enforce index nested loop join.
+	// HintINLJ is hint enforce index nested loop hash/sort merge join.
 	HintINLJ = "inl_join"
+	// HintINLHJ is hint enforce index nested loop hash join.
+	HintINLHJ = "inl_hash_join"
+	// HintINLMJ is hint enforce index nested loop merge join.
+	HintINLMJ = "inl_merge_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
 	// HintHJ is hint enforce hash join.
@@ -372,10 +376,22 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.preferJoinType |= preferHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsIndexInner
+		p.preferJoinType |= preferLeftAsINLJInner
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsIndexInner
+		p.preferJoinType |= preferRightAsINLJInner
+	}
+	if hintInfo.ifPreferINLHJ(lhsAlias) {
+		p.preferJoinType |= preferLeftAsINLHJInner
+	}
+	if hintInfo.ifPreferINLHJ(rhsAlias) {
+		p.preferJoinType |= preferRightAsINLHJInner
+	}
+	if hintInfo.ifPreferINLMJ(lhsAlias) {
+		p.preferJoinType |= preferLeftAsINLMJInner
+	}
+	if hintInfo.ifPreferINLMJ(rhsAlias) {
+		p.preferJoinType |= preferRightAsINLMJInner
 	}
 
 	// set hintInfo for further usage if this hint info can be used.
@@ -385,7 +401,10 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
-	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
+	containIndexJoin := (p.preferJoinType^preferRightAsINLJInner^preferLeftAsINLJInner) > 0 ||
+		(p.preferJoinType^preferRightAsINLHJInner^preferLeftAsINLHJInner) > 0 ||
+		(p.preferJoinType^preferRightAsINLMJInner^preferLeftAsINLMJInner) > 0
+	if bits.OnesCount(p.preferJoinType) > 1 && containIndexJoin {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2076,10 +2095,10 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
-		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
-		indexHintList                               []indexHintInfo
-		tiflashTables                               []hintTableInfo
-		aggHints                                    aggHintInfo
+		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
+		indexHintList                                                         []indexHintInfo
+		tiflashTables                                                         []hintTableInfo
+		aggHints                                                              aggHintInfo
 	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -2087,6 +2106,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+		case HintINLHJ:
+			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+		case HintINLMJ:
+			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintHashAgg:
@@ -2137,7 +2160,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,
-		indexNestedLoopJoinTables: INLJTables,
+		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
 		flashTables:               tiflashTables,
@@ -2147,7 +2170,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
-	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables.inljTables)
+	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
+	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
@@ -2158,8 +2183,12 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 	if len(unMatchedTables) == 0 {
 		return
 	}
-	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s or %s. Maybe you can use the table alias name",
-		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinTypeAlias, hintTables))
+	if len(joinTypeAlias) != 0 {
+		joinTypeAlias = fmt.Sprintf(" or %s", restore2JoinHint(joinTypeAlias, hintTables))
+	}
+
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s%s. Maybe you can use the table alias name",
+		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), joinTypeAlias)
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
@@ -2791,7 +2820,13 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.preferJoinType |= preferHashJoin
 		}
 		if b.TableHints().ifPreferINLJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsIndexInner
+			joinPlan.preferJoinType = preferRightAsINLJInner
+		}
+		if b.TableHints().ifPreferINLHJ(innerAlias) {
+			joinPlan.preferJoinType = preferRightAsINLHJInner
+		}
+		if b.TableHints().ifPreferINLMJ(innerAlias) {
+			joinPlan.preferJoinType = preferRightAsINLMJInner
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {

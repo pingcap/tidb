@@ -56,13 +56,19 @@ type visitInfo struct {
 	err       error
 }
 
+type indexNestedLoopJoinTables struct {
+	inljTables  []hintTableInfo
+	inlhjTables []hintTableInfo
+	inlmjTables []hintTableInfo
+}
+
 type tableHintInfo struct {
-	indexNestedLoopJoinTables []hintTableInfo
-	sortMergeJoinTables       []hintTableInfo
-	hashJoinTables            []hintTableInfo
-	indexHintList             []indexHintInfo
-	flashTables               []hintTableInfo
-	aggHints                  aggHintInfo
+	indexNestedLoopJoinTables
+	sortMergeJoinTables []hintTableInfo
+	hashJoinTables      []hintTableInfo
+	indexHintList       []indexHintInfo
+	flashTables         []hintTableInfo
+	aggHints            aggHintInfo
 }
 
 type hintTableInfo struct {
@@ -108,7 +114,15 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
