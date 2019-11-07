@@ -309,7 +309,6 @@ func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	for i := 0; i < input.NumRows(); i++ {
 		if result.IsNull(i) {
 			continue
@@ -396,11 +395,30 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinHexStrArgSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinHexStrArgSig, corresponding to hex(str)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
 func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0.GetBytes(i))))
+	}
+	return nil
 }
 
 func (b *builtinLTrimSig) vectorized() bool {
@@ -755,11 +773,21 @@ func (b *builtinLeftBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinReverseBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinReverseBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+	for i := 0; i < input.NumRows(); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		reversed := reverseBytes(result.GetBytes(i))
+		result.SetRaw(i, reversed)
+	}
+	return nil
 }
 
 func (b *builtinRTrimSig) vectorized() bool {
@@ -1699,9 +1727,29 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCharLengthSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		i64s[i] = int64(len([]rune(str)))
+	}
+	return nil
 }
