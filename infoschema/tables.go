@@ -89,6 +89,7 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
+	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
 type columnInfo struct {
@@ -1029,6 +1030,15 @@ var tableTiDBClusterInfoCols = []columnInfo{
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
+var tableTableTiFlashReplicaCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+}
+
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(schemas))
@@ -1961,6 +1971,28 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
+// dataForTableTiFlashReplica constructs data for table tiflash replica info.
+func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if tbl.TiFlashReplica == nil {
+				continue
+			}
+			record := types.MakeDatums(
+				schema.Name.O,                   // TABLE_SCHEMA
+				tbl.Name.O,                      // TABLE_NAME
+				tbl.ID,                          // TABLE_ID
+				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
+				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
+				tbl.TiFlashReplica.Available,                         // AVAILABLE
+			)
+			rows = append(rows, record)
+		}
+	}
+	return rows
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -2003,6 +2035,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
+	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2110,6 +2143,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
+	case tableTiFlashReplica:
+		fullRows = dataForTableTiFlashReplica(dbs)
 	}
 	if err != nil {
 		return nil, err
