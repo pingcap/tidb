@@ -597,7 +597,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 
 	lr := newLockResolver(s.store)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
