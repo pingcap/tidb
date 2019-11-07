@@ -177,6 +177,7 @@ token-limit = 0
 enable-table-lock = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
+enable-batch-dml = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -209,6 +210,7 @@ max-sql-length=1024
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
+	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
