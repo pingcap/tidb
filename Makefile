@@ -144,8 +144,8 @@ endif
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
-	@export log_level=error; \
 	$(GO) get github.com/go-playground/overalls
+	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \
