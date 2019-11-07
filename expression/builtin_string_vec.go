@@ -478,14 +478,12 @@ func (b *builtinQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendNull()
+			result.AppendString("NULL")
 			continue
 		}
-
 		str := buf.GetString(i)
 		result.AppendString(Quote(str))
 	}
-
 	return nil
 }
 
