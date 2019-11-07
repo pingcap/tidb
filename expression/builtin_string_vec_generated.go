@@ -42,16 +42,18 @@ func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = 0
+	}
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEvalInt(b.ctx, input, buf1); err != nil {
 			return err
 		}
-		buf1.MergeNulls(buf0)
 
 		arg1 := buf1.Int64s()
 
 		for j := 0; j < n; j++ {
-			if buf1.IsNull(j) || i64s[j] > 0 {
+			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 
@@ -90,16 +92,18 @@ func (b *builtinFieldRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = 0
+	}
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEvalReal(b.ctx, input, buf1); err != nil {
 			return err
 		}
-		buf1.MergeNulls(buf0)
 
 		arg1 := buf1.Float64s()
 
 		for j := 0; j < n; j++ {
-			if buf1.IsNull(j) || i64s[j] > 0 {
+			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 
@@ -136,14 +140,16 @@ func (b *builtinFieldStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = 0
+	}
 	for i := 1; i < len(b.args); i++ {
 		if err := b.args[i].VecEvalString(b.ctx, input, buf1); err != nil {
 			return err
 		}
-		buf1.MergeNulls(buf0)
 
 		for j := 0; j < n; j++ {
-			if buf1.IsNull(j) || i64s[j] > 0 {
+			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
 				continue
 			}
 
