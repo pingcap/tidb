@@ -2443,6 +2443,8 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 		}
 		wg.Done()
 	}()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC", "return"), IsNil)
 	go func() {
 		for {
 			tk.MustExec("update kvvars set b = b + 1 where a = 1")
@@ -2453,6 +2455,7 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 		wg.Done()
 	}()
 	wg.Wait()
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC"), IsNil)
 	for {
 		tk2.MustQuery("select * from kvvars")
 		if atomic.LoadInt32(backOffWeightVal) != 0 {
