@@ -14,7 +14,7 @@ export PATH := $(path_to_add):$(PATH)
 GO              := GO111MODULE=on go
 GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p 4
+GOTEST          := $(GO) test -p 8
 OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
@@ -41,6 +41,11 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
+# VB = Vector Benchmark
+VB_FILE =
+VB_FUNC =
+
+
 .PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
@@ -55,7 +60,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist check test
 
 build:
 	$(GOBUILD)
@@ -139,8 +144,8 @@ endif
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
-	@export log_level=error; \
 	$(GO) get github.com/go-playground/overalls
+	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \
@@ -266,3 +271,13 @@ tools/bin/misspell:tools/check/go.mod
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
+
+# Usage:
+#
+# 	$ make vectorized-bench VB_FILE=Time VB_FUNC=builtinCurrentDateSig
+vectorized-bench:
+	cd ./expression && \
+		go test -v -benchmem \
+			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
+			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
+			-args "$(VB_FUNC)"

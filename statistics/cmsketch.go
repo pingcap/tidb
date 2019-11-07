@@ -456,7 +456,9 @@ func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, 
 	}
 	topN := make([]*TopNMeta, 0, len(topNRows))
 	for _, row := range topNRows {
-		topN = append(topN, &TopNMeta{Data: row.GetBytes(0), Count: row.GetUint64(1)})
+		data := make([]byte, len(row.GetBytes(0)))
+		copy(data, row.GetBytes(0))
+		topN = append(topN, &TopNMeta{Data: data, Count: row.GetUint64(1)})
 	}
 	return decodeCMSketch(cms, topN)
 }

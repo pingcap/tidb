@@ -34,30 +34,6 @@ func (b *builtinValuesDurationSig) vecEvalDuration(input *chunk.Chunk, result *c
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinInDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinInTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinInJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinRowSig) vectorized() bool {
 	return false
 }
@@ -98,22 +74,6 @@ func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinInIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinInRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinBitCountSig) vectorized() bool {
 	return false
 }
@@ -143,22 +103,6 @@ func (b *builtinValuesDecimalSig) vectorized() bool {
 }
 
 func (b *builtinValuesDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinInStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinInDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 

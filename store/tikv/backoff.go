@@ -142,6 +142,7 @@ const (
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
+	boTxnNotFound
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -159,6 +160,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 500, NoJitter)
+	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
@@ -184,6 +187,8 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
+	case boTxnNotFound:
+		return "txnNotFound"
 	}
 	return ""
 }
@@ -192,7 +197,7 @@ func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
-	case BoTxnLock, boTxnLockFast:
+	case BoTxnLock, boTxnLockFast, boTxnNotFound:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
@@ -212,7 +217,6 @@ const (
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
-	prewriteMaxBackoff             = 20000
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000
 	GcResolveLockMaxBackoff        = 100000
@@ -227,8 +231,13 @@ const (
 	pessimisticRollbackMaxBackoff  = 10000
 )
 
-// CommitMaxBackoff is max sleep time of the 'commit' command
-var CommitMaxBackoff = 41000
+var (
+	// CommitMaxBackoff is max sleep time of the 'commit' command
+	CommitMaxBackoff = 41000
+
+	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
+	PrewriteMaxBackoff = 20000
+)
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {

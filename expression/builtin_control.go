@@ -37,6 +37,7 @@ var (
 	_ builtinFunc = &builtinCaseWhenStringSig{}
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
+	_ builtinFunc = &builtinCaseWhenJSONSig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}

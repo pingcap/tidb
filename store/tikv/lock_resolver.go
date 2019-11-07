@@ -129,11 +129,12 @@ var ttlFactor = 6000
 
 // Lock represents a lock from tikv server.
 type Lock struct {
-	Key     []byte
-	Primary []byte
-	TxnID   uint64
-	TTL     uint64
-	TxnSize uint64
+	Key      []byte
+	Primary  []byte
+	TxnID    uint64
+	TTL      uint64
+	TxnSize  uint64
+	LockType kvrpcpb.Op
 }
 
 func (l *Lock) String() string {
@@ -143,11 +144,12 @@ func (l *Lock) String() string {
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	return &Lock{
-		Key:     l.GetKey(),
-		Primary: l.GetPrimaryLock(),
-		TxnID:   l.GetLockVersion(),
-		TTL:     l.GetLockTtl(),
-		TxnSize: l.GetTxnSize(),
+		Key:      l.GetKey(),
+		Primary:  l.GetPrimaryLock(),
+		TxnID:    l.GetLockVersion(),
+		TTL:      l.GetLockTtl(),
+		TxnSize:  l.GetTxnSize(),
+		LockType: l.LockType,
 	}
 }
 
@@ -184,23 +186,11 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	tikvLockResolverCountWithBatchResolve.Inc()
 
-	expiredLocks := make([]*Lock, 0, len(locks))
-	for _, l := range locks {
-		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
-			tikvLockResolverCountWithExpired.Inc()
-			expiredLocks = append(expiredLocks, l)
-		} else {
-			tikvLockResolverCountWithNotExpired.Inc()
-		}
-	}
-	if len(expiredLocks) != len(locks) {
-		logutil.BgLogger().Error("BatchResolveLocks: maybe safe point is wrong!",
-			zap.Int("get locks", len(locks)),
-			zap.Int("expired locks", len(expiredLocks)))
-		return false, nil
-	}
+	// The GCWorker kill all ongoing transactions, because it must make sure all
+	// locks have been cleaned before GC.
+	expiredLocks := locks
 
-	startTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -211,19 +201,17 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if _, ok := txnInfos[l.TxnID]; ok {
 			continue
 		}
+		tikvLockResolverCountWithExpired.Inc()
 
-		currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
-		if err != nil {
-			return false, err
-		}
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, startTS, currentTS)
+		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true)
 		if err != nil {
 			return false, err
 		}
 
 		if status.ttl > 0 {
-			// Do not clean lock that is not expired.
-			continue
+			logutil.BgLogger().Error("BatchResolveLocks fail to clean locks, this result is not expected!")
+			return false, errors.New("TiDB ask TiKV to rollback locks but it doesn't, the protocol maybe wrong")
 		}
 
 		txnInfos[l.TxnID] = uint64(status.commitTS)
@@ -293,21 +281,11 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 	tikvLockResolverCountWithResolve.Inc()
 
-	var expiredLocks []*Lock
-	for _, l := range locks {
-		msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
-		if msBeforeLockExpired <= 0 {
-			expiredLocks = append(expiredLocks, l)
-		} else {
-			msBeforeTxnExpired.update(int64(l.TTL))
-			tikvLockResolverCountWithNotExpired.Inc()
-		}
-	}
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	pushed := make([]uint64, 0, len(locks))
-	for _, l := range expiredLocks {
+	for _, l := range locks {
 		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
@@ -384,11 +362,13 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS)
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true)
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64) (TxnStatus, error) {
 	var currentTS uint64
+	var err error
+	var status TxnStatus
 	if l.TTL == 0 {
 		// NOTE: l.TTL = 0 is a special protocol!!!
 		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
@@ -396,28 +376,75 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		// Set currentTS to max uint64 to make the lock expired.
 		currentTS = math.MaxUint64
 	} else {
-		var err error
 		currentTS, err = lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 		if err != nil {
 			return TxnStatus{}, err
 		}
 	}
-	return lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS)
+
+	rollbackIfNotExist := false
+	for {
+		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist)
+		if err == nil {
+			return status, nil
+		}
+		// If the error is something other than txnNotFoundErr, throw the error (network
+		// unavailable, tikv down, backoff timeout etc) to the caller.
+		if _, ok := errors.Cause(err).(txnNotFoundErr); !ok {
+			return TxnStatus{}, err
+		}
+
+		if l.LockType == kvrpcpb.Op_PessimisticLock {
+			return TxnStatus{l.TTL, 0}, nil
+		}
+
+		// Handle txnNotFound error.
+		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
+		// This is likely to happen in the concurrently prewrite when secondary regions
+		// success before the primary region.
+		if err := bo.Backoff(boTxnNotFound, err); err != nil {
+			logutil.BgLogger().Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
+		}
+
+		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
+			rollbackIfNotExist = true
+		}
+	}
 }
 
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64) (TxnStatus, error) {
+type txnNotFoundErr struct {
+	*kvrpcpb.TxnNotFound
+}
+
+func (e txnNotFoundErr) Error() string {
+	return e.TxnNotFound.String()
+}
+
+// getTxnStatus sends the CheckTxnStatus request to the TiKV server.
+// When rollbackIfNotExist is false, the caller should be careful with the txnNotFoundErr error.
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, callerStartTS, currentTS uint64, rollbackIfNotExist bool) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
 
 	tikvLockResolverCountWithQueryTxnStatus.Inc()
 
+	// CheckTxnStatus may meet the following cases:
+	// 1. LOCK
+	// 1.1 Lock expired -- orphan lock, fail to update TTL, crash recovery etc.
+	// 1.2 Lock TTL -- active transaction holding the lock.
+	// 2. NO LOCK
+	// 2.1 Txn Committed
+	// 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
+	// 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
+
 	var status TxnStatus
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
-		PrimaryKey:    primary,
-		LockTs:        txnID,
-		CallerStartTs: callerStartTS,
-		CurrentTs:     currentTS,
+		PrimaryKey:         primary,
+		LockTs:             txnID,
+		CallerStartTs:      callerStartTS,
+		CurrentTs:          currentTS,
+		RollbackIfNotExist: rollbackIfNotExist,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
@@ -444,6 +471,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		cmdResp := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
+			txnNotFound := keyErr.GetTxnNotFound()
+			if txnNotFound != nil {
+				return status, txnNotFoundErr{txnNotFound}
+			}
+
 			err = errors.Errorf("unexpected err: %s, tid: %v", keyErr, txnID)
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err

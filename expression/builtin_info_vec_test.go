@@ -18,19 +18,35 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
-	ast.TiDBVersion:    {},
-	ast.CurrentUser:    {},
-	ast.FoundRows:      {},
-	ast.Database:       {},
-	ast.User:           {},
-	ast.TiDBDecodeKey:  {},
-	ast.RowCount:       {},
-	ast.CurrentRole:    {},
-	ast.TiDBIsDDLOwner: {},
-	ast.ConnectionID:   {},
+	ast.Version: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.TiDBVersion: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.CurrentUser: {},
+	ast.FoundRows:   {},
+	ast.Database: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.User:          {},
+	ast.TiDBDecodeKey: {},
+	ast.RowCount: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
+	ast.CurrentRole: {},
+	ast.TiDBIsDDLOwner: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
+	ast.ConnectionID: {},
+	ast.LastInsertId: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {

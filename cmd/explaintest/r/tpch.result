@@ -251,16 +251,16 @@ limit 10;
 id	count	task	operator info
 Projection_14	10.00	root	Column#18, Column#35, Column#13, Column#16
 └─TopN_17	10.00	root	Column#35:desc, Column#13:asc, offset:0, count:10
-  └─HashAgg_23	40252367.98	root	group by:Column#49, Column#50, Column#51, funcs:sum(Column#45), firstrow(Column#46), firstrow(Column#47), firstrow(Column#48)
-    └─Projection_79	91515927.49	root	mul(Column#23, minus(1, Column#24)), Column#13, Column#16, Column#18, Column#18, Column#13, Column#16
+  └─HashAgg_23	40252367.98	root	group by:Column#52, Column#53, Column#54, funcs:sum(Column#48), firstrow(Column#49), firstrow(Column#50), firstrow(Column#51)
+    └─Projection_81	91515927.49	root	mul(Column#23, minus(1, Column#24)), Column#13, Column#16, Column#18, Column#18, Column#13, Column#16
       └─IndexHashJoin_38	91515927.49	root	inner join, inner:IndexLookUp_28, outer key:Column#9, inner key:Column#18
-        ├─HashRightJoin_69	22592975.51	root	inner join, inner:TableReader_75, equal:[eq(Column#1, Column#10)]
-        │ ├─TableReader_75	1498236.00	root	data:Selection_74
-        │ │ └─Selection_74	1498236.00	cop[tikv]	eq(Column#7, "AUTOMOBILE")
-        │ │   └─TableScan_73	7500000.00	cop[tikv]	table:customer, range:[-inf,+inf], keep order:false
-        │ └─TableReader_72	36870000.00	root	data:Selection_71
-        │   └─Selection_71	36870000.00	cop[tikv]	lt(Column#13, 1995-03-13 00:00:00.000000)
-        │     └─TableScan_70	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
+        ├─HashRightJoin_71	22592975.51	root	inner join, inner:TableReader_77, equal:[eq(Column#1, Column#10)]
+        │ ├─TableReader_77	1498236.00	root	data:Selection_76
+        │ │ └─Selection_76	1498236.00	cop[tikv]	eq(Column#7, "AUTOMOBILE")
+        │ │   └─TableScan_75	7500000.00	cop[tikv]	table:customer, range:[-inf,+inf], keep order:false
+        │ └─TableReader_74	36870000.00	root	data:Selection_73
+        │   └─Selection_73	36870000.00	cop[tikv]	lt(Column#13, 1995-03-13 00:00:00.000000)
+        │     └─TableScan_72	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
         └─IndexLookUp_28	2.20	root	
           ├─IndexScan_25	4.05	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#18, Column#9)], keep order:false
           └─Selection_27	2.20	cop[tikv]	gt(Column#28, 1995-03-13 00:00:00.000000)
@@ -518,7 +518,7 @@ o_year;
 id	count	task	operator info
 Sort_29	719.02	root	Column#67:asc
 └─Projection_31	719.02	root	Column#62, div(Column#65, Column#66)
-  └─HashAgg_34	719.02	root	group by:Column#78, funcs:sum(Column#75), sum(Column#76), firstrow(Column#77)
+  └─HashAgg_34	719.02	root	group by:Column#80, funcs:sum(Column#77), sum(Column#78), firstrow(Column#79)
     └─Projection_123	563136.02	root	case(eq(Column#64, "INDIA"), Column#63, 0), Column#63, Column#62, Column#62
       └─Projection_35	563136.02	root	extract("YEAR", Column#38), mul(Column#22, minus(1, Column#23)), Column#56
         └─HashLeftJoin_45	563136.02	root	inner join, inner:TableReader_121, equal:[eq(Column#13, Column#55)]
@@ -596,24 +596,24 @@ Sort_25	2406.00	root	Column#57:asc, Column#58:desc
 └─Projection_27	2406.00	root	Column#53, Column#54, Column#56
   └─HashAgg_30	2406.00	root	group by:Column#53, Column#54, funcs:sum(Column#55), firstrow(Column#53), firstrow(Column#54)
     └─Projection_31	971049283.51	root	Column#50, extract("YEAR", Column#44), minus(mul(Column#22, minus(1, Column#23)), mul(Column#37, Column#21))
-      └─HashLeftJoin_44	971049283.51	root	inner join, inner:TableReader_104, equal:[eq(Column#19, Column#35) eq(Column#18, Column#34)]
-        ├─HashLeftJoin_56	241379546.70	root	inner join, inner:TableReader_102, equal:[eq(Column#17, Column#40)]
-        │ ├─HashLeftJoin_77	241379546.70	root	inner join, inner:TableReader_100, equal:[eq(Column#18, Column#1)]
-        │ │ ├─HashRightJoin_80	300005811.00	root	inner join, inner:HashRightJoin_91, equal:[eq(Column#10, Column#19)]
-        │ │ │ ├─HashRightJoin_91	500000.00	root	inner join, inner:TableReader_95, equal:[eq(Column#49, Column#13)]
-        │ │ │ │ ├─TableReader_95	25.00	root	data:TableScan_94
-        │ │ │ │ │ └─TableScan_94	25.00	cop[tikv]	table:nation, range:[-inf,+inf], keep order:false
-        │ │ │ │ └─TableReader_93	500000.00	root	data:TableScan_92
-        │ │ │ │   └─TableScan_92	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
-        │ │ │ └─TableReader_97	300005811.00	root	data:TableScan_96
-        │ │ │   └─TableScan_96	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
-        │ │ └─TableReader_100	8000000.00	root	data:Selection_99
-        │ │   └─Selection_99	8000000.00	cop[tikv]	like(Column#2, "%dim%", 92)
-        │ │     └─TableScan_98	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
-        │ └─TableReader_102	75000000.00	root	data:TableScan_101
-        │   └─TableScan_101	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
-        └─TableReader_104	40000000.00	root	data:TableScan_103
-          └─TableScan_103	40000000.00	cop[tikv]	table:partsupp, range:[-inf,+inf], keep order:false
+      └─HashLeftJoin_44	971049283.51	root	inner join, inner:TableReader_106, equal:[eq(Column#19, Column#35) eq(Column#18, Column#34)]
+        ├─HashLeftJoin_56	241379546.70	root	inner join, inner:TableReader_104, equal:[eq(Column#17, Column#40)]
+        │ ├─HashLeftJoin_79	241379546.70	root	inner join, inner:TableReader_102, equal:[eq(Column#18, Column#1)]
+        │ │ ├─HashRightJoin_82	300005811.00	root	inner join, inner:HashRightJoin_93, equal:[eq(Column#10, Column#19)]
+        │ │ │ ├─HashRightJoin_93	500000.00	root	inner join, inner:TableReader_97, equal:[eq(Column#49, Column#13)]
+        │ │ │ │ ├─TableReader_97	25.00	root	data:TableScan_96
+        │ │ │ │ │ └─TableScan_96	25.00	cop[tikv]	table:nation, range:[-inf,+inf], keep order:false
+        │ │ │ │ └─TableReader_95	500000.00	root	data:TableScan_94
+        │ │ │ │   └─TableScan_94	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
+        │ │ │ └─TableReader_99	300005811.00	root	data:TableScan_98
+        │ │ │   └─TableScan_98	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
+        │ │ └─TableReader_102	8000000.00	root	data:Selection_101
+        │ │   └─Selection_101	8000000.00	cop[tikv]	like(Column#2, "%dim%", 92)
+        │ │     └─TableScan_100	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
+        │ └─TableReader_104	75000000.00	root	data:TableScan_103
+        │   └─TableScan_103	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
+        └─TableReader_106	40000000.00	root	data:TableScan_105
+          └─TableScan_105	40000000.00	cop[tikv]	table:partsupp, range:[-inf,+inf], keep order:false
 /*
 Q10 Returned Item Reporting Query
 The query identifies customers who might be having problems with the parts that are shipped to them.
@@ -660,7 +660,7 @@ limit 20;
 id	count	task	operator info
 Projection_17	20.00	root	Column#1, Column#2, Column#39, Column#6, Column#36, Column#3, Column#5, Column#8
 └─TopN_20	20.00	root	Column#39:desc, offset:0, count:20
-  └─HashAgg_26	3017307.69	root	group by:Column#59, Column#60, Column#61, Column#62, Column#63, Column#64, Column#65, funcs:sum(Column#51), firstrow(Column#52), firstrow(Column#53), firstrow(Column#54), firstrow(Column#55), firstrow(Column#56), firstrow(Column#57), firstrow(Column#58)
+  └─HashAgg_26	3017307.69	root	group by:Column#61, Column#62, Column#63, Column#64, Column#65, Column#66, Column#67, funcs:sum(Column#53), firstrow(Column#54), firstrow(Column#55), firstrow(Column#56), firstrow(Column#57), firstrow(Column#58), firstrow(Column#59), firstrow(Column#60)
     └─Projection_67	12222016.17	root	mul(Column#23, minus(1, Column#24)), Column#1, Column#2, Column#3, Column#5, Column#6, Column#8, Column#36, Column#1, Column#2, Column#6, Column#5, Column#36, Column#3, Column#8
       └─IndexMergeJoin_39	12222016.17	root	inner join, inner:Projection_37, outer key:Column#9, inner key:Column#18
         ├─HashLeftJoin_44	3017307.69	root	inner join, inner:TableReader_63, equal:[eq(Column#1, Column#10)]
@@ -769,7 +769,7 @@ l_shipmode;
 id	count	task	operator info
 Sort_9	1.00	root	Column#29:asc
 └─Projection_11	1.00	root	Column#24, Column#27, Column#28
-  └─HashAgg_14	1.00	root	group by:Column#37, funcs:sum(Column#34), sum(Column#35), firstrow(Column#36)
+  └─HashAgg_14	1.00	root	group by:Column#38, funcs:sum(Column#35), sum(Column#36), firstrow(Column#37)
     └─Projection_40	10023369.01	root	cast(case(or(eq(Column#6, "1-URGENT"), eq(Column#6, "2-HIGH")), 1, 0)), cast(case(and(ne(Column#6, "1-URGENT"), ne(Column#6, "2-HIGH")), 1, 0)), Column#24, Column#24
       └─IndexMergeJoin_22	10023369.01	root	inner join, inner:TableReader_20, outer key:Column#10, inner key:Column#1
         ├─TableReader_36	10023369.01	root	data:Selection_35
@@ -1038,7 +1038,7 @@ Projection_24	100.00	root	Column#2, Column#1, Column#9, Column#13, Column#12, Co
       │ │ └─TableReader_63	75000000.00	root	data:TableScan_62
       │ │   └─TableScan_62	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
       │ └─Selection_66	59251097.60	root	gt(Column#52, 314)
-      │   └─HashAgg_73	74063872.00	root	group by:Column#69, funcs:sum(Column#67), firstrow(Column#69)
+      │   └─HashAgg_73	74063872.00	root	group by:Column#71, funcs:sum(Column#69), firstrow(Column#71)
       │     └─TableReader_74	74063872.00	root	data:HashAgg_67
       │       └─HashAgg_67	74063872.00	cop[tikv]	group by:Column#35, funcs:sum(Column#39)
       │         └─TableScan_72	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
@@ -1222,25 +1222,25 @@ id	count	task	operator info
 Projection_25	1.00	root	Column#2, Column#104
 └─TopN_28	1.00	root	Column#104:desc, Column#2:asc, offset:0, count:100
   └─HashAgg_34	1.00	root	group by:Column#2, funcs:count(1), firstrow(Column#2)
-    └─IndexHashJoin_49	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:Column#8, inner key:Column#71, other cond:ne(Column#73, Column#1), ne(Column#73, Column#10)
-      ├─IndexHashJoin_84	9786202.08	root	semi join, inner:IndexLookUp_75, outer key:Column#8, inner key:Column#38, other cond:ne(Column#40, Column#1), ne(Column#40, Column#10)
-      │ ├─IndexMergeJoin_95	12232752.60	root	inner join, inner:TableReader_93, outer key:Column#8, inner key:Column#25
-      │ │ ├─HashRightJoin_101	12232752.60	root	inner join, inner:HashRightJoin_114, equal:[eq(Column#1, Column#10)]
-      │ │ │ ├─HashRightJoin_114	20000.00	root	inner join, inner:TableReader_119, equal:[eq(Column#34, Column#4)]
-      │ │ │ │ ├─TableReader_119	1.00	root	data:Selection_118
-      │ │ │ │ │ └─Selection_118	1.00	cop[tikv]	eq(Column#35, "EGYPT")
-      │ │ │ │ │   └─TableScan_117	25.00	cop[tikv]	table:nation, range:[-inf,+inf], keep order:false
-      │ │ │ │ └─TableReader_116	500000.00	root	data:TableScan_115
-      │ │ │ │   └─TableScan_115	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
-      │ │ │ └─TableReader_122	240004648.80	root	data:Selection_121
-      │ │ │   └─Selection_121	240004648.80	cop[tikv]	gt(Column#20, Column#19)
-      │ │ │     └─TableScan_120	300005811.00	cop[tikv]	table:l1, range:[-inf,+inf], keep order:false
-      │ │ └─TableReader_93	0.80	root	data:Selection_92
-      │ │   └─Selection_92	0.80	cop[tikv]	eq(Column#27, "F")
-      │ │     └─TableScan_91	1.00	cop[tikv]	table:orders, range: decided by [Column#8], keep order:true
-      │ └─IndexLookUp_75	4.05	root	
-      │   ├─IndexScan_73	4.05	cop[tikv]	table:l2, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#38, Column#8)], keep order:false
-      │   └─TableScan_74	4.05	cop[tikv]	table:l2, keep order:false
+    └─IndexHashJoin_49	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:Column#8, inner key:Column#71, other cond:ne(Column#73, Column#10)
+      ├─IndexHashJoin_88	9786202.08	root	semi join, inner:IndexLookUp_79, outer key:Column#8, inner key:Column#38, other cond:ne(Column#40, Column#1), ne(Column#40, Column#10)
+      │ ├─IndexMergeJoin_99	12232752.60	root	inner join, inner:TableReader_97, outer key:Column#8, inner key:Column#25
+      │ │ ├─HashRightJoin_105	12232752.60	root	inner join, inner:HashRightJoin_118, equal:[eq(Column#1, Column#10)]
+      │ │ │ ├─HashRightJoin_118	20000.00	root	inner join, inner:TableReader_123, equal:[eq(Column#34, Column#4)]
+      │ │ │ │ ├─TableReader_123	1.00	root	data:Selection_122
+      │ │ │ │ │ └─Selection_122	1.00	cop[tikv]	eq(Column#35, "EGYPT")
+      │ │ │ │ │   └─TableScan_121	25.00	cop[tikv]	table:nation, range:[-inf,+inf], keep order:false
+      │ │ │ │ └─TableReader_120	500000.00	root	data:TableScan_119
+      │ │ │ │   └─TableScan_119	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
+      │ │ │ └─TableReader_126	240004648.80	root	data:Selection_125
+      │ │ │   └─Selection_125	240004648.80	cop[tikv]	gt(Column#20, Column#19)
+      │ │ │     └─TableScan_124	300005811.00	cop[tikv]	table:l1, range:[-inf,+inf], keep order:false
+      │ │ └─TableReader_97	0.80	root	data:Selection_96
+      │ │   └─Selection_96	0.80	cop[tikv]	eq(Column#27, "F")
+      │ │     └─TableScan_95	1.00	cop[tikv]	table:orders, range: decided by [Column#8], keep order:true
+      │ └─IndexLookUp_79	4.05	root	
+      │   ├─IndexScan_77	4.05	cop[tikv]	table:l2, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#38, Column#8)], keep order:false
+      │   └─TableScan_78	4.05	cop[tikv]	table:l2, keep order:false
       └─IndexLookUp_39	3.24	root	
         ├─IndexScan_36	4.05	cop[tikv]	table:l3, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#71, Column#8)], keep order:false
         └─Selection_38	3.24	cop[tikv]	gt(Column#83, Column#82)

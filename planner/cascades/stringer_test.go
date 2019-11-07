@@ -51,13 +51,13 @@ func (s *testStringerSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStringerSuite) TestGroupStringer(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
 		memo.OperandSelection: {
-			&PushSelDownTableScan{},
-			&PushSelDownTableGather{},
+			rulePushSelDownTableGather,
+			rulePushSelDownTableScan,
 		},
 		memo.OperandDataSource: {
-			&EnumeratePaths{},
+			ruleEnumeratePaths,
 		},
 	})
 	defer func() {
@@ -72,15 +72,12 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 	for i, sql := range input {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil)
-		p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		logic, ok := p.(plannercore.LogicalPlan)
 		c.Assert(ok, IsTrue)
-		// Do column prune here to reduce the output columns.
-		err = logic.PruneColumns(logic.Schema().Columns)
+		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
 		c.Assert(err, IsNil)
-		// Build keyInfo to test the unique key information.
-		logic.BuildKeyInfo()
 		group := convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)
