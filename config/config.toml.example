@@ -73,11 +73,11 @@ level = "info"
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamp in output.
-disable-timestamp = false
+# Enable automatic timestamps in log output, if not set, it will be defaulted to true.
+# enable-timestamp = true
 
-# Disable stack information in error message.
-disable-error-stack = true
+# Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
+# enable-error-stack = false
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
@@ -135,14 +135,16 @@ report-status = true
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
+## API for prometheus: http://${status-host}:${status_port}/metrics
+## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
-# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+# Prometheus client push interval in second, set \"0\" to disable push to pushgateway.
 metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
@@ -259,7 +261,7 @@ local-agent-host-port = ""
 
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
-grpc-connection-count = 16
+grpc-connection-count = 4
 
 # After a duration of this time in seconds if the client doesn't see any activity it pings
 # the server to see if the transport is still alive.
@@ -281,8 +283,8 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data.
-enable-arrow = true
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-rpc = true
 
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
@@ -317,10 +319,6 @@ enable = true
 
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
-
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "120s".
-ttl = "40s"
 
 [stmt-summary]
 # max number of statements kept in memory.

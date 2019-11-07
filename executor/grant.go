@@ -302,8 +302,8 @@ func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 func composeGlobalPrivUpdate(priv mysql.PrivilegeType, value string) (string, error) {
 	if priv == mysql.AllPriv {
 		strs := make([]string, 0, len(mysql.Priv2UserCol))
-		for _, v := range mysql.Priv2UserCol {
-			strs = append(strs, fmt.Sprintf(`%s='%s'`, v, value))
+		for _, v := range mysql.AllGlobalPrivs {
+			strs = append(strs, fmt.Sprintf(`%s='%s'`, mysql.Priv2UserCol[v], value))
 		}
 		return strings.Join(strs, ", "), nil
 	}

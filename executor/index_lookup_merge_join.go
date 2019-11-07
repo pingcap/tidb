@@ -19,7 +19,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
@@ -87,8 +86,8 @@ type innerMergeCtx struct {
 }
 
 type lookUpMergeJoinTask struct {
-	outerResult   *chunk.Chunk
-	outerOrderIdx []int
+	outerResult   *chunk.List
+	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
 	innerIter   chunk.Iterator
@@ -241,12 +240,6 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 
 // Next implements the Executor interface
 func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() {
-			e.runtimeStats.Record(time.Since(start), req.NumRows())
-		}()
-	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -330,29 +323,35 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
-		outerResult: newFirstChunk(omw.executor),
+		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
 	omw.increaseBatchSize()
-	if omw.lookup.isOuterJoin { // if is outerJoin, push the requiredRows down
-		requiredRows := int(atomic.LoadInt64(&omw.lookup.requiredRows))
-		task.outerResult.SetRequiredRows(requiredRows, omw.maxBatchSize)
-	} else {
-		task.outerResult.SetRequiredRows(omw.batchSize, omw.maxBatchSize)
+	requiredRows := omw.batchSize
+	if omw.lookup.isOuterJoin {
+		requiredRows = int(atomic.LoadInt64(&omw.lookup.requiredRows))
+	}
+	if requiredRows <= 0 || requiredRows > omw.maxBatchSize {
+		requiredRows = omw.maxBatchSize
+	}
+	for requiredRows > 0 {
+		execChk := newFirstChunk(omw.executor)
+		err := Next(ctx, omw.executor, execChk)
+		if err != nil {
+			return task, err
+		}
+		if execChk.NumRows() == 0 {
+			break
+		}
+
+		task.outerResult.Add(execChk)
+		requiredRows -= execChk.NumRows()
+		task.memTracker.Consume(execChk.MemoryUsage())
 	}
 
-	task.memTracker.Consume(task.outerResult.MemoryUsage())
-	oldMemUsage := task.outerResult.MemoryUsage()
-	err := Next(ctx, omw.executor, task.outerResult)
-	if err != nil {
-		return task, err
-	}
-
-	newMemUsage := task.outerResult.MemoryUsage()
-	task.memTracker.Consume(newMemUsage - oldMemUsage)
-	if task.outerResult == nil || task.outerResult.NumRows() == 0 {
+	if task.outerResult.Len() == 0 {
 		return nil, nil
 	}
 
@@ -394,20 +393,26 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 }
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	numOuterRows := task.outerResult.NumRows()
-	var outerMatch []bool
+	numOuterChks := task.outerResult.NumChunks()
+	var outerMatch [][]bool
 	if imw.outerMergeCtx.filter != nil {
-		outerMatch = make([]bool, numOuterRows)
-		task.memTracker.Consume(int64(cap(outerMatch)))
-		outerMatch, err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(task.outerResult), outerMatch)
-		if err != nil {
-			return err
+		outerMatch = make([][]bool, numOuterChks)
+		for i := 0; i < numOuterChks; i++ {
+			chk := task.outerResult.GetChunk(i)
+			outerMatch[i] = make([]bool, chk.NumRows())
+			outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), outerMatch[i])
+			if err != nil {
+				return err
+			}
 		}
 	}
-	task.outerOrderIdx = make([]int, 0, numOuterRows)
-	for i := 0; i < numOuterRows; i++ {
-		if len(outerMatch) == 0 || outerMatch[i] {
-			task.outerOrderIdx = append(task.outerOrderIdx, i)
+	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
+	for i := 0; i < numOuterChks; i++ {
+		numRow := task.outerResult.GetChunk(i).NumRows()
+		for j := 0; j < numRow; j++ {
+			if len(outerMatch) == 0 || outerMatch[i][j] {
+				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
+			}
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
@@ -592,7 +597,7 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 	return dLookUpKeys, nil
 }
 
-func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, rowIdx int) (*indexJoinLookUpContent, error) {
+func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, rowIdx chunk.RowPtr) (*indexJoinLookUpContent, error) {
 	outerRow := task.outerResult.GetRow(rowIdx)
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(imw.keyCols)

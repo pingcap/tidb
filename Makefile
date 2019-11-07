@@ -14,7 +14,7 @@ export PATH := $(path_to_add):$(PATH)
 GO              := GO111MODULE=on go
 GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p 4
+GOTEST          := $(GO) test -p 8
 OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
@@ -60,7 +60,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist check test
 
 build:
 	$(GOBUILD)
@@ -144,8 +144,8 @@ endif
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
-	@export log_level=error; \
 	$(GO) get github.com/go-playground/overalls
+	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \

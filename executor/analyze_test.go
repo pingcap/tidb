@@ -178,7 +178,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
-func (s *testSuite1) TestAnalyzeFastSample(c *C) {
+func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := mockstore.NewMockTikvStore(
@@ -251,7 +251,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
 }
 
-func (s *testSuite1) TestFastAnalyze(c *C) {
+func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := mockstore.NewMockTikvStore(

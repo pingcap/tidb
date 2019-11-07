@@ -14,11 +14,14 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
@@ -28,6 +31,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
@@ -48,13 +52,24 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&randJSONDuration{}}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString},
+			geners: []dataGenerator{
+				&dataTimeStrGener{},
+				&timeStrGener{},
+				&dataStrGener{},
+			}},
 	},
 }
 
@@ -70,6 +85,15 @@ func (g *dateTimeGenerWithFsp) gen() interface{} {
 		return t
 	}
 	return result
+}
+
+type randJSONDuration struct{}
+
+func (g *randJSONDuration) gen() interface{} {
+	d := types.Duration{
+		Duration: time.Duration(time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond),
+		Fsp:      3}
+	return json.CreateBinary(d.String())
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCastEvalOneVec(c *C) {

@@ -107,11 +107,144 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 }
 
 func (b *builtinArithmeticModIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+	// reuse result as rh to avoid buf allocate
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+
+	rh := result
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		err = b.modUU(lh, rh)
+	case isLHSUnsigned && !isRHSUnsigned:
+		err = b.modUS(lh, rh)
+	case !isLHSUnsigned && isRHSUnsigned:
+		err = b.modSU(lh, rh)
+	case !isLHSUnsigned && !isRHSUnsigned:
+		err = b.modSS(lh, rh)
+	}
+	return err
+}
+func (b *builtinArithmeticModIntSig) modUU(lh, rh *chunk.Column) error {
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if rh.IsNull(i) {
+			continue
+		}
+		if rhi64s[i] == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			rh.SetNull(i, true)
+			continue
+		}
+		if lh.IsNull(i) {
+			rh.SetNull(i, true)
+			continue
+		}
+		lhVar, rhVar := lhi64s[i], rhi64s[i]
+		rhi64s[i] = int64(uint64(lhVar) % uint64(rhVar))
+	}
+	return nil
+}
+func (b *builtinArithmeticModIntSig) modUS(lh, rh *chunk.Column) error {
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if rh.IsNull(i) {
+			continue
+		}
+		if rhi64s[i] == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			rh.SetNull(i, true)
+			continue
+		}
+		if lh.IsNull(i) {
+			rh.SetNull(i, true)
+			continue
+		}
+		lhVar, rhVar := lhi64s[i], rhi64s[i]
+		if rhVar < 0 {
+			rhi64s[i] = int64(uint64(lhVar) % uint64(-rhVar))
+		} else {
+			rhi64s[i] = int64(uint64(lhVar) % uint64(rhVar))
+		}
+	}
+	return nil
+}
+func (b *builtinArithmeticModIntSig) modSU(lh, rh *chunk.Column) error {
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if rh.IsNull(i) {
+			continue
+		}
+		if rhi64s[i] == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			rh.SetNull(i, true)
+			continue
+		}
+		if lh.IsNull(i) {
+			rh.SetNull(i, true)
+			continue
+		}
+		lhVar, rhVar := lhi64s[i], rhi64s[i]
+		if lhVar < 0 {
+			rhi64s[i] = -int64(uint64(-lhVar) % uint64(rhVar))
+		} else {
+			rhi64s[i] = int64(uint64(lhVar) % uint64(rhVar))
+		}
+	}
+	return nil
+}
+func (b *builtinArithmeticModIntSig) modSS(lh, rh *chunk.Column) error {
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if rh.IsNull(i) {
+			continue
+		}
+		if rhi64s[i] == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			rh.SetNull(i, true)
+			continue
+		}
+		if lh.IsNull(i) {
+			rh.SetNull(i, true)
+			continue
+		}
+		lhVar, rhVar := lhi64s[i], rhi64s[i]
+		rhi64s[i] = lhVar % rhVar
+	}
+	return nil
 }
 
 func (b *builtinArithmeticMinusRealSig) vectorized() bool {
@@ -583,9 +716,38 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 }
 
 func (b *builtinArithmeticMultiplyIntUnsignedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	x := result.Uint64s()
+	y := buf.Uint64s()
+	result.MergeNulls(buf)
+	var res uint64
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		res = x[i] * y[i]
+		if x[i] != 0 && res/x[i] != y[i] {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+		}
+		x[i] = res
+	}
+	return nil
 }
