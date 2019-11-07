@@ -86,7 +86,9 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
-
+	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
+	//  Such err should only be marshal in the data but not in OtherError.
+	//  However, we can not distinguish such err now.
 	return buildResp(selResp, execDetails, err)
 }
 
@@ -416,6 +418,12 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
+	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
+	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
+	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
+	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	// TODO set FlagInUpdateOrDeleteStmt, FlagInUnionStmt,
 	return sc
 }
 
@@ -563,10 +571,10 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	switch dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
-	case tipb.EncodeType_TypeArrow:
+	case tipb.EncodeType_TypeChunk:
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
-		err := h.encodeArrow(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
+		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
 		if err != nil {
 			return err
 		}
@@ -612,7 +620,7 @@ func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte
 	selResp.EncodeType = tipb.EncodeType_TypeDefault
 }
 
-func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+func (h *rpcHandler) encodeChunk(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
 	var chunks []tipb.Chunk
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
@@ -642,7 +650,7 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 		chk.Reset()
 	}
 	selResp.Chunks = chunks
-	selResp.EncodeType = tipb.EncodeType_TypeArrow
+	selResp.EncodeType = tipb.EncodeType_TypeChunk
 	return nil
 }
 
@@ -696,8 +704,16 @@ func toPBError(err error) *tipb.Error {
 		perr.Code = int32(sqlErr.Code)
 		perr.Msg = sqlErr.Message
 	default:
-		perr.Code = int32(1)
-		perr.Msg = err.Error()
+		e := errors.Cause(err)
+		switch y := e.(type) {
+		case *terror.Error:
+			tmp := y.ToSQLError()
+			perr.Code = int32(tmp.Code)
+			perr.Msg = tmp.Message
+		default:
+			perr.Code = int32(1)
+			perr.Msg = err.Error()
+		}
 	}
 	return perr
 }

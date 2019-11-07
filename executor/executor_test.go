@@ -2087,7 +2087,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -4557,6 +4557,11 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+}
+
+func (s *testRecoverTable) TearDownSuite(c *C) {
+	s.store.Close()
+	s.dom.Close()
 }
 
 func (s *testRecoverTable) TestRecoverTable(c *C) {

@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"math"
 
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
@@ -101,22 +102,22 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // for each expression in each group under the required physical property. A
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
-func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, err error) {
+func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, cost float64, err error) {
 	logical, err = opt.onPhasePreprocessing(sctx, logical)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	rootGroup := convert2Group(logical)
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	p, err = opt.onPhaseImplementation(sctx, rootGroup)
+	p, cost, err = opt.onPhaseImplementation(sctx, rootGroup)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	err = p.ResolveIndices()
-	return p, err
+	return p, cost, err
 }
 
 // convert2GroupExpr converts a logical plan to a GroupExpr.
@@ -241,32 +242,34 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 	elem := g.Equivalents.Front()
 	expr := elem.Value.(*memo.GroupExpr)
 	childStats := make([]*property.StatsInfo, len(expr.Children))
+	childSchema := make([]*expression.Schema, len(expr.Children))
 	for i, childGroup := range expr.Children {
 		err = opt.fillGroupStats(childGroup)
 		if err != nil {
 			return err
 		}
 		childStats[i] = childGroup.Prop.Stats
+		childSchema[i] = childGroup.Prop.Schema
 	}
 	planNode := expr.ExprNode
-	g.Prop.Stats, err = planNode.DeriveStats(childStats)
+	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema)
 	return err
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, error) {
+func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if impl == nil {
-		return nil, plannercore.ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
+		return nil, 0, plannercore.ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
-	return impl.GetPlan(), nil
+	return impl.GetPlan(), impl.GetCost(), nil
 }
 
 // implGroup finds the best Implementation which satisfies the required
@@ -287,7 +290,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	// Handle implementation rules for each equivalent GroupExpr.
 	var cumCost float64
 	var childImpls []memo.Implementation
-	var childPlans []plannercore.PhysicalPlan
 	err := opt.fillGroupStats(g)
 	if err != nil {
 		return nil, err
@@ -301,7 +303,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		}
 		for _, impl := range impls {
 			cumCost = 0.0
-			childPlans = childPlans[:0]
 			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
 				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
@@ -314,7 +315,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 				}
 				cumCost += childImpl.GetCost()
 				childImpls = append(childImpls, childImpl)
-				childPlans = append(childPlans, childImpl.GetPlan())
 			}
 			if impl.GetCost() == math.MaxFloat64 {
 				continue
@@ -324,16 +324,15 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 				continue
 			}
 			if groupImpl == nil || groupImpl.GetCost() > cumCost {
-				impl.GetPlan().SetChildren(childPlans...)
-				groupImpl = impl
+				groupImpl = impl.AttachChildren(childImpls...)
 				costLimit = cumCost
 			}
 		}
 	}
 	// Handle enforcer rules for required physical property.
-	for _, rule := range GetEnforcerRules(reqPhysProp) {
+	for _, rule := range GetEnforcerRules(g, reqPhysProp) {
 		newReqPhysProp := rule.NewProperty(reqPhysProp)
-		enforceCost := rule.GetEnforceCost(outCount)
+		enforceCost := rule.GetEnforceCost(g, outCount)
 		childImpl, err := opt.implGroup(g, newReqPhysProp, costLimit-enforceCost)
 		if err != nil {
 			return nil, err

@@ -205,10 +205,17 @@ func (e *HashAggExec) Close() error {
 		for _, ch := range e.partialOutputChs {
 			close(ch)
 		}
+		for _, ch := range e.partialInputChs {
+			close(ch)
+		}
 		close(e.finalOutputCh)
 	}
 	close(e.finishCh)
 	for _, ch := range e.partialOutputChs {
+		for range ch {
+		}
+	}
+	for _, ch := range e.partialInputChs {
 		for range ch {
 		}
 	}

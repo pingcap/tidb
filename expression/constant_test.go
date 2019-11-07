@@ -21,7 +21,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -40,9 +39,6 @@ func newColumn(id int) *Column {
 func newColumnWithType(id int, t *types.FieldType) *Column {
 	return &Column{
 		UniqueID: int64(id),
-		ColName:  model.NewCIStr(fmt.Sprint(id)),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  t,
 	}
 }

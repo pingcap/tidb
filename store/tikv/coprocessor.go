@@ -765,7 +765,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
-		lastRange = resp.Range
+		if resp.Range != nil {
+			lastRange = resp.Range
+		}
 	}
 }
 

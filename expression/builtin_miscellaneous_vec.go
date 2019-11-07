@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"net"
@@ -115,11 +116,38 @@ func (b *builtinStringAnyValueSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinIsIPv6Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		// Note that even when the i-th input string is null, the output is
+		// 0 instead of null, therefore we do not set the null bit mask in
+		// result's corresponding row.
+		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			ipStr := buf.GetString(i)
+			if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
+				i64s[i] = 1
+			} else {
+				i64s[i] = 0
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstStringSig) vectorized() bool {
@@ -190,19 +218,48 @@ func (b *builtinIntAnyValueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinIsIPv4CompatSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			// Note that the input should be IP address in byte format.
+			// For IPv4, it should be byte slice with 4 bytes.
+			// For IPv6, it should be byte slice with 16 bytes.
+			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
+			ipAddress := buf.GetBytes(i)
+			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
+				//Not an IPv6 address, return false
+				i64s[i] = 0
+			} else {
+				i64s[i] = 1
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinNameConstTimeSig) vectorized() bool {
@@ -222,11 +279,40 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			// Note that the input should be IP address in byte format.
+			// For IPv4, it should be byte slice with 4 bytes.
+			// For IPv6, it should be byte slice with 16 bytes.
+			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
+			ipAddress := buf.GetBytes(i)
+			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
+				//Not an IPv6 address, return false
+				i64s[i] = 0
+			} else {
+				i64s[i] = 1
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstDecimalSig) vectorized() bool {

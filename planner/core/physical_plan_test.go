@@ -79,7 +79,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -113,7 +113,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -151,7 +151,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -185,7 +185,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -222,7 +222,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		core.Preprocess(se, stmt, s.is)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -258,7 +258,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -298,7 +298,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -320,7 +320,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	c.Assert(err, IsNil)
 	se.Execute(context.Background(), "use test")
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
-	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.HashAggFinalConcurrency = 1
@@ -337,7 +336,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -372,7 +371,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil, comment)
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -407,7 +406,7 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 		c.Assert(err, IsNil, comment)
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -448,7 +447,7 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, expect, Commentf("for %s", sql))
 }
@@ -483,7 +482,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -527,7 +526,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, pis)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, pis)
 		c.Assert(err, IsNil, comment)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -558,7 +557,7 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -579,7 +578,7 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
 	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -609,7 +608,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	for i, tt := range input {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -641,7 +640,7 @@ func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(context.TODO(), se, stmt, s.is)
+		_, _, err = planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
@@ -684,7 +683,7 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.Background(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.Background(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = test
@@ -725,7 +724,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 
@@ -785,7 +784,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		stmt, err := s.ParseOneStmt(test.SQL, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 
@@ -856,7 +855,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		stmt, err := s.ParseOneStmt(test.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, test.best, comment)
 
@@ -909,9 +908,9 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 		stmt2, err := s.ParseOneStmt(tt.sql2, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p1, err := planner.Optimize(ctx, se, stmt1, s.is)
+		p1, _, err := planner.Optimize(ctx, se, stmt1, s.is)
 		c.Assert(err, IsNil)
-		p2, err := planner.Optimize(ctx, se, stmt2, s.is)
+		p2, _, err := planner.Optimize(ctx, se, stmt2, s.is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p1), Equals, core.ToString(p2))
@@ -947,7 +946,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = test
@@ -992,7 +991,7 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -1036,7 +1035,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		core.Preprocess(se, stmt, s.is)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 
 		c.Assert(core.ToString(p), Equals, tt.plan, comment)
