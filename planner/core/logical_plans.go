@@ -268,6 +268,16 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
+// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
+// this method would collect them at first. If the GroupByItems have been changed,
+// we should explicitly collect GroupByColumns before this method.
+func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
+	if la.groupByCols == nil {
+		la.collectGroupByColumns()
+	}
+	return la.groupByCols
+}
+
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range la.GroupByItems {
