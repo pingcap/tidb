@@ -26,40 +26,27 @@ import (
 	"github.com/pingcap/parser/terror"
 )
 
-const (
-	codeErrParse                   = terror.ErrCode(mysql.ErrParse)
-	codeErrSyntax                  = terror.ErrCode(mysql.ErrSyntax)
-	codeErrUnknownCharacterSet     = terror.ErrCode(mysql.ErrUnknownCharacterSet)
-	codeErrInvalidYearColumnLength = terror.ErrCode(mysql.ErrInvalidYearColumnLength)
-	codeWrongArgument              = terror.ErrCode(mysql.ErrWrongArguments)
-	codeWrongFieldTerminators      = terror.ErrCode(mysql.ErrWrongFieldTerminators)
-	codeTooBigDisplayWidth         = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
-	codeErrUnknownAlterLock        = terror.ErrCode(mysql.ErrUnknownAlterLock)
-	codeErrUnknownAlterAlgorithm   = terror.ErrCode(mysql.ErrUnknownAlterAlgorithm)
-	codeErrTooBigPrecision         = terror.ErrCode(mysql.ErrTooBigPrecision)
-)
-
 var (
 	// ErrSyntax returns for sql syntax error.
-	ErrSyntax = terror.ClassParser.New(codeErrSyntax, mysql.MySQLErrName[mysql.ErrSyntax])
+	ErrSyntax = terror.ClassParser.New(mysql.ErrSyntax, mysql.MySQLErrName[mysql.ErrSyntax])
 	// ErrParse returns for sql parse error.
-	ErrParse = terror.ClassParser.New(codeErrParse, mysql.MySQLErrName[mysql.ErrParse])
+	ErrParse = terror.ClassParser.New(mysql.ErrParse, mysql.MySQLErrName[mysql.ErrParse])
 	// ErrUnknownCharacterSet returns for no character set found error.
-	ErrUnknownCharacterSet = terror.ClassParser.New(codeErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	ErrUnknownCharacterSet = terror.ClassParser.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 	// ErrInvalidYearColumnLength returns for illegal column length for year type.
-	ErrInvalidYearColumnLength = terror.ClassParser.New(codeErrInvalidYearColumnLength, mysql.MySQLErrName[mysql.ErrInvalidYearColumnLength])
+	ErrInvalidYearColumnLength = terror.ClassParser.New(mysql.ErrInvalidYearColumnLength, mysql.MySQLErrName[mysql.ErrInvalidYearColumnLength])
 	// ErrWrongArguments returns for illegal argument.
-	ErrWrongArguments = terror.ClassParser.New(codeWrongArgument, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	ErrWrongArguments = terror.ClassParser.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	// ErrWrongFieldTerminators returns for illegal field terminators.
-	ErrWrongFieldTerminators = terror.ClassParser.New(codeWrongFieldTerminators, mysql.MySQLErrName[mysql.ErrWrongFieldTerminators])
+	ErrWrongFieldTerminators = terror.ClassParser.New(mysql.ErrWrongFieldTerminators, mysql.MySQLErrName[mysql.ErrWrongFieldTerminators])
 	// ErrTooBigDisplayWidth returns for data display width exceed limit .
-	ErrTooBigDisplayWidth = terror.ClassParser.New(codeTooBigDisplayWidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
+	ErrTooBigDisplayWidth = terror.ClassParser.New(mysql.ErrTooBigDisplaywidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
 	// ErrTooBigPrecision returns for data precision exceed limit.
-	ErrTooBigPrecision = terror.ClassParser.New(codeErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	ErrTooBigPrecision = terror.ClassParser.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 	// ErrUnknownAlterLock returns for no alter lock type found error.
-	ErrUnknownAlterLock = terror.ClassParser.New(codeErrUnknownAlterLock, mysql.MySQLErrName[mysql.ErrUnknownAlterLock])
+	ErrUnknownAlterLock = terror.ClassParser.New(mysql.ErrUnknownAlterLock, mysql.MySQLErrName[mysql.ErrUnknownAlterLock])
 	// ErrUnknownAlterAlgorithm returns for no alter algorithm found error.
-	ErrUnknownAlterAlgorithm = terror.ClassParser.New(codeErrUnknownAlterAlgorithm, mysql.MySQLErrName[mysql.ErrUnknownAlterAlgorithm])
+	ErrUnknownAlterAlgorithm = terror.ClassParser.New(mysql.ErrUnknownAlterAlgorithm, mysql.MySQLErrName[mysql.ErrUnknownAlterAlgorithm])
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodePattern  = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
@@ -69,16 +56,16 @@ var (
 
 func init() {
 	parserMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeErrSyntax:                  mysql.ErrSyntax,
-		codeErrParse:                   mysql.ErrParse,
-		codeErrUnknownCharacterSet:     mysql.ErrUnknownCharacterSet,
-		codeErrInvalidYearColumnLength: mysql.ErrInvalidYearColumnLength,
-		codeWrongArgument:              mysql.ErrWrongArguments,
-		codeWrongFieldTerminators:      mysql.ErrWrongFieldTerminators,
-		codeTooBigDisplayWidth:         mysql.ErrTooBigDisplaywidth,
-		codeErrUnknownAlterLock:        mysql.ErrUnknownAlterLock,
-		codeErrUnknownAlterAlgorithm:   mysql.ErrUnknownAlterAlgorithm,
-		codeErrTooBigPrecision:         mysql.ErrTooBigPrecision,
+		mysql.ErrSyntax:                  mysql.ErrSyntax,
+		mysql.ErrParse:                   mysql.ErrParse,
+		mysql.ErrUnknownCharacterSet:     mysql.ErrUnknownCharacterSet,
+		mysql.ErrInvalidYearColumnLength: mysql.ErrInvalidYearColumnLength,
+		mysql.ErrWrongArguments:          mysql.ErrWrongArguments,
+		mysql.ErrWrongFieldTerminators:   mysql.ErrWrongFieldTerminators,
+		mysql.ErrTooBigDisplaywidth:      mysql.ErrTooBigDisplaywidth,
+		mysql.ErrUnknownAlterLock:        mysql.ErrUnknownAlterLock,
+		mysql.ErrUnknownAlterAlgorithm:   mysql.ErrUnknownAlterAlgorithm,
+		mysql.ErrTooBigPrecision:         mysql.ErrTooBigPrecision,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
 }
