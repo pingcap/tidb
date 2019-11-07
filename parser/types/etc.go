@@ -104,9 +104,5 @@ const (
 	wordSize      = 4 // A word is 4 bytes int32.
 )
 
-const (
-	codeInvalidDefault = terror.ErrCode(mysql.ErrInvalidDefault)
-)
-
 // ErrInvalidDefault is returned when meet a invalid default value.
-var ErrInvalidDefault = terror.ClassTypes.New(codeInvalidDefault, "Invalid default value for '%s'")
+var ErrInvalidDefault = terror.ClassTypes.New(mysql.ErrInvalidDefault, mysql.MySQLErrName[mysql.ErrInvalidDefault])
