@@ -599,7 +599,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	return e
 }
 
-// Note the innerExec and outerExec is reversed, this is different from prepare4Join
+// Note the innerExec and outerExec are reversed, this is different from prepare4Join
 func prepare4OuterJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
 	cols0 := testCase.columns()
 	cols1 := testCase.columns()
@@ -638,6 +638,7 @@ func prepare4OuterJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor
 	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
 	return e
 }
+
 func benchmarkOuterHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(casTest.columns()...),
@@ -689,6 +690,7 @@ func benchmarkOuterHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase)
 		}
 	}
 }
+
 func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(casTest.columns()...),
