@@ -359,7 +359,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 	for i := 0; i < numChks; i++ {
 		numOfRows := e.rowContainer.recordsInDisk.NumRowsOfChunk(i)
 		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.recordsInDisk.GetRow(chunk.RowPtr{uint32(i), uint32(j)})
+			row, err := e.rowContainer.recordsInDisk.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			if err != nil {
 				return
 			}
