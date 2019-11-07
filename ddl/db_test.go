@@ -2787,27 +2787,25 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	times := 0
 	hook := &ddl.TestDDLCallback{}
 	s.tk.MustExec("delete from t1")
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.State != model.JobStateRunning {
-			return
-		}
 		if times == 0 {
-			tk2.MustExec("insert into t1 values ();")
+			_, checkErr = tk2.Exec("insert into t1 values ();")
 		}
 		times++
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
+	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
-	// Check insert error when column has prevent null flag.
+	// Check insert error when column has PreventNullInsertFlag.
 	s.tk.MustExec("delete from t1")
-	hook.OnJobUpdatedExported = nil
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
@@ -2815,20 +2813,18 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		if job.State != model.JobStateRunning {
 			return
 		}
-		c2 := getModifyColumn()
-		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, err := tk2.Exec("insert into t1 values ();")
-			c.Assert(err.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
-		}
+		// now c2 has PreventNullInsertFlag, an error is expected.
+		_, checkErr = tk2.Exec("insert into t1 values ();")
 	}
-
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	s.tk.MustExec("alter table t1 change c2 c2 bigint not null;")
+	c.Assert(checkErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
 	_, err = s.tk.Exec("insert into t1 values ();")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
 }
 
