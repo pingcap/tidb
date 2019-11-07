@@ -18,9 +18,9 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // Codec is used to:

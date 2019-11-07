@@ -7,6 +7,19 @@
     <script type="text/javascript" src="jquery-2.1.1.min.js"></script>
     <script type="text/javascript" src="jquery.console.js"></script>
     <script src="wasm_exec.js"></script>
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-151748922-1"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+
+        gtag('config', 'UA-151748922-1', {
+            'linker': {
+            'domains': ['tour.pingcap.com/', 'play.tidb.io/', 'tour.tidb.io/', 'play.pingcap.com/']
+            }
+        });
+    </script>
     <style type="text/css" media="screen">
     div.term {
         font-size: 14px;

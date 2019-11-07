@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func (s *testChunkSuite) TestList(c *check.C) {

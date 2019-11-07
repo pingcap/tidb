@@ -16,9 +16,9 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // ExplainExec represents an explain executor.

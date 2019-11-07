@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"syscall/js"
@@ -12,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
+// Initialize a store and return a *Kit
 func setup() *Kit {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
@@ -34,19 +34,17 @@ func setup() *Kit {
 func main() {
 	k := setup()
 	term := NewTerm()
-	seid := k.CreateSession()
 
 	js.Global().Set("executeSQL", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		go func() {
 			start := time.Now()
-			id := seid
 			text := args[0].String()
 			ret := ""
 			for _, sql := range strings.Split(text, ";") {
 				if strings.Trim(sql, " ") == "" {
 					continue
 				} else if strings.Trim(sql, " \n\t\r") == "source" {
-					if err := k.ExecFile(id); err != nil {
+					if err := k.ExecFile(); err != nil {
 						ret += term.Error(err)
 					} else {
 						ret += term.WriteEmpty(time.Now().Sub(start))
@@ -54,11 +52,11 @@ func main() {
 					continue
 				}
 				fmt.Println(sql)
-				if rs, err := k.Exec(id, sql); err != nil {
+				if rs, err := k.Exec(sql); err != nil {
 					ret += term.Error(err)
 				} else if rs == nil {
 					ret += term.WriteEmpty(time.Now().Sub(start))
-				} else if rows, err := k.ResultSetToStringSlice(context.Background(), id, rs); err != nil {
+				} else if rows, err := k.ResultSetToStringSlice(rs); err != nil {
 					ret += term.Error(err)
 				} else {
 					msg := term.WriteRows(rs.Fields(), rows, time.Now().Sub(start))

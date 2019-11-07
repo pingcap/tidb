@@ -4,83 +4,45 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/pingcap/parser/ast"
 )
 
+// Terminal translate execution result to human readable string
 type Terminal interface {
-	Read() string
+	// WriteRows format the table head and rows of the table to string
 	WriteRows([]*ast.ResultField, [][]string, time.Duration) string
+
+	// WriteEmpty format the empty result to string
 	WriteEmpty(time.Duration) string
+
+	// Error format error to string
 	Error(error) string
 }
 
+// NewTerm returns a Terminal
 func NewTerm() Terminal {
 	return &Term{bufio.NewReader(os.Stdin), []string{}}
 }
 
+// A implemention of Terminal
 type Term struct {
 	reader   *bufio.Reader
 	commands []string
 }
 
-func (t *Term) Read() string {
-	if len(t.commands) > 0 {
-		cmd := t.commands[0]
-		t.commands = t.commands[1:]
-		return cmd
-	}
-	fmt.Print("TiDB [pingcap]> ")
-	for {
-		text, _ := t.reader.ReadString('\n')
-		text = strings.Trim(text, " \n\t")
-		cmds := strings.Split(text, ";")
-		if t.appendCommands(cmds) {
-			fmt.Print("...")
-			continue
-		} else {
-			break
-		}
-	}
-	if len(t.commands) > 0 {
-		cmd := t.commands[0]
-		t.commands = t.commands[1:]
-		return cmd
-	} else {
-		return ""
-	}
-}
-
-func (t *Term) appendCommands(cmds []string) (cont bool) {
-	if len(cmds) == 0 {
-		panic("append empty commands")
-	}
-	if cmds[len(cmds)-1] == "" {
-		cmds = cmds[0 : len(cmds)-1]
-		if len(cmds) == 0 {
-			return len(t.commands) != 0
-		}
-	} else {
-		cont = true
-	}
-	if len(t.commands) == 0 {
-		t.commands = cmds
-	} else {
-		l := len(t.commands)
-		t.commands[l-1] = t.commands[l-1] + " " + cmds[0]
-		t.commands = append(t.commands, cmds[1:]...)
-	}
-	return cont
-}
-
+// Column is the representation of a column of a table.
+// It consists of the column name, the values the column contains,
+// And Len is the max length of all values and the name, it's used
+// to format the output.
 type Column struct {
 	Name   string
 	Values []string
 	Len    int
 }
 
+// WriteRows format the table head and rows of the table to string
 func (t *Term) WriteRows(fields []*ast.ResultField, rows [][]string, d time.Duration) string {
 	columns := make([]*Column, len(fields))
 	for i := range columns {
@@ -116,10 +78,12 @@ func (t *Term) WriteRows(fields []*ast.ResultField, rows [][]string, d time.Dura
 	return ret
 }
 
+// WriteEmpty format the empty result to string
 func (t *Term) WriteEmpty(d time.Duration) string {
 	return fmt.Sprintf("Execute success (%.2f sec)\n", d.Seconds())
 }
 
+// divider add a line ('--------') to split two rows
 func (*Term) divider(cs []*Column) string {
 	ret := fmt.Sprint("+")
 	for _, c := range cs {
@@ -132,6 +96,7 @@ func (*Term) divider(cs []*Column) string {
 	return ret
 }
 
+// print the value in the idx of cs.
 func (*Term) print(cs []*Column, idx int) string {
 	ret := fmt.Sprint("| ")
 	for _, c := range cs {
@@ -147,6 +112,7 @@ func (*Term) print(cs []*Column, idx int) string {
 	return ret
 }
 
+// Error format error to string
 func (*Term) Error(err error) string {
 	return fmt.Sprintln(err)
 }

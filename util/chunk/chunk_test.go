@@ -24,12 +24,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func TestT(t *testing.T) {

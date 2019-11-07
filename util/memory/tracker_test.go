@@ -19,9 +19,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/util/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )

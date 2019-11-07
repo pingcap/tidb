@@ -4,6 +4,7 @@ import (
 	"github.com/cznic/mathutil"
 )
 
+// Reexport functions and variables from mathutil
 var MaxUint64 = mathutil.MaxUint64
 var MinUint64 = mathutil.MinUint64
 var MaxUint32 = mathutil.MaxUint32

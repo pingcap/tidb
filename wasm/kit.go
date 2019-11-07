@@ -2,9 +2,8 @@ package main
 
 import (
 	"context"
-	"sync"
-	"syscall/js"
 	"fmt"
+	"syscall/js"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -16,55 +15,36 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+// Kit is a utility to run sql.
 type Kit struct {
-	mu       sync.Mutex
-	store    kv.Storage
-	sessions map[int]session.Session
-	nextID   int
+	session session.Session
 }
 
+// NewKit returns a new *Kit.
 func NewKit(store kv.Storage) *Kit {
-	return &Kit{
-		store:    store,
-		sessions: make(map[int]session.Session),
-	}
-}
+	kit := &Kit{}
 
-func (k *Kit) CreateSession() int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	s, err := session.CreateSession(k.store)
-	if err != nil {
+	if se, err := session.CreateSession(store); err != nil {
 		panic(err)
+	} else {
+		kit.session = se
 	}
-	if !s.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}, nil, nil) {
+	if !kit.session.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "localhost",
+		AuthUsername: "root",
+		AuthHostname: "localhost",
+	}, nil, nil) {
 		panic("auth failed")
 	}
-	id := k.nextID
-	k.nextID++
-	k.sessions[id] = s
-	return id
+
+	return kit
 }
 
-func (k *Kit) CloseSession(id int) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	se, ok := k.sessions[id]
-	if !ok {
-		return
-	}
-	se.Close()
-	delete(k.sessions, id)
-}
-
-func (k *Kit) Exec(id int, sql string) (sqlexec.RecordSet, error) {
-	se, ok := k.sessions[id]
-	if !ok {
-		return nil, errors.New("session not exists")
-	}
-
+// Exec executes a sql statement.
+func (k *Kit) Exec(sql string) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
-	rss, err := se.Execute(ctx, sql)
+	rss, err := k.session.Execute(ctx, sql)
 	if err == nil && len(rss) > 0 {
 		return rss[0], nil
 	}
@@ -73,18 +53,18 @@ func (k *Kit) Exec(id int, sql string) (sqlexec.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	loadStats := se.Value(executor.LoadStatsVarKey)
+	loadStats := k.session.Value(executor.LoadStatsVarKey)
 	if loadStats != nil {
-		defer se.SetValue(executor.LoadStatsVarKey, nil)
+		defer k.session.SetValue(executor.LoadStatsVarKey, nil)
 		if err := k.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
-	loadDataInfo := se.Value(executor.LoadDataVarKey)
+	loadDataInfo := k.session.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
-		defer se.SetValue(executor.LoadDataVarKey, nil)
-		if err = handleLoadData(ctx, se, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+		defer k.session.SetValue(executor.LoadDataVarKey, nil)
+		if err = handleLoadData(ctx, k.session, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 			return nil, err
 		}
 	}
@@ -92,12 +72,13 @@ func (k *Kit) Exec(id int, sql string) (sqlexec.RecordSet, error) {
 	return nil, nil
 }
 
-func (k *Kit) ExecFile(id int) error {
+// ExecFile let user upload a file and execute sql statements from that file.
+func (k *Kit) ExecFile() error {
 	c := make(chan error)
 	js.Global().Get("upload").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		go func() {
 			fmt.Println("success")
-			_, e := k.Exec(id, args[0].String())
+			_, e := k.Exec(args[0].String())
 			c <- e
 		}()
 		return nil
@@ -117,14 +98,13 @@ func (k *Kit) ExecFile(id int) error {
 	return <-c
 }
 
-func (k *Kit) ResultSetToStringSlice(ctx context.Context, id int, rs sqlexec.RecordSet) ([][]string, error) {
-	se, ok := k.sessions[id]
-	if !ok {
-		return nil, errors.New("session not exists")
-	}
-	return session.ResultSetToStringSlice(context.Background(), se, rs)
+// ResultSetToStringSlice converts sqlexec.RecordSet to string slice slices.
+func (k *Kit) ResultSetToStringSlice(rs sqlexec.RecordSet) ([][]string, error) {
+	return session.ResultSetToStringSlice(context.Background(), k.session, rs)
 }
 
+// handleLoadData does the additional work after processing the 'load data' query.
+// It let user upload a file, then reads the file content, inserts data into database.
 func handleLoadData(ctx context.Context, se session.Session, loadDataInfo *executor.LoadDataInfo) error {
 	if loadDataInfo == nil {
 		return errors.New("load data info is empty")
@@ -158,6 +138,7 @@ func handleLoadData(ctx context.Context, se session.Session, loadDataInfo *execu
 	panic(err1)
 }
 
+// processData process input data from uploaded file and enqueue commit task
 func processData(ctx context.Context, loadDataInfo *executor.LoadDataInfo) error {
 	var err error
 	var prevData, curData []byte
@@ -222,7 +203,7 @@ func insertDataWithCommit(ctx context.Context, prevData,
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
-// It sends client a file path, then reads the file content from client, loads it into the storage.
+// It let user upload a file, then reads the file content, loads it into the storage.
 func (k *Kit) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
 	if loadStatsInfo == nil {
 		return errors.New("load stats: info is empty")
