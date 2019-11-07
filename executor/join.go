@@ -387,6 +387,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	if e.useOuterToBuild {
 		if e.rowContainer.alreadySpilled() {
 			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
+			e.joinWorkerWaitGroup.Add(1)
 			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInDisk(0) }, e.handleJoinWorkerPanic)
 		} else {
 			// Concurrently handling unmatched rows from the hash table at the tail
@@ -395,8 +396,8 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 				e.joinWorkerWaitGroup.Add(1)
 				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workID) }, e.handleJoinWorkerPanic)
 			}
-			e.joinWorkerWaitGroup.Wait()
 		}
+		e.joinWorkerWaitGroup.Wait()
 	}
 	close(e.joinResultCh)
 }
