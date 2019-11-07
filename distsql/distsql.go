@@ -49,6 +49,12 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
+
+	pInfo, ok := sctx.GetSessionManager().GetProcessInfo(1) // question - where to get id param?
+	if ok {
+		kvReq.MaxExecutionTime = pInfo.MaxExecutionTime
+	}
+
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")

@@ -384,13 +384,12 @@ type copIteratorTaskSender struct {
 }
 
 type copResponse struct {
-	pbResp                 *coprocessor.Response
-	detail                 *execdetails.ExecDetails
-	startKey               kv.Key
-	err                    error
-	respSize               int64
-	respTime               time.Duration
-	maxExecutionDurationMs uint64 // TODO: figure out how to pass this param to TiKV
+	pbResp   *coprocessor.Response
+	detail   *execdetails.ExecDetails
+	startKey kv.Key
+	err      error
+	respSize int64
+	respTime time.Duration
 }
 
 const (
@@ -656,7 +655,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		NotFillCache:           worker.req.NotFillCache,
 		HandleTime:             true,
 		ScanDetail:             true,
-		MaxExecutionDurationMs: 30, // TODO: how to set this?
+		MaxExecutionDurationMs: worker.req.MaxExecutionTime,
 	})
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)

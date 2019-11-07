@@ -278,6 +278,8 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// MaxExecutionTime is used to push down TiDB's max execution time to TiKV's max execution time.
+	MaxExecutionTime uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
