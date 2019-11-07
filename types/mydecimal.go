@@ -250,11 +250,6 @@ func (d *MyDecimal) GetDigitsFrac() int8 {
 	return d.digitsFrac
 }
 
-// SetPrecision sets the precision of the decimal type.
-func (d *MyDecimal) SetPrecision(precision int8) {
-	d.resultFrac = precision
-}
-
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
