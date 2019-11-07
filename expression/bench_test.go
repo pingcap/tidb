@@ -31,11 +31,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -1495,51 +1493,4 @@ func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
 		}
 	}
 	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
-}
-
-func BenchmarkVectorizedEncodeValue(b *testing.B) {
-	ctx := mock.NewContext()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for i := 0; i < len(tNames); i++ {
-		ft := eType2FieldType(eTypes[i])
-		if eTypes[i] == types.ETDecimal {
-			ft.Flen = 0
-		}
-		colExpr := &Column{Index: 0, RetType: ft}
-		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
-		fillColumnWithGener(eTypes[i], input, 0, nil)
-		colBuf := chunk.NewColumn(ft, 1024)
-		b.Run("vec-"+tNames[i], func(b *testing.B) {
-			bufs := make([][]byte, 1024)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				for i := 0; i < 1024; i++ {
-					bufs[i] = bufs[i][:0]
-				}
-				var err error
-				if bufs, err = VectorizedGetGroupKey(ctx, bufs, colExpr, colExpr.GetType(), input, colBuf); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-		b.Run("row-"+tNames[i], func(b *testing.B) {
-			it := chunk.NewIterator4Chunk(input)
-			var buf []byte
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					d, err := colExpr.Eval(row)
-					if err != nil {
-						b.Fatal(err)
-					}
-					buf, err = codec.EncodeValue(sc, buf[:0], d)
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-			}
-		})
-	}
 }

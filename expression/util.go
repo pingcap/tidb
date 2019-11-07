@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
@@ -764,20 +763,4 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		return dt.GetUint64(), false, true
 	}
 	return 0, false, false
-}
-
-// VectorizedGetGroupKey evaluates the group items vectorially.
-func VectorizedGetGroupKey(ctx sessionctx.Context, groupKey [][]byte, item Expression, tp *types.FieldType, input *chunk.Chunk, buf *chunk.Column) ([][]byte, error) {
-	if err := vecEval(ctx, item, input, buf); err != nil {
-		return nil, err
-	}
-	// This check is used to avoid error during the execution of `EncodeDecimal`.
-	if item.GetType().Tp == mysql.TypeNewDecimal {
-		numRows := input.NumRows()
-		d64s := buf.Decimals()
-		for i := 0; i < numRows; i++ {
-			d64s[i].SetPrecision(0)
-		}
-	}
-	return codec.EncodeColumnTo(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
 }

@@ -15,6 +15,8 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/codec"
 	"sync"
 
 	"github.com/cznic/mathutil"
@@ -413,7 +415,19 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 
-		if groupKey, err = expression.VectorizedGetGroupKey(ctx, groupKey, item, tp, input, buf); err != nil {
+		if err := expression.VecEval(ctx, item, input, buf); err != nil {
+			expression.PutColumn(buf)
+			return nil, err
+		}
+		// This check is used to avoid error during the execution of `EncodeDecimal`.
+		if item.GetType().Tp == mysql.TypeNewDecimal {
+			newTp := *tp
+			newTp.Flen = 0
+			tp = &newTp
+		}
+		groupKey, err = codec.EncodeColumnTo(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
+		if err != nil {
+			expression.PutColumn(buf)
 			return nil, err
 		}
 		expression.PutColumn(buf)
