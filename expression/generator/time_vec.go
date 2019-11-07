@@ -325,7 +325,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 				rhs    types.Duration
 			)
 		{{- end }}
-		{{- if (or $AIsString $BIsString) }} 
+		{{- if or (or $AIsString $BIsString) (and $AIsTime $BIsTime) }} 
 			stmtCtx := b.ctx.GetSessionVars().StmtCtx
 		{{- end }}
 	for i:=0; i<n ; i++{
