@@ -98,7 +98,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 10}, &rangeInt64Gener{0, 8}},
 		},
 	},
-	ast.Hex: {},
+	ast.Hex: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
+	},
 	ast.Unhex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
 	},
@@ -135,6 +137,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
 		},
+	},
+	ast.CharLength: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.BitLength: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
@@ -173,6 +178,15 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Right: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
+		// need to add BinaryFlag for the Binary func
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{
+				&randLenStrGener{10, 20},
+				&rangeInt64Gener{begin: -10, end: 20},
+			},
+		},
 	},
 	ast.Left: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
@@ -193,6 +207,10 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Reverse: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+		// need to add BinaryFlag for the Binary func
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+		},
 	},
 	ast.Replace: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{0, 10}, &randLenStrGener{0, 10}}},
