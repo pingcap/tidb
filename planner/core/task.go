@@ -19,12 +19,14 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -390,17 +392,38 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
 }
 
+func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
+	if inner.statsInfo().HistColl != nil {
+		size = inner.statsInfo().HistColl.GetAvgRowSize(inner.Schema().Columns, false)
+	} else {
+		// Estimate using just the type info.
+		cols := inner.Schema().Columns
+		for _, col := range cols {
+			padChar := p.ctx.GetSessionVars().StmtCtx.PadCharToFullLength
+			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+		}
+	}
+	return
+}
+
 // GetCost computes cost of hash join operator itself.
 func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	innerCnt, outerCnt := lCnt, rCnt
+	inner := p.children[0]
 	// Taking the right as the inner for right join or using the outer to build a hash table.
 	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
 		innerCnt, outerCnt = rCnt, lCnt
+		inner = p.children[1]
 	}
 	sessVars := p.ctx.GetSessionVars()
+	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	memQuota := float64(p.ctx.GetSessionVars().MemQuotaQuery)
+	rowSize := p.avgRowSize(inner)
+	spill := oomUseTmpStorage && rowSize*innerCnt > memQuota
 	// Cost of building hash table.
 	cpuCost := innerCnt * sessVars.CPUFactor
-	memoryCost := innerCnt * sessVars.MemoryFactor
+	memoryCost := innerCnt * sessVars.MemoryFactor * rowSize
+	diskCost := innerCnt * sessVars.DiskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
 		cartesian:     false,
@@ -431,20 +454,36 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	// Cost of quering hash table is cheap actually, so we just compute the cost of
 	// evaluating `OtherConditions` and joining row pairs.
 	probeCost := numPairs * sessVars.CPUFactor
+	probeDiskCost := numPairs * sessVars.DiskFactor * rowSize
 	// Cost of evaluating outer filter.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		// Input outer count for the above compution should be adjusted by selectionFactor.
 		probeCost *= selectionFactor
 		probeCost += outerCnt * sessVars.CPUFactor
+		probeDiskCost *= selectionFactor
+		probeDiskCost += outerCnt * sessVars.DiskFactor * rowSize
 	}
+	diskCost += probeDiskCost
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.ConcurrencyFactor
 	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
 	if p.UseOuterToBuild {
-		cpuCost += innerCnt * sessVars.CPUFactor / float64(p.Concurrency)
+		if spill {
+			// It runs in sequence when build data is on disk. See handleUnmatchedRowsFromHashTableInDisk
+			cpuCost += innerCnt * sessVars.CPUFactor
+		} else {
+			cpuCost += innerCnt * sessVars.CPUFactor / float64(p.Concurrency)
+		}
+		diskCost += innerCnt * sessVars.DiskFactor * rowSize
 	}
-	return cpuCost + memoryCost
+
+	if spill {
+		memoryCost = memQuota * sessVars.MemoryFactor
+	} else {
+		diskCost = 0
+	}
+	return cpuCost + memoryCost + diskCost
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
