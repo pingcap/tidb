@@ -406,7 +406,7 @@ type SessionVars struct {
 	DurationCompile time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt string
+	PrevStmt fmt.Stringer
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
