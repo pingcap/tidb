@@ -253,6 +253,8 @@ func init() {
 		mysql.ErrUnknownPartition:            mysql.ErrUnknownPartition,
 		mysql.ErrNoPartitionForGivenValue:    mysql.ErrNoPartitionForGivenValue,
 		mysql.ErrLockOrActiveTransaction:     mysql.ErrLockOrActiveTransaction,
+		mysql.ErrIndexOutBound:               mysql.ErrIndexOutBound,
+		mysql.ErrColumnStateNonPublic:        mysql.ErrColumnStateNonPublic,
 		mysql.ErrFieldGetDefaultFailed:       mysql.ErrFieldGetDefaultFailed,
 		mysql.ErrUnsupportedOp:               mysql.ErrUnsupportedOp,
 		mysql.ErrRowNotFound:                 mysql.ErrRowNotFound,
