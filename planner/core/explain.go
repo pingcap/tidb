@@ -114,7 +114,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		if p.StoreType == kv.TiFlash {
 			// TiFlash table always use full range scan for each region,
 			// the ranges in p.Ranges is used to prune cop task
-			fmt.Fprintf(buffer, ", range:[-inf,+inf]")
+			fmt.Fprintf(buffer, ", range:" + ranger.FullIntRange(false).String())
 		} else {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
