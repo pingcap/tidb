@@ -251,6 +251,11 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	} else {
 		c.data = make([]byte, sizeData)
 	}
+	if !isNull {
+		for i := 0; i < sizeData; i++ {
+			c.data[i] = 0
+		}
+	}
 
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
