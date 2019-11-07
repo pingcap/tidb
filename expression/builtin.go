@@ -15,10 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:generate go run generator/control_vec.go
-//go:generate go run generator/time_vec.go
 //go:generate go run generator/compare_vec.go
+//go:generate go run generator/control_vec.go
+//go:generate go run generator/other_vec.go
 //go:generate go run generator/string_vec.go
+//go:generate go run generator/time_vec.go
 
 package expression
 
