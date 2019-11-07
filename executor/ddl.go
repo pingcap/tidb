@@ -468,7 +468,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if len(ts) == 0 {
 		return errors.Errorf("The timestamp in flashback statement should be consistent with the drop/truncate DDL start time")
 	}
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, s.Timestamp.GetString())
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, ts)
 	if err != nil {
 		return err
 	}
