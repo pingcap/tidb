@@ -63,23 +63,32 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
+	isConstKey := b.args[1].ConstItem()
+
+	var key []byte
+	if isConstKey {
+		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
+	}
 
 	result.ReserveString(n)
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		if isWarning {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+			stmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
-		key := encrypt.DeriveKeyMySQL([]byte(keyBuf.GetString(i)), b.keySize)
+		if !isConstKey {
+			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+		}
 		plainText, err := encrypt.AESDecryptWithECB([]byte(strBuf.GetString(i)), key)
 		if err != nil {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(string(plainText))
+		result.AppendBytes(plainText)
 	}
 
 	return nil
