@@ -410,8 +410,8 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		}
 		key := encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
 
-		// we can't use GetBytes, because in AESEncryptWithECB padding is automatically
-		// added to str and this will damange the data layout in chunk.Column
+		// NOTE: we can't use GetBytes, because in AESEncryptWithECB padding is automatically
+		//       added to str and this will damange the data layout in chunk.Column
 		str := []byte(strBuf.GetString(i))
 		cipherText, err := encrypt.AESEncryptWithECB(str, key)
 		if err != nil {
