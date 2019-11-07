@@ -523,6 +523,33 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
+// locationGener is used to generate location
+type locationGener struct {}
+
+func (g *locationGener) gen() interface{} {
+	var locations = []string{
+			usaLocation,
+			jisLocation,
+			isoLocation,
+			eurLocation,
+			internalLocation,
+		}
+	return locations[rand.Intn(5)]
+}
+
+// formatGener is used to generate format
+type formatGener struct {}
+
+func (g *formatGener) gen() interface{} {
+	var formats = []string{
+			dateFormat,
+			datetimeFormat,
+			timestampFormat,
+			timeFormat,
+		}
+	return formats[rand.Intn(4)]
+}
+
 type vecExprBenchCase struct {
 	// retEvalType is the EvalType of the expression result.
 	// This field is required.
