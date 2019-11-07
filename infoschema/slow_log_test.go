@@ -173,7 +173,7 @@ select * from t;`)
 	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, IsNil)
 
-	// Test parser error
+	// Test parser error.
 	slowLog = bytes.NewBufferString(
 		`# Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227#
