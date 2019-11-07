@@ -160,11 +160,11 @@ func (b *builtinNameConstStringSig) vecEvalString(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinDecimalAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDecimalAnyValueSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalDecimal(b.ctx, input, result)
 }
 
 func (b *builtinUUIDSig) vectorized() bool {
