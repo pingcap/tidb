@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -140,8 +142,10 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 			fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 		}
 	} else if len(p.Ranges) > 0 {
-		if normalized {
-			fmt.Fprint(buffer, ", range:[?,?]")
+		if p.StoreType == kv.TiFlash {
+			// TiFlash table always use full range scan for each region,
+			// the ranges in p.Ranges is used to prune cop task
+			fmt.Fprintf(buffer, ", range:"+ranger.FullIntRange(false)[0].String())
 		} else {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {

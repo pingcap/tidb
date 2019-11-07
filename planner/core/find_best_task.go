@@ -849,9 +849,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		StoreType:       path.storeType,
 	}.Init(ds.ctx)
 	if ts.StoreType == kv.TiFlash {
+		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
+		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-		ts.Ranges = ranger.FullIntRange(false)
 	}
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
