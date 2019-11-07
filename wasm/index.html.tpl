@@ -4,19 +4,17 @@
     <meta charset="utf-8" />
     <title>TiDB Playground</title>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
-    <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
+    <script type="text/javascript" src="jquery-2.1.1.min.js"></script>
     <script type="text/javascript" src="jquery.console.js"></script>
     <script src="wasm_exec.js"></script>
     <style type="text/css" media="screen">
     div.term {
         font-size: 14px;
-        margin-top: 1em
     }
 
     div.term div.jquery-console-inner {
         height: 800px;
         background: black;
-        padding: 0.5em;
         overflow: auto
     }
 
@@ -49,20 +47,11 @@
         font-weight: bold;
     }
 
-    /* .inner {
-        display: table;
-        margin: 0 auto;
-        font-family: monospace;
-        font-size: 20px;
-    }
-
-    .outer {
-        width: 100%
-    } */
     body {
         min-height: 100vh;
         min-width: 100vw;
         background-color: #000000;
+        overflow-x: hidden;
     }
 
     .loading-wrap {

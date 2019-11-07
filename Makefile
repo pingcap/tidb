@@ -229,9 +229,9 @@ wasm:
 	mkdir -p wasm-dist
 	# We produce main.css instead of main.wasm because many CDNs don't compress .wasm file automatically.
 	GOOS=js GOARCH=wasm $(GOBUILD) -ldflags '$(LDFLAGS)' -o wasm-dist/main.css wasm/*.go
-	cp "$(GOROOT)/misc/wasm/wasm_exec.js" wasm-dist/wasm_exec.js
-	cp wasm/favicon.ico wasm-dist/favicon.ico
-	cp wasm/jquery.console.js wasm-dist/jquery.console.js
+	cp "$(GOROOT)/misc/wasm/wasm_exec.js" wasm-dist/
+	cp wasm/favicon.ico wasm-dist/
+	cp wasm/*.js wasm-dist/
 	sed 's/82837504/$(shell wc -c < wasm-dist/main.css)/g' wasm/index.html.tpl > wasm-dist/index.html
 
 checklist:
