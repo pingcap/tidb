@@ -1008,11 +1008,9 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.UseOuterToBuild {
-		// update the InnerChildIds
-		v.InnerChildIdx = 1 - v.InnerChildIdx
-		// update the buildSideEstCount due to the change of InnerChildIds
-		e.buildSideEstCount = v.Children()[v.InnerChildIdx].StatsCount()
-		if v.InnerChildIdx == 0 {
+		// update the buildSideEstCount due to changing the inner
+		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
+		if v.InnerChildIdx == 1 {
 			if len(v.RightConditions) > 0 {
 				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
 				return nil
@@ -1035,11 +1033,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
-		}
-		e.joiners = make([]joiner, e.concurrency)
-		for i := uint(0); i < e.concurrency; i++ {
-			e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 1, defaultValues,
-				v.OtherConditions, lhsTypes, rhsTypes)
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
@@ -1066,11 +1059,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
-		e.joiners = make([]joiner, e.concurrency)
-		for i := uint(0); i < e.concurrency; i++ {
-			e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
-				v.OtherConditions, lhsTypes, rhsTypes)
-		}
+	}
+	e.joiners = make([]joiner, e.concurrency)
+	for i := uint(0); i < e.concurrency; i++ {
+		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
+			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	executorCountHashJoinExec.Inc()
 	return e

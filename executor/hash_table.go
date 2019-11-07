@@ -194,47 +194,12 @@ func (c *hashRowContainer) alreadySpilledSafe() bool { return atomic.LoadUint32(
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
-	var chkIdx uint32
-	if c.alreadySpilled() {
-		// append chk to disk.
-		chkIdx = uint32(c.recordsInDisk.NumChunks())
-		err := c.recordsInDisk.Add(chk)
-		if err != nil {
-			return err
-		}
-	} else {
-		chkIdx = uint32(c.records.NumChunks())
-		c.records.Add(chk)
-		if atomic.LoadUint32(&c.exceeded) != 0 {
-			err := c.spillToDisk()
-			if err != nil {
-				return err
-			}
-			c.records = nil // GC its internal chunks.
-			c.memTracker.Consume(-c.memTracker.BytesConsumed())
-			atomic.StoreUint32(&c.spilled, 1)
-		}
-	}
-	numRows := chk.NumRows()
-	c.hCtx.initHash(numRows)
-
-	hCtx := c.hCtx
-	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for i := 0; i < numRows; i++ {
-		if c.hCtx.hasNull[i] {
-			continue
-		}
-		key := c.hCtx.hashVals[i].Sum64()
-		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
-		c.hashTable.Put(key, rowPtr)
-	}
-	return nil
+	return c.PutChunkSelected(chk, nil)
 }
+
+// PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
 	var chkIdx uint32
 	if c.alreadySpilled() {
@@ -268,7 +233,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) e
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if !selected[i] || c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
 			continue
 		}
 		key := c.hCtx.hashVals[i].Sum64()
