@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -839,6 +840,10 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
+			if funcName == ast.AesDecrypt {
+				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+				c.Assert(err, IsNil)
+			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -1029,6 +1034,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
+			if funcName == ast.AesDecrypt {
+				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+				if err!=nil{
+					panic(err)
+				}
+			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
