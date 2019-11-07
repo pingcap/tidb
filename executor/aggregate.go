@@ -364,9 +364,11 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 
 	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
 	numRows := chk.NumRows()
+	rows := make([]chunk.Row, 1)
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
-			if err = af.UpdatePartialResult(ctx, []chunk.Row{chk.GetRow(i)}, partialResults[i][j]); err != nil {
+			rows[0] = chk.GetRow(i)
+			if err = af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
 				return err
 			}
 		}
@@ -436,23 +438,17 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 }
 
 func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
-	numRows := len(groupKey)
-	partialResults := make([][]aggfuncs.PartialResult, numRows)
-	for i := 0; i < numRows; i++ {
-		partialResults[i] = make([]aggfuncs.PartialResult, 0, len(w.aggFuncs))
-	}
-	for i := 0; i < numRows; i++ {
+	n := len(groupKey)
+	partialResults := make([][]aggfuncs.PartialResult, n)
+	for i := 0; i < n; i++ {
 		var ok bool
-		groupStringKey := string(groupKey[i])
-		partialResults[i], ok = mapper[groupStringKey]
-		if ok {
+		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-
 		for _, af := range w.aggFuncs {
 			partialResults[i] = append(partialResults[i], af.AllocPartialResult())
 		}
-		mapper[groupStringKey] = partialResults[i]
+		mapper[string(groupKey[i])] = partialResults[i]
 	}
 	return partialResults
 }
