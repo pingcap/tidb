@@ -361,6 +361,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 		for j := 0; j < numOfRows; j++ {
 			row, err := e.rowContainer.recordsInDisk.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			if err != nil {
+				joinResult.err = err
 				return
 			}
 			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows

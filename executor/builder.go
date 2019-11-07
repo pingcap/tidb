@@ -1007,24 +1007,27 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
+	if v.InnerChildIdx == 1 {
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
 	if v.UseOuterToBuild {
-		// update the buildSideEstCount due to changing the inner
+		// update the buildSideEstCount due to changing the build side
 		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
 		if v.InnerChildIdx == 1 {
-			if len(v.RightConditions) > 0 {
-				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
-				return nil
-			}
 			e.buildSideExec = leftExec
 			e.probeSideExec = rightExec
 			e.outerFilter = v.LeftConditions
 			e.buildKeys = v.LeftJoinKeys
 			e.probeKeys = v.RightJoinKeys
 		} else {
-			if len(v.LeftConditions) > 0 {
-				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
-				return nil
-			}
 			e.buildSideExec = rightExec
 			e.probeSideExec = leftExec
 			e.outerFilter = v.RightConditions
@@ -1036,20 +1039,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
-			if len(v.LeftConditions) > 0 {
-				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
-				return nil
-			}
 			e.buildSideExec = leftExec
 			e.probeSideExec = rightExec
 			e.outerFilter = v.RightConditions
 			e.buildKeys = v.LeftJoinKeys
 			e.probeKeys = v.RightJoinKeys
 		} else {
-			if len(v.RightConditions) > 0 {
-				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
-				return nil
-			}
 			e.buildSideExec = rightExec
 			e.probeSideExec = leftExec
 			e.outerFilter = v.LeftConditions
