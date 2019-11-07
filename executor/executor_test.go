@@ -4702,7 +4702,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test flash table with wrong time.
 	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", time.Now().String()))
-	c.Assert(err.Error(), Equals, "Can't found drop table: t_flashback in ddl history jobs")
+	c.Assert(err.Error(), Equals, "Can't find dropped table: t_flashback in ddl history jobs")
 
 	// Test flashback table failed by there is already a new table with the same name.
 	ts := getDDLJobStartTime(tk, "test_flashback", "t_flashback")
