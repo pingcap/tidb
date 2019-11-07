@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -75,11 +76,29 @@ func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinBitCountSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		if err != nil && types.ErrOverflow.Equal(err) {
+			return err
+		}
+		return err
+	}
+	f64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		var count int64
+		if result.IsNull(i) {
+			continue
+		}
+		for ; f64s[i] != 0; f64s[i] = (f64s[i] - 1) & f64s[i] {
+			count++
+		}
+		f64s[i] = count
+	}
+	return nil
 }
 
 func (b *builtinGetParamStringSig) vectorized() bool {
