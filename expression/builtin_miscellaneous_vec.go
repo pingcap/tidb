@@ -255,11 +255,11 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinNameConstIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinNameConstTimeSig) vectorized() bool {
