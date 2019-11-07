@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // ExplainInfo implements Plan interface.
@@ -114,7 +115,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		if p.StoreType == kv.TiFlash {
 			// TiFlash table always use full range scan for each region,
 			// the ranges in p.Ranges is used to prune cop task
-			fmt.Fprintf(buffer, ", range:" + ranger.FullIntRange(false).String())
+			fmt.Fprintf(buffer, ", range:" + ranger.FullIntRange(false)[0].String())
 		} else {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
