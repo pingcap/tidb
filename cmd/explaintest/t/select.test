@@ -210,3 +210,5 @@ CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
     PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
+
+explain select 1 from (select sleep(1)) t;
