@@ -1257,6 +1257,9 @@ func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 			result.AppendNull()
 			continue
 		}
+		if i64s2[i] < 0 || i64s2[i] > 64 {
+			i64s2[i] = 64
+		}
 		result.AppendString(exportSet(i64s[i], on.GetString(i), off.GetString(i),
 			separator.GetString(i), i64s2[i]))
 	}
