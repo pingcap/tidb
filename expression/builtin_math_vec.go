@@ -620,7 +620,11 @@ func (b *builtinAbsIntSig) vectorized() bool {
 }
 
 func (b *builtinRoundIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalInt(b.ctx, input, result)
+	i64s := result.Int64s()
+	for i := 0; i < len(i64s); i++ {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+	return nil
 }
 
 func (b *builtinRoundIntSig) vectorized() bool {
