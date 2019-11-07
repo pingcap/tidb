@@ -31,7 +31,20 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.Sleep:     {},
 	ast.UUID:      {},
 	ast.Inet6Ntoa: {},
-	ast.InetAton:  {},
+	ast.InetAton: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4StrGener{}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
+			&selectStringGener{
+				candidates: []string{
+					"11.11.11.11.",    // last char is .
+					"266.266.266.266", // exceed 255
+					"1",               // dotCount == 0
+					".122",            //dotCount == 1
+					".123.123.123",    //dotCount == 2
+				},
+			}}},
+	},
 	ast.IsIPv4Mapped: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4MappedByteGener{}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{}}},

@@ -411,11 +411,69 @@ func (b *builtinTimeAnyValueSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinInetAtonSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	var (
+		byteResult, res uint64
+		dotCount        int
+	)
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		ipAddr := buf.GetString(i)
+		if len(ipAddr) == 0 || ipAddr[len(ipAddr)-1] == '.' {
+			// ip address should not end with '.'.
+			result.SetNull(i, true)
+			continue
+		}
+		//reset
+		byteResult = 0
+		res = 0
+		dotCount = 0
+		for _, c := range ipAddr {
+			if c >= '0' && c <= '9' {
+				digit := uint64(c - '0') // turn char into int
+				byteResult = byteResult*10 + digit
+				if byteResult > 255 {
+					result.SetNull(i, true)
+					break
+				}
+			} else if c == '.' {
+				dotCount++
+				if dotCount > 3 {
+					result.SetNull(i, true)
+					break
+				}
+				res = (res << 8) + byteResult
+				byteResult = 0
+			} else {
+				result.SetNull(i, true)
+				break // illegal char (not number or .)
+			}
+		}
+		if !result.IsNull(i) {
+			if dotCount == 1 {
+				res <<= 8
+			}
+			if dotCount == 2 {
+				res <<= 16
+			}
+			i64s[i] = int64((res << 8) + byteResult)
+		}
+	}
+	return nil
 }
 
 func (b *builtinInet6NtoaSig) vectorized() bool {
