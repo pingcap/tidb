@@ -1376,9 +1376,14 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 	}
 
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
 		t, err := ds[i].Time.GoTime(getTimeZone(b.ctx))
 		if err != nil {
 			i64s[i] = 0
