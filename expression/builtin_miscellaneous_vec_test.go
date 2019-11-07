@@ -65,8 +65,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETJSON, childrenTypes: []types.EvalType{types.ETString, types.ETJSON}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString, types.ETDecimal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString, types.ETReal}},
-		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}}
-		,
+		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}},
 	},
 }
 
