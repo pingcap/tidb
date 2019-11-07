@@ -717,7 +717,7 @@ type clientHelper struct {
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
-func (ch *clientHelper) ResolveLocks(bo *Backoffer, region RegionVerID, callerStartTS uint64, locks []*Lock) (int64, error) {
+func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
 	msBeforeTxnExpired, minCommitTSPushed, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
 	if err != nil {
 		return msBeforeTxnExpired, err
@@ -856,7 +856,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		msBeforeExpired, err1 := worker.ResolveLocks(bo, task.region, worker.req.StartTs, []*Lock{NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
