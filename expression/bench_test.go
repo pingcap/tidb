@@ -1036,7 +1036,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 		for _, testCase := range testCases {
 			if funcName == ast.AesDecrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				if err!=nil{
+				if err != nil {
 					panic(err)
 				}
 			}
