@@ -463,6 +463,10 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 				break // illegal char (not number or .)
 			}
 		}
+		// 127 		-> 0.0.0.127
+		// 127.255 	-> 127.0.0.255
+		// 127.256	-> NULL
+		// 127.2.1	-> 127.2.0.1
 		if !result.IsNull(i) {
 			if dotCount == 1 {
 				res <<= 16
