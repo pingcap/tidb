@@ -107,9 +107,9 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
 		}
 	case types.KindMysqlDuration:
-		ctx.WritePlain(n.GetMysqlDuration().String())
+		ctx.WritePlainf("'%s'", n.GetMysqlDuration())
 	case types.KindMysqlTime:
-		ctx.WritePlain(n.GetMysqlTime().String())
+		ctx.WritePlainf("'%s'", n.GetMysqlTime())
 	case types.KindMysqlEnum,
 		types.KindMysqlBit, types.KindMysqlSet,
 		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
