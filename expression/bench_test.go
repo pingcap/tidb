@@ -524,29 +524,29 @@ func (g *randDurInt) gen() interface{} {
 }
 
 // locationGener is used to generate location
-type locationGener struct {}
+type locationGener struct{}
 
 func (g *locationGener) gen() interface{} {
 	var locations = []string{
-			usaLocation,
-			jisLocation,
-			isoLocation,
-			eurLocation,
-			internalLocation,
-		}
+		usaLocation,
+		jisLocation,
+		isoLocation,
+		eurLocation,
+		internalLocation,
+	}
 	return locations[rand.Intn(5)]
 }
 
 // formatGener is used to generate format
-type formatGener struct {}
+type formatGener struct{}
 
 func (g *formatGener) gen() interface{} {
 	var formats = []string{
-			dateFormat,
-			datetimeFormat,
-			timestampFormat,
-			timeFormat,
-		}
+		dateFormat,
+		datetimeFormat,
+		timestampFormat,
+		timeFormat,
+	}
 	return formats[rand.Intn(4)]
 }
 
