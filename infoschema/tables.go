@@ -94,6 +94,7 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
 	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
+	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
 type columnInfo struct {
@@ -1041,6 +1042,15 @@ var tableTiDBClusterInfoCols = []columnInfo{
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTableTiFlashReplicaCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
@@ -2114,6 +2124,28 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return finalRows, nil
 }
 
+// dataForTableTiFlashReplica constructs data for table tiflash replica info.
+func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if tbl.TiFlashReplica == nil {
+				continue
+			}
+			record := types.MakeDatums(
+				schema.Name.O,                   // TABLE_SCHEMA
+				tbl.Name.O,                      // TABLE_NAME
+				tbl.ID,                          // TABLE_ID
+				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
+				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
+				tbl.TiFlashReplica.Available,                         // AVAILABLE
+			)
+			rows = append(rows, record)
+		}
+	}
+	return rows
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -2157,6 +2189,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
 	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
+	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2266,6 +2299,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
+	case tableTiFlashReplica:
+		fullRows = dataForTableTiFlashReplica(dbs)
 	}
 	if err != nil {
 		return nil, err
