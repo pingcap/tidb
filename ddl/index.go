@@ -463,7 +463,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
-			if err = updateNullColumnFlags(tblInfo, indexInfo, mysql.NotNullFlag); err != nil {
+			if err = updateColsNull2NotNull(tblInfo, indexInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}

@@ -229,7 +229,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
-// TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a null primary key is encountered.
+// TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
 func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
@@ -327,19 +327,33 @@ func (s *testDBSuite2) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
+
+	// Check the column's flag when the "add primary key" failed.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	ctx := tk.Se.(sessionctx.Context)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	t := testGetTableByName(c, ctx, "test_db", "t1")
+	col1Flag := t.Cols()[1].Flag
+	c.Assert(!mysql.HasNotNullFlag(col1Flag) && !mysql.HasPreventNullInsertFlag(col1Flag) && mysql.HasUnsignedFlag(col1Flag), IsTrue)
+	tk.MustExec("drop table t1")
 }
 
 func (s *testDBSuite3) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table t1")
 }
 
 func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL, sqlModeSQL string) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+	tk.MustExec("create table t1 (c1 int, c2 int unsigned, c3 int, unique key(c1))")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
 	count := defaultBatchSize * 2
 	start := 0
@@ -407,8 +421,6 @@ LOOP:
 
 	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
-
-	tk.MustExec("drop table t1")
 	d.(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -1380,7 +1392,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 
 func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk = testkit.NewTestKitWithInit(c, s.store)
-	s.tk.MustExec("create table test_add_pk(a int, b int, c varchar(255), d int as (a+b), e int as (a+1) stored, index idx(b))")
+	s.tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', d int as (a+b), e int as (a+1) stored, index idx(b))")
 	defer s.tk.MustExec("drop table test_add_pk")
 
 	// for generated columns
@@ -1419,15 +1431,26 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 	// for valid comment
-	s.tk.MustExec("alter table test_add_pk add primary key(a) comment " + validComment)
+	s.tk.MustExec("alter table test_add_pk add primary key(a, b, c) comment " + validComment)
+	ctx := s.tk.Se.(sessionctx.Context)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	t := testGetTableByName(c, ctx, "test", "test_add_pk")
+	col1Flag := t.Cols()[0].Flag
+	col2Flag := t.Cols()[1].Flag
+	col3Flag := t.Cols()[2].Flag
+	c.Assert(mysql.HasNotNullFlag(col1Flag) && !mysql.HasPreventNullInsertFlag(col1Flag), IsTrue)
+	c.Assert(mysql.HasNotNullFlag(col2Flag) && !mysql.HasPreventNullInsertFlag(col2Flag) && mysql.HasUnsignedFlag(col2Flag), IsTrue)
+	c.Assert(mysql.HasNotNullFlag(col3Flag) && !mysql.HasPreventNullInsertFlag(col3Flag) && !mysql.HasNoDefaultValueFlag(col3Flag), IsTrue)
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 
 	// for null values in primary key
+	s.tk.MustExec("drop table test_add_pk")
+	s.tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', index idx(b))")
 	s.tk.MustExec("insert into test_add_pk set a = 0, b = 0, c = 0")
 	s.tk.MustExec("insert into test_add_pk set a = 1")
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key (b)", tmysql.ErrInvalidUseOfNull)
 	s.tk.MustExec("insert into test_add_pk set a = 2, b = 2")
-	s.tk.MustGetErrCode("alter table test_add_pk add primary key (a, c)", tmysql.ErrInvalidUseOfNull)
+	s.tk.MustGetErrCode("alter table test_add_pk add primary key (a, b)", tmysql.ErrInvalidUseOfNull)
 	s.tk.MustExec("insert into test_add_pk set a = 3, c = 3")
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key (c, b, a)", tmysql.ErrInvalidUseOfNull)
 }

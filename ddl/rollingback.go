@@ -24,15 +24,16 @@ import (
 	"go.uber.org/zap"
 )
 
-func updateNullColumnFlags(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, flag uint) error {
+func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	nullCols, err := getNullColInfos(tblInfo, indexInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, col := range nullCols {
-		col.Flag = flag
-	}
 
+	for _, col := range nullCols {
+		col.Flag |= mysql.NotNullFlag
+		col.Flag = col.Flag &^ mysql.PreventNullInsertFlag
+	}
 	return nil
 }
 
