@@ -244,8 +244,7 @@ const (
 )
 
 var (
-	zeroDataSize = 4 * 1024
-	zeroData     = make([]byte, zeroDataSize)
+	emptyBuf = make([]byte, 4*1024)
 )
 
 // resize resizes the column so that it contains n elements, only valid for fixed-length types.
@@ -257,12 +256,8 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		c.data = make([]byte, sizeData)
 	}
 	if !isNull {
-		if sizeData <= zeroDataSize {
-			copy(c.data, zeroData)
-		} else {
-			for i := 0; i < sizeData; i++ {
-				c.data[i] = 0
-			}
+		for j := 0; j < sizeData; j += len(emptyBuf) {
+			copy(c.data[j:], emptyBuf)
 		}
 	}
 
