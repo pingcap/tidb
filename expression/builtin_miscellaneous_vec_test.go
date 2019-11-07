@@ -38,10 +38,12 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 			&selectStringGener{
 				candidates: []string{
 					"11.11.11.11.",    // last char is .
-					"266.266.266.266", // exceed 255
-					"1",               // dotCount == 0
-					".122",            //dotCount == 1
-					".123.123.123",    //dotCount == 2
+					"266.266.266.266", // int in string exceed 255
+					"127",
+					".122",
+					".123.123",
+					"127.255",
+					"127.2.1",
 				},
 			}}},
 	},

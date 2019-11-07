@@ -444,7 +444,7 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		dotCount = 0
 		for _, c := range ipAddr {
 			if c >= '0' && c <= '9' {
-				digit := uint64(c - '0') // turn char into int
+				digit := uint64(c - '0')
 				byteResult = byteResult*10 + digit
 				if byteResult > 255 {
 					result.SetNull(i, true)
@@ -465,10 +465,10 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 		if !result.IsNull(i) {
 			if dotCount == 1 {
-				res <<= 8
+				res <<= 16
 			}
 			if dotCount == 2 {
-				res <<= 16
+				res <<= 8
 			}
 			i64s[i] = int64((res << 8) + byteResult)
 		}
