@@ -390,6 +390,10 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			return TxnStatus{}, err
 		}
 
+		if l.LockType == kvrpcpb.Op_PessimisticLock {
+			return TxnStatus{l.TTL, 0}, nil
+		}
+
 		// Handle txnNotFound error.
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
 		// This is likely to happen in the concurrently prewrite when secondary regions
@@ -397,6 +401,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		if err := bo.Backoff(boTxnNotFound, err); err != nil {
 			logutil.BgLogger().Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
+
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
 			rollbackIfNotExist = true
 		}
