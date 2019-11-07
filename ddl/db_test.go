@@ -854,12 +854,13 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	s.tk.MustExec("admin check table test")
 }
 func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
-	s.testAddIndex(c, false,
+	testAddIndex(c, s.store, s.lease, false,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
 
 func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
+	testAddIndex(c, s.store, s.lease, true,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range (c3) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
@@ -869,12 +870,14 @@ func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
 }
 
 func (s *testDBSuite3) TestAddPrimaryKey3(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
+	testAddIndex(c, s.store, s.lease, true,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by hash (c3) partitions 4;`, "primary")
 }
 
 func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
+	testAddIndex(c, s.store, s.lease, true,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range columns (c3) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
@@ -884,12 +887,13 @@ func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
 }
 
 func (s *testDBSuite1) TestAddIndex1(c *C) {
-	s.testAddIndex(c, false,
+	testAddIndex(c, s.store, s.lease, false,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
 func (s *testDBSuite2) TestAddIndex2(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+	testAddIndex(c, s.store, s.lease, true,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c1) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
@@ -899,12 +903,14 @@ func (s *testDBSuite2) TestAddIndex2(c *C) {
 }
 
 func (s *testDBSuite3) TestAddIndex3(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+	testAddIndex(c, s.store, s.lease, true,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`, "")
 }
 
 func (s *testDBSuite4) TestAddIndex4(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+	testAddIndex(c, s.store, s.lease, true,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
@@ -913,14 +919,14 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL, idxTp string) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
+func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition bool, createTableSQL, idxTp string) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
 	if testPartition {
-		s.tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	}
-	s.tk.MustExec("drop table if exists test_add_index")
-	s.tk.MustExec(createTableSQL)
+	tk.MustExec("drop table if exists test_add_index")
+	tk.MustExec(createTableSQL)
 
 	done := make(chan error, 1)
 	start := -10
@@ -928,7 +934,7 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL, idx
 	// first add some rows
 	for i := start; i < num; i++ {
 		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
-		s.mustExec(c, sql)
+		tk.MustExec(sql)
 	}
 
 	// Add some discrete rows.
@@ -942,22 +948,22 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL, idx
 		for j := 0; j < rand.Intn(maxBatch); j++ {
 			n += j
 			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
-			s.mustExec(c, sql)
+			tk.MustExec(sql)
 			otherKeys = append(otherKeys, n)
 		}
 	}
 	// Encounter the value of math.MaxInt64 in middle of
 	v := math.MaxInt64 - defaultBatchSize/2
 	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
-	s.mustExec(c, sql)
+	tk.MustExec(sql)
 	otherKeys = append(otherKeys, v)
 
 	addIdxSQL := fmt.Sprintf("alter table test_add_index add %s key c3_index(c3)", idxTp)
-	testddlutil.SessionExecInGoroutine(c, s.store, addIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
 
 	deletedKeys := make(map[int]struct{})
 
-	ticker := time.NewTicker(s.lease / 2)
+	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -980,9 +986,9 @@ LOOP:
 				n := rand.Intn(num)
 				deletedKeys[n] = struct{}{}
 				sql := fmt.Sprintf("delete from test_add_index where c1 = %d", n)
-				s.mustExec(c, sql)
+				tk.MustExec(sql)
 				sql = fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
-				s.mustExec(c, sql)
+				tk.MustExec(sql)
 			}
 			num += step
 		}
@@ -1003,18 +1009,18 @@ LOOP:
 	for _, key := range keys {
 		expectedRows = append(expectedRows, []interface{}{key})
 	}
-	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start))
+	rows := tk.MustQuery(fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start)).Rows()
 	matchRows(c, rows, expectedRows)
 
 	if testPartition {
-		s.tk.MustExec("admin check table test_add_index")
+		tk.MustExec("admin check table test_add_index")
 		return
 	}
 
 	// test index range
 	for i := 0; i < 100; i++ {
 		index := rand.Intn(len(keys) - 3)
-		rows := s.mustQuery(c, "select c1 from test_add_index where c3 >= ? order by c1 limit 3", keys[index])
+		rows := tk.MustQuery("select c1 from test_add_index where c3 >= ? order by c1 limit 3", keys[index]).Rows()
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
@@ -1025,9 +1031,9 @@ LOOP:
 	// c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
 
 	// get all row handles
-	ctx := s.s.(sessionctx.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
-	t := s.testGetTable(c, "test_add_index")
+	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := make(map[int64]struct{})
 	startKey := t.RecordKey(math.MinInt64)
 	err := t.IterRecords(ctx, startKey, t.Cols(),
@@ -1057,7 +1063,6 @@ LOOP:
 	txn.Rollback()
 
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
-	defer txn.Rollback()
 
 	it, err := nidx.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -1075,7 +1080,7 @@ LOOP:
 		delete(handles, h)
 	}
 	c.Assert(handles, HasLen, 0)
-	s.tk.MustExec("drop table test_add_index")
+	tk.MustExec("drop table test_add_index")
 }
 
 // TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
@@ -1420,11 +1425,11 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	// for null values in primary key
 	s.tk.MustExec("insert into test_add_pk set a = 0, b = 0, c = 0")
 	s.tk.MustExec("insert into test_add_pk set a = 1")
-	s.tk.ExecToErr("alter table test_add_pk add primary key (b)", tmysql.ErrInvalidUseOfNull)
+	s.tk.MustGetErrCode("alter table test_add_pk add primary key (b)", tmysql.ErrInvalidUseOfNull)
 	s.tk.MustExec("insert into test_add_pk set a = 2, b = 2")
-	s.tk.ExecToErr("alter table test_add_pk add primary key (a, c)", tmysql.ErrInvalidUseOfNull)
+	s.tk.MustGetErrCode("alter table test_add_pk add primary key (a, c)", tmysql.ErrInvalidUseOfNull)
 	s.tk.MustExec("insert into test_add_pk set a = 3, c = 3")
-	s.tk.ExecToErr("alter table test_add_pk add primary key (c, b, a)", tmysql.ErrInvalidUseOfNull)
+	s.tk.MustGetErrCode("alter table test_add_pk add primary key (c, b, a)", tmysql.ErrInvalidUseOfNull)
 }
 
 func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
