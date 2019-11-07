@@ -1168,10 +1168,18 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
 
 	defer func() {
-		// refine  error message
+		// refine error message
 		if !forced && (hasINLJHint || hasINLHJHint || hasINLMJHint) {
 			// Construct warning message prefix.
-			errMsg := "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
+			var errMsg string
+			switch {
+			case hasINLJHint:
+				errMsg = "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
+			case hasINLHJHint:
+				errMsg = "Optimizer Hint INL_HASH_JOIN is inapplicable"
+			case hasINLMJHint:
+				errMsg = "Optimizer Hint INL_MERGE_JOIN is inapplicable"
+			}
 			if p.hintInfo != nil {
 				t := p.hintInfo.indexNestedLoopJoinTables
 				switch {
@@ -1196,20 +1204,20 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 	}()
 
-	// canLeftOuter and canRightOuter indicates whether this type of join
+	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
-	var canLeftOuter, canRightOuter bool
+	var supportLeftOuter, supportRightOuter bool
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		canLeftOuter = true
+		supportLeftOuter = true
 	case RightOuterJoin:
-		canRightOuter = true
+		supportRightOuter = true
 	case InnerJoin:
-		canLeftOuter, canRightOuter = true, true
+		supportLeftOuter, supportRightOuter = true, true
 	}
 
 	var allLeftOuterJoins, allRightOuterJoins, forcedLeftOuterJoins, forcedRightOuterJoins []PhysicalPlan
-	if canLeftOuter {
+	if supportLeftOuter {
 		allLeftOuterJoins = p.getIndexJoinByOuterIdx(prop, 0)
 		forcedLeftOuterJoins = make([]PhysicalPlan, 0, len(allLeftOuterJoins))
 		for _, j := range allLeftOuterJoins {
@@ -1228,11 +1236,13 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				}
 			}
 		}
-		if !canRightOuter || forcedLeftOuterJoins != nil && (forceLeftOuter && !forceRightOuter) {
-			return forcedLeftOuterJoins, forcedLeftOuterJoins != nil && forceLeftOuter
+		if len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || forceLeftOuter && !forceRightOuter) {
+			return forcedLeftOuterJoins, forceLeftOuter
+		} else if !supportRightOuter {
+			return allLeftOuterJoins, false
 		}
 	}
-	if canRightOuter {
+	if supportRightOuter {
 		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
 		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
 		for _, j := range allRightOuterJoins {
@@ -1251,13 +1261,15 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				}
 			}
 		}
-		if !canLeftOuter || forcedRightOuterJoins != nil && (forceRightOuter && !forceLeftOuter) {
-			return forcedRightOuterJoins, forcedRightOuterJoins != nil && forceRightOuter
+		if len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || forceRightOuter && !forceLeftOuter) {
+			return forcedRightOuterJoins, forceRightOuter
+		} else if !supportLeftOuter {
+			return allRightOuterJoins, false
 		}
 	}
 
-	canForceLeft := forcedLeftOuterJoins != nil && forceLeftOuter
-	canForceRight := forcedRightOuterJoins != nil && forceRightOuter
+	canForceLeft := len(forcedLeftOuterJoins) != 0 && forceLeftOuter
+	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
 	forced = canForceLeft || canForceRight
 	if forced {
 		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), forced

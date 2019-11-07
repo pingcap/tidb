@@ -404,7 +404,7 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	containIndexJoin := (p.preferJoinType^preferRightAsINLJInner^preferLeftAsINLJInner) > 0 ||
 		(p.preferJoinType^preferRightAsINLHJInner^preferLeftAsINLHJInner) > 0 ||
 		(p.preferJoinType^preferRightAsINLMJInner^preferLeftAsINLMJInner) > 0
-	if bits.OnesCount(p.preferJoinType) > 1 && containIndexJoin {
+	if bits.OnesCount(p.preferJoinType) > 1 && !containIndexJoin {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
