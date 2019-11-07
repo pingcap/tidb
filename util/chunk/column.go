@@ -243,6 +243,11 @@ const (
 	sizeTime       = int(unsafe.Sizeof(types.Time{}))
 )
 
+var (
+	zeroDataSize = 4 * 1024
+	zeroData     = make([]byte, zeroDataSize)
+)
+
 // resize resizes the column so that it contains n elements, only valid for fixed-length types.
 func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
@@ -252,8 +257,12 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		c.data = make([]byte, sizeData)
 	}
 	if !isNull {
-		for i := 0; i < sizeData; i++ {
-			c.data[i] = 0
+		if sizeData <= zeroDataSize {
+			copy(c.data, zeroData)
+		} else {
+			for i := 0; i < sizeData; i++ {
+				c.data[i] = 0
+			}
 		}
 	}
 
