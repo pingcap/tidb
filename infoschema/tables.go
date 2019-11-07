@@ -89,7 +89,7 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
-	tableTiFlashReplica                     = "TABLE_TIFLASH_REPLICA"
+	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
 type columnInfo struct {
