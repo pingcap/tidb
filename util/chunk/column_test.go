@@ -786,7 +786,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 		col.AppendInt64(int64(i))
 	}
 	col.ResizeInt64(1024, false)
-	for i := 0; i < 1024; i ++ {
+	for i := 0; i < 1024; i++ {
 		c.Assert(col.Int64s()[i], check.Equals, int64(0))
 	}
 
@@ -795,7 +795,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 		col.AppendFloat32(float32(i))
 	}
 	col.ResizeFloat32(1024, false)
-	for i := 0; i < 1024; i ++ {
+	for i := 0; i < 1024; i++ {
 		c.Assert(col.Float32s()[i], check.Equals, float32(0))
 	}
 
@@ -804,7 +804,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 		col.AppendFloat64(float64(i))
 	}
 	col.ResizeFloat64(1024, false)
-	for i := 0; i < 1024; i ++ {
+	for i := 0; i < 1024; i++ {
 		c.Assert(col.Float64s()[i], check.Equals, float64(0))
 	}
 
@@ -813,7 +813,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 		col.AppendMyDecimal(new(types.MyDecimal).FromInt(int64(i)))
 	}
 	col.ResizeDecimal(1024, false)
-	for i := 0; i < 1024; i ++ {
+	for i := 0; i < 1024; i++ {
 		var d types.MyDecimal
 		c.Assert(col.Decimals()[i], check.Equals, d)
 	}
@@ -823,7 +823,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: int8(i)})
 	}
 	col.ResizeGoDuration(1024, false)
-	for i := 0; i < 1024; i ++ {
+	for i := 0; i < 1024; i++ {
 		c.Assert(col.GoDurations()[i], check.Equals, time.Duration(0))
 	}
 
@@ -834,7 +834,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 		col.AppendTime(t)
 	}
 	col.ResizeTime(1024, false)
-	for i := 0; i < 1024; i ++ {
+	for i := 0; i < 1024; i++ {
 		var t types.Time
 		c.Assert(col.Times()[i], check.Equals, t)
 	}
