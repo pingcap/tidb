@@ -997,19 +997,21 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		return nil
 	}
 
+	e := &HashJoinExec{
+		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		concurrency:       v.Concurrency,
+		joinType:          v.JoinType,
+		isOuterJoin:       v.JoinType.IsOuterJoin(),
+		buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
+		useOuterToBuild:   v.UseOuterToBuild,
+	}
+	defaultValues := v.DefaultValues
+	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.UseOuterToBuild {
+		// update the InnerChildIds
 		v.InnerChildIdx = 1 - v.InnerChildIdx
-		e := &HashJoinExec{
-			baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-			concurrency:       v.Concurrency,
-			joinType:          v.JoinType,
-			isOuterJoin:       v.JoinType.IsOuterJoin(),
-			buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
-			useOuterToBuild:   v.UseOuterToBuild,
-		}
-
-		defaultValues := v.DefaultValues
-		lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
+		// update the buildSideEstCount due to the change of InnerChildIds
+		e.buildSideEstCount = v.Children()[v.InnerChildIdx].StatsCount()
 		if v.InnerChildIdx == 0 {
 			if len(v.RightConditions) > 0 {
 				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
@@ -1039,20 +1041,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 1, defaultValues,
 				v.OtherConditions, lhsTypes, rhsTypes)
 		}
-		executorCountHashJoinExec.Inc()
-		return e
 	} else {
-		e := &HashJoinExec{
-			baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-			concurrency:       v.Concurrency,
-			joinType:          v.JoinType,
-			isOuterJoin:       v.JoinType.IsOuterJoin(),
-			buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
-			useOuterToBuild:   v.UseOuterToBuild,
-		}
-
-		defaultValues := v.DefaultValues
-		lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 		if v.InnerChildIdx == 0 {
 			if len(v.LeftConditions) > 0 {
 				b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
@@ -1082,9 +1071,9 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 				v.OtherConditions, lhsTypes, rhsTypes)
 		}
-		executorCountHashJoinExec.Inc()
-		return e
 	}
+	executorCountHashJoinExec.Inc()
+	return e
 }
 
 func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor {
