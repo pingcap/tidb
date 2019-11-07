@@ -66,11 +66,20 @@ func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinRowCountSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals ROW_COUNT().
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
 func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	res := int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinCurrentUserSig) vectorized() bool {
