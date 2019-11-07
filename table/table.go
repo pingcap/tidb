@@ -75,7 +75,7 @@ var (
 	// ErrInvalidRecordKey returns for invalid record key.
 	ErrInvalidRecordKey = terror.ClassTable.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
-	ErrTruncateWrongValue = terror.ClassTable.New(mysql.ErrTruncatedWrongValueForField, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
+	ErrTruncateWrongValue = terror.ClassTable.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(mysql.ErrTruncatedWrongValueForField, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrUnknownPartition returns unknown partition error.
@@ -249,7 +249,7 @@ func init() {
 		mysql.ErrBadField:                    mysql.ErrBadField,
 		mysql.ErrFieldSpecifiedTwice:         mysql.ErrFieldSpecifiedTwice,
 		mysql.ErrNoDefaultForField:           mysql.ErrNoDefaultForField,
-		mysql.ErrTruncatedWrongValueForField: mysql.ErrTruncatedWrongValueForField,
+		mysql.ErrTruncatedWrongValueForField: mysql.ErrTruncatedWrongValue,
 		mysql.ErrUnknownPartition:            mysql.ErrUnknownPartition,
 		mysql.ErrNoPartitionForGivenValue:    mysql.ErrNoPartitionForGivenValue,
 		mysql.ErrLockOrActiveTransaction:     mysql.ErrLockOrActiveTransaction,
