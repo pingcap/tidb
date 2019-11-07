@@ -26,6 +26,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+func (b *builtinInetNtoaSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
@@ -58,7 +62,7 @@ func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-func (b *builtinInetNtoaSig) vectorized() bool {
+func (b *builtinIsIPv4Sig) vectorized() bool {
 	return true
 }
 
@@ -88,9 +92,6 @@ func (b *builtinIsIPv4Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	return nil
 }
 
-func (b *builtinIsIPv4Sig) vectorized() bool {
-	return true
-}
 func (b *builtinJSONAnyValueSig) vectorized() bool {
 	return true
 }
