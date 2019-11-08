@@ -338,9 +338,9 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	regionStore := cachedRegion.getStore()
-	var store *Store = nil
-	var peer *metapb.Peer = nil
-	var storeIdx int = 0
+	var store *Store
+	var peer *metapb.Peer
+	var storeIdx int
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, c.labelKeys, c.labelValues)
