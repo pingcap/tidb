@@ -348,13 +348,33 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONInsert,
 		ast.JSONReplace,
 		ast.JSONRemove,
+		ast.JSONLength,
 
 		// date functions.
 		ast.DateFormat:
-		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
+		return isPushdownEnabled(sf.FuncName.L)
+
+	case ast.Cast:
+		// Disable time related cast function temporarily
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsTime,
+			tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDurationAsTime,
+			tipb.ScalarFuncSig_CastJsonAsTime,
+			tipb.ScalarFuncSig_CastTimeAsTime:
+			return false
+		default:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
 	}
 	return false
+}
+
+func isPushdownEnabled(name string) bool {
+	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[name]
+	return !disallowPushdown
 }
 
 // DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
