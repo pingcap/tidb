@@ -1054,14 +1054,14 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustExec("analyze table s")
 	// Test IndexNestedLoopHashJoin keepOrder.
-	tk.MustQuery("explain select /*+ TIDB_INLJ(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
+	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
 		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:Column#2, inner key:Column#3",
 		"├─TableReader_30 100.00 root data:TableScan_29",
 		"│ └─TableScan_29 100.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true",
 		"└─TableReader_22 1.00 root data:TableScan_21",
 		"  └─TableScan_21 1.00 cop[tikv] table:s, range: decided by [Column#2], keep order:false",
 	))
-	rs := tk.MustQuery("select /*+ TIDB_INLJ(s) */ * from t left join s on t.a=s.a order by t.pk")
+	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
 		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
 	}
