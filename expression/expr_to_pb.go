@@ -357,7 +357,17 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 	case ast.Cast:
 		// Disable time related cast function temporarily
 		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsTime,
+		case tipb.ScalarFuncSig_CastIntAsReal,
+			tipb.ScalarFuncSig_CastStringAsReal,
+			tipb.ScalarFuncSig_CastDurationAsDecimal,
+			tipb.ScalarFuncSig_CastDecimalAsString,
+			tipb.ScalarFuncSig_CastTimeAsInt,
+			tipb.ScalarFuncSig_CastTimeAsReal,
+			tipb.ScalarFuncSig_CastTimeAsDecimal,
+			tipb.ScalarFuncSig_CastTimeAsString,
+			tipb.ScalarFuncSig_CastTimeAsDuration,
+			tipb.ScalarFuncSig_CastTimeAsJson,
+			tipb.ScalarFuncSig_CastIntAsTime,
 			tipb.ScalarFuncSig_CastRealAsTime,
 			tipb.ScalarFuncSig_CastDecimalAsTime,
 			tipb.ScalarFuncSig_CastStringAsTime,
