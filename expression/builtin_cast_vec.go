@@ -1077,7 +1077,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		res := buf.GetTime(i)
 		tm, err := res.Convert(sc, b.tp.Tp)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err!= nil{
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1085,7 +1085,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		}
 		res, err = tm.RoundFrac(sc, int8(b.tp.Decimal))
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err!= nil{
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
