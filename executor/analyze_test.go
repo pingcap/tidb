@@ -469,6 +469,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
 	cluster.SplitTable(mvccStore, tid, 6)
+	// Flush the region cache first.
 	tk.MustQuery("select * from retry_row_count")
 	tk.MustExec("analyze table retry_row_count")
 	// 4 regions will be sampled, and it will retry the last failed region.
