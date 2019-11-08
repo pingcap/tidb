@@ -21,8 +21,8 @@ analyze table outdated_statistics index idx_ab;
 explain select * from outdated_statistics where a=1 and b=1 and c=1;
 
 CREATE TABLE `access_path_selection` (
-`a` int,	`a` int,
-`b` int,	`b` int,
+`a` int,
+`b` int,
 KEY `IDX_a` (`a`),
 KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)

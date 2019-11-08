@@ -20,8 +20,8 @@ IndexLookUp_11	0.00	root
 └─Selection_10	0.00	cop	eq(test.outdated_statistics.c, 1)
   └─TableScan_9	1.00	cop	table:outdated_statistics, keep order:false
 CREATE TABLE `access_path_selection` (
-`a` int,	`a` int,
-`b` int,	`b` int,
+`a` int,
+`b` int,
 KEY `IDX_a` (`a`),
 KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)
