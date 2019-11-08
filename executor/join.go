@@ -179,11 +179,9 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 		if !hasWaitedForBuild {
-			if probeSideResult.NumRows() == 0 {
-				if !e.useOuterToBuild {
-					e.finished.Store(true)
-					return
-				}
+			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
+				e.finished.Store(true)
+				return
 			}
 			jobFinished, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
@@ -394,9 +392,9 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 		} else {
 			// Concurrently handling unmatched rows from the hash table at the tail
 			for i := uint(0); i < e.concurrency; i++ {
-				var workID = i
+				var workerID = i
 				e.joinWorkerWaitGroup.Add(1)
-				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workID) }, e.handleJoinWorkerPanic)
+				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
 			}
 			e.joinWorkerWaitGroup.Wait()
 		}
@@ -576,6 +574,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 	return true, joinResult
 }
+
+// join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
 func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
 	hCtx.initHash(probeSideChk.NumRows())
 	for _, i := range hCtx.keyColIdx {
@@ -687,14 +687,14 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
-			if len(e.outerFilter) > 0 {
+			if len(e.outerFilter) == 0 {
+				err = e.rowContainer.PutChunk(chk)
+			} else {
 				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
 				if err != nil {
 					return err
 				}
 				err = e.rowContainer.PutChunkSelected(chk, selected)
-			} else {
-				err = e.rowContainer.PutChunk(chk)
 			}
 		}
 		if err != nil {

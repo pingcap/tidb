@@ -1022,34 +1022,26 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		// update the buildSideEstCount due to changing the build side
 		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
 		if v.InnerChildIdx == 1 {
-			e.buildSideExec = leftExec
-			e.probeSideExec = rightExec
+			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
+			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
 			e.outerFilter = v.LeftConditions
-			e.buildKeys = v.LeftJoinKeys
-			e.probeKeys = v.RightJoinKeys
 		} else {
-			e.buildSideExec = rightExec
-			e.probeSideExec = leftExec
+			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
+			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.RightConditions
-			e.buildKeys = v.RightJoinKeys
-			e.probeKeys = v.LeftJoinKeys
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
-			e.buildSideExec = leftExec
-			e.probeSideExec = rightExec
+			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
+			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
 			e.outerFilter = v.RightConditions
-			e.buildKeys = v.LeftJoinKeys
-			e.probeKeys = v.RightJoinKeys
 		} else {
-			e.buildSideExec = rightExec
-			e.probeSideExec = leftExec
+			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
+			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.LeftConditions
-			e.buildKeys = v.RightJoinKeys
-			e.probeKeys = v.LeftJoinKeys
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
