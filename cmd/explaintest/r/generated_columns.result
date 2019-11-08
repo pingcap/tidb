@@ -71,24 +71,24 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
-IndexHashJoin_35	5.00	root	inner join, inner:IndexLookUp_25, outer key:Column#8, inner key:Column#3
+IndexJoin_26	5.00	root	inner join, inner:IndexLookUp_25, outer key:Column#8, inner key:Column#3
 ├─IndexLookUp_25	5.00	root	
 │ ├─Selection_24	5.00	cop[tikv]	not(isnull(Column#3))
 │ │ └─IndexScan_22	5.00	cop[tikv]	table:sgc1, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
 │ └─TableScan_23	5.00	cop[tikv]	table:sgc1, keep order:false
-└─TableReader_38	1.00	root	data:Selection_37
-  └─Selection_37	1.00	cop[tikv]	not(isnull(Column#8))
-    └─TableScan_36	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
+└─TableReader_47	1.00	root	data:Selection_46
+  └─Selection_46	1.00	cop[tikv]	not(isnull(Column#8))
+    └─TableScan_45	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
 Projection_6	5.00	root	Column#1, Column#2, Column#3, Column#4, Column#6, Column#7, Column#8, Column#9
-└─HashRightJoin_24	5.00	root	inner join, inner:TableReader_43, equal:[eq(Column#8, Column#3)]
-  ├─TableReader_43	1.00	root	data:Selection_42
-  │ └─Selection_42	1.00	cop[tikv]	not(isnull(Column#8))
-  │   └─TableScan_41	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
-  └─TableReader_52	5.00	root	data:Selection_51
-    └─Selection_51	5.00	cop[tikv]	not(isnull(Column#3))
-      └─TableScan_50	5.00	cop[tikv]	table:sgc1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_38	5.00	root	inner join, inner:TableReader_57, equal:[eq(Column#8, Column#3)]
+  ├─TableReader_57	1.00	root	data:Selection_56
+  │ └─Selection_56	1.00	cop[tikv]	not(isnull(Column#8))
+  │   └─TableScan_55	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
+  └─TableReader_66	5.00	root	data:Selection_65
+    └─Selection_65	5.00	cop[tikv]	not(isnull(Column#3))
+      └─TableScan_64	5.00	cop[tikv]	table:sgc1, range:[-inf,+inf], keep order:false
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,

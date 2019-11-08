@@ -769,14 +769,16 @@ l_shipmode;
 id	count	task	operator info
 Sort_9	1.00	root	Column#29:asc
 └─Projection_11	1.00	root	Column#24, Column#27, Column#28
-  └─HashAgg_14	1.00	root	group by:Column#38, funcs:sum(Column#35), sum(Column#36), firstrow(Column#37)
-    └─Projection_40	10023369.01	root	cast(case(or(eq(Column#6, "1-URGENT"), eq(Column#6, "2-HIGH")), 1, 0)), cast(case(and(ne(Column#6, "1-URGENT"), ne(Column#6, "2-HIGH")), 1, 0)), Column#24, Column#24
-      └─IndexMergeJoin_22	10023369.01	root	inner join, inner:TableReader_20, outer key:Column#10, inner key:Column#1
-        ├─TableReader_36	10023369.01	root	data:Selection_35
-        │ └─Selection_35	10023369.01	cop[tikv]	ge(Column#22, 1997-01-01 00:00:00.000000), in(Column#24, "RAIL", "FOB"), lt(Column#20, Column#21), lt(Column#21, Column#22), lt(Column#22, 1998-01-01)
-        │   └─TableScan_34	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
-        └─TableReader_20	1.00	root	data:TableScan_19
-          └─TableScan_19	1.00	cop[tikv]	table:orders, range: decided by [Column#10], keep order:true
+  └─HashAgg_14	1.00	root	group by:Column#43, funcs:sum(Column#40), sum(Column#41), firstrow(Column#42)
+    └─Projection_54	10023369.01	root	cast(case(or(eq(Column#6, "1-URGENT"), eq(Column#6, "2-HIGH")), 1, 0)), cast(case(and(ne(Column#6, "1-URGENT"), ne(Column#6, "2-HIGH")), 1, 0)), Column#24, Column#24
+      └─IndexMergeJoin_36	10023369.01	root	inner join, inner:Projection_34, outer key:Column#1, inner key:Column#10
+        ├─Projection_34	0.00	root	Column#10, Column#20, Column#21, Column#22, Column#24
+        │ └─IndexLookUp_33	0.00	root	
+        │   ├─IndexScan_30	0.13	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(Column#10, Column#1)], keep order:true
+        │   └─Selection_32	0.00	cop[tikv]	ge(Column#22, 1997-01-01 00:00:00.000000), in(Column#24, "RAIL", "FOB"), lt(Column#20, Column#21), lt(Column#21, Column#22), lt(Column#22, 1998-01-01)
+        │     └─TableScan_31	0.13	cop[tikv]	table:lineitem, keep order:false
+        └─TableReader_52	75000000.00	root	data:TableScan_51
+          └─TableScan_51	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
 /*
 Q13 Customer Distribution Query
 This query seeks relationships between customers and the size of their orders.
@@ -931,16 +933,16 @@ id	count	task	operator info
 Sort_13	3863988.24	root	Column#28:desc, Column#25:asc, Column#26:asc, Column#27:asc
 └─Projection_15	3863988.24	root	Column#10, Column#11, Column#12, Column#24
   └─HashAgg_18	3863988.24	root	group by:Column#10, Column#11, Column#12, funcs:count(distinct Column#2), firstrow(Column#10), firstrow(Column#11), firstrow(Column#12)
-    └─HashLeftJoin_30	3863988.24	root	anti semi join, inner:TableReader_57, equal:[eq(Column#2, Column#16)]
+    └─HashLeftJoin_30	3863988.24	root	anti semi join, inner:TableReader_68, equal:[eq(Column#2, Column#16)]
       ├─IndexMergeJoin_38	4829985.30	root	inner join, inner:IndexReader_36, outer key:Column#7, inner key:Column#1
-      │ ├─TableReader_50	1200618.43	root	data:Selection_49
-      │ │ └─Selection_49	1200618.43	cop[tikv]	in(Column#12, 48, 19, 12, 4, 41, 7, 21, 39), ne(Column#10, "Brand#34"), not(like(Column#11, "LARGE BRUSHED%", 92))
-      │ │   └─TableScan_48	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
+      │ ├─TableReader_61	1200618.43	root	data:Selection_60
+      │ │ └─Selection_60	1200618.43	cop[tikv]	in(Column#12, 48, 19, 12, 4, 41, 7, 21, 39), ne(Column#10, "Brand#34"), not(like(Column#11, "LARGE BRUSHED%", 92))
+      │ │   └─TableScan_59	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_36	4.02	root	index:IndexScan_35
       │   └─IndexScan_35	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#1, Column#7)], keep order:true
-      └─TableReader_57	400000.00	root	data:Selection_56
-        └─Selection_56	400000.00	cop[tikv]	like(Column#22, "%Customer%Complaints%", 92)
-          └─TableScan_55	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
+      └─TableReader_68	400000.00	root	data:Selection_67
+        └─Selection_67	400000.00	cop[tikv]	like(Column#22, "%Customer%Complaints%", 92)
+          └─TableScan_66	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
@@ -1159,17 +1161,17 @@ Sort_28	20000.00	root	Column#48:asc
       └─Projection_54	64006.34	root	Column#12, Column#13, Column#14, Column#18, mul(0.5, Column#45)
         └─Selection_55	64006.34	root	gt(cast(Column#14), mul(0.5, Column#45))
           └─HashAgg_58	80007.93	root	group by:Column#12, Column#13, funcs:firstrow(Column#12), firstrow(Column#13), firstrow(Column#14), firstrow(Column#18), sum(Column#32)
-            └─HashLeftJoin_61	9711455.06	root	left outer join, inner:TableReader_91, equal:[eq(Column#12, Column#29) eq(Column#13, Column#30)]
+            └─HashLeftJoin_61	9711455.06	root	left outer join, inner:TableReader_102, equal:[eq(Column#12, Column#29) eq(Column#13, Column#30)]
               ├─IndexHashJoin_74	321865.05	root	inner join, inner:IndexLookUp_65, outer key:Column#18, inner key:Column#12
-              │ ├─TableReader_86	80007.93	root	data:Selection_85
-              │ │ └─Selection_85	80007.93	cop[tikv]	like(Column#19, "green%", 92)
-              │ │   └─TableScan_84	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
+              │ ├─TableReader_97	80007.93	root	data:Selection_96
+              │ │ └─Selection_96	80007.93	cop[tikv]	like(Column#19, "green%", 92)
+              │ │   └─TableScan_95	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
               │ └─IndexLookUp_65	4.02	root	
               │   ├─IndexScan_63	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#12, Column#18)], keep order:false
               │   └─TableScan_64	4.02	cop[tikv]	table:partsupp, keep order:false
-              └─TableReader_91	44189356.65	root	data:Selection_90
-                └─Selection_90	44189356.65	cop[tikv]	ge(Column#38, 1993-01-01 00:00:00.000000), lt(Column#38, 1994-01-01)
-                  └─TableScan_89	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
+              └─TableReader_102	44189356.65	root	data:Selection_101
+                └─Selection_101	44189356.65	cop[tikv]	ge(Column#38, 1993-01-01 00:00:00.000000), lt(Column#38, 1994-01-01)
+                  └─TableScan_100	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.

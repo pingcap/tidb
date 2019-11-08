@@ -170,11 +170,11 @@ id	count	task	operator info
 Projection_12	0.00	root	Column#47
 └─TopN_15	0.00	root	Column#47:asc, offset:0, count:5
   └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:Column#1, inner key:Column#41
-    ├─IndexLookUp_67	0.00	root	
-    │ ├─Selection_65	0.00	cop[tikv]	eq(Column#4, 18), eq(Column#5, 1)
-    │ │ └─IndexScan_63	10.00	cop[tikv]	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
-    │ └─Selection_66	0.00	cop[tikv]	eq(Column#21, 32314), eq(Column#3, 2)
-    │   └─TableScan_64	0.00	cop[tikv]	table:tr, keep order:false, stats:pseudo
+    ├─IndexLookUp_78	0.00	root	
+    │ ├─Selection_76	0.00	cop[tikv]	eq(Column#4, 18), eq(Column#5, 1)
+    │ │ └─IndexScan_74	10.00	cop[tikv]	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │ └─Selection_77	0.00	cop[tikv]	eq(Column#21, 32314), eq(Column#3, 2)
+    │   └─TableScan_75	0.00	cop[tikv]	table:tr, keep order:false, stats:pseudo
     └─IndexLookUp_23	0.03	root	
       ├─IndexScan_20	1.25	cop[tikv]	table:te, index:trade_id, range: decided by [eq(Column#41, Column#1)], keep order:false, stats:pseudo
       └─Selection_22	0.03	cop[tikv]	ge(Column#47, 2018-04-23 00:00:00.000000), le(Column#47, 2018-04-23 23:59:59.000000)
@@ -217,20 +217,20 @@ create table t(a int not null, index idx(a));
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
-└─IndexMergeJoin_19	5.00	root	inner join, inner:IndexReader_17, outer key:Column#1, inner key:Column#3
+└─IndexJoin_15	5.00	root	inner join, inner:IndexReader_14, outer key:Column#1, inner key:Column#3
   ├─TableReader_23	4.00	root	data:TableScan_22
   │ └─TableScan_22	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─IndexReader_17	1.25	root	index:IndexScan_16
-    └─IndexScan_16	1.25	cop[tikv]	table:t2, index:a, range: decided by [eq(Column#3, Column#1)], keep order:true, stats:pseudo
+  └─IndexReader_14	1.25	root	index:IndexScan_13
+    └─IndexScan_13	1.25	cop[tikv]	table:t2, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(Column#3)
-  └─IndexMergeJoin_21	5.00	root	left outer join, inner:IndexReader_19, outer key:Column#1, inner key:Column#3
+  └─IndexJoin_17	5.00	root	left outer join, inner:IndexReader_16, outer key:Column#1, inner key:Column#3
     ├─TableReader_25	4.00	root	data:TableScan_24
     │ └─TableScan_24	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-    └─IndexReader_19	1.25	root	index:IndexScan_18
-      └─IndexScan_18	1.25	cop[tikv]	table:t2, index:a, range: decided by [eq(Column#3, Column#1)], keep order:true, stats:pseudo
+    └─IndexReader_16	1.25	root	index:IndexScan_15
+      └─IndexScan_15	1.25	cop[tikv]	table:t2, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
