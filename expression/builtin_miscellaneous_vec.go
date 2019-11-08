@@ -432,6 +432,9 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	i64s := result.Int64s()
 	result.MergeNulls(buf)
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		ipAddr := buf.GetString(i)
 		if len(ipAddr) == 0 || ipAddr[len(ipAddr)-1] == '.' {
 			// ip address should not end with '.'.
