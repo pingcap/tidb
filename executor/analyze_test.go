@@ -394,24 +394,13 @@ type testFastAnalyze struct {
 	store   kv.Storage
 	dom     *domain.Domain
 	cluster *mocktikv.Cluster
-	cli     *regionProperityClient
 }
 
 func (s *testFastAnalyze) SetUpSuite(c *C) {
-	cli := &regionProperityClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-	s.cli = cli
-
 	var err error
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(s.cluster),
-	)
+	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -452,26 +441,42 @@ func (c *regionProperityClient) setFailRegion(regionID uint64) {
 }
 
 func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+		mockstore.WithCluster(cluster),
+	)
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
-	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
+	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 	// construct 6 regions split by {6, 12, 18, 24, 30}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
-	regionIDs := manipulateCluster(s.cluster, splitKeys)
+	regionIDs := manipulateCluster(cluster, splitKeys)
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
-	s.cli.setFailRegion(regionIDs[4])
+	cli.setFailRegion(regionIDs[4])
 	tk.MustExec("analyze table t")
 	// 4 regions will be sampled, and it will retry the last failed region.
-	c.Assert(s.cli.mu.count, Equals, int64(5))
+	c.Assert(cli.mu.count, Equals, int64(5))
 	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()[0]
 	c.Assert(row[5], Equals, "30")
 }
