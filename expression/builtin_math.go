@@ -1740,12 +1740,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	argTp := args[0].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
+	if argTp.IsStringKind() {
 		argTp = types.ETReal
-	}
-	// MySQL compatibility
-	if argTp == types.ETJson {
-		argTp = types.ETInt
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp, types.ETInt)
