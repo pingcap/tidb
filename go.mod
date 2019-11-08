@@ -13,7 +13,7 @@ require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
-	github.com/gogo/protobuf v1.2.0
+	github.com/gogo/protobuf v1.2.1
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
 	github.com/golang/protobuf v1.3.2
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db
@@ -24,7 +24,6 @@ require (
 	github.com/gorilla/mux v1.6.2
 	github.com/gorilla/websocket v1.4.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
-	github.com/grpc-ecosystem/grpc-gateway v1.5.1 // indirect
 	github.com/jeremywohl/flatten v0.0.0-20190921043622-d936035e55cf
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
@@ -32,21 +31,19 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
-	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
+	github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20191101062931-76b56d6eb466
+	github.com/pingcap/kvproto v0.0.0-20191104103048-40f562012fb1
 	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
-	github.com/pingcap/parser v0.0.0-20191031081038-bfb0c3adf567
+	github.com/pingcap/parser v0.0.0-20191108092154-c51ae7d72bef
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
 	github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible
 	github.com/pingcap/tipb v0.0.0-20191105120856-bd4b782c8393
-	github.com/prometheus/client_golang v0.9.0
-	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
-	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
-	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
+	github.com/prometheus/client_golang v1.0.0
+	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
 	github.com/shirou/gopsutil v2.18.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
@@ -59,19 +56,17 @@ require (
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
 	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
-	go.etcd.io/bbolt v1.3.3 // indirect
-	go.etcd.io/etcd v0.5.0-alpha.5.0.20190320044326-77d4b742cdbf
-	go.uber.org/atomic v1.4.0
-	go.uber.org/multierr v1.2.0 // indirect
-	go.uber.org/zap v1.10.0
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
+	go.uber.org/atomic v1.5.0
+	go.uber.org/zap v1.12.0
 	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
 	golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
-	golang.org/x/tools v0.0.0-20190911022129-16c5e0f7d110
+	golang.org/x/tools v0.0.0-20191107010934-f79515f33823
 	google.golang.org/genproto v0.0.0-20190905072037-92dd089d5514 // indirect
-	google.golang.org/grpc v1.23.0
+	google.golang.org/grpc v1.23.1
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
@@ -81,5 +76,3 @@ require (
 replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-04dfd648ce8d
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/lamxTyler/parser v0.0.0-20191107065847-5aedc4fd8a0f
