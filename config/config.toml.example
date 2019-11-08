@@ -44,6 +44,9 @@ oom-action = "log"
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
@@ -283,8 +286,8 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data.
-enable-arrow = true
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-rpc = true
 
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
