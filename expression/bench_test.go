@@ -494,10 +494,10 @@ func (g *timeStrGener) gen() interface{} {
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
 }
 
-// dataStrGener is used to generate strings which are data format
-type dataStrGener struct{}
+// dateStrGener is used to generate strings which are data format
+type dateStrGener struct{}
 
-func (g *dataStrGener) gen() interface{} {
+func (g *dateStrGener) gen() interface{} {
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)

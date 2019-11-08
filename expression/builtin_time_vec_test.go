@@ -130,14 +130,14 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Timestamp: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateTimeStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{new(dateTimeStrGener), new(dataStrGener)}},
+			geners: []dataGenerator{new(dateTimeStrGener), new(dateStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			geners: []dataGenerator{new(dateTimeStrGener), nil}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{nil, new(dataStrGener)}},
+			geners: []dataGenerator{nil, new(dateStrGener)}},
 	},
 	ast.MonthName: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
