@@ -397,7 +397,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 	if keyErr.Retryable != "" {
 		notFoundDetail := prettyLockNotFoundKey(keyErr.GetRetryable())
-		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable() + " " + notFoundDetail)
+		return kv.ErrTxnRetryable.FastGenByArgs(keyErr.GetRetryable() + " " + notFoundDetail)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())

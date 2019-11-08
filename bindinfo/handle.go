@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -133,7 +134,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta)
-		if meta.FirstUsingBinding() != nil {
+		if meta.HasUsingBinding() {
 			newCache.setBindRecord(hash, newRecord)
 		} else {
 			newCache.removeDeletedBindRecord(hash, oldRecord)
@@ -430,39 +431,39 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
 	return fmt.Sprintf(
-		"DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
-		normdOrigSQL,
-		db,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+		expression.Quote(normdOrigSQL),
+		expression.Quote(db),
 	)
 }
 
 func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Binding) string {
-	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		orignalSQL,
-		info.BindSQL,
-		db,
-		info.Status,
-		info.CreateTime,
-		info.UpdateTime,
-		info.Charset,
-		info.Collation,
+	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
+		expression.Quote(orignalSQL),
+		expression.Quote(info.BindSQL),
+		expression.Quote(db),
+		expression.Quote(info.Status),
+		expression.Quote(info.CreateTime.String()),
+		expression.Quote(info.UpdateTime.String()),
+		expression.Quote(info.Charset),
+		expression.Quote(info.Collation),
 	)
 }
 
 func (h *BindHandle) logicalDeleteBindInfoSQL(record *BindRecord, updateTs types.Time) string {
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status='%s',update_time='%s' WHERE original_sql='%s' and default_db='%s'`,
-		deleted,
-		updateTs,
-		record.OriginalSQL,
-		record.Db)
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
+		expression.Quote(deleted),
+		expression.Quote(updateTs.String()),
+		expression.Quote(record.OriginalSQL),
+		expression.Quote(record.Db))
 	if len(record.Bindings) == 0 {
 		return sql
 	}
 	bindings := make([]string, 0, len(record.Bindings))
 	for _, bind := range record.Bindings {
-		bindings = append(bindings, fmt.Sprintf(`'%s'`, bind.BindSQL))
+		bindings = append(bindings, fmt.Sprintf(`%s`, expression.Quote(bind.BindSQL)))
 	}
-	return sql + fmt.Sprintf(" and bind_sql in (%s)", strings.Join(bindings, ","))
+	return sql + fmt.Sprintf(` and bind_sql in (%s)`, strings.Join(bindings, ","))
 }
 
 // GenHintsFromSQL is used to generate hints from SQL.
@@ -479,7 +480,7 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		normalizedSQL, digiest := parser.NormalizeDigest(sqls[i])
-		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.FirstUsingBinding() != nil {
+		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		h.sctx.Lock()

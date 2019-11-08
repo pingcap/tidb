@@ -32,7 +32,7 @@ const (
 	tableNameTiDBProfileMutex                = "tidb_profile_mutex"
 	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
 	tableNameTiDBProfileBlock                = "tidb_profile_block"
-	tableNameTiDBGoroutines                  = "tidb_goroutines"
+	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -107,7 +107,7 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("allocs")
 	case tableNameTiDBProfileBlock:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("block")
-	case tableNameTiDBGoroutines:
+	case tableNameTiDBProfileGoroutines:
 		fullRows, err = (&profile.Collector{}).Goroutines()
 	}
 	if err != nil {
