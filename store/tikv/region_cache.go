@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -93,12 +95,13 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32) int32 {
+func (r *RegionStore) follower(seed uint32, labelKeys []string, labelValues []string) int32 {
 	l := uint32(len(r.stores))
 	if l <= 1 {
 		return r.workTiKVIdx
 	}
 
+	candidates := make([]int32, 0)
 	for retry := l - 1; retry > 0; retry-- {
 		followerIdx := int32(seed % (l - 1))
 		if followerIdx >= r.workTiKVIdx {
@@ -108,9 +111,31 @@ func (r *RegionStore) follower(seed uint32) int32 {
 			continue
 		}
 		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
-			return followerIdx
+			if len(labelKeys) == 0 {
+				return followerIdx
+			}
+			candidates = append(candidates, followerIdx)
 		}
 		seed++
+	}
+	bestMatchedLevel := -1
+	var bestCandidate int32 = -1
+	for _, idx := range candidates {
+		matchedLevel := 0
+		for i, label := range r.stores[idx].labels {
+			if i < len(labelKeys) {
+				if label.Key == labelKeys[i] && label.Value == labelValues[i] {
+					matchedLevel += 1
+				}
+			}
+		}
+		if matchedLevel > bestMatchedLevel {
+			bestMatchedLevel = matchedLevel
+			bestCandidate = idx
+		}
+	}
+	if bestCandidate >= 0 {
+		return bestCandidate
 	}
 	return r.workTiKVIdx
 }
@@ -201,12 +226,25 @@ type RegionCache struct {
 	}
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
+
+	labelKeys   []string
+	labelValues []string
 }
 
 // NewRegionCache creates a RegionCache.
 func NewRegionCache(pdClient pd.Client) *RegionCache {
+	var labelKeys = make([]string, 0)
+	var labelValues = make([]string, 0)
+	for _, kv := range strings.Split(config.GetGlobalConfig().Labels, ",") {
+		kvPair := strings.Split(kv, "=")
+		labelKeys = append(labelKeys, strings.Trim(kvPair[0], " \t"))
+		labelValues = append(labelValues, strings.Trim(kvPair[1], " \t"))
+	}
+
 	c := &RegionCache{
-		pdClient: pdClient,
+		pdClient:    pdClient,
+		labelKeys:   labelKeys,
+		labelValues: labelValues,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
@@ -300,12 +338,12 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	regionStore := cachedRegion.getStore()
-	var store *Store
-	var peer *metapb.Peer
-	var storeIdx int
+	var store *Store = nil
+	var peer *metapb.Peer = nil
+	var storeIdx int = 0
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, c.labelKeys, c.labelValues)
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -1035,8 +1073,11 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
-	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
+func (r *Region) FollowerStorePeer(
+	rs *RegionStore, followerStoreSeed uint32,
+	labelKeys []string, labelValues []string,
+) (*Store, *metapb.Peer, int) {
+	return r.getStorePeer(rs, rs.follower(followerStoreSeed, labelKeys, labelValues))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1167,7 +1208,8 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string       // loaded store address
+	addr         string // loaded store address
+	labels       []*metapb.StoreLabel
 	storeID      uint64       // store's id
 	state        uint64       // unsafe store storeState
 	resolveMutex sync.Mutex   // protect pd from concurrent init requests
@@ -1217,6 +1259,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
+		s.labels = store.GetLabels()
 		s.storeType = kv.TiKV
 		for _, label := range store.Labels {
 			if label.Key == "engine" {
@@ -1272,9 +1315,10 @@ func (s *Store) reResolve(c *RegionCache) {
 		}
 	}
 	addr = store.GetAddress()
+	labels := store.GetLabels()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, labels: labels, storeType: storeType}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore

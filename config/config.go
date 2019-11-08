@@ -56,6 +56,7 @@ var (
 // Config contains configuration options.
 type Config struct {
 	Host             string          `toml:"host" json:"host"`
+	Labels           string          `toml:"label" json:"label"`
 	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
 	Port             uint            `toml:"port" json:"port"`
 	Cors             string          `toml:"cors" json:"cors"`
@@ -415,6 +416,7 @@ type StmtSummary struct {
 
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
+	Labels:                       "",
 	AdvertiseAddress:             "",
 	Port:                         4000,
 	Cors:                         "",
