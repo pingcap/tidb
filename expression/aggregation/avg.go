@@ -35,7 +35,7 @@ func (af *avgFunction) updateAvg(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	if value.IsNull() {
 		return nil
 	}
-	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value, a.GetType())
+	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
 	if err != nil {
 		return err
 	}
