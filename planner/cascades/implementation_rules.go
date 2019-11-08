@@ -124,10 +124,9 @@ func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.Ph
 	if tg.IsIndexGather {
 		reader := tg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 		return impl.NewIndexReaderImpl(reader, tg.Source.TblColHists), nil
-	} else {
-		reader := tg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-		return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
 	}
+	reader := tg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.

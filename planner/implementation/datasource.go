@@ -112,7 +112,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	return impl.cost
 }
 
-// NewTableReaderImpl creates a new IndexReader Implementation.
+// NewIndexReaderImpl creates a new IndexReader Implementation.
 func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, tblColHists *statistics.HistColl) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
