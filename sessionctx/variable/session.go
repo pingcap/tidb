@@ -299,10 +299,12 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV.
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
 	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
 	DescScanFactor float64
+	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
@@ -364,8 +366,8 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
-	// EnableArrow indicates whether the coprocessor request can use arrow API.
-	EnableArrow bool
+	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
+	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -441,7 +443,14 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
+	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	isolationReadEngines map[kv.StoreType]struct{}
+
 	PlannerSelectBlockAsName []ast.HintTable
+
+	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
+	// negative value means nowait, 0 means default behavior, others means actual wait time
+	LockWaitTimeout int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -502,6 +511,7 @@ func NewSessionVars() *SessionVars {
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
@@ -517,6 +527,8 @@ func NewSessionVars() *SessionVars {
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -554,13 +566,13 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
-	var enableArrow string
-	if config.GetGlobalConfig().TiKVClient.EnableArrow {
-		enableArrow = "1"
+	var enableChunkRPC string
+	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+		enableChunkRPC = "1"
 	} else {
-		enableArrow = "0"
+		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
+	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 
@@ -611,6 +623,11 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 // GetSplitRegionTimeout gets split region timeout.
 func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
+}
+
+// GetIsolationReadEngines gets isolation read engines.
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -800,6 +817,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
+	case InnodbLockWaitTimeout:
+		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
+		s.LockWaitTimeout = int64(lockWaitSec * 1000)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -822,6 +842,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
 	case TiDBOptDescScanFactor:
 		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+	case TiDBOptSeekFactor:
+		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
 	case TiDBOptConcurrencyFactor:
@@ -898,8 +920,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBEnableArrow:
-		s.EnableArrow = TiDBOptOn(val)
+	case TiDBEnableChunkRPC:
+		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -951,6 +973,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
+	case TiDBIsolationReadEngines:
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiKV.Name():
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
+			case kv.TiFlash.Name():
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}
 	}
 	s.systems[name] = val
 	return nil

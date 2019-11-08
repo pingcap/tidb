@@ -220,22 +220,38 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	}
 
 	var tasks []*copTask
-	appendTask := func(region RegionVerID, ranges *copRanges) {
-		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
-		// to make sure the message can be sent successfully.
-		rLen := ranges.len()
-		for i := 0; i < rLen; {
-			nextI := mathutil.Min(i+rangesPerTask, rLen)
+	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+		if req.StoreType == kv.TiKV {
+			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+			// to make sure the message can be sent successfully.
+			rLen := ranges.len()
+			for i := 0; i < rLen; {
+				nextI := mathutil.Min(i+rangesPerTask, rLen)
+				tasks = append(tasks, &copTask{
+					region: regionWithRangeInfo.Region,
+					ranges: ranges.slice(i, nextI),
+					// Channel buffer is 2 for handling region split.
+					// In a common case, two region split tasks will not be blocked.
+					respChan:  make(chan *copResponse, 2),
+					cmdType:   cmdType,
+					storeType: req.StoreType,
+				})
+				i = nextI
+			}
+		} else if req.StoreType == kv.TiFlash {
+			fullRange := kv.KeyRange{StartKey: regionWithRangeInfo.StartKey, EndKey: regionWithRangeInfo.EndKey}
 			tasks = append(tasks, &copTask{
-				region: region,
-				ranges: ranges.slice(i, nextI),
+				region: regionWithRangeInfo.Region,
+				// TiFlash only support full range scan for the region, ignore the real ranges
+				// does not affect the correctness because we already merge the access range condition
+				// into filter condition in `getOriginalPhysicalTableScan`
+				ranges: &copRanges{mid: []kv.KeyRange{fullRange}},
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
-			i = nextI
 		}
 	}
 
@@ -257,7 +273,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	return tasks, nil
 }
 
-func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges)) error {
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
@@ -274,7 +290,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			fn(loc.Region, ranges)
+			fn(loc, ranges)
 			break
 		}
 
@@ -286,7 +302,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 				StartKey: r.StartKey,
 				EndKey:   loc.EndKey,
 			}
-			fn(loc.Region, taskRanges)
+			fn(loc, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
@@ -296,7 +312,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		} else {
 			// rs[i] is not in the region.
 			taskRanges := ranges.slice(0, i)
-			fn(loc.Region, taskRanges)
+			fn(loc, taskRanges)
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
@@ -309,7 +325,7 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 	ranges := copRanges{mid: keyRanges}
 
 	var ret []kv.KeyRange
-	appendRange := func(region RegionVerID, ranges *copRanges) {
+	appendRange := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 		for i := 0; i < ranges.len(); i++ {
 			ret = append(ret, ranges.at(i))
 		}
@@ -765,7 +781,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
-		lastRange = resp.Range
+		if resp.Range != nil {
+			lastRange = resp.Range
+		}
 	}
 }
 

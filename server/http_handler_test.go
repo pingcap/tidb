@@ -14,6 +14,7 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -391,6 +393,76 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(data.Value.Info.Lock, IsNil)
 	c.Assert(data.Value.Info.Writes, IsNil)
 	c.Assert(data.Value.Info.Values, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data []tableFlashReplicaInfo
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 0)
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("use tidb")
+	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, false)
+
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
+
+	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	c.Assert(err, IsNil)
+	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, t.Meta().ID)
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "")
+
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, true) // The status should be true now.
+
+	// Should not take effect.
+	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, true) // The status should be true now.
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
