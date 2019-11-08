@@ -56,6 +56,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandAggregation: {
 		&ImplHashAgg{},
 	},
+	memo.OperandLimit: {
+		&ImplLimit{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -247,4 +250,25 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
 	// TODO: Implement TiKVHashAgg
 	return impl.NewTiDBHashAggImpl(hashAgg), nil
+}
+
+// ImplLimit is the implementation rule which implements LogicalLimit
+// to PhysicalLimit.
+type ImplLimit struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalLimit := expr.ExprNode.(*plannercore.LogicalLimit)
+	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
+	physicalLimit := plannercore.PhysicalLimit{
+		Offset: logicalLimit.Offset,
+		Count:  logicalLimit.Count,
+	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.SelectBlockOffset(), newProp)
+	return impl.NewLimitImpl(physicalLimit), nil
 }
