@@ -1134,7 +1134,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			if err != nil {
 				return nil, err
 			}
-			if len(constr.Keys) == 1 && config.GetGlobalConfig().EnableAlterPrimaryKey {
+			if len(constr.Keys) == 1 && !config.GetGlobalConfig().AlterPrimaryKey {
 				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
@@ -1166,7 +1166,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 		}
 		// set index type.
 		if constr.Option != nil {
-			err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), constr.Option)
+			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), constr.Option)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -3320,8 +3320,8 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
-	if config.GetGlobalConfig().EnableAlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("unsupported add primary key, enable-alter-primary-key is true")
+	if !config.GetGlobalConfig().AlterPrimaryKey {
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("unsupported add primary key, alter-primary-key is true")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -3359,7 +3359,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
-	if err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
+	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -3427,7 +3427,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
-	if err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
+	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -3600,10 +3600,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	if isPK {
-		if config.GetGlobalConfig().EnableAlterPrimaryKey || t.Meta().PKIsHandle {
+		if !config.GetGlobalConfig().AlterPrimaryKey || t.Meta().PKIsHandle {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack(fmt.Sprintf(
-				"unsupported drop primary key, enable-alter-primary-key is %v, the table's pk-is-handle is %v",
-				config.GetGlobalConfig().EnableAlterPrimaryKey, t.Meta().PKIsHandle))
+				"unsupported drop primary key, alter-primary-key is %v, the table's pk-is-handle is %v",
+				config.GetGlobalConfig().AlterPrimaryKey, t.Meta().PKIsHandle))
 		}
 		if indexInfo == nil {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
@@ -3672,21 +3672,21 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 // validateCommentLength checks comment length of table, column, index and partition.
 // If comment length is more than the standard length truncate it
 // and store the comment length upto the standard comment length size.
-func validateCommentLength(vars *variable.SessionVars, indexName string, indexOption *ast.IndexOption) error {
+func validateCommentLength(vars *variable.SessionVars, indexName string, indexOption *ast.IndexOption) (string, error) {
 	if indexOption == nil {
-		return nil
+		return "", nil
 	}
 
 	maxLen := MaxCommentLength
 	if len(indexOption.Comment) > maxLen {
 		err := errTooLongIndexComment.GenWithStackByArgs(indexName, maxLen)
 		if vars.StrictSQLMode {
-			return err
+			return "", err
 		}
 		vars.StmtCtx.AppendWarning(err)
 		indexOption.Comment = indexOption.Comment[:maxLen]
 	}
-	return nil
+	return indexOption.Comment, nil
 }
 
 func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {

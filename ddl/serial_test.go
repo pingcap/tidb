@@ -58,7 +58,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	cfg := config.GetGlobalConfig()
 	newCfg := *cfg
 	// Test for add/drop primary key.
-	newCfg.EnableAlterPrimaryKey = true
+	newCfg.AlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
 
 	s.cluster = mocktikv.NewCluster()
