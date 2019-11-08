@@ -173,7 +173,7 @@ func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 			is.Desc = true
 		}
 	}
-	return nil, nil
+	return impl.NewIndexScanImpl(is, logicalScan.Source.TblColHists), nil
 }
 
 // ImplShow is the implementation rule which implements LogicalShow to
