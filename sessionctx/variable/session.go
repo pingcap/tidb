@@ -206,7 +206,7 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams []types.Datum
+	PreparedParams PreparedParams
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -406,7 +406,17 @@ type SessionVars struct {
 	DurationCompile time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt string
+	PrevStmt fmt.Stringer
+}
+
+// PreparedParams contains the parameters of the current prepared statement when executing it.
+type PreparedParams []types.Datum
+
+func (pps PreparedParams) String() string {
+	if len(pps) == 0 {
+		return ""
+	}
+	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
 // ConnectionInfo present connection used by audit.
@@ -582,26 +592,6 @@ func (s *SessionVars) Location() *time.Location {
 		loc = timeutil.SystemLocation()
 	}
 	return loc
-}
-
-// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
-func (s *SessionVars) GetExecuteArgumentsInfo() string {
-	if len(s.PreparedParams) == 0 {
-		return ""
-	}
-	args := make([]string, 0, len(s.PreparedParams))
-	for _, v := range s.PreparedParams {
-		if v.IsNull() {
-			args = append(args, "<nil>")
-		} else {
-			str, err := v.ToString()
-			if err != nil {
-				terror.Log(err)
-			}
-			args = append(args, str)
-		}
-	}
-	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
 }
 
 // GetSystemVar gets the string value of a system variable.
