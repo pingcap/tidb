@@ -16,12 +16,12 @@ package ddl_test
 import (
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/mock"
+	"go.etcd.io/etcd/clientv3"
 )
 
 type ddlOptionsSuite struct{}

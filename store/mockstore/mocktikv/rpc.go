@@ -98,6 +98,11 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			CommitTsExpired: &expired.CommitTsExpired,
 		}
 	}
+	if tmp, ok := errors.Cause(err).(*ErrTxnNotFound); ok {
+		return &kvrpcpb.KeyError{
+			TxnNotFound: &tmp.TxnNotFound,
+		}
+	}
 	return &kvrpcpb.KeyError{
 		Abort: err.Error(),
 	}
@@ -382,7 +387,7 @@ func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) 
 		panic("KvCheckTxnStatus: key not in region")
 	}
 	var resp kvrpcpb.CheckTxnStatusResponse
-	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs())
+	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	} else {

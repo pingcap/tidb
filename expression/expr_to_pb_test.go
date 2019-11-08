@@ -266,6 +266,7 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 
 func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	var likeFuncs []Expression
+	var expects []string
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -280,19 +281,21 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	}
 	ctx := mock.NewContext()
 	retTp = types.NewFieldType(mysql.TypeUnspecified)
-	fc, err := NewFunction(ctx, ast.Like, retTp, args[0], args[1], args[3])
+	fc1, err := NewFunction(ctx, ast.Like, retTp, args[0], args[1], args[3])
 	c.Assert(err, IsNil)
-	likeFuncs = append(likeFuncs, fc)
+	expects = append(expects, `{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":5,"val":"cGF0dGVybg==","sig":0,"field_type":{"tp":254,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":63,"charset":"binary"}}],"sig":4310,"field_type":{"tp":8,"flag":128,"flen":1,"decimal":0,"collate":63,"charset":"binary"}}`)
+	likeFuncs = append(likeFuncs, fc1)
 
-	fc, err = NewFunction(ctx, ast.Like, retTp, args[0], args[2], args[3])
+	fc2, err := NewFunction(ctx, ast.Like, retTp, args[0], args[2], args[3])
 	c.Assert(err, IsNil)
-	likeFuncs = append(likeFuncs, fc)
+	expects = append(expects, `{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":5,"val":"JWFiYyU=","sig":0,"field_type":{"tp":254,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":63,"charset":"binary"}}],"sig":4310,"field_type":{"tp":8,"flag":128,"flen":1,"decimal":0,"collate":63,"charset":"binary"}}`)
+	likeFuncs = append(likeFuncs, fc2)
 
 	pbExprs := ExpressionsToPBList(sc, likeFuncs, client)
-	for _, pbExpr := range pbExprs {
+	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
-		c.Assert(string(js), Equals, "null")
+		c.Assert(string(js), Equals, expects[i])
 	}
 }
 
@@ -318,7 +321,7 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	jsons[ast.Plus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":200,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 	jsons[ast.Minus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":204,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 	jsons[ast.Mul] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":208,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
-	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":31,\"collate\":63,\"charset\":\"binary\"}}"
+	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 
 	pbExprs := ExpressionsToPBList(sc, arithmeticalFuncs, client)
 	for i, pbExpr := range pbExprs {
@@ -428,28 +431,29 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	cases := []struct {
 		name   string
 		sig    tipb.ScalarFuncSig
+		argCnt int
 		enable bool
 	}{
-		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
-		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
+		{ast.And, tipb.ScalarFuncSig_BitAndSig, 2, true},
+		{ast.Or, tipb.ScalarFuncSig_BitOrSig, 2, false},
+		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, 1, true},
 	}
 	var enabled []string
-	for i, funcName := range cases {
-		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
-		if i+1 < len(cases) {
-			args = append(args, dg.genColumn(mysql.TypeLong, 2))
+	for _, cs := range cases {
+		args := make([]Expression, 0, cs.argCnt)
+		for i := 0; i < cs.argCnt; i++ {
+			args = append(args, dg.genColumn(mysql.TypeLong, int64(i)))
 		}
 		fc, err := NewFunction(
 			mock.NewContext(),
-			funcName.name,
+			cs.name,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
 		)
 		c.Assert(err, IsNil)
 		funcs = append(funcs, fc)
-		if funcName.enable {
-			enabled = append(enabled, funcName.name)
+		if cs.enable {
+			enabled = append(enabled, cs.name)
 		}
 	}
 
