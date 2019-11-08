@@ -35,6 +35,6 @@ explain select max(_tidb_rowid) from access_path_selection;
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)
 └─Limit_17	1.00	root	offset:0, count:1
-  └─TableReader_42	1.00	root	data:Limit_41
-    └─Limit_41	1.00	cop	offset:0, count:1
-      └─TableScan_40	1.25	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
+  └─TableReader_27	1.00	root	data:Limit_26
+    └─Limit_26	1.00	cop	offset:0, count:1
+      └─TableScan_25	1.25	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
