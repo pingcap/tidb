@@ -61,10 +61,15 @@ const (
 	ActionRepairTable                   ActionType = 29
 	ActionSetTiFlashReplica             ActionType = 30
 	ActionUpdateTiFlashReplicaStatus    ActionType = 31
+	ActionAddPrimaryKey                 ActionType = 32
+	ActionDropPrimaryKey                ActionType = 33
 )
 
-// AddIndexStr is a string related to the operation of "add index".
-const AddIndexStr = "add index"
+const (
+	// AddIndexStr is a string related to the operation of "add index".
+	AddIndexStr      = "add index"
+	AddPrimaryKeyStr = "add primary key"
+)
 
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
@@ -98,6 +103,8 @@ var actionMap = map[ActionType]string{
 	ActionRepairTable:                   "repair table",
 	ActionSetTiFlashReplica:             "set tiflash replica",
 	ActionUpdateTiFlashReplicaStatus:    "update tiflash replica status",
+	ActionAddPrimaryKey:                 AddPrimaryKeyStr,
+	ActionDropPrimaryKey:                "drop primary key",
 }
 
 // String return current ddl action in string
