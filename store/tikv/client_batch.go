@@ -285,7 +285,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
 	if err == nil {
 		tikvClient := tikvpb.NewTikvClient(c.conn)
 		var streamClient tikvpb.Tikv_BatchCommandsClient
-		streamClient, err = tikvClient.BatchCommands(context.TODO())
+		streamClient, err = tikvClient.BatchCommands(context.TODO(), grpc.UseCompressor("gzip"))
 		if err == nil {
 			logutil.BgLogger().Info(
 				"batchRecvLoop re-create streaming success",
@@ -505,7 +505,7 @@ func (c *batchCommandsClient) initBatchClient() error {
 
 	// Initialize batch streaming clients.
 	tikvClient := tikvpb.NewTikvClient(c.conn)
-	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	streamClient, err := tikvClient.BatchCommands(context.TODO(), grpc.UseCompressor("gzip"))
 	if err != nil {
 		return errors.Trace(err)
 	}
