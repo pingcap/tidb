@@ -466,10 +466,10 @@ insert tb values ('1');
 explain select * from ta where a = 1;
 id	count	task	operator info
 Projection_5	8000.00	root	Column#1
-└─UnionScan_6	8000.00	root	eq(cast(Column#1), 1)
-  └─TableReader_9	8000.00	root	data:Selection_8
-    └─Selection_8	8000.00	cop[tikv]	eq(cast(Column#1), 1)
-      └─TableScan_7	10000.00	cop[tikv]	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_6	8000.00	root	eq(cast(Column#1), 1)
+  └─UnionScan_7	10000.00	root	eq(cast(Column#1), 1)
+    └─TableReader_9	10000.00	root	data:TableScan_8
+      └─TableScan_8	10000.00	cop[tikv]	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, primary key(a, b));
