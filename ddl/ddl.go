@@ -130,6 +130,8 @@ var (
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
 
+	// ErrInvalidDefaultValue returns for invalid default value for columns.
+	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	// ErrInvalidDBState returns for invalid database state.
@@ -679,6 +681,7 @@ func init() {
 		codeFileNotFound:                           mysql.ErrFileNotFound,
 		codeErrorOnRename:                          mysql.ErrErrorOnRename,
 		codeBadField:                               mysql.ErrBadField,
+		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:                       mysql.ErrInvalidUseOfNull,
 		codeUnsupportedOnGeneratedColumn:           mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:                mysql.ErrGeneratedColumnNonPrior,

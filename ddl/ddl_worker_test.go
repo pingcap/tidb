@@ -529,7 +529,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
-	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, "", "")
+	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, "", "", "", "")
 	c.Assert(err, IsNil)
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
