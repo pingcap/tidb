@@ -41,6 +41,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTableScan: {
 		&ImplTableScan{},
 	},
+	memo.OperandIndexScan: {
+		&ImplIndexScan{},
+	},
 	memo.OperandTableGather: {
 		&ImplTableGather{},
 	},
@@ -118,8 +121,13 @@ func (r *ImplTableGather) Match(expr *memo.GroupExpr, prop *property.PhysicalPro
 func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	tg := expr.ExprNode.(*plannercore.TableGather)
-	reader := tg.GetPhysicalReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
+	if tg.IsIndexGather {
+		reader := tg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		return impl.NewIndexReaderImpl(reader, tg.Source.TblColHists), nil
+	} else {
+		reader := tg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
+	}
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.
@@ -143,6 +151,29 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
 	return impl.NewTableScanImpl(ts, tblCols, tblColHists), nil
+}
+
+// ImplIndexScan implements IndexScan as PhysicalIndexScan.
+type ImplIndexScan struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	is := expr.ExprNode.(*plannercore.IndexScan)
+	return prop.IsEmpty() || is.MatchIndexProp(prop)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalScan := expr.ExprNode.(*plannercore.IndexScan)
+	is := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	if !reqProp.IsEmpty() {
+		is.KeepOrder = true
+		if reqProp.Items[0].Desc {
+			is.Desc = true
+		}
+	}
+	return nil, nil
 }
 
 // ImplShow is the implementation rule which implements LogicalShow to

@@ -394,6 +394,12 @@ type DataSource struct {
 type TableGather struct {
 	logicalSchemaProducer
 	Source *DataSource
+	// IsIndexGather marks if this TableGather gathers tuples from an IndexScan.
+	// TableGather and IndexGather are logically equivalent. So that we
+	// only need TableGather for the exploration phase. But in implementation
+	// phase, we need this flag to determine whether to generate PhysicalTableReader
+	// or PhysicalIndexReader.
+	IsIndexGather bool
 }
 
 // TableScan is the logical table scan operator for TiKV.
@@ -403,6 +409,34 @@ type TableScan struct {
 	Handle      *expression.Column
 	AccessConds expression.CNFExprs
 	Ranges      []*ranger.Range
+}
+
+// IndexScan is the logical index scan operator for TiKV.
+type IndexScan struct {
+	logicalSchemaProducer
+	Source       *DataSource
+	Path         *accessPath
+	IsDoubleRead bool
+	AccessConds  expression.CNFExprs
+	Ranges       []*ranger.Range
+}
+
+// MatchIndexProp checks if the indexScan can match the required property.
+func (p *IndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+	if all, _ := prop.AllSameOrder(); !all {
+		return false
+	}
+	path := p.Path
+	if !prop.IsEmpty() {
+		for i, col := range path.idxCols {
+			if col.Equal(nil, prop.Items[0].Col) {
+				return matchIndicesProp(path.idxCols[i:], path.idxColLens[i:], prop.Items)
+			} else if i >= path.eqCondCount {
+				break
+			}
+		}
+	}
+	return false
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -445,19 +479,33 @@ func getTablePath(paths []*accessPath) *accessPath {
 func (ds *DataSource) buildTableGather() LogicalPlan {
 	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
-	tg := TableGather{Source: ds}.Init(ds.ctx, ds.blockOffset)
+	tg := TableGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
 	tg.SetSchema(ds.Schema())
 	tg.SetChildren(ts)
 	return tg
 }
 
-// Convert2Gathers builds logical TableGather and IndexGather(to be implemented) from DataSource.
+func (ds *DataSource) buildIndexGather(path *accessPath) LogicalPlan {
+	is := IndexScan{Source: ds, Path: path, IsDoubleRead: false}.Init(ds.ctx, ds.blockOffset)
+	is.SetSchema(ds.Schema())
+	tg := TableGather{Source: ds, IsIndexGather: true}.Init(ds.ctx, ds.blockOffset)
+	tg.SetSchema(ds.Schema())
+	tg.SetChildren(is)
+	return tg
+}
+
+// Convert2Gathers builds logical TableGathers from DataSource.
 func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
 		if !path.isTablePath {
-			// TODO: add IndexGather
+			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
+			// If index columns can cover all of the needed columns, we can use a TableGather + IndexScan.
+			if isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle) {
+				gathers = append(gathers, ds.buildIndexGather(path))
+			}
+			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
 		}
 	}
 	return gathers

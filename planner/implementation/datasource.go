@@ -95,3 +95,55 @@ func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implement
 	}
 	return impl.cost
 }
+
+// IndexReaderImpl is the implementation of PhysicalIndexReader.
+type IndexReaderImpl struct {
+	baseImpl
+	tblColHists *statistics.HistColl
+}
+
+// CalcCost implements Implementation interface.
+func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	reader := impl.plan.(*plannercore.PhysicalIndexReader)
+	sessVars := reader.SCtx().GetSessionVars()
+	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(children[0].GetPlan().Schema().Columns, true)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
+	return impl.cost
+}
+
+// NewTableReaderImpl creates a new IndexReader Implementation.
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, tblColHists *statistics.HistColl) *IndexReaderImpl {
+	return &IndexReaderImpl{
+		baseImpl:    baseImpl{plan: reader},
+		tblColHists: tblColHists,
+	}
+}
+
+// IndexScanImpl is the Implementation of PhysicalIndexScan.
+type IndexScanImpl struct {
+	baseImpl
+	tblColHists *statistics.HistColl
+}
+
+// CalcCost implements Implementation interface.
+func (impl *IndexScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	is := impl.plan.(*plannercore.PhysicalIndexScan)
+	sessVars := is.SCtx().GetSessionVars()
+	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.Schema().Columns, is.Index.Unique)
+	cost := outCount * rowSize * sessVars.ScanFactor
+	if is.Desc {
+		cost = outCount * rowSize * sessVars.DescScanFactor
+	}
+	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
+	impl.cost = cost
+	return impl.cost
+}
+
+// NewIndexScanImpl creates a new IndexScan Implementation.
+func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
+	return &IndexScanImpl{
+		baseImpl:    baseImpl{plan: scan},
+		tblColHists: tblColHists,
+	}
+}

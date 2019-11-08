@@ -119,7 +119,7 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	return ndv
 }
 
-func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
 	if ds.tableStats == nil {
 		tableStats := &property.StatsInfo{
 			RowCount:     float64(ds.statisticTable.Count),
@@ -141,10 +141,11 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	ds.stats = ds.tableStats.Scale(selectivity)
+	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		ds.stats.HistColl = ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
+	return stats
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -153,7 +154,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
 	}
-	ds.deriveStatsByFilter(ds.pushedDownConds)
+	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -203,7 +204,7 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		// `PushDownNot` function call in multiple `DeriveStats` then.
 		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
 	}
-	ts.Source.deriveStatsByFilter(ts.AccessConds)
+	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	if ts.Handle != nil {
@@ -220,7 +221,22 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	if err != nil {
 		return nil, err
 	}
-	return ts.Source.stats, nil
+	return ts.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
+	for i, expr := range is.AccessConds {
+		is.AccessConds[i] = expression.PushDownNot(nil, expr)
+	}
+	is.stats = is.Source.deriveStatsByFilter(is.AccessConds)
+	if len(is.AccessConds) == 0 {
+		is.Ranges = ranger.FullRange()
+	}
+	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
+
+	// TODO: Fulfill the accessPath for skyline pruning.
+	return is.stats, nil
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.

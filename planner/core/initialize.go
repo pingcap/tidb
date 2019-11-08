@@ -51,6 +51,12 @@ func (ts TableScan) Init(ctx sessionctx.Context, offset int) *TableScan {
 	return &ts
 }
 
+// Init initializes IndexScan.
+func (is IndexScan) Init(ctx sessionctx.Context, offset int) *IndexScan {
+	is.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
+	return &is
+}
+
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx sessionctx.Context, offset int) *LogicalApply {
 	la.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
@@ -387,15 +393,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	switch p.indexPlan.(type) {
-	case *PhysicalHashAgg, *PhysicalStreamAgg:
-		p.schema = p.indexPlan.Schema()
-	default:
-		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		p.schema = is.dataSourceSchema
-	}
-	p.OutputColumns = p.schema.Clone().Columns
+	p.SetSchema(nil)
 	return &p
 }
 

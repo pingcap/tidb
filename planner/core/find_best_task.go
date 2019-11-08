@@ -975,6 +975,29 @@ func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.S
 	return ts
 }
 
+// GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
+func (s *IndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+	ds := s.Source
+	path := s.Path
+	is := PhysicalIndexScan{
+		Table:            ds.tableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          ds.Columns,
+		Index:            path.index,
+		IdxCols:          path.idxCols,
+		IdxColLens:       path.idxColLens,
+		AccessCondition:  path.accessConds,
+		Ranges:           path.ranges,
+		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
+	}.Init(ds.ctx, ds.blockOffset)
+	is.stats = stats
+	is.initSchema(path.index, path.fullIdxCols, s.IsDoubleRead)
+	return is
+}
+
 // convertToTableScan converts the DataSource to table scan.
 func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	// It will be handled in convertToIndexScan.

@@ -50,32 +50,32 @@
         ]
       },
       {
-        "SQL": "select a, @i:=@i+1 as ii from (select a, @i:=0 from t as t1) as t2 where @i < 10",
+        "SQL": "select b, @i:=@i+1 as ii from (select b, @i:=0 from t as t1) as t2 where @i < 10",
         "Result": [
-          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
+          "Group#0 Schema:[Column#15,Column#16]",
           "    Projection_4 input:[Group#1], Column#13, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#1 Schema:[Column#13,Column#14]",
           "    Selection_3 input:[Group#2], lt(cast(getvar(\"i\")), 10)",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
-          "    Projection_2 input:[Group#3], Column#1, setvar(\"i\", \"0\")",
-          "Group#3 Schema:[Column#1], UniqueKey:[Column#1]",
+          "Group#2 Schema:[Column#13,Column#14]",
+          "    Projection_2 input:[Group#3], Column#2, setvar(\"i\", \"0\")",
+          "Group#3 Schema:[Column#2]",
           "    TableGather_6 input:[Group#4]",
-          "Group#4 Schema:[Column#1], UniqueKey:[Column#1]",
-          "    TableScan_5 table:t1, pk col:Column#1"
+          "Group#4 Schema:[Column#2]",
+          "    TableScan_5 table:t1"
         ]
       },
       {
-        "SQL": "select a, @i:=@i+1 as ii from (select a, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
+        "SQL": "select b, @i:=@i+1 as ii from (select a, b, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
         "Result": [
-          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
-          "    Projection_4 input:[Group#1], Column#13, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#0 Schema:[Column#16,Column#17]",
+          "    Projection_4 input:[Group#1], Column#14, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
+          "Group#1 Schema:[Column#13,Column#14,Column#15], UniqueKey:[Column#13]",
           "    Selection_8 input:[Group#2], lt(cast(getvar(\"i\")), 10)",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
-          "    Projection_2 input:[Group#3], Column#1, setvar(\"i\", \"0\")",
-          "Group#3 Schema:[Column#1], UniqueKey:[Column#1]",
+          "Group#2 Schema:[Column#13,Column#14,Column#15], UniqueKey:[Column#13]",
+          "    Projection_2 input:[Group#3], Column#1, Column#2, setvar(\"i\", \"0\")",
+          "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableGather_6 input:[Group#4]",
-          "Group#4 Schema:[Column#1], UniqueKey:[Column#1]",
+          "Group#4 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableScan_10 table:t1, pk col:Column#1, cond:[gt(Column#1, 10)]"
         ]
       },

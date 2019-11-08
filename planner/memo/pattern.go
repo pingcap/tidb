@@ -59,6 +59,8 @@ const (
 	OperandTableGather
 	// OperandTableScan is the operand for TableScan.
 	OperandTableScan
+	// OperandIndexScan is the operand for IndexScan.
+	OperandIndexScan
 	// OperandShow is the operand for Show.
 	OperandShow
 	// OperandUnsupported is the operand for unsupported operators.
