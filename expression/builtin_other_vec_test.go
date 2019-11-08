@@ -21,7 +21,6 @@ import (
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-	ast.In:       {},
 	ast.SetVar:   {},
 	ast.GetVar:   {},
 	ast.BitCount: {},
