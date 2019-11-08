@@ -600,20 +600,21 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		if conflictCommitTS > forUpdateTS {
 			newForUpdateTS = conflictCommitTS
 		}
-	} else if terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet) {
+	} else {
+		// this branch if err not nil, always update forUpdateTS to avoid problem described below
 		// for nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn
 		// the select for updateTs must be updated, otherwise there maybe rollback problem.
 		// begin;  select for update key1(here ErrLocked or other errors(or max_execution_time like util),
 		//         key1 lock not get and async rollback key1 is raised)
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
-		newForUpdateTS, tsErr := a.GetTimestampWithRetry(ctx)
-		if tsErr != nil {
-			return nil, tsErr
+		if err != nil {
+			newForUpdateTS, tsErr := a.GetTimestampWithRetry(ctx)
+			if tsErr != nil {
+				return nil, tsErr
+			}
+			txnCtx.SetForUpdateTS(newForUpdateTS)
 		}
-		txnCtx.SetForUpdateTS(newForUpdateTS)
-		return nil, err
-	} else {
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {

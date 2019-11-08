@@ -68,7 +68,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 			}},
 		},
 	},
-	ast.RowCount:    {},
+	ast.RowCount: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
 	ast.CurrentRole: {},
 	ast.TiDBIsDDLOwner: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
