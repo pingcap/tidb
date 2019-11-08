@@ -17,9 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/ranger"
 	"io"
 	"sort"
 	"strings"
@@ -33,12 +30,15 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -250,7 +250,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 			}
 		} else if req.StoreType == kv.TiFlash {
 			left, right := regionWithRangeInfo.StartKey, regionWithRangeInfo.EndKey
-			if bytes.Compare(tableStart, left) >= 0 || len(left) == 0{
+			if bytes.Compare(tableStart, left) >= 0 || len(left) == 0 {
 				left = tableStart
 			}
 			if bytes.Compare(tableEnd, right) <= 0 || len(right) == 0 {
