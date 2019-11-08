@@ -545,14 +545,17 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	} else {
 		sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID))
 	}
-	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
-	if err != nil {
-		return
-	}
+	var data []byte
 	// Delete outdated data
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
-	for _, meta := range cms.TopN() {
-		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
+	if cms != nil {
+		data, err = statistics.EncodeCMSketchWithoutTopN(cms)
+		if err != nil {
+			return
+		}
+		for _, meta := range cms.TopN() {
+			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {
