@@ -22,6 +22,84 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+func vecJSONModify(b *baseBuiltinFunc, input *chunk.Chunk, result *chunk.Column, mt json.ModifyType) error {
+	nr := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+
+	strBufs := make([]*chunk.Column, (len(b.args)-1)/2)
+	for i := 0; i < (len(b.args)-1)/2; i++ {
+		strBufs[i], err = b.bufAllocator.get(types.ETString, nr)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(strBufs[i])
+		if err := b.args[i*2+1].VecEvalString(b.ctx, input, strBufs[i]); err != nil {
+			return err
+		}
+	}
+	valueBufs := make([]*chunk.Column, (len(b.args)-1)/2+1)
+	for i := 0; i < (len(b.args)-1)/2; i++ {
+		valueBufs[i], err = b.bufAllocator.get(types.ETJson, nr)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(valueBufs[i])
+		if err := b.args[(i+1)*2].VecEvalJSON(b.ctx, input, valueBufs[i]); err != nil {
+			return err
+		}
+	}
+	result.ReserveJSON(nr)
+	for i := 0; i < nr; i++ {
+		if jsonBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		pathExprs := make([]json.PathExpression, 0, (len(b.args)-1)/2+1)
+		values := make([]json.BinaryJSON, 0, (len(b.args)-1)/2+1)
+		var pathExpr json.PathExpression
+		isNull := false
+		for j := 1; j < len(b.args); j++ {
+			if j&1 == 0 {
+				// 2,4,6,8,10
+				if valueBufs[j/2-1].IsNull(i) {
+					values = append(values, json.CreateBinary(nil))
+				} else {
+					values = append(values, valueBufs[j/2-1].GetJSON(i))
+				}
+			} else {
+				// 1,3,5,7,9
+				if strBufs[(j-1)/2].IsNull(i) {
+					isNull = true
+					break
+				} else {
+					pathExpr, err = json.ParseJSONPathExpr(strBufs[(j-1)/2].GetString(i))
+					if err != nil {
+						return err
+					}
+					pathExprs = append(pathExprs, pathExpr)
+				}
+			}
+		}
+		if isNull {
+			result.AppendNull()
+		} else {
+			res, err := jsonBuf.GetJSON(i).Modify(pathExprs, values, mt)
+			if err != nil {
+				return err
+			}
+			result.AppendJSON(res)
+		}
+	}
+	return nil
+}
+
 func (b *builtinJSONDepthSig) vectorized() bool {
 	return true
 }
@@ -82,19 +160,21 @@ func (b *builtinJSONKeysSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinJSONInsertSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONInsertSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	err := vecJSONModify(&b.baseBuiltinFunc, input, result, json.ModifyInsert)
+	return err
 }
 
 func (b *builtinJSONReplaceSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONReplaceSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	err := vecJSONModify(&b.baseBuiltinFunc, input, result, json.ModifyReplace)
+	return err
 }
 
 func (b *builtinJSONArraySig) vectorized() bool {
@@ -251,11 +331,12 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinJSONSetSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONSetSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	err := vecJSONModify(&b.baseBuiltinFunc, input, result, json.ModifySet)
+	return err
 }
 
 func (b *builtinJSONObjectSig) vectorized() bool {
