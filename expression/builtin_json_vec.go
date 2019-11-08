@@ -78,13 +78,12 @@ func vecJSONModify(b *baseBuiltinFunc, input *chunk.Chunk, result *chunk.Column,
 				if strBufs[(j-1)/2].IsNull(i) {
 					isNull = true
 					break
-				} else {
-					pathExpr, err = json.ParseJSONPathExpr(strBufs[(j-1)/2].GetString(i))
-					if err != nil {
-						return err
-					}
-					pathExprs = append(pathExprs, pathExpr)
 				}
+				pathExpr, err = json.ParseJSONPathExpr(strBufs[(j-1)/2].GetString(i))
+				if err != nil {
+					return err
+				}
+				pathExprs = append(pathExprs, pathExpr)
 			}
 		}
 		if isNull {
