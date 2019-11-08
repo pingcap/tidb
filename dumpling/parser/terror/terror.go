@@ -83,6 +83,7 @@ const (
 	ClassTiKV
 	ClassSession
 	ClassPlugin
+	ClassUtil
 	// Add more as needed.
 )
 
@@ -111,6 +112,7 @@ var errClz2Str = map[ErrClass]string{
 	ClassTiKV:       "tikv",
 	ClassSession:    "session",
 	ClassPlugin:     "plugin",
+	ClassUtil:       "util",
 }
 
 // String implements fmt.Stringer interface.
