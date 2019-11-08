@@ -70,6 +70,7 @@ type Config struct {
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
@@ -370,8 +371,8 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
-	// EnableArrow indicate the data encode in arrow format.
-	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
+	// EnableChunkRPC indicate the data encode in chunk format for coprocessor requests.
+	EnableChunkRPC bool `toml:"enable-chunk-rpc" json:"enable-chunk-rpc"`
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
@@ -427,6 +428,7 @@ var defaultConf = Config{
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
+	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -500,7 +502,7 @@ var defaultConf = Config{
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
 
-		EnableArrow: true,
+		EnableChunkRPC: true,
 
 		RegionCacheTTL: 600,
 	},
