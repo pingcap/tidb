@@ -454,6 +454,8 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	session.DisableStats4Test()
+	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 
