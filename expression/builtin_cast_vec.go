@@ -1085,11 +1085,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		}
 		res, err = tm.RoundFrac(sc, int8(b.tp.Decimal))
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
+			return err
 		}
 
 		if b.tp.Tp == mysql.TypeDate {
