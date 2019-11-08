@@ -284,14 +284,12 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 	{{- else }}
 		result.ResizeGoDuration(n, false)
 		r64s := result.GoDurations()
-		{{- if $reuse }}
-			{{- if $reuseA }}
-				buf0 := result
-				{{- template "BufAllocator1" . }}
-			{{- else if $reuseB }}
-				buf1 := result
-				{{- template "BufAllocator0" . }}
-			{{- end }}
+		{{- if $reuseA }}
+			buf0 := result
+			{{- template "BufAllocator1" . }}
+		{{- else if $reuseB }}
+			buf1 := result
+			{{- template "BufAllocator0" . }}
 		{{- else }}
 			{{- template "BufAllocator0" . }}
 			{{- template "BufAllocator1" . }}
@@ -304,19 +302,19 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			return err
 		}
 
-		{{- if and .TypeA.Fixed .TypeB.Fixed }}
-			result.MergeNulls(buf0, buf1)
-			arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
-			arg1 := buf1.{{.TypeB.TypeNameInColumn}}s()
+		{{- if $reuseA }}
+			result.MergeNulls(buf1)
+		{{- else if $reuseB }}
+			result.MergeNulls(buf0)
 		{{- else }}
-			{{- if .TypeA.Fixed }} 
-				result.MergeNulls(buf0)
-				arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
-			{{- end }}
-			{{- if .TypeB.Fixed }} 
-				result.MergeNulls(buf1)
-				arg1 := buf1.{{.TypeB.TypeNameInColumn}}s()
-			{{- end }}
+			result.MergeNulls(buf0, buf1)
+		{{- end -}}
+
+		{{- if .TypeA.Fixed }} 
+			arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
+		{{- end }}
+		{{- if .TypeB.Fixed }} 
+			arg1 := buf1.{{.TypeB.TypeNameInColumn}}s()
 		{{- end }}
 
 		{{- if (or $AIsDuration $BIsDuration) }} 
@@ -329,16 +327,8 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			stmtCtx := b.ctx.GetSessionVars().StmtCtx
 		{{- end }}
 	for i:=0; i<n ; i++{
-		{{- if and .TypeA.Fixed .TypeB.Fixed }} 
-			if result.IsNull(i) {
-		{{- else if .TypeA.Fixed }} 
-			if result.IsNull(i) || buf1.IsNull(i) {
-		{{- else if .TypeB.Fixed }} 
-			if result.IsNull(i) || buf0.IsNull(i) {
-		{{- else }} 
-			if buf1.IsNull(i) || buf0.IsNull(i) {
+		if result.IsNull(i) {
 			result.SetNull(i, true)
-		{{- end }}
 			continue
 		}
 		

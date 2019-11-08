@@ -642,11 +642,12 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf0)
+	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.Times()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) || buf1.IsNull(i) {
+		if result.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhsTime := arg0[i]
@@ -690,7 +691,7 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf0)
+	result.MergeNulls(buf1)
 	arg0 := buf0.GoDurations()
 	var (
 		lhs types.Duration
@@ -698,7 +699,8 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 	)
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) || buf1.IsNull(i) {
+		if result.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhs.Duration = arg0[i]
@@ -743,7 +745,7 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf0, buf1)
+	result.MergeNulls(buf1)
 	arg0 := buf0.GoDurations()
 	arg1 := buf1.GoDurations()
 	var (
@@ -752,6 +754,7 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 	)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhs.Duration = arg0[i]
@@ -793,11 +796,12 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 	if err := b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf1)
+	result.MergeNulls(buf0, buf1)
 	arg1 := buf1.Times()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) || buf0.IsNull(i) {
+		if result.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
@@ -841,7 +845,7 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf1)
+	result.MergeNulls(buf0)
 	arg1 := buf1.GoDurations()
 	var (
 		lhs types.Duration
@@ -849,7 +853,8 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 	)
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) || buf0.IsNull(i) {
+		if result.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
@@ -899,9 +904,10 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	result.MergeNulls(buf0, buf1)
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) || buf0.IsNull(i) {
+		if result.IsNull(i) {
 			result.SetNull(i, true)
 			continue
 		}
@@ -968,6 +974,7 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		lhsTime := arg0[i]
