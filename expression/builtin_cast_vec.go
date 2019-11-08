@@ -1053,11 +1053,54 @@ func (b *builtinCastTimeAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCastTimeAsTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		res := buf.GetTime(i)
+		tm, err := res.Convert(sc, b.tp.Tp)
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err!= nil{
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		res, err = tm.RoundFrac(sc, int8(b.tp.Decimal))
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err!= nil{
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		if b.tp.Tp == mysql.TypeDate {
+			// Truncate hh:mm:ss part if the type is Date.
+			res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
+			res.Type = b.tp.Tp
+		}
+		times[i] = res
+	}
+
+	return nil
 }
 
 func (b *builtinCastTimeAsStringSig) vectorized() bool {
