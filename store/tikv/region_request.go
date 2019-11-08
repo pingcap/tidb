@@ -171,8 +171,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	// judge the store limit switch.
 	if atomic.LoadUint32(&config.GetGlobalConfig().TiKVClient.StoreLimit) > 0 {
 		if err := s.getStoreToken(ctx.Store); err != nil {
-			logutil.BgLogger().Warn("get store token failed", zap.Error(err))
-			return nil, false, errors.Trace(err)
+			return nil, false, err
 		}
 		defer s.releaseStoreToken(ctx.Store)
 	}
