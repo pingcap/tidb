@@ -97,7 +97,7 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsINLJInner = 1 << iota
+	preferLeftAsINLJInner uint = 1 << iota
 	preferRightAsINLJInner
 	preferLeftAsINLHJInner
 	preferRightAsINLHJInner

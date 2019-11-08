@@ -399,12 +399,12 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.hintInfo = hintInfo
 	}
 
-	// If there're multiple join types and one of them is not index join hint,
-	// then there is a conflict of join types.
-	containIndexJoin := (p.preferJoinType^preferRightAsINLJInner^preferLeftAsINLJInner) > 0 ||
-		(p.preferJoinType^preferRightAsINLHJInner^preferLeftAsINLHJInner) > 0 ||
-		(p.preferJoinType^preferRightAsINLMJInner^preferLeftAsINLMJInner) > 0
-	if bits.OnesCount(p.preferJoinType) > 1 && !containIndexJoin {
+	// If there're multiple join types and at least one of them is not index
+	// join hint, then there must exist conflict of join types.
+	mask := preferRightAsINLJInner ^ preferLeftAsINLJInner ^
+		preferRightAsINLHJInner ^ preferLeftAsINLHJInner ^
+		preferRightAsINLMJInner ^ preferLeftAsINLMJInner
+	if onesCount := bits.OnesCount(p.preferJoinType & ^mask); onesCount > 1 || onesCount == 1 && p.preferJoinType&mask > 0 {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
