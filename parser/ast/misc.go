@@ -1353,10 +1353,27 @@ type DropBindingStmt struct {
 
 	GlobalScope bool
 	OriginSel   StmtNode
+	HintedSel   StmtNode
 }
 
 func (n *DropBindingStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("DROP ")
+	if n.GlobalScope {
+		ctx.WriteKeyWord("GLOBAL ")
+	} else {
+		ctx.WriteKeyWord("SESSION ")
+	}
+	ctx.WriteKeyWord("BINDING FOR ")
+	if err := n.OriginSel.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if n.HintedSel != nil {
+		ctx.WriteKeyWord(" USING ")
+		if err := n.HintedSel.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
@@ -1370,6 +1387,13 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.OriginSel = selnode.(*SelectStmt)
+	if n.HintedSel != nil {
+		selnode, ok = n.HintedSel.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HintedSel = selnode.(*SelectStmt)
+	}
 	return v.Leave(n)
 }
 
