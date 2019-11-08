@@ -4145,7 +4145,7 @@ func (s *testSuiteP2) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
-func (s *testSuite) TestShowTableRegion(c *C) {
+func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
@@ -4557,6 +4557,11 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+}
+
+func (s *testRecoverTable) TearDownSuite(c *C) {
+	s.store.Close()
+	s.dom.Close()
 }
 
 func (s *testRecoverTable) TestRecoverTable(c *C) {

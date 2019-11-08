@@ -60,10 +60,10 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 	whensSlice := make([][]int64, l/2)
 	thens := make([]*chunk.Column, l/2)
 	var eLse *chunk.Column
-	{{ if .Fixed }}
+	{{- if .Fixed }}
 	thensSlice := make([][]{{.TypeNameGo}}, l/2)
 	var eLseSlice []{{.TypeNameGo}}
-	{{ end }}
+	{{- end }}
 
 	for j := 0; j < l-1; j+=2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -86,9 +86,9 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 			return err
 		}
 		thens[j/2] = bufThen
-		{{ if .Fixed }}
+		{{- if .Fixed }}
 		thensSlice[j/2] = bufThen.{{ .TypeNameInColumn }}s()
-		{{ end }}
+		{{- end }}
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
@@ -103,52 +103,52 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 			return err
 		}
 		eLse = bufElse
-		{{ if .Fixed }}
+		{{- if .Fixed }}
 		eLseSlice = bufElse.{{ .TypeNameInColumn }}s()
-		{{ end }}
+		{{- end }}
 	}
 	
-	{{ if .Fixed }}
+	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
 	resultSlice := result.{{ .TypeNameInColumn }}s()
-	{{ else }}
+	{{- else }}
 	result.Reserve{{ .TypeNameInColumn }}(n)
-	{{ end }}		
+	{{- end }}		
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
-			{{ if .Fixed }}
+			{{- if .Fixed }}
 			resultSlice[i] = thensSlice[j][i]
 			result.SetNull(i, thens[j].IsNull(i))
-			{{ else }}
+			{{- else }}
 			if thens[j].IsNull(i) {
 				result.AppendNull()
 			} else {
 				result.Append{{ .TypeNameInColumn }}(thens[j].Get{{ .TypeNameInColumn }}(i))
 			}
-			{{ end }}
+			{{- end }}
 			continue ROW
 		}
 		if eLse != nil {
-			{{ if .Fixed }}
+			{{- if .Fixed }}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))
-			{{ else }}
+			{{- else }}
 			if eLse.IsNull(i) {
 				result.AppendNull()
 			} else {
 				result.Append{{ .TypeNameInColumn }}(eLse.Get{{ .TypeNameInColumn }}(i))
 			}	
-			{{ end }}
+			{{- end }}
 		} else {
-			{{ if .Fixed }}
+			{{- if .Fixed }}
 			result.SetNull(i, true)
-			{{ else }}
+			{{- else }}
 			result.AppendNull()
-			{{ end }}
+			{{- end }}
 		}
 	}
 	return nil
@@ -166,7 +166,7 @@ var builtinIfNullVec = template.Must(template.New("builtinIfNullVec").Parse(`
 func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	{{ if .Fixed }}
+	{{- if .Fixed }}
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, result); err != nil {
 		return err
 	}
@@ -204,8 +204,8 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 	if err := b.args[1].VecEval{{ .TypeName }}(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.Reserve{{ .TypeNameInColumn }}(n)
 
+	result.Reserve{{ .TypeNameInColumn }}(n)
 	for i := 0; i < n; i++ {
 		if !buf0.IsNull(i) {
 			result.Append{{ .TypeNameInColumn }}(buf0.Get{{ .TypeNameInColumn }}(i))
@@ -215,7 +215,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 			result.AppendNull()
 		}
 	}
-	{{ end }}
+	{{ end -}}
 	return nil
 }
 
@@ -239,11 +239,11 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 		return err
 	}
 
-{{ if .Fixed }}
+{{- if .Fixed }}
 	if err := b.args[1].VecEval{{ .TypeName }}(b.ctx, input, result); err != nil {
 		return err
 	}
-{{ else }}
+{{- else }}
 	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
@@ -252,8 +252,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 	if err := b.args[1].VecEval{{ .TypeName }}(b.ctx, input, buf1); err != nil {
 		return err
 	}
-{{ end }}
-
+{{- end }}
 	buf2, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 	if err != nil {
 		return err
@@ -265,40 +264,40 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 
 {{ if not .Fixed }}
 	result.Reserve{{ .TypeNameInColumn }}(n)
-{{ end }}
+{{- end }}
 	arg0 := buf0.Int64s()
-{{ if .Fixed }}
+{{- if .Fixed }}
 	arg2 := buf2.{{ .TypeNameInColumn }}s()
 	rs := result.{{ .TypeNameInColumn }}s()
-{{ end }}
+{{- end }}
 	for i := 0; i < n; i++ {
 		arg := arg0[i]
 		isNull0 := buf0.IsNull(i)
 		switch {
 		case isNull0 || arg == 0:
-{{ if .Fixed }}
+{{- if .Fixed }}
 			if buf2.IsNull(i) {
 				result.SetNull(i, true)
 			} else {
 				result.SetNull(i, false)
 				rs[i] = arg2[i]
 			}
-{{ else }}
+{{- else }}
 			if buf2.IsNull(i) {
 				result.AppendNull()
 			} else {
 				result.Append{{ .TypeNameInColumn }}(buf2.Get{{ .TypeNameInColumn }}(i))
 			}
-{{ end }}
+{{- end }}
 		case arg != 0:
-{{ if .Fixed }}
-{{ else }}
+{{- if .Fixed }}
+{{- else }}
 			if buf1.IsNull(i) {
 				result.AppendNull()
 			} else {
 				result.Append{{ .TypeNameInColumn }}(buf1.Get{{ .TypeNameInColumn }}(i))
 			}
-{{ end }}
+{{- end }}
 		}
 	}
 	return nil
