@@ -22,9 +22,9 @@ IndexLookUp_11	0.00	root
 CREATE TABLE `access_path_selection` (
 `a` int,	`a` int,
 `b` int,	`b` int,
-KEY `IDX_a` (`a`),	KEY `IDX_a` (`a`),
-KEY `IDX_b` (`b`),	KEY `IDX_b` (`b`),
-KEY `IDX_ab` (`a`, `b`)	KEY `IDX_ab` (`a`, `b`)
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
 );
 explain select a, b from access_path_selection order by _tidb_rowid;
 id	count	task	operator info

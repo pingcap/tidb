@@ -23,9 +23,9 @@ explain select * from outdated_statistics where a=1 and b=1 and c=1;
 CREATE TABLE `access_path_selection` (
 `a` int,	`a` int,
 `b` int,	`b` int,
-KEY `IDX_a` (`a`),	KEY `IDX_a` (`a`),
-KEY `IDX_b` (`b`),	KEY `IDX_b` (`b`),
-KEY `IDX_ab` (`a`, `b`)	KEY `IDX_ab` (`a`, `b`)
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
 );
 # _tidb_rowid should also be considered as PK.
 explain select a, b from access_path_selection order by _tidb_rowid;
