@@ -250,7 +250,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 			}
 		} else if req.StoreType == kv.TiFlash {
 			left, right := regionWithRangeInfo.StartKey, regionWithRangeInfo.EndKey
-			if bytes.Compare(tableStart, left) >= 0 || len(left) == 0 {
+			if bytes.Compare(tableStart, left) >= 0 {
 				left = tableStart
 			}
 			if bytes.Compare(tableEnd, right) <= 0 || len(right) == 0 {
