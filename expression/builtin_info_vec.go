@@ -52,7 +52,7 @@ func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	n := input.NumRows()
 	data := b.ctx.GetSessionVars()
 	if data == nil {
-		return errors.Errorf("Missing session variable when evalue builtin")
+		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
 	}
 	connectionID := int64(data.ConnectionID)
 	result.ResizeInt64(n, false)
