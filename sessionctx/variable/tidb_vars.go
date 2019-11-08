@@ -124,8 +124,8 @@ const (
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
-	// tidb_enable_arrow enables TiDB to use Chunk format for coprocessor requests.
-	TiDBEnableArrow = "tidb_enable_arrow"
+	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
@@ -188,6 +188,8 @@ const (
 	TiDBOptScanFactor = "tidb_opt_scan_factor"
 	// tidb_opt_desc_factor is the IO cost of scanning 1 byte data on TiKV in desc order.
 	TiDBOptDescScanFactor = "tidb_opt_desc_factor"
+	// tidb_opt_seek_factor is the IO cost of seeking the start value in a range on TiKV or TiFlash.
+	TiDBOptSeekFactor = "tidb_opt_seek_factor"
 	// tidb_opt_memory_factor is the memory cost of storing one tuple.
 	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
 	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
@@ -331,6 +333,10 @@ const (
 
 	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
 	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
+
+	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
+	// Now, only support TiKV and TiFlash.
+	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
 )
 
 // Default TiDB system variable values.
@@ -357,6 +363,7 @@ const (
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0
+	DefOptSeekFactor                   = 20.0
 	DefOptMemoryFactor                 = 0.001
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
@@ -406,6 +413,7 @@ const (
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
 	DefTiDBUsePlanBaselines            = true
+	DefInnodbLockWaitTimeout           = 50 // 50s
 )
 
 // Process global variables.

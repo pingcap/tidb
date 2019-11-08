@@ -198,8 +198,8 @@ func (ds *DataSource) BuildKeyInfo() {
 			// The columns of this index should all occur in column schema.
 			// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
 			find := false
-			for i, col := range ds.schema.Columns {
-				if idxCol.Name.L == col.ColName.L {
+			for i, col := range ds.Columns {
+				if idxCol.Name.L == col.Name.L {
 					if !mysql.HasNotNullFlag(ds.Columns[i].Flag) {
 						break
 					}

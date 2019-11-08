@@ -35,8 +35,8 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/texttree"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -71,8 +71,8 @@ type CheckTable struct {
 	baseSchemaProducer
 
 	DBName             string
-	TblInfo            *model.TableInfo
-	Indices            []table.Index
+	Table              table.Table
+	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 
@@ -232,6 +232,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
+		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
@@ -267,6 +268,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
+		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
 			return err
@@ -276,7 +278,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		e.names = plan.OutputNames()
+		e.names = names
 		e.Plan = plan
 		sctx.GetSessionVars().StmtCtx.PointExec = true
 		return nil
@@ -304,7 +306,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
 	}
@@ -312,11 +314,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return err
 	}
-	e.names = p.OutputNames()
+	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, p.OutputNames()))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, names))
 	}
 	return err
 }
@@ -326,12 +328,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	prepared *ast.Prepared, is infoschema.InfoSchema, p Plan) error {
 	var (
-		ok  bool
-		err error
+		ok    bool
+		err   error
+		names types.NameSlice
 	)
 	switch p.(type) {
 	case *PointGetPlan:
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		names = p.OutputNames()
 		if err != nil {
 			return err
 		}
@@ -343,12 +347,13 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if ok {
 			// make constant expression store paramMarker
 			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 		}
 	}
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
+		prepared.CachedNames = names
 	}
 	return err
 }
@@ -444,11 +449,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2PrefixCols(is.schema.Columns, is.Index)
-	if len(idxCols) == 0 {
+	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return nil, err
 	}
@@ -511,14 +515,16 @@ type InsertGeneratedColumns struct {
 type Insert struct {
 	baseSchemaProducer
 
-	Table       table.Table
-	tableSchema *expression.Schema
-	Columns     []*ast.ColumnName
-	Lists       [][]expression.Expression
-	SetList     []*expression.Assignment
+	Table         table.Table
+	tableSchema   *expression.Schema
+	tableColNames types.NameSlice
+	Columns       []*ast.ColumnName
+	Lists         [][]expression.Expression
+	SetList       []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema
+	names4OnDuplicate  types.NameSlice
 
 	IsReplace bool
 
@@ -670,11 +676,16 @@ func (e *Explain) prepareSchema() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(fieldNames))...)
-	for _, fieldName := range fieldNames {
-		schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	cwn := &columnsWithNames{
+		cols:  make([]*expression.Column, 0, len(fieldNames)),
+		names: make([]*types.FieldName, 0, len(fieldNames)),
 	}
-	e.SetSchema(schema)
+
+	for _, fieldName := range fieldNames {
+		cwn.Append(buildColumnWithName("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	}
+	e.SetSchema(cwn.col2Schema())
+	e.names = cwn.names
 	return nil
 }
 
@@ -704,7 +715,7 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
-	childIndent := e.getIndent4Child(indent, isLastChild)
+	childIndent := texttree.Indent4Child(indent, isLastChild)
 
 	if physPlan, ok := p.(PhysicalPlan); ok {
 		for i, child := range physPlan.Children() {
@@ -723,9 +734,9 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 		var storeType string
 		switch x.StoreType {
 		case kv.TiKV:
-			storeType = "tikv"
+			storeType = kv.TiKV.Name()
 		case kv.TiFlash:
-			storeType = "tiflash"
+			storeType = kv.TiFlash.Name()
 		default:
 			err = errors.Errorf("the store type %v is unknown", x.StoreType)
 			return
@@ -777,7 +788,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	explainID := p.ExplainID().String()
-	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
@@ -806,53 +817,6 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 		}
 	}
 	e.Rows = append(e.Rows, row)
-}
-
-func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
-	if len(indent) == 0 {
-		return id
-	}
-
-	indentBytes := []rune(indent)
-	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] != plancodec.TreeBody {
-			continue
-		}
-
-		// Here we attach a new node to the current sub-tree by changing
-		// the closest TreeBody to a:
-		// 1. TreeLastNode, if this operator is the last child.
-		// 2. TreeMiddleNode, if this operator is not the last child..
-		if isLastChild {
-			indentBytes[i] = plancodec.TreeLastNode
-		} else {
-			indentBytes[i] = plancodec.TreeMiddleNode
-		}
-		break
-	}
-
-	// Replace the TreeGap between the TreeBody and the node to a
-	// TreeNodeIdentifier.
-	indentBytes[len(indentBytes)-1] = plancodec.TreeNodeIdentifier
-	return string(indentBytes) + id
-}
-
-func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
-	if !isLastChild {
-		return string(append([]rune(indent), plancodec.TreeBody, plancodec.TreeGap))
-	}
-
-	// If the current node is the last node of the current operator tree, we
-	// need to end this sub-tree by changing the closest TreeBody to a TreeGap.
-	indentBytes := []rune(indent)
-	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] == plancodec.TreeBody {
-			indentBytes[i] = plancodec.TreeGap
-			break
-		}
-	}
-
-	return string(append(indentBytes, plancodec.TreeBody, plancodec.TreeGap))
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {

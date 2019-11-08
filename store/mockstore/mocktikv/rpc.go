@@ -59,6 +59,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
 				TxnSize:     locked.TxnSize,
+				LockType:    locked.LockType,
 			},
 		}
 	}
@@ -90,6 +91,16 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),
+		}
+	}
+	if expired, ok := errors.Cause(err).(*ErrCommitTSExpired); ok {
+		return &kvrpcpb.KeyError{
+			CommitTsExpired: &expired.CommitTsExpired,
+		}
+	}
+	if tmp, ok := errors.Cause(err).(*ErrTxnNotFound); ok {
+		return &kvrpcpb.KeyError{
+			TxnNotFound: &tmp.TxnNotFound,
 		}
 	}
 	return &kvrpcpb.KeyError{
@@ -309,10 +320,12 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
-
-	// TODO: remove this when implement sever side wait.
-	h.simulateServerSideWaitLock(errs)
+	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
+		req.GetLockTtl(), req.WaitTimeout)
+	if req.WaitTimeout == kv.LockAlwaysWait {
+		// TODO: remove this when implement sever side wait.
+		h.simulateServerSideWaitLock(errs)
+	}
 	return &kvrpcpb.PessimisticLockResponse{
 		Errors: convertToKeyErrors(errs),
 	}
@@ -374,7 +387,7 @@ func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) 
 		panic("KvCheckTxnStatus: key not in region")
 	}
 	var resp kvrpcpb.CheckTxnStatusResponse
-	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs())
+	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	} else {
