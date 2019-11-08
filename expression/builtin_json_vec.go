@@ -359,7 +359,7 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(pathBuf)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, pathBuf); err != nil {
+	if err := b.args[1].VecEvalString(b.ctx, input, pathBuf); err != nil {
 		return err
 	}
 
