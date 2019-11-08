@@ -17,6 +17,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/ranger"
 	"io"
 	"sort"
 	"strings"
@@ -218,6 +221,13 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
+	var tableStart, tableEnd kv.Key
+	if req.StoreType == kv.TiFlash {
+		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
+		fullRange := ranger.FullIntRange(false)
+		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
+		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
+	}
 
 	var tasks []*copTask
 	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
@@ -239,7 +249,14 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 				i = nextI
 			}
 		} else if req.StoreType == kv.TiFlash {
-			fullRange := kv.KeyRange{StartKey: regionWithRangeInfo.StartKey, EndKey: regionWithRangeInfo.EndKey}
+			left, right := regionWithRangeInfo.StartKey, regionWithRangeInfo.EndKey
+			if bytes.Compare(tableStart, left) >= 0 || len(left) == 0{
+				left = tableStart
+			}
+			if bytes.Compare(tableEnd, right) <= 0 || len(right) == 0 {
+				right = tableEnd
+			}
+			fullRange := kv.KeyRange{StartKey: left, EndKey: right}
 			tasks = append(tasks, &copTask{
 				region: regionWithRangeInfo.Region,
 				// TiFlash only support full range scan for the region, ignore the real ranges
