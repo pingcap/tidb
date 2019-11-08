@@ -996,6 +996,10 @@ const (
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogParseTimeStr is the parse sql time.
+	SlowLogParseTimeStr = "Parse_time"
+	// SlowLogCompileTimeStr is the compile plan time.
+	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1028,6 +1032,10 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
+	SlowLogPrepared = "Prepared"
+	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
+	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
@@ -1039,19 +1047,21 @@ const (
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS       uint64
-	SQL         string
-	Digest      string
-	TimeTotal   time.Duration
-	TimeParse   time.Duration
-	TimeCompile time.Duration
-	IndexNames  string
-	StatsInfos  map[string]uint64
-	CopTasks    *stmtctx.CopTasksDetails
-	ExecDetail  execdetails.ExecDetails
-	MemMax      int64
-	Succ        bool
-	PrevStmt    string
+	TxnTS          uint64
+	SQL            string
+	Digest         string
+	TimeTotal      time.Duration
+	TimeParse      time.Duration
+	TimeCompile    time.Duration
+	IndexNames     string
+	StatsInfos     map[string]uint64
+	CopTasks       *stmtctx.CopTasksDetails
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	Succ           bool
+	Prepared       bool
+	HasMoreResults bool
+	PrevStmt       string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1085,6 +1095,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
@@ -1138,6 +1150,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
 
+	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
+	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 
 	if logItems.PrevStmt != "" {

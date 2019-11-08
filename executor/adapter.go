@@ -134,13 +134,18 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
 	sessVars := a.stmt.Ctx.GetSessionVars()
 	pps := types.CloneRow(sessVars.PreparedParams)
 	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
 	a.stmt.SummaryStmt()
 	return err
+}
+
+// OnFetchReturned implements commandLifeCycle#OnFetchReturned
+func (a *recordSet) OnFetchReturned() {
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -633,7 +638,7 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
@@ -657,18 +662,20 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
 	slowItems := &variable.SlowQueryLogItems{
-		TxnTS:       txnTS,
-		SQL:         sql.String(),
-		Digest:      digest,
-		TimeTotal:   costTime,
-		TimeParse:   a.Ctx.GetSessionVars().DurationParse,
-		TimeCompile: a.Ctx.GetSessionVars().DurationCompile,
-		IndexNames:  indexNames,
-		StatsInfos:  statsInfos,
-		CopTasks:    copTaskInfo,
-		ExecDetail:  execDetail,
-		MemMax:      memMax,
-		Succ:        succ,
+		TxnTS:          txnTS,
+		SQL:            sql.String(),
+		Digest:         digest,
+		TimeTotal:      costTime,
+		TimeParse:      a.Ctx.GetSessionVars().DurationParse,
+		TimeCompile:    a.Ctx.GetSessionVars().DurationCompile,
+		IndexNames:     indexNames,
+		StatsInfos:     statsInfos,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     execDetail,
+		MemMax:         memMax,
+		Succ:           succ,
+		Prepared:       a.isPreparedStmt,
+		HasMoreResults: hasMoreResults,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
