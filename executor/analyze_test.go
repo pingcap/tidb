@@ -402,6 +402,8 @@ func (s *testFastAnalyze) SetUpSuite(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
+	session.DisableStats4Test()
+	session.SetSchemaLease(0)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -415,8 +417,8 @@ type regionProperityClient struct {
 	tikv.Client
 	mu struct {
 		sync.Mutex
-		regionID uint64
-		count    int64
+		failedOnce bool
+		count      int64
 	}
 }
 
@@ -426,18 +428,12 @@ func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, re
 		defer c.mu.Unlock()
 		c.mu.count++
 		// Mock failure once.
-		if req.DebugGetRegionProperties().RegionId == c.mu.regionID {
-			c.mu.regionID = 0
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
 			return &tikvrpc.Response{}, nil
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
-}
-
-func (c *regionProperityClient) setFailRegion(regionID uint64) {
-	c.mu.Lock()
-	c.mu.regionID = regionID
-	c.mu.Unlock()
 }
 
 func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
@@ -449,13 +445,13 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithHijackClient(hijackClient),
 		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
-	session.DisableStats4Test()
-	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 
@@ -466,16 +462,14 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
-	// construct 6 regions split by {6, 12, 18, 24, 30}
-	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
-	regionIDs := manipulateCluster(cluster, splitKeys)
 	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
-	cli.setFailRegion(regionIDs[4])
+	cluster.SplitTable(mvccStore, tid, 6)
+	tk.MustQuery("select * from retry_row_count")
 	tk.MustExec("analyze table retry_row_count")
 	// 4 regions will be sampled, and it will retry the last failed region.
 	c.Assert(cli.mu.count, Equals, int64(5))
