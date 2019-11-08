@@ -161,7 +161,8 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
-func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
+	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
@@ -174,7 +175,13 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	}
 
 	if !sessVars.InTxn() {
-		return se.CommitTxn(ctx)
+		if err := se.CommitTxn(ctx); err != nil {
+			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
+			}
+			return err
+		}
+		return nil
 	}
 
 	return checkStmtLimit(ctx, sctx, se, sessVars)
@@ -218,6 +225,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if rs == nil {
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil)
 			s.(*executor.ExecStmt).SummaryStmt()
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), sessVars)
 		}
 	}()
 
@@ -244,8 +252,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			logutil.Logger(context.Background()).Error("get txn error", zap.Error(err1))
 		}
 	}
-
-	err = finishStmt(ctx, sctx, se, sessVars, err)
+	err = finishStmt(ctx, sctx, se, sessVars, err, s)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
