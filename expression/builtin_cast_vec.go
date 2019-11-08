@@ -515,11 +515,49 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 }
 
 func (b *builtinCastDurationAsTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf)
+	var duration types.Duration
+	ds := buf.GoDurations()
+	times := result.Times()
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	fsp := int8(b.tp.Decimal)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		duration.Duration = ds[i]
+		duration.Fsp = fsp
+		tm, err := duration.ConvertToTime(stmtCtx, b.tp.Tp)
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		tm, err = tm.RoundFrac(stmtCtx, fsp)
+		if err != nil {
+			return err
+		}
+		times[i] = tm
+	}
+	return nil
 }
 
 func (b *builtinCastIntAsStringSig) vectorized() bool {
