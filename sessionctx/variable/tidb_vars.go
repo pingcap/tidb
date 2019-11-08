@@ -140,6 +140,12 @@ const (
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
+	// tidb_enable_large_txn enables TiDB to use the large transaction feature.
+	TiDBEnableLargeTxn = "tidb_enable_large_txn"
+
+	// tidb_large_txn_size controls the size threshold for a transaction to use the large transaction feature.
+	TiDBLargeTxnSize = "tidb_large_txn_size"
+
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
@@ -414,6 +420,8 @@ const (
 	DefTiDBAllowRemoveAutoInc          = false
 	DefTiDBUsePlanBaselines            = true
 	DefInnodbLockWaitTimeout           = 50 // 50s
+	DefTiDBEnableLargeTxn              = false
+	DefTiDBLargeTxnSize                = 4 << 20 // 4M
 )
 
 // Process global variables.

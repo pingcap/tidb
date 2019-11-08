@@ -366,6 +366,12 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
+	// EnableLargeTxn enables the large transaction feature.
+	EnableLargeTxn bool
+
+	// LargeTxnSize is the size threshold for a transaction to be considered as large transaction.
+	LargeTxnSize int64
+
 	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
 	EnableChunkRPC bool
 
@@ -529,6 +535,8 @@ func NewSessionVars() *SessionVars {
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		EnableLargeTxn:              DefTiDBEnableLargeTxn,
+		LargeTxnSize:                DefTiDBLargeTxnSize,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -920,6 +928,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableLargeTxn:
+		s.EnableLargeTxn = TiDBOptOn(val)
+	case TiDBLargeTxnSize:
+		s.LargeTxnSize = tidbOptInt64(val, DefTiDBLargeTxnSize)
 	case TiDBEnableChunkRPC:
 		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:

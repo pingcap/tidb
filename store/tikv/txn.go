@@ -259,6 +259,10 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
 
+func (txn *tikvTxn) IsLargeTxn() bool {
+	return txn.us.GetOption(kv.LargeTxn) != nil
+}
+
 func (txn *tikvTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
 }
@@ -359,10 +363,12 @@ func (txn *tikvTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	// Clean up pessimistic lock.
-	if txn.IsPessimistic() && txn.committer != nil {
-		err := txn.rollbackPessimisticLocks()
+	if txn.committer != nil {
 		txn.committer.ttlManager.close()
+	}
+	// Clean up pessimistic lock.
+	if txn.IsPessimistic() {
+		err := txn.rollbackPessimisticLocks()
 		if err != nil {
 			logutil.BgLogger().Error(err.Error())
 		}

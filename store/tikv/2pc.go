@@ -489,6 +489,10 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 			isPessimisticLock[i] = true
 		}
 	}
+	var minCommitTS uint64
+	if c.txn.IsLargeTxn() {
+		minCommitTS = c.startTS + 1
+	}
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
@@ -497,11 +501,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
+		MinCommitTs:       minCommitTS,
 	}
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
-func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchKeys) error {
+func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchKeys) error {
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -509,7 +514,17 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		txnSize = math.MaxUint64
 	}
 
+	isPrimary := bytes.Equal(batch.keys[0], c.primary())
 	req := c.buildPrewriteRequest(batch, txnSize)
+
+	if x := bo.ctx.Value("checkLargeTxnEnable"); x != nil {
+		codeRun := x.(*bool)
+		*codeRun = true
+		if req.Prewrite().MinCommitTs == 0 {
+			return errors.New("minCommitTS should greater then 0 in the large txn")
+		}
+	}
+
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -533,6 +548,10 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			if isPrimary {
+				// TODO: Move killed to a variable shared by session and txn.
+				c.ttlManager.run(c, nil)
+			}
 			return nil
 		}
 		var locks []*Lock

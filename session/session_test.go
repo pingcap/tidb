@@ -2882,3 +2882,26 @@ func (s *testSessionSuite) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }
+
+func (s *testSessionSuite) TestEnableLargeTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table enable_large_txn (id int)")
+	tk.MustExec("set @@tidb_enable_large_txn = 0")
+	tk.MustQuery("select @@tidb_enable_large_txn").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_large_txn = 1")
+	tk.MustQuery("select @@tidb_enable_large_txn").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_large_txn_size = 6666")
+	tk.MustQuery("select @@tidb_large_txn_size").Check(testkit.Rows("6666"))
+
+	tk.MustExec("set @@tidb_large_txn_size = 0")
+	tk.MustQuery("select @@tidb_large_txn_size").Check(testkit.Rows("0"))
+
+	var codeRun bool
+	ctx := context.WithValue(context.Background(), "checkLargeTxnEnable", &codeRun)
+	_, err := tk.Se.Execute(ctx, "insert into enable_large_txn values (1),(2),(3)")
+	c.Assert(err, IsNil)
+	c.Assert(codeRun, IsTrue)
+}

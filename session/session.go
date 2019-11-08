@@ -437,6 +437,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 
+	if s.sessionVars.EnableLargeTxn && s.txn.Size() > int(s.sessionVars.LargeTxnSize) {
+		s.txn.SetOption(kv.LargeTxn, true)
+	}
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
 

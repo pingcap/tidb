@@ -53,6 +53,8 @@ const (
 	SnapshotTS
 	// Set replica read
 	ReplicaRead
+	// LargeTxn option means this txn is a large txn.
+	LargeTxn
 )
 
 // Priority value for transaction priority.
