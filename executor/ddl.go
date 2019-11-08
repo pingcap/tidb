@@ -458,7 +458,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string
 		}
 	}
 	if tblInfo == nil {
-		return nil, nil, errors.Errorf("Can't found drop table: %v in ddl history jobs", tableName.Name)
+		return nil, nil, errors.Errorf("Can't find dropped table: %v in ddl history jobs", tableName.Name)
 	}
 	return job, tblInfo, nil
 }

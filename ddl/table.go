@@ -264,7 +264,13 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 		// Remove dropped table DDL job from gc_delete_range table.
-		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tblInfo.ID)
+		var tids []int64
+		if tblInfo.GetPartitionInfo() != nil {
+			tids = getPartitionIDs(tblInfo)
+		} else {
+			tids = []int64{tblInfo.ID}
+		}
+		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
