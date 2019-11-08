@@ -483,15 +483,6 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 		RequestIds: requestIDs,
 	}
 
-	if err := cli.initBatchClient(); err != nil {
-		logutil.Logger(context.Background()).Warn(
-			"init create streaming fail",
-			zap.String("target", cli.target),
-			zap.Error(err),
-		)
-		return
-	}
-
 	cli.send(req, entries)
 	return
 }
