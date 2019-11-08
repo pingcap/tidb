@@ -461,15 +461,15 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists retry_row_count")
 	tk.MustExec("create table retry_row_count(a int primary key)")
-	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 	// construct 6 regions split by {6, 12, 18, 24, 30}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
 	regionIDs := manipulateCluster(cluster, splitKeys)
+	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
