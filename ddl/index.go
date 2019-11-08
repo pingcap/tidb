@@ -383,7 +383,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, err
 			}
 			indexInfo.Primary = true
-
 		}
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)

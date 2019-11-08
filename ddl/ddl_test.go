@@ -104,7 +104,7 @@ func TestT(t *testing.T) {
 	newCfg.EnableTableLock = true
 	newCfg.Log.SlowThreshold = 10000
 	// Test for add/drop primary key.
-	newCfg.EnablePKIsHandle = false
+	newCfg.EnableAlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
 
 	testleak.BeforeTest()

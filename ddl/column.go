@@ -475,9 +475,9 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
 	colsStr := ""
 	for i, col := range oldCols {
-		if i==0{
+		if i == 0 {
 			colsStr += "`" + col.Name.L + "` is null"
-		}else{
+		} else {
 			colsStr += " or `" + col.Name.L + "` is null"
 		}
 	}
