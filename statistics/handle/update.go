@@ -564,12 +564,17 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 
 func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.mu.Lock()
-	h.mu.ctx.GetSessionVars().BatchDelete = true
-	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	h.mu.ctx.GetSessionVars().BatchDelete = false
-	h.mu.Unlock()
-	return errors.Trace(err)
+	defer h.mu.Unlock()
+	hasData := true
+	for hasData {
+		sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d limit 10000", tableID, histID, isIndex)
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		hasData = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	}
+	return nil
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
