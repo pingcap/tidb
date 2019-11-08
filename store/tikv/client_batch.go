@@ -33,6 +33,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
+	_ "google.golang.org/grpc/encoding/gzip"
 )
 
 type batchConn struct {
