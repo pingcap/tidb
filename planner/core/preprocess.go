@@ -533,7 +533,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 		return
 	}
 
-	// check rename action like rename statement does.
+	// Check rename action like rename statement does.
 	oldTable := stmt.Table.Name.String()
 	newTable := stmt.CreateStmt.Table.Name.String()
 	p.checkRenameTable(oldTable, newTable)

@@ -216,31 +216,9 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 				continue
 			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
-			// check the repair mode.
-			if RepairMode {
-				inRepair := false
-				for _, tn := range RepairTableList {
-					// use dbName and tableName to specified a table.
-					if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
-						// this table is in repair table list.
-						inRepair = true
-						break
-					}
-				}
-				if inRepair {
-					// record the repaired table in Map.
-					if repairedDB, ok := RepairDBInfoMap[di.ID]; ok {
-						repairedDB.Tables = append(repairedDB.Tables, tbl)
-					} else {
-						// shallow copy the DB.
-						repairedDB := di.Copy()
-						// clean the tables and set repaired table.
-						repairedDB.Tables = []*model.TableInfo{}
-						repairedDB.Tables = append(repairedDB.Tables, tbl)
-						RepairDBInfoMap[di.ID] = repairedDB
-					}
-					continue
-				}
+			// Check the whether the table is in repair mode.
+			if fetchRepairedTableList(di, tbl) {
+				continue
 			}
 			di.Tables = append(di.Tables, tbl)
 		}
@@ -1190,11 +1168,40 @@ func (do *Domain) GetTablesInRepair() map[int64]*model.DBInfo {
 
 // GetRepairCleanFunc return a func for call back when repair action done.
 func (do *Domain) GetRepairCleanFunc() func(a, b string) {
-	return do.removeFromRepairList
+	return removeFromRepairList
 }
 
-// remove the table from repair list when a repair action done.
-func (do *Domain) removeFromRepairList(schemaLowerName, tableLowerName string) {
+// Fetch the repaired table list when fetch tableInfo from meta.
+func fetchRepairedTableList(di *model.DBInfo, tbl *model.TableInfo) bool {
+	if RepairMode {
+		isRepair := false
+		for _, tn := range RepairTableList {
+			// Use dbName and tableName to specified a table.
+			if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
+				isRepair = true
+				break
+			}
+		}
+		if isRepair {
+			// Record the repaired table in Map.
+			if repairedDB, ok := RepairDBInfoMap[di.ID]; ok {
+				repairedDB.Tables = append(repairedDB.Tables, tbl)
+			} else {
+				// Shallow copy the DB.
+				repairedDB := di.Copy()
+				// Clean the tables and set repaired table.
+				repairedDB.Tables = []*model.TableInfo{}
+				repairedDB.Tables = append(repairedDB.Tables, tbl)
+				RepairDBInfoMap[di.ID] = repairedDB
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// Remove the table from repair list when a repair action done.
+func removeFromRepairList(schemaLowerName, tableLowerName string) {
 	repairedLowerName := schemaLowerName + "." + tableLowerName
 	// remove from the repair list
 	for i, rt := range RepairTableList {

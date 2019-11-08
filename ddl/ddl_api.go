@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/admin"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -3941,20 +3941,20 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	if !ok || oldDBInfo == nil {
 		return ErrRepairTableFail.GenWithStackByArgs("get the repaired DB failed")
 	}
-	// now only support same db repair.
+	// By now only support same db repair.
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
 		return ErrRepairTableFail.GenWithStackByArgs("repaired table should in same database with the old one")
 	}
-	// cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
+	// Cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
 	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// override newTableInfo with oldTableInfo's necessary element
-	// todo: maybe more element assignment here, and new TableInfo should compare with the real data;
+	// Override newTableInfo with oldTableInfo's necessary element.
+	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
 	newTableInfo.ID = oldTableInfo.ID
-	// if any old partitionInfo has lost, that means the partition id lost too, so did the data, so repair failed.
+	// If any old partitionInfo has lost, that means the partition id lost too, so did the data, repair failed.
 	for i, new := range newTableInfo.Partition.Definitions {
 		found := false
 		for _, old := range oldTableInfo.Partition.Definitions {
@@ -3969,7 +3969,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		}
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
-	// if any old indexInfo has lost, that means the index id lost too, so did the data, so repair failed.
+	// If any old indexInfo has lost, that means the index id lost too, so did the data, repair failed.
 	for i, new := range newTableInfo.Indices {
 		found := false
 		for _, old := range oldTableInfo.Indices {

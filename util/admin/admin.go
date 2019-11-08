@@ -775,7 +775,7 @@ var (
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )
 
-// This is keyType for admin repair table
+// This is keyType for admin repair table.
 type repairKeyType int
 
 const (
@@ -787,6 +787,14 @@ const (
 	RepairedCallBack
 )
 
-func (t repairKeyType) String() string {
-	return "repairedTable"
+func (t repairKeyType) String() (res string) {
+	switch t {
+	case RepairedTable:
+		res = "RepairedTable"
+	case RepairedDatabase:
+		res = "RepairedDatabase"
+	case RepairedCallBack:
+		res = "RepairedCallBack"
+	}
+	return res
 }
