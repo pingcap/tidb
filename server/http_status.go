@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -70,7 +70,7 @@ func (s *Server) startHTTPServer() {
 
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
-	router.Handle("/metrics", prometheus.Handler()).Name("Metrics")
+	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
