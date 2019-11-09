@@ -4145,7 +4145,7 @@ func (s *testSuiteP2) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
-func (s *testSuite) TestShowTableRegion(c *C) {
+func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
@@ -4425,7 +4425,7 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 }
 
 func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.oom = &oomCapturer{r.Core, ""}
 	lg := zap.New(s.oom)
