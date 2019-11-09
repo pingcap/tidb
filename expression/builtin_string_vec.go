@@ -1287,11 +1287,30 @@ func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinOrdSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		i64s[i] = ord(str)
+	}
+	return nil
 }
 
 func (b *builtinInstrBinarySig) vectorized() bool {
