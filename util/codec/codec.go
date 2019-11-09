@@ -360,6 +360,13 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
 func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
+	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil)
+}
+
+// HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
+// sel indicates which rows are selected. If it is nil, all rows are selected.
+func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
+	isNull, sel []bool) (err error) {
 	var b []byte
 	column := chk.Column(colIdx)
 	rows := chk.NumRows()
@@ -367,6 +374,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		i64s := column.Int64s()
 		for i, v := range i64s {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -386,6 +396,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeFloat:
 		f32s := column.Float32s()
 		for i, f := range f32s {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -403,6 +416,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeDouble:
 		f64s := column.Float64s()
 		for i, f := range f64s {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -418,6 +434,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -434,6 +453,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		ts := column.Times()
 		for i, t := range ts {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -462,6 +484,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeDuration:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -479,6 +504,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeNewDecimal:
 		ds := column.Decimals()
 		for i, d := range ds {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -498,6 +526,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeEnum:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -514,6 +545,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeSet:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -530,6 +564,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeBit:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -548,6 +585,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeJSON:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true

@@ -27,11 +27,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
-var _ = Suite(&testInferTypeSuite{})
+var _ = SerialSuites(&testInferTypeSuite{})
 
 type typeInferTestCase struct {
 	sql     string
@@ -47,12 +46,10 @@ type testInferTypeSuite struct {
 }
 
 func (s *testInferTypeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 }
 
 func (s *testInferTypeSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
 }
 
 func (s *testInferTypeSuite) TestInferType(c *C) {
@@ -141,7 +138,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
@@ -727,15 +724,15 @@ func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCas
 
 		{"c_int_d / c_int_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
 		{"c_int_d / c_bigint_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
-		{"c_int_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
+		{"c_int_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"c_int_d / c_time_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
-		{"c_int_d / c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
+		{"c_int_d / c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"c_int_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 4},
 		{"c_datetime / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 29, 6}, // TODO: Flen should be 25.
 		{"c_bigint_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 27, 4}, // TODO: Flen should be 28.
-		{"c_double_d / c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
-		{"c_double_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
-		{"c_double_d / c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
+		{"c_double_d / c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+		{"c_double_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+		{"c_double_d / c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 
 		{"c_int_d DIV c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_uint_d DIV c_uint_d", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, mysql.MaxIntWidth, 0},

@@ -153,7 +153,7 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	}
 }
 
-func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
+func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
@@ -187,7 +187,7 @@ func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk.MustExec("drop table if exists lineitem")
 }
 
-func (s *testSuite1) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
+func (s *testSuite2) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 	executionInfoCol := 4
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
