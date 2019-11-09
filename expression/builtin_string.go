@@ -2801,7 +2801,7 @@ func (b *builtinEltSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinEltSig.
+// evalString evals a ELT(N,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
 func (b *builtinEltSig) evalString(row chunk.Row) (string, bool, error) {
 	idx, isNull, err := b.args[0].EvalInt(b.ctx, row)

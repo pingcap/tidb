@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -66,11 +67,20 @@ func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinRowCountSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals ROW_COUNT().
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
 func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	res := int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinCurrentUserSig) vectorized() bool {
@@ -98,11 +108,22 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
+	var res int64
+	if ddlOwnerChecker.IsOwner() {
+		res = 1
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinFoundRowsSig) vectorized() bool {
@@ -168,9 +189,26 @@ func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(decodeKey(b.ctx, buf.GetString(i)))
+	}
+	return nil
 }

@@ -89,9 +89,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
 	},
-	ast.MakeDate:  {},
-	ast.MakeTime:  {},
-	ast.PeriodAdd: {},
+	ast.MakeDate: {},
+	ast.MakeTime: {},
+	ast.PeriodAdd: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
+	},
 	ast.PeriodDiff: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
 	},
@@ -101,7 +103,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec: {},
+	ast.TimeToSec: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+	},
 	ast.TimestampAdd: {
 		{
 			retEvalType:   types.ETString,
