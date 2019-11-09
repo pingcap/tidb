@@ -22,7 +22,6 @@ import (
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-
 	ast.SetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
 	},
