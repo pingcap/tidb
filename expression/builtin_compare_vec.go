@@ -555,11 +555,54 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 }
 
 func (b *builtinGreatestTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dst)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dst.ResizeTime(n, false)
+	dstTimes := dst.Times()
+	for i := 0; i < n; i++ {
+		dstTimes[i] = types.ZeroDatetime
+	}
+	var argTime types.Time
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) || dst.IsNull(i) {
+				dst.SetNull(i, true)
+				continue
+			}
+			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				continue
+			}
+			if argTime.Compare(dstTimes[i]) > 0 {
+				dstTimes[i] = argTime
+			}
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if dst.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(dstTimes[i].String())
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestRealSig) vectorized() bool {
