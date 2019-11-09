@@ -849,11 +849,47 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinCeilDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	ds := result.Decimals()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		val := buf.GetDecimal(i)
+		var err error
+		if val.IsNegative() {
+			err = val.Round(&ds[i], 0, types.ModeTruncate)
+		} else {
+			err = val.Round(&ds[i], 0, types.ModeTruncate)
+		}
+		if err != nil {
+			return err
+		}
+		if ds[i].Compare(val) == 0 {
+			continue
+		}
+		res := new(types.MyDecimal)
+		err = types.DecimalAdd(res, types.NewDecFromInt(1), &ds[i])
+		if err != nil {
+			return err
+		}
+		ds[i] = *res
+	}
+	return nil
 }
 
 func (b *builtinFloorDecToDecSig) vectorized() bool {
