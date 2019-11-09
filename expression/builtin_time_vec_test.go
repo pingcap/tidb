@@ -107,7 +107,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec: {},
+	ast.TimeToSec: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+	},
 	ast.TimestampAdd: {
 		{
 			retEvalType:   types.ETString,

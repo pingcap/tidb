@@ -979,11 +979,40 @@ func (b *builtinSubDurationAndDurationSig) vecEvalDuration(input *chunk.Chunk, r
 }
 
 func (b *builtinTimeToSecSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals TIME_TO_SEC(time).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
 func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	fsp := b.args[0].GetType().Decimal
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		var sign int
+		duration := buf.GetDuration(i, int(fsp))
+		if duration.Duration >= 0 {
+			sign = 1
+		} else {
+			sign = -1
+		}
+		i64s[i] = int64(sign * (duration.Hour()*3600 + duration.Minute()*60 + duration.Second()))
+	}
+	return nil
 }
 
 func (b *builtinStrToDateDatetimeSig) vectorized() bool {
