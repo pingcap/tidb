@@ -1385,11 +1385,39 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinFromUnixTime1ArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFromUnixTime1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf)
+	ts := result.Times()
+	ds := buf.Decimals()
+	fsp := int8(b.tp.Decimal)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		t, isNull, err := evalFromUnixTime(b.ctx, fsp, &ds[i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		ts[i] = t
+	}
+	return nil
 }
 
 func (b *builtinSubDateDurationIntSig) vectorized() bool {
