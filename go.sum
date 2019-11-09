@@ -6,8 +6,6 @@ github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f/go.mod h1:3eOhrU
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf h1:qet1QNfXsQxTZqLG4oE62mJzwPIB8+Tee4RNCL9ulrY=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
-github.com/bb7133/parser v0.0.0-20191108085541-3e1f36599565 h1:3L8WLzL3zT4fDTOyD2yMz/UTEELS7AJU0ZNlevDGnFQ=
-github.com/bb7133/parser v0.0.0-20191108085541-3e1f36599565/go.mod h1:Vavbz+Ti/y+IQGXwsgGMHASfCyvH4A6zVQspCFBuRXM=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/beorn7/perks v1.0.0 h1:HWo1m869IqiPhD389kmkxeTalrjNbbJTC8LXupb+sl0=
 github.com/beorn7/perks v1.0.0/go.mod h1:KWe93zE9D1o94FZ5RNwFwVgaQK1VOXiVxmqh+CedLV8=
@@ -190,6 +188,8 @@ github.com/pingcap/kvproto v0.0.0-20191018025622-fbf07f9804da h1:dLmHmFq44tIq7yW
 github.com/pingcap/kvproto v0.0.0-20191018025622-fbf07f9804da/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
 github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd h1:hWDol43WY5PGhsh3+8794bFHY1bPrmu6bTalpssCrGg=
 github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
+github.com/pingcap/parser v0.0.0-20191108104421-a8f0a51789f3 h1:igazArQuuuyXhR6T27JB7mfynBkEnnczL1A0kun9s4k=
+github.com/pingcap/parser v0.0.0-20191108104421-a8f0a51789f3/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v1.1.0-beta.0.20191018040858-0d9d9d67d029 h1:nJp6nnW70cGtmOiRnjvoU8fSxhb5QwGNgYr/AtyPCgo=
 github.com/pingcap/pd v1.1.0-beta.0.20191018040858-0d9d9d67d029/go.mod h1:+F+Zp4BoMM7TbDKCeosXO+X9A+IWaw/T3/gRBo1sr6Q=
 github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible h1:H1jg0aDWz2SLRh3hNBo2HFtnuHtudIUvBumU7syRkic=
