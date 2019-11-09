@@ -323,12 +323,54 @@ func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 func (b *builtinReverseSig) vectorized() bool {
 	return true
 }
+
 func (b *builtinConcatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a CONCAT(str1,str2,...)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	strs := make([][]byte, n)
+	isNulls := make([]bool, n)
+	result.ReserveString(n)
+	var byteBuf []byte
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if isNulls[i] {
+				continue
+			}
+			if buf.IsNull(i) {
+				isNulls[i] = true
+				continue
+			}
+			byteBuf = buf.GetBytes(i)
+			if uint64(len(strs[i])+len(byteBuf)) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+				isNulls[i] = true
+				continue
+			}
+			strs[i] = append(strs[i], byteBuf...)
+		}
+	}
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+		} else {
+			result.AppendBytes(strs[i])
+		}
+	}
+	return nil
 }
 
 func (b *builtinLocate3ArgsSig) vectorized() bool {
