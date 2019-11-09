@@ -73,8 +73,8 @@ type CheckTable struct {
 	baseSchemaProducer
 
 	DBName             string
-	TblInfo            *model.TableInfo
-	Indices            []table.Index
+	Table              table.Table
+	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
 }
 

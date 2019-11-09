@@ -574,6 +574,7 @@ func (s *testSuite) TestShow2(c *C) {
 					c_timestamp timestamp,
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_timestamp_default_4 timestamp(3) default current_timestamp(3) on update current_timestamp(3),
 					c_blob blob,
 					c_tinyblob tinyblob,
 					c_mediumblob mediumblob,
@@ -609,6 +610,7 @@ func (s *testSuite) TestShow2(c *C) {
 			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
 			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
+			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
 			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
@@ -730,7 +732,7 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
 		""+
 			"different_charset CREATE TABLE `different_charset` (\n"+
-			"  `ch1` varchar(10) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
@@ -741,7 +743,9 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 		"`b` timestamp(3) default current_timestamp(3),\n" +
 		"`c` datetime default current_timestamp,\n" +
 		"`d` datetime(4) default current_timestamp(4),\n" +
-		"`e` varchar(20) default 'cUrrent_tImestamp')")
+		"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
+		"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
+		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
 	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
@@ -749,7 +753,9 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 			"  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),\n"+
 			"  `c` datetime DEFAULT CURRENT_TIMESTAMP,\n"+
 			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
-			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp'\n"+
+			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
+			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
+			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")
@@ -828,6 +834,22 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
+
+	//for issue #11831
+	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
+	tk.MustQuery("show create table `ttt4`").Check(testutil.RowsWithSep("|",
+		""+
+			"ttt4 CREATE TABLE `ttt4` (\n"+
+			"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+	))
+	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustQuery("show create table `ttt5`").Check(testutil.RowsWithSep("|",
+		""+
+			"ttt5 CREATE TABLE `ttt5` (\n"+
+			"  `a` varchar(123) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testSuite) TestShowEscape(c *C) {

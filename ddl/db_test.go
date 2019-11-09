@@ -2147,6 +2147,19 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
+
+	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	c.Assert(err, IsNil)
+	result := s.tk.MustQuery("show create table collateTest")
+	got := result.Rows()[0][1]
+	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+
+	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
+	s.tk.MustExec("use test2")
+	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
+	result = s.tk.MustQuery("show create table dbCollateTest")
+	got = result.Rows()[0][1]
+	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {
@@ -4653,8 +4666,8 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 	result := s.tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
-			"  `a` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
-			"  `b` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("alter table t_mcc modify column a varchar(8);")
@@ -4667,7 +4680,7 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
 			"  `a` varchar(8) DEFAULT NULL,\n" +
-			"  `b` varchar(8) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 }
