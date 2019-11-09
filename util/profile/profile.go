@@ -15,17 +15,13 @@ package profile
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/pprof/graph"
-	"github.com/google/pprof/measurement"
 	"github.com/google/pprof/profile"
-	"github.com/google/pprof/report"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/texttree"
@@ -39,36 +35,6 @@ type Collector struct {
 	Rows [][]types.Datum
 }
 
-type perfNode struct {
-	Name      string
-	Location  string
-	Cum       int64
-	CumFormat string
-	Percent   string
-	Children  []*perfNode
-}
-
-func (c *Collector) collect(node *perfNode, depth int64, indent string, rootChild int, parentCur int64, isLastChild bool) {
-	row := types.MakeDatums(
-		texttree.PrettyIdentifier(node.Name, indent, isLastChild),
-		node.Percent,
-		strings.TrimSpace(measurement.Percentage(node.Cum, parentCur)),
-		rootChild,
-		depth,
-		node.Location,
-	)
-	c.Rows = append(c.Rows, row)
-
-	indent4Child := texttree.Indent4Child(indent, isLastChild)
-	for i, child := range node.Children {
-		rc := rootChild
-		if depth == 0 {
-			rc = i + 1
-		}
-		c.collect(child, depth+1, indent4Child, rc, node.Cum, i == len(node.Children)-1)
-	}
-}
-
 func (c *Collector) profileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
 	p, err := profile.Parse(f)
 	if err != nil {
@@ -78,58 +44,19 @@ func (c *Collector) profileReaderToDatums(f io.Reader) ([][]types.Datum, error) 
 }
 
 func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error) {
-	err := p.Aggregate(true, true, true, true, true)
+	err := p.CheckValid()
 	if err != nil {
 		return nil, err
 	}
-	rpt := report.NewDefault(p, report.Options{
-		OutputFormat: report.Dot,
-		CallTree:     true,
-	})
-	g, config := report.GetDOT(rpt)
-	var nodes []*perfNode
-	nroots := 0
-	rootValue := int64(0)
-	nodeArr := []string{}
-	nodeMap := map[*graph.Node]*perfNode{}
-	// Make all nodes and the map, collect the roots.
-	for _, n := range g.Nodes {
-		v := n.CumValue()
-		node := &perfNode{
-			Name:      n.Info.Name,
-			Location:  fmt.Sprintf("%s:%d", n.Info.File, n.Info.Lineno),
-			Cum:       v,
-			CumFormat: config.FormatValue(v),
-			Percent:   strings.TrimSpace(measurement.Percentage(v, config.Total)),
-		}
-		nodes = append(nodes, node)
-		if len(n.In) == 0 {
-			nodes[nroots], nodes[len(nodes)-1] = nodes[len(nodes)-1], nodes[nroots]
-			nroots++
-			rootValue += v
-		}
-		nodeMap[n] = node
-		// Get all node names into an array.
-		nodeArr = append(nodeArr, n.Info.Name)
-	}
-	// Populate the child links.
-	for _, n := range g.Nodes {
-		node := nodeMap[n]
-		for child := range n.Out {
-			node.Children = append(node.Children, nodeMap[child])
-		}
+
+	root := newFlamegraphNode()
+	for _, sample := range p.Sample {
+		root.add(sample)
 	}
 
-	rootNode := &perfNode{
-		Name:      "root",
-		Location:  "root",
-		Cum:       rootValue,
-		CumFormat: config.FormatValue(rootValue),
-		Percent:   strings.TrimSpace(measurement.Percentage(rootValue, config.Total)),
-		Children:  nodes[0:nroots],
-	}
-
-	c.collect(rootNode, 0, "", 0, config.Total, len(rootNode.Children) == 0)
+	col := newFlamegraphCollector(p, c.Rows)
+	col.collect(root)
+	c.Rows = col.rows
 	return c.Rows, nil
 }
 
