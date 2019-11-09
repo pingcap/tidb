@@ -1032,10 +1032,18 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 		var t types.Time
 		succ := t.StrToDate(sc, dateBuf.GetString(i), formatBuf.GetString(i))
 		if !succ {
-			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
 		if hasNoZeroDateMode && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
-			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
 		t.Type, t.Fsp = mysql.TypeDate, types.MinFsp
 		times[i] = t
