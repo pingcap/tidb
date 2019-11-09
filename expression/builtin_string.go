@@ -2647,10 +2647,13 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if len(str) == 0 {
-		return 0, false, nil
-	}
+	return ord(str), false, nil
+}
 
+func ord(str string) int64 {
+	if len(str) == 0 {
+		return 0
+	}
 	_, size := utf8.DecodeRuneInString(str)
 	leftMost := str[:size]
 	var result int64
@@ -2659,8 +2662,7 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		result += int64(leftMost[i]) * factor
 		factor *= 256
 	}
-
-	return result, false, nil
+	return result
 }
 
 type quoteFunctionClass struct {
