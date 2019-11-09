@@ -359,9 +359,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 
 	regionStore := cachedRegion.getStore()
 
-	// tikvCnt is to check whether the TiFlash store exist.
 	// sIdx is for load balance of TiFlash store.
-	tikvCnt, sIdx := 0, int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
+	sIdx := int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
 	for i := range regionStore.stores {
 		storeIdx := (sIdx + i) % len(regionStore.stores)
 		store := regionStore.stores[storeIdx]
@@ -377,7 +376,6 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			store.reResolve(c)
 		}
 		if store.storeType != kv.TiFlash {
-			tikvCnt++
 			continue
 		}
 		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(storeIdx))
@@ -400,9 +398,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		}, nil
 	}
 
-	if tikvCnt == len(regionStore.stores) {
-		return nil, errors.Errorf("Can not find the TiFlash store address, region version id:%v", id)
-	}
+	cachedRegion.invalidate()
 	return nil, nil
 }
 
@@ -1224,7 +1220,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.storeType = kv.TiKV
 		for _, label := range store.Labels {
 			if label.Key == "engine" {
-				if label.Value == "tiflash" {
+				if label.Value == kv.TiFlash.Name() {
 					s.storeType = kv.TiFlash
 				}
 				break
@@ -1269,7 +1265,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	storeType := kv.TiKV
 	for _, label := range store.Labels {
 		if label.Key == "engine" {
-			if label.Value == "tiflash" {
+			if label.Value == kv.TiFlash.Name() {
 				storeType = kv.TiFlash
 			}
 			break

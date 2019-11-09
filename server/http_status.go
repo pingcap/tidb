@@ -31,13 +31,14 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -70,7 +71,7 @@ func (s *Server) startHTTPServer() {
 
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
-	router.Handle("/metrics", prometheus.Handler()).Name("Metrics")
+	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
@@ -88,11 +89,18 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
 
+	// HTTP path for get the TiDB config
+	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
+		return config.GetGlobalConfig(), nil
+	}))
+
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
 	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool}).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
+	// HTTP path for get table tiflash replica info.
+	router.Handle("/tiflash/replica", flashReplicaHandler{tikvHandlerTool})
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.

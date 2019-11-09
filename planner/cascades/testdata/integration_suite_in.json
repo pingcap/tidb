@@ -22,7 +22,35 @@
       "explain select a from t order by a",
       "select a from t order by a",
       "explain select b from t order by b",
-      "select b from t order by b"
+      "select b from t order by b",
+      "explain select b from t order by a+b",
+      "select b from t order by a+b",
+      "explain select b from t order by b, a+b, a",
+      "select b from t order by b, a+b, a"
+    ]
+  },
+  {
+    "name": "TestAggregation",
+    "cases": [
+      "explain select sum(a) from t",
+      "select a from t",
+      "explain select max(a), min(b) from t",
+      "select max(a), min(b) from t",
+      "explain select b, avg(a) from t group by b order by b",
+      "select b, avg(a) from t group by b order by b",
+      "explain select b, avg(a) from t group by b having sum(a) > 1 order by b",
+      "select b, avg(a) from t group by b having sum(a) > 1 order by b",
+      "explain select max(a+b) from t",
+      "select max(a+b) from t",
+      "explain select sum(a) from t group by a, a+b order by a",
+      "select sum(a) from t group by a, a+b order by a"
+    ]
+  },
+  {
+    "name": "TestSimplePlans",
+    "cases": [
+      "select a from t limit 2",
+      "select a from t limit 1 offset 2"
     ]
   }
 ]

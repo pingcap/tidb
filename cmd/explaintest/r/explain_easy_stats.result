@@ -47,28 +47,28 @@ IndexReader_6	0.00	root	index:IndexScan_5
 └─IndexScan_5	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-HashLeftJoin_22	2481.25	root	left outer join, inner:TableReader_35, equal:[eq(Column#2, Column#4)]
-├─TableReader_32	1998.00	root	data:TableScan_31
-│ └─TableScan_31	1998.00	cop[tikv]	table:t1, range:(1,+inf], keep order:false
-└─TableReader_35	1985.00	root	data:Selection_34
-  └─Selection_34	1985.00	cop[tikv]	not(isnull(Column#4))
-    └─TableScan_33	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+HashLeftJoin_22	2481.25	root	left outer join, inner:TableReader_36, equal:[eq(Column#2, Column#4)]
+├─TableReader_33	1998.00	root	data:TableScan_32
+│ └─TableScan_32	1998.00	cop[tikv]	table:t1, range:(1,+inf], keep order:false
+└─TableReader_36	1985.00	root	data:Selection_35
+  └─Selection_35	1985.00	cop[tikv]	not(isnull(Column#4))
+    └─TableScan_34	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
 Update_2	N/A	root	N/A
 └─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-Delete_3	N/A	root	N/A
-└─IndexLookUp_9	0.00	root	
-  ├─IndexScan_7	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
-  └─TableScan_8	0.00	cop[tikv]	table:t1, keep order:false
+Delete_4	N/A	root	N/A
+└─IndexLookUp_11	0.00	root	
+  ├─IndexScan_9	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
+  └─TableScan_10	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(Column#9)
 └─HashLeftJoin_21	1985.00	root	inner join, inner:HashAgg_25, equal:[eq(Column#1, Column#5)]
-  ├─IndexReader_36	1999.00	root	index:IndexScan_35
-  │ └─IndexScan_35	1999.00	cop[tikv]	table:a, index:c2, range:[NULL,+inf], keep order:false
+  ├─TableReader_34	1999.00	root	data:TableScan_33
+  │ └─TableScan_33	1999.00	cop[tikv]	table:a, range:[-inf,+inf], keep order:false
   └─HashAgg_25	1985.00	root	group by:Column#5, funcs:count(Column#5), firstrow(Column#5)
     └─TableReader_32	1985.00	root	data:Selection_31
       └─Selection_31	1985.00	cop[tikv]	not(isnull(Column#5))
@@ -94,8 +94,8 @@ explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
 Projection_9	1985.00	root	Column#1
 └─HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(Column#1, Column#5)]
-  ├─IndexReader_34	1999.00	root	index:IndexScan_33
-  │ └─IndexScan_33	1999.00	cop[tikv]	table:t1, index:c2, range:[NULL,+inf], keep order:false
+  ├─TableReader_32	1999.00	root	data:TableScan_31
+  │ └─TableScan_31	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
   └─HashAgg_23	1985.00	root	group by:Column#5, funcs:firstrow(Column#5)
     └─TableReader_30	1985.00	root	data:Selection_29
       └─Selection_29	1985.00	cop[tikv]	not(isnull(Column#5))
@@ -107,8 +107,8 @@ explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) 
 id	count	task	operator info
 Projection_12	1999.00	root	eq(Column#2, Column#5)
 └─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Projection_43
-  ├─IndexReader_18	1999.00	root	index:IndexScan_17
-  │ └─IndexScan_17	1999.00	cop[tikv]	table:t1, index:c2, range:[NULL,+inf], keep order:false
+  ├─TableReader_16	1999.00	root	data:TableScan_15
+  │ └─TableScan_15	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
   └─Projection_43	1.00	root	Column#4, Column#5
     └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
       ├─Limit_41	1.00	cop[tikv]	offset:0, count:1
@@ -125,8 +125,8 @@ explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	1999.00	root	Column#8
 └─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
-  ├─IndexReader_11	1999.00	root	index:IndexScan_10
-  │ └─IndexScan_10	1999.00	cop[tikv]	table:t1, index:c2, range:[NULL,+inf], keep order:false
+  ├─TableReader_9	1999.00	root	data:TableScan_8
+  │ └─TableScan_8	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
   └─TableReader_14	0.00	root	data:Selection_13
     └─Selection_13	0.00	cop[tikv]	eq(1, Column#5)
       └─TableScan_12	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
@@ -139,14 +139,14 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
-"HashLeftJoin_7" -> "IndexReader_11"
+"HashLeftJoin_7" -> "TableReader_9"
 "HashLeftJoin_7" -> "TableReader_14"
 }
-subgraph cluster10{
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexScan_10"
+"TableScan_8"
 }
 subgraph cluster13{
 node [style=filled, color=lightgrey]
@@ -154,7 +154,7 @@ color=black
 label = "cop"
 "Selection_13" -> "TableScan_12"
 }
-"IndexReader_11" -> "IndexScan_10"
+"TableReader_9" -> "TableScan_8"
 "TableReader_14" -> "Selection_13"
 }
 

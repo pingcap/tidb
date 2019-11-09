@@ -439,66 +439,6 @@ func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }
 
-func (s *testSuite6) TestRenameTable(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("create database rename1")
-	tk.MustExec("create database rename2")
-	tk.MustExec("create database rename3")
-	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
-	tk.MustExec("insert rename1.t values ()")
-	tk.MustExec("rename table rename1.t to rename2.t")
-	// Make sure the drop old database doesn't affect the rename3.t's operations.
-	tk.MustExec("drop database rename1")
-	tk.MustExec("insert rename2.t values ()")
-	tk.MustExec("rename table rename2.t to rename3.t")
-	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
-	// Make sure the drop old database doesn't affect the rename3.t's operations.
-	tk.MustExec("drop database rename2")
-	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
-	tk.MustExec("drop database rename3")
-
-	tk.MustExec("create database rename1")
-	tk.MustExec("create database rename2")
-	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
-	tk.MustExec("rename table rename1.t to rename2.t1")
-	tk.MustExec("insert rename2.t1 values ()")
-	result := tk.MustQuery("select * from rename2.t1")
-	result.Check(testkit.Rows("1"))
-	// Make sure the drop old database doesn't affect the t1's operations.
-	tk.MustExec("drop database rename1")
-	tk.MustExec("insert rename2.t1 values ()")
-	result = tk.MustQuery("select * from rename2.t1")
-	result.Check(testkit.Rows("1", "2"))
-	// Rename a table to another table in the same database.
-	tk.MustExec("rename table rename2.t1 to rename2.t2")
-	tk.MustExec("insert rename2.t2 values ()")
-	result = tk.MustQuery("select * from rename2.t2")
-	result.Check(testkit.Rows("1", "2", "5001"))
-	tk.MustExec("drop database rename2")
-
-	tk.MustExec("create database rename1")
-	tk.MustExec("create database rename2")
-	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
-	tk.MustExec("insert rename1.t values ()")
-	tk.MustExec("rename table rename1.t to rename2.t1")
-	// Make sure the value is greater than autoid.step.
-	tk.MustExec("insert rename2.t1 values (100000)")
-	tk.MustExec("insert rename2.t1 values ()")
-	result = tk.MustQuery("select * from rename2.t1")
-	result.Check(testkit.Rows("1", "100000", "100001"))
-	_, err := tk.Exec("insert rename1.t values ()")
-	c.Assert(err, NotNil)
-	tk.MustExec("drop database rename1")
-	tk.MustExec("drop database rename2")
-}
-
 func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	dbName := "col_charset_collate"
@@ -1009,4 +949,64 @@ func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {
 	tk.MustExec("drop table if exists tdv;")
 	tk.MustExec("create table tdv(a int);")
 	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
+}
+
+func (s *testSuite3) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t values ()")
+	tk.MustExec("rename table rename2.t to rename3.t")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename2")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
+	tk.MustExec("drop database rename3")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	tk.MustExec("insert rename2.t1 values ()")
+	result := tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1"))
+	// Make sure the drop old database doesn't affect the t1's operations.
+	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t1 values ()")
+	result = tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1", "2"))
+	// Rename a table to another table in the same database.
+	tk.MustExec("rename table rename2.t1 to rename2.t2")
+	tk.MustExec("insert rename2.t2 values ()")
+	result = tk.MustQuery("select * from rename2.t2")
+	result.Check(testkit.Rows("1", "2", "5001"))
+	tk.MustExec("drop database rename2")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	// Make sure the value is greater than autoid.step.
+	tk.MustExec("insert rename2.t1 values (100000)")
+	tk.MustExec("insert rename2.t1 values ()")
+	result = tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1", "100000", "100001"))
+	_, err := tk.Exec("insert rename1.t values ()")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop database rename1")
+	tk.MustExec("drop database rename2")
 }

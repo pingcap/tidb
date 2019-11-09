@@ -371,7 +371,7 @@
       },
       {
         "SQL": "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
-        "Best": "MergeRightOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#1,Column#13)->TableReader(Table(t))}(Column#1,Column#25)"
+        "Best": "RightHashJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#1,Column#13)->TableReader(Table(t))}(Column#1,Column#25)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
@@ -1037,7 +1037,7 @@
       },
       {
         "SQL": "select max(a+1) from t;",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(Column#1, 1)))])->TopN([plus(Column#1, 1) true],0,1))->Projection->TopN([Column#15 true],0,1)->Projection->Projection->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(Column#1, 1)))])->TopN([plus(Column#1, 1) true],0,1))->Projection->TopN([Column#41 true],0,1)->Projection->Projection->StreamAgg"
       },
       {
         "SQL": "select max(a), min(a) from t;",
