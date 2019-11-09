@@ -36,7 +36,11 @@ var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
 
 func TestT(t *testing.T) {
+	testleak.BeforeTest()
+	defer testleak.AfterTestT(t)
+
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	TestingT(t)
 }
 
@@ -62,12 +66,10 @@ func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().PlanColumnID = 0
-	testleak.BeforeTest()
 }
 
 func (s *testEvaluatorSuite) TearDownTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
-	testleak.AfterTest(c)()
 }
 
 func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
@@ -316,7 +318,6 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -353,7 +354,6 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -505,7 +505,6 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {
-	defer testleak.AfterTest(c)()
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
 		Unit   string
@@ -551,7 +550,6 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		input   string
 		pattern string
@@ -575,7 +573,6 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		pattern string
 		input   string
@@ -611,7 +608,6 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		arg    interface{}
 		op     string

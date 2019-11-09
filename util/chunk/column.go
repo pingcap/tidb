@@ -243,6 +243,10 @@ const (
 	sizeTime       = int(unsafe.Sizeof(types.Time{}))
 )
 
+var (
+	emptyBuf = make([]byte, 4*1024)
+)
+
 // resize resizes the column so that it contains n elements, only valid for fixed-length types.
 func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
@@ -250,6 +254,11 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
 	} else {
 		c.data = make([]byte, sizeData)
+	}
+	if !isNull {
+		for j := 0; j < sizeData; j += len(emptyBuf) {
+			copy(c.data[j:], emptyBuf)
+		}
 	}
 
 	newNulls := false
@@ -663,6 +672,14 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
+	if !c.isFixed() {
+		panic("result column should be fixed-length type")
+	}
+	for _, col := range cols {
+		if c.length != col.length {
+			panic("should ensure all columns have the same length")
+		}
+	}
 	for _, col := range cols {
 		for i := range c.nullBitmap {
 			// bit 0 is null, 1 is not null, so do AND operations here.

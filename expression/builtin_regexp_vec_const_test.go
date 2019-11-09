@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenFieldTypes []*types.FieldType, input *chunk.Chunk, output *chunk.Column) {
@@ -60,8 +59,6 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinRegexpForConstants(c *C) {
-	defer testleak.AfterTest(c)()
-
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants()
 	err := bf.vecEvalInt(input, output)
 	c.Assert(err, IsNil)

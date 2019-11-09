@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
@@ -103,7 +104,7 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
-			columns = append(columns, v.Col.ColName.O)
+			columns = append(columns, v.ColName.O)
 		}
 		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)
@@ -202,7 +203,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		return err
 	}
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
 
 	e.lazyFillAutoID = true
@@ -370,7 +371,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
 		sessVars.StmtCtx.BadNullAsWarning = true
 	}
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
 
 	for {
