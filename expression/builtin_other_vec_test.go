@@ -22,19 +22,14 @@ import (
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-//<<<<<<< HEAD
-	ast.SetVar:   {},
-	ast.GetVar:   {},
-	ast.BitCount: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}}},
-//=======
+
 	ast.SetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
 	},
 	ast.GetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
-//	ast.BitCount: {},
-//>>>>>>> 3712664d43101e7d178c923388ed8f1fb0628b39
+	ast.BitCount: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}}},
 	ast.GetParam: {},
 }
 
