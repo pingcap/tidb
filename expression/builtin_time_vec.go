@@ -904,7 +904,11 @@ func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 		}
 		retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
 		if retTimestamp == 0 {
-			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(startTime.String()))
+			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(startTime.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
 		ret := types.TimeFromDays(retTimestamp + days[i] - 1)
 		if ret.IsZero() || ret.Time.Year() > 9999 {
