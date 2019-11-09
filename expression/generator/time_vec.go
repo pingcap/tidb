@@ -264,6 +264,14 @@ var timeDiff = template.Must(template.New("").Parse(`
 	}
 	defer b.bufAllocator.put(buf1)
 {{ end }}
+{{ define "ArgsVecEval" }}
+	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEval{{ .TypeB.TypeName }}(b.ctx, input, buf1); err != nil {
+		return err
+	}
+{{ end }}
 
 {{ range . }}
 {{ $AIsString := (eq .TypeA.TypeName "String") }}
@@ -287,28 +295,19 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 		{{- if $reuseA }}
 			buf0 := result
 			{{- template "BufAllocator1" . }}
+			{{- template "ArgsVecEval" . }}
+			result.MergeNulls(buf1)
 		{{- else if $reuseB }}
 			buf1 := result
 			{{- template "BufAllocator0" . }}
+			{{- template "ArgsVecEval" . }}
+			result.MergeNulls(buf0)
 		{{- else }}
 			{{- template "BufAllocator0" . }}
 			{{- template "BufAllocator1" . }}
-		{{- end }}
-		
-		if err := b.args[0].VecEval{{ .TypeA.TypeName }}(b.ctx, input, buf0); err != nil {
-			return err
-		}
-		if err := b.args[1].VecEval{{ .TypeB.TypeName }}(b.ctx, input, buf1); err != nil {
-			return err
-		}
-
-		{{- if $reuseA }}
-			result.MergeNulls(buf1)
-		{{- else if $reuseB }}
-			result.MergeNulls(buf0)
-		{{- else }}
+			{{- template "ArgsVecEval" . }}
 			result.MergeNulls(buf0, buf1)
-		{{- end -}}
+		{{- end }}
 
 		{{- if .TypeA.Fixed }} 
 			arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
