@@ -24,6 +24,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
@@ -1097,6 +1098,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			c.connID, c.startTS, c.commitTS)
 		return err
 	}
+
+	failpoint.Inject("mockSleepBetween2PC", func() error {
+		time.Sleep(100 * time.Millisecond)
+		return nil
+	})
 
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
