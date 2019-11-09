@@ -128,11 +128,38 @@ func (b *builtinDateSig) vectorized() bool {
 }
 
 func (b *builtinFromUnixTime2ArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	unixTimeStamps := buf.Decimals()
+	result.ResizeTime(n, false)
+	//t64s := result.Times()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		_, isNull, err := evalFromUnixTime(b.ctx, int8(b.tp.Decimal), &unixTimeStamps[i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		//t64s[i] = t
+	}
+	return nil
 }
 
 func (b *builtinSysDateWithoutFspSig) vectorized() bool {
