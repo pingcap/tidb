@@ -14,7 +14,7 @@
 package expression
 
 import (
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"strings"
 	"time"
 
@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testExpressionSuite) TestGetTimeValue(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
@@ -108,7 +106,6 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 }
 
 func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
-	defer testleak.AfterTest(c)()
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -134,7 +131,6 @@ func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 }
 
 func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 

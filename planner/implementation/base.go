@@ -42,3 +42,12 @@ func (impl *baseImpl) GetCost() float64 {
 func (impl *baseImpl) GetPlan() plannercore.PhysicalPlan {
 	return impl.plan
 }
+
+func (impl *baseImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	childrenPlan := make([]plannercore.PhysicalPlan, len(children))
+	for i, child := range children {
+		childrenPlan[i] = child.GetPlan()
+	}
+	impl.plan.SetChildren(childrenPlan...)
+	return impl
+}

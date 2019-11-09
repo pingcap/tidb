@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +28,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -106,9 +106,9 @@ func (h *benchHelper) init() {
 	cols := make([]*Column, 0, len(h.inputTypes))
 	for i := 0; i < len(h.inputTypes); i++ {
 		cols = append(cols, &Column{
-			ColName: model.NewCIStr(fmt.Sprintf("col_%v", i)),
-			RetType: h.inputTypes[i],
-			Index:   i,
+			UniqueID: int64(i),
+			RetType:  h.inputTypes[i],
+			Index:    i,
 		})
 	}
 
@@ -362,6 +362,70 @@ func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
 }
 
+// ipv6StrGener is used to generate ipv6 strings.
+type ipv6StrGener struct {
+}
+
+func (g *ipv6StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
+// ipv6ByteGener is used to generate ipv6 address in 16 bytes string.
+type ipv6ByteGener struct {
+}
+
+func (g *ipv6ByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return string(ip[:net.IPv6len])
+}
+
+// ipv4ByteGener is used to generate ipv4 address in 4 bytes string.
+type ipv4ByteGener struct {
+}
+
+func (g *ipv4ByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv4len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return string(ip[:net.IPv4len])
+}
+
+// ipv4Compat is used to generate ipv4 compatible ipv6 strings
+type ipv4CompatByteGener struct {
+}
+
+func (g *ipv4CompatByteGener) gen() interface{} {
+	var ip = make([]byte, net.IPv6len)
+	for i := range ip {
+		if i < 12 {
+			ip[i] = 0
+		} else {
+			ip[i] = uint8(rand.Intn(256))
+		}
+	}
+	return string(ip[:net.IPv6len])
+}
+
+// ipv4MappedByteGener is used to generate ipv4-mapped ipv6 bytes.
+type ipv4MappedByteGener struct {
+}
+
+func (g *ipv4MappedByteGener) gen() interface{} {
+	var ip = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0}
+	for i := 12; i < 16; i++ {
+		ip[i] = uint8(rand.Intn(256)) // reset the last 4 bytes
+	}
+	return string(ip[:net.IPv6len])
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -444,6 +508,15 @@ func (g *dataStrGener) gen() interface{} {
 	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
 }
 
+// constStrGener always returns the given string
+type constStrGener struct {
+	s string
+}
+
+func (g *constStrGener) gen() interface{} {
+	return g.s
+}
+
 type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
@@ -472,11 +545,16 @@ type vecExprBenchCase struct {
 type vecExprBenchCases map[string][]vecExprBenchCase
 
 func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vecExprBenchCase) {
-	batchSize := 1024
 	var gen dataGenerator
 	if len(testCase.geners) > colIdx && testCase.geners[colIdx] != nil {
 		gen = testCase.geners[colIdx]
-	} else {
+	}
+	fillColumnWithGener(eType, chk, colIdx, gen)
+}
+
+func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
+	batchSize := 1024
+	if gen == nil {
 		gen = &defaultGener{0.2, eType}
 	}
 
@@ -900,6 +978,40 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
 			for i := 0; i < int(vecWarnCnt); i++ {
 				c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
+			}
+		}
+	}
+}
+
+// testVectorizedBuiltinFuncForRand is used to verify that the vectorized
+// expression is evaluated correctly
+func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
+	for funcName, testCases := range vecExprCases {
+		c.Assert(strings.EqualFold("rand", funcName), Equals, true)
+
+		for _, testCase := range testCases {
+			c.Assert(len(testCase.childrenTypes), Equals, 0)
+
+			ctx := mock.NewContext()
+			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+			tmp := strings.Split(baseFuncName, ".")
+			baseFuncName = tmp[len(tmp)-1]
+			// do not forget to implement the vectorized method.
+			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
+			switch testCase.retEvalType {
+			case types.ETReal:
+				err := baseFunc.vecEvalReal(input, output)
+				c.Assert(err, IsNil)
+				// do not forget to call ResizeXXX/ReserveXXX
+				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				// check result
+				res := output.Float64s()
+				for _, v := range res {
+					c.Assert((0 <= v) && (v < 1), Equals, true)
+				}
+			default:
+				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 			}
 		}
 	}

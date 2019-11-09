@@ -1,0 +1,14 @@
+[
+  {
+    "name": "TestPredicatePushDown",
+    "cases": [
+      "select a, b from (select a, b from t as t1 order by a) as t2 where t2.b > 10",
+      "select a, b from (select a, b from t as t1 order by a) as t2 where t2.a > 10",
+      "select a, b from (select a, b, a+b as a_b from t as t1) as t2 where a_b > 10 and b = 1",
+      "select a, @i:=@i+1 as ii from (select a, @i:=0 from t as t1) as t2 where @i < 10",
+      "select a, @i:=@i+1 as ii from (select a, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
+      "select a, max(b) from t group by a having a > 1",
+      "select a, avg(b) from t group by a having a > 1 and max(b) > 10"
+    ]
+  }
+]

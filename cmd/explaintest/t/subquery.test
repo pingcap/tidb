@@ -11,3 +11,7 @@ create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
 analyze table t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
+
+drop table if exists t;
+create table t(a int, b int, c int);
+explain select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);

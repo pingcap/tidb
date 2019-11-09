@@ -663,6 +663,14 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
+	if !c.isFixed() {
+		panic("result column should be fixed-length type")
+	}
+	for _, col := range cols {
+		if c.length != col.length {
+			panic("should ensure all columns have the same length")
+		}
+	}
 	for _, col := range cols {
 		for i := range c.nullBitmap {
 			// bit 0 is null, 1 is not null, so do AND operations here.

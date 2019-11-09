@@ -344,6 +344,10 @@ type dbTableHandler struct {
 	*tikvHandlerTool
 }
 
+type flashReplicaHandler struct {
+	*tikvHandlerTool
+}
+
 // regionHandler is the common field for http handler. It contains
 // some common functions for all handlers.
 type regionHandler struct {
@@ -666,6 +670,83 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	binloginfo.DisableSkipBinlogFlag()
+}
+
+type tableFlashReplicaInfo struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
+	ID             int64    `json:"id"`
+	ReplicaCount   uint64   `json:"replica_count"`
+	LocationLabels []string `json:"location_labels"`
+	Available      bool     `json:"available"`
+}
+
+func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodPost {
+		h.handleStatusReport(w, req)
+		return
+	}
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	allDBs := schema.AllSchemas()
+	for _, db := range allDBs {
+		tables := schema.SchemaTables(db.Name)
+		for _, tbl := range tables {
+			tblInfo := tbl.Meta()
+			if tblInfo.TiFlashReplica == nil {
+				continue
+			}
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             tblInfo.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.Available,
+			})
+		}
+	}
+	writeData(w, replicaInfos)
+}
+
+type tableFlashReplicaStatus struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
+	ID               int64  `json:"id"`
+	RegionCount      uint64 `json:"region_count"`
+	FlashRegionCount uint64 `json:"flash_region_count"`
+}
+
+// checkTableFlashReplicaAvailable uses to check the available status of table flash replica.
+func (tf *tableFlashReplicaStatus) checkTableFlashReplicaAvailable() bool {
+	return tf.FlashRegionCount == tf.RegionCount
+}
+
+func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
+	var status tableFlashReplicaStatus
+	err := json.NewDecoder(req.Body).Decode(&status)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	do, err := session.GetDomain(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.checkTableFlashReplicaAvailable())
+	if err != nil {
+		writeError(w, err)
+	}
+	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
+		status.RegionCount),
+		zap.Uint64("flash region count", status.FlashRegionCount),
+		zap.Error(err))
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
