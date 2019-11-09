@@ -119,3 +119,46 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+
+func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+		memo.OperandSelection: {
+			rulePushSelDownTableScan,
+			rulePushSelDownTableGather,
+			rulePushSelDownSort,
+			rulePushSelDownProjection,
+			rulePushSelDownAggregation,
+		},
+		memo.OperandDataSource: {
+			ruleEnumeratePaths,
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+		memo.OperandLimit: {
+			ruleTransformLimitToTopN,
+		},
+		memo.OperandDataSource: {
+			ruleEnumeratePaths,
+		},
+	})
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}

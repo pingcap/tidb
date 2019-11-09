@@ -30,5 +30,12 @@
       "select max(a+b) from t",
       "select sum(a) from t group by a, a+b order by a"
     ]
+  },
+  {
+    "name": "TestSimplePlans",
+    "cases": [
+      "select a from t limit 2",
+      "select a from t limit 1 offset 2"
+    ]
   }
 ]

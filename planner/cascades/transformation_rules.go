@@ -54,6 +54,7 @@ const (
 	rulePushSelDownAggregation
 	ruleEnumeratePaths
 	rulePushAggDownGather
+	ruleTransformLimitToTopN
 )
 
 var transformationRuleList = []Transformation{
@@ -64,6 +65,7 @@ var transformationRuleList = []Transformation{
 	&PushSelDownAggregation{},
 	&EnumeratePaths{},
 	&PushAggDownGather{},
+	&TransformLimitToTopN{},
 }
 
 var defaultTransformationMap = map[memo.Operand][]TransformationID{
@@ -79,6 +81,9 @@ var defaultTransformationMap = map[memo.Operand][]TransformationID{
 	},
 	memo.OperandAggregation: {
 		rulePushAggDownGather,
+	},
+	memo.OperandLimit: {
+		ruleTransformLimitToTopN,
 	},
 }
 
@@ -498,4 +503,39 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 	remainedGroupExpr := memo.NewGroupExpr(remainedSel)
 	remainedGroupExpr.SetChildren(aggGroup)
 	return []*memo.GroupExpr{remainedGroupExpr}, true, false, nil
+}
+
+// TransformLimitToTopN transforms Limit+Sort to TopN.
+type TransformLimitToTopN struct {
+}
+
+// GetPattern implements Transformation interface.
+// The pattern of this rule is `Limit -> Sort`.
+func (r *TransformLimitToTopN) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *TransformLimitToTopN) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `Limit -> Sort -> x` to `TopN -> x`.
+func (r *TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	topN := plannercore.LogicalTopN{
+		ByItems: sort.ByItems,
+		Offset:  limit.Offset,
+		Count:   limit.Count,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	topNExpr := memo.NewGroupExpr(topN)
+	topNExpr.SetChildren(childGroup)
+	return []*memo.GroupExpr{topNExpr}, true, false, nil
 }

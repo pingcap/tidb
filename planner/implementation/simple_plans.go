@@ -114,3 +114,15 @@ func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implemen
 func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
 	return &TiKVHashAggImpl{baseImpl{plan: agg}}
 }
+
+// LimitImpl is the implementation of PhysicalLimit. Since PhysicalLimit on different
+// engines have the same behavior, and we don't calculate the cost of `Limit`, we only
+// have one Implementation for it.
+type LimitImpl struct {
+	baseImpl
+}
+
+// NewLimitImpl creates a new LimitImpl.
+func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
+	return &LimitImpl{baseImpl{plan: limit}}
+}

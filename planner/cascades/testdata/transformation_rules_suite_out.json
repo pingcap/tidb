@@ -164,5 +164,40 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTopNRules",
+    "Cases": [
+      {
+        "SQL": "select b from t order by a limit 2",
+        "Result": [
+          "Group#0 Schema:[Column#15]",
+          "    Projection_5 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
+          "    TopN_8 input:[Group#2], Column#14:asc, offset:0, count:2",
+          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
+          "    Projection_2 input:[Group#3], Column#2, Column#1",
+          "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_7 input:[Group#4]",
+          "Group#4 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_6 table:t, pk col:Column#1"
+        ]
+      },
+      {
+        "SQL": "select a+b from t order by a limit 1 offset 2",
+        "Result": [
+          "Group#0 Schema:[Column#15]",
+          "    Projection_5 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
+          "    TopN_8 input:[Group#2], Column#14:asc, offset:2, count:1",
+          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
+          "    Projection_2 input:[Group#3], plus(Column#1, Column#2), Column#1",
+          "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_7 input:[Group#4]",
+          "Group#4 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_6 table:t, pk col:Column#1"
+        ]
+      }
+    ]
   }
 ]
