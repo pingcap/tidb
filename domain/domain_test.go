@@ -422,6 +422,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrUnknown)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrUnknown)
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrInfoSchemaExpired)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrInfoSchemaChanged)
 }
