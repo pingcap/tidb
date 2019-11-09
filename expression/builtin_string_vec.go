@@ -1073,11 +1073,53 @@ func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinEltSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a ELT(N,str1,str2,str3,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
 func (b *builtinEltSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := buf0.Int64s()
+	argLen := len(b.args)
+	bufs := make([]*chunk.Column, argLen)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		j := i64s[i]
+		if j < 1 || j >= int64(argLen) {
+			result.AppendNull()
+			continue
+		}
+		if bufs[j] == nil {
+			bufs[j], err = b.bufAllocator.get(types.ETString, n)
+			if err != nil {
+				return err
+			}
+			defer b.bufAllocator.put(bufs[j])
+			if err := b.args[j].VecEvalString(b.ctx, input, bufs[j]); err != nil {
+				return err
+			}
+		}
+		if bufs[j].IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(bufs[j].GetString(i))
+	}
+	return nil
 }
 
 func (b *builtinInsertSig) vectorized() bool {
@@ -1434,6 +1476,8 @@ func (b *builtinMakeSetSig) vectorized() bool {
 	return false
 }
 
+// evalString evals MAKE_SET(bits,str1,str2,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
 func (b *builtinMakeSetSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
