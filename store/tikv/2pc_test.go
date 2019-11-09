@@ -38,6 +38,11 @@ type testCommitterSuite struct {
 
 var _ = Suite(&testCommitterSuite{})
 
+func (s *testCommitterSuite) SetUpSuite(c *C) {
+	PessimisticLockTTL = 3000 // 3s
+	s.OneByOneSuite.SetUpSuite(c)
+}
+
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
@@ -592,7 +597,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 
 	lr := newLockResolver(s.store)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
-	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
