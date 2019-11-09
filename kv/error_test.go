@@ -11,26 +11,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package kv
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
-var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-	ast.SetVar:   {},
-	ast.GetVar:   {},
-	ast.BitCount: {},
-	ast.GetParam: {},
-}
+type testErrorSuite struct{}
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOtherCases)
-}
+var _ = Suite(testErrorSuite{})
 
-func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
-	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOtherCases)
+func (s testErrorSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		ErrNotExist,
+		ErrTxnRetryable,
+		ErrCannotSetNilValue,
+		ErrInvalidTxn,
+		ErrTxnTooLarge,
+		ErrEntryTooLarge,
+		ErrKeyExists,
+		ErrNotImplemented,
+		ErrWriteConflict,
+		ErrWriteConflictInTiDB,
+	}
+	for _, err := range kvErrs {
+		c.Assert(err.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
+	}
 }
