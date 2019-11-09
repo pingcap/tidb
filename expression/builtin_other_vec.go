@@ -87,16 +87,19 @@ func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 		return err
 	}
-	f64s := result.Int64s()
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		var count int64
 		if result.IsNull(i) {
 			continue
 		}
-		for ; f64s[i] != 0; f64s[i] = (f64s[i] - 1) & f64s[i] {
-			count++
-		}
-		f64s[i] = count
+		i64s[i] = i64s[i] - ((i64s[i] >> 1) & 0x5555555555555555)
+		i64s[i] = (i64s[i] & 0x3333333333333333) + ((i64s[i] >> 2) & 0x3333333333333333)
+		i64s[i] = (i64s[i] + (i64s[i] >> 4)) & 0x0f0f0f0f0f0f0f0f
+		i64s[i] = i64s[i] + (i64s[i] >> 8)
+		i64s[i] = i64s[i] + (i64s[i] >> 16)
+		i64s[i] = i64s[i] + (i64s[i] >> 32)
+		i64s[i] = i64s[i] & 0x7f
+
 	}
 	return nil
 }
