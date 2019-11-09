@@ -135,12 +135,12 @@ cluster-ssl-key = ""
 # If enable status report HTTP service.
 report-status = true
 
-# TiDB status host.
-status-host = "0.0.0.0"
-
 ## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
 ## API for prometheus: http://${status-host}:${status_port}/metrics
 ## API for pprof:      http://${status-host}:${status_port}/debug/pprof
+# TiDB status host.
+status-host = "0.0.0.0"
+
 # TiDB status port.
 status-port = 10080
 
