@@ -864,18 +864,22 @@ func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 	}
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
+	ds1 := buf.Decimals()
 	ds := result.Decimals()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		val := buf.GetDecimal(i)
+		val := &ds1[i]
 		var err error
 		if val.IsNegative() {
 			err = val.Round(&ds[i], 0, types.ModeTruncate)
-		} else {
-			err = val.Round(&ds[i], 0, types.ModeTruncate)
+			if err != nil {
+				return err
+			}
+			continue
 		}
+		err = val.Round(&ds[i], 0, types.ModeTruncate)
 		if err != nil {
 			return err
 		}
