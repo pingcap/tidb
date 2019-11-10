@@ -2629,3 +2629,18 @@ func (m FulltextSearchModifier) IsNaturalLanguageMode() bool {
 func (m FulltextSearchModifier) WithQueryExpansion() bool {
 	return m&FulltextSearchModifierWithQueryExpansion == FulltextSearchModifierWithQueryExpansion
 }
+
+type TimestampBound struct {
+	Mode      TimestampBoundMode
+	Timestamp ExprNode
+}
+
+type TimestampBoundMode int
+
+const (
+	TimestampBoundStrong TimestampBoundMode = iota
+	TimestampBoundMaxStaleness
+	TimestampBoundExactStaleness
+	TimestampBoundReadTimestamp
+	TimestampBoundMinReadTimestamp
+)
