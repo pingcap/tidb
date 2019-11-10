@@ -1994,7 +1994,11 @@ func (b *builtinSysDateWithFspSig) evalTime(row chunk.Row) (d types.Time, isNull
 	}
 
 	loc := b.ctx.GetSessionVars().Location()
-	now := time.Now().In(loc)
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return types.Time{}, true, err
+	}
+	now := nowTs.In(loc)
 	result, err := convertTimeToMysqlTime(now, int8(fsp), types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, err

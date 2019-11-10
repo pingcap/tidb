@@ -541,7 +541,11 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	}
 
 	loc := b.ctx.GetSessionVars().Location()
-	now := time.Now().In(loc)
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	now := nowTs.In(loc)
 
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
