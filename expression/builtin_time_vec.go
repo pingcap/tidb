@@ -526,11 +526,39 @@ func (b *builtinAddDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinSysDateWithFspSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	loc := b.ctx.GetSessionVars().Location()
+	now := time.Now().In(loc)
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf)
+	times := result.Times()
+	ds := buf.Int64s()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		t, err := convertTimeToMysqlTime(now, int8(ds[i]), types.ModeHalfEven)
+		if err != nil {
+			return err
+		}
+		times[i] = t
+	}
+	return nil
 }
 
 func (b *builtinAddDateDurationIntSig) vectorized() bool {
