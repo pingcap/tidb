@@ -791,12 +791,27 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, handleInvalidTimeError(b.ctx, err)
 	}
-	if t.InvalidZero() {
-		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
-	}
 	formatMask, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	// MySQL compatibility, #11203
+	// If format mask is 0 then return 0 without warnings
+	if formatMask == "0" {
+		return "0", false, nil
+	}
+
+	if t.InvalidZero() {
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to null without warnings
+		n, isNullInt, errInt := b.args[0].EvalInt(b.ctx, row)
+		isOriginalIntOrDecimalZero := n == 0 && !isNullInt && errInt == nil
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := t.Fsp > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return "", true, nil
+		}
+		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 
 	res, err := t.DateFormat(formatMask)
@@ -5544,6 +5559,15 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to 0 value (not null)
+		n, err := date.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := date.Fsp > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return 0, false, nil
+		}
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
 	}
 
