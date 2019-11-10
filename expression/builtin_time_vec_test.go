@@ -189,6 +189,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
 			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
 		},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETString},
+			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}, &timeFormatGener{0.5}},
+		},
 	},
 }
 
