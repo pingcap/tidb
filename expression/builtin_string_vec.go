@@ -519,11 +519,76 @@ func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a CONCAT_WS(separator,str1,str2,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	strs := make([][]string, n)
+	seps := make([]string, n)
+	isNulls := make([]bool, n)
+	targetLengths := make([]int, n)
+	argsLen := len(b.args)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			// If the separator is NULL, the result is NULL.
+			isNulls[i] = true
+			continue
+		}
+		isNulls[i] = false
+		strs[i] = make([]string, 0, argsLen)
+		seps[i] = buf.GetString(i)
+	}
+
+	var strBuf []byte
+	for j := 1; j < argsLen; j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if buf.IsNull(i) {
+				// CONCAT_WS() does not skip empty strings. However,
+				// it does skip any NULL values after the separator argument.
+				continue
+			}
+			strBuf = buf.GetBytes(i)
+			targetLengths[i] += len(strBuf)
+			if i > 1 {
+				targetLengths[i] += len(seps[i])
+			}
+			if uint64(targetLengths[i]) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+				continue
+			}
+			strs[i] = append(strs[i], string(strBuf))
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+			continue
+		}
+		str := strings.Join(strs[i], seps[i])
+		// check whether the length of result is larger than Flen
+		if len(str) > b.tp.Flen {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinConvertSig) vectorized() bool {

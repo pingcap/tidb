@@ -372,7 +372,7 @@ func (b *builtinConcatWSSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinConcatWSSig.
+// evalString evals a CONCAT_WS(separator,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	args := b.getArgs()
@@ -411,8 +411,12 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 		strs = append(strs, val)
 	}
 
-	// TODO: check whether the length of result is larger than Flen
-	return strings.Join(strs, sep), false, nil
+	// check whether the length of result is larger than Flen
+	str := strings.Join(strs, sep)
+	if len(str) > b.tp.Flen {
+		return "", true, nil
+	}
+	return str, false, nil
 }
 
 type leftFunctionClass struct {
