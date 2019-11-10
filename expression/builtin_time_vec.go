@@ -1464,11 +1464,56 @@ func (b *builtinSubDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, resul
 }
 
 func (b *builtinYearWeekWithModeSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals YEARWEEK(date,mode).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf1)
+	i64s := result.Int64s()
+	ds := buf1.Times()
+	ms := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		date := ds[i]
+		if date.IsZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		mode := int(ms[i])
+		if buf2.IsNull(i) {
+			mode = 0
+		}
+		year, week := date.Time.YearWeek(mode)
+		i64s[i] = int64(week + year*100)
+		if i64s[i] < 0 {
+			i64s[i] = int64(math.MaxUint32)
+		}
+	}
+	return nil
 }
 
 func (b *builtinTimestampDiffSig) vectorized() bool {
