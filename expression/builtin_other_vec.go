@@ -43,7 +43,7 @@ func (b *builtinRowSig) vectorized() bool {
 }
 
 func (b *builtinRowSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	panic("builtinRowSig.evalString() should never be called.")
+	panic("builtinRowSig.vecEvalString() should never be called.")
 }
 
 func (b *builtinValuesRealSig) vectorized() bool {
