@@ -14,9 +14,9 @@
 package cascades
 
 import (
-	"github.com/pingcap/tidb/expression"
 	"math"
 
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
