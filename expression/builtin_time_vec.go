@@ -1023,6 +1023,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
+	fsp := int8(b.tp.Decimal)
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -1044,7 +1045,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 			result.SetNull(i, true)
 			continue
 		}
-		t.Type, t.Fsp = mysql.TypeDate, types.MinFsp
+		t.Type, t.Fsp = mysql.TypeDatetime, fsp
 		times[i] = t
 	}
 	return nil
