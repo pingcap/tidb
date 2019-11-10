@@ -39,11 +39,11 @@ func (b *builtinValuesDurationSig) vecEvalDuration(input *chunk.Chunk, result *c
 }
 
 func (b *builtinRowSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRowSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	panic("builtinRowSig.vecEvalString() should never be called.")
 }
 
 func (b *builtinValuesRealSig) vectorized() bool {
