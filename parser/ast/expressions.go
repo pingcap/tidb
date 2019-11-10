@@ -1339,6 +1339,7 @@ func (n *MatchAgainst) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
+	n = newNode.(*MatchAgainst)
 	for i, colName := range n.ColumnNames {
 		newColName, ok := colName.Accept(v)
 		if !ok {
