@@ -132,7 +132,9 @@ func (b *builtinFromUnixTime2ArgSig) vectorized() bool {
 }
 
 func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	var err error
 	n := input.NumRows()
+
 	buf, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
@@ -142,22 +144,35 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 	unixTimeStamps := buf.Decimals()
-	result.ResizeTime(n, false)
-	//t64s := result.Times()
-	result.MergeNulls(buf)
+
+	bufFormat, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufFormat)
+	if err = b.args[1].VecEvalString(b.ctx, input, bufFormat); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if buf.IsNull(i) || bufFormat.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		_, isNull, err := evalFromUnixTime(b.ctx, int8(b.tp.Decimal), &unixTimeStamps[i])
+		t, isNull, err := evalFromUnixTime(b.ctx, int8(b.tp.Decimal), &unixTimeStamps[i])
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
-		//t64s[i] = t
+		res, err := t.DateFormat(bufFormat.GetString(i))
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
 	}
 	return nil
 }
@@ -416,7 +431,7 @@ func (b *builtinPeriodDiffSig) vectorized() bool {
 	return true
 }
 
-// evalInt evals PERIOD_DIFF(P1,P2).
+// vecEvalInt evals PERIOD_DIFF(P1,P2).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
@@ -672,7 +687,7 @@ func (b *builtinQuarterSig) vectorized() bool {
 	return true
 }
 
-// evalInt evals QUARTER(date).
+// vecEvalInt evals QUARTER(date).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
 func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -742,7 +757,7 @@ func (b *builtinToSecondsSig) vectorized() bool {
 	return true
 }
 
-// evalInt evals a builtinToSecondsSig.
+// vecEvalInt evals a builtinToSecondsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1073,7 +1088,7 @@ func (b *builtinPeriodAddSig) vectorized() bool {
 	return true
 }
 
-// evalInt evals PERIOD_ADD(P,N).
+// vecEvalInt evals PERIOD_ADD(P,N).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
@@ -1111,7 +1126,7 @@ func (b *builtinTimestampAddSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinTimestampAddSig.
+// vecEvalString evals a builtinTimestampAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1201,7 +1216,7 @@ func (b *builtinToDaysSig) vectorized() bool {
 	return true
 }
 
-// evalInt evals a builtinToDaysSig.
+// vecEvalInt evals a builtinToDaysSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()

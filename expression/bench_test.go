@@ -300,6 +300,31 @@ func (g *timeFormatGener) gen() interface{} {
 	}
 }
 
+type dateFormatGener struct {
+	nullRation float64
+}
+
+// gen (generate) date format specifiers
+// format specifier list:
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+func (g *dateFormatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return "%Y-%M-%D %H:%I:%S %X"
+	case 1:
+		return "%y-%m-%d %h:%i:%s %x"
+	case 2:
+		return "%a %b %c %e %f %j %k %l"
+	case 3:
+		return "%p %r %T %U %u %V %v %W %w %Y %y %% %z"
+	default:
+		return nil
+	}
+}
+
 // rangeRealGener is used to generate float64 items in [begin, end].
 type rangeRealGener struct {
 	begin float64
@@ -398,7 +423,7 @@ func (g *ipv4ByteGener) gen() interface{} {
 	return string(ip[:net.IPv4len])
 }
 
-// ipv4Compat is used to generate ipv4 compatible ipv6 strings
+// ipv4CompatByteGener is used to generate ipv4 compatible ipv6 strings
 type ipv4CompatByteGener struct {
 }
 
@@ -806,6 +831,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	return baseFunc, fts, input, result
 }
 
+// getColumnLen
 // a hack way to calculate length of a chunk.Column.
 func getColumnLen(col *chunk.Column, eType types.EvalType) int {
 	chk := chunk.New([]*types.FieldType{eType2FieldType(eType)}, 1024, 1024)
