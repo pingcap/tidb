@@ -313,7 +313,7 @@ func (g *dateFormatGener) gen() interface{} {
 	}
 	switch rand.Uint32() % 4 {
 	case 0:
-		return "%Y-%M-%D %H:%I:%S %X"
+		return "%Y-%M-%D %H:%i:%S %X"
 	case 1:
 		return "%y-%m-%d %h:%i:%s %x"
 	case 2:
