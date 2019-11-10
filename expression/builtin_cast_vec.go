@@ -1240,7 +1240,7 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastStringAsRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
