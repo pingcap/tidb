@@ -1019,8 +1019,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(dateBuf)
-	result.MergeNulls(formatBuf)
+	result.MergeNulls(dateBuf, formatBuf)
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
