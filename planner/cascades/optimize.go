@@ -16,6 +16,7 @@ package cascades
 import (
 	"container/list"
 	"math"
+	"reflect"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -261,6 +262,11 @@ func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Gro
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
+	println("*********************************************")
+	groupString := ToString(g)
+	for _, s := range groupString {
+		println(s)
+	}
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
@@ -320,6 +326,8 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 				continue
 			}
 			cumCost = impl.CalcCost(outCount, childImpls...)
+			println(reflect.TypeOf(impl).String())
+			println(int64(impl.GetCost()))
 			if cumCost > costLimit {
 				continue
 			}
@@ -332,7 +340,7 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	// Handle enforcer rules for required physical property.
 	for _, rule := range GetEnforcerRules(g, reqPhysProp) {
 		newReqPhysProp := rule.NewProperty(reqPhysProp)
-		enforceCost := rule.GetEnforceCost(g, outCount)
+		enforceCost := rule.GetEnforceCost(g)
 		childImpl, err := opt.implGroup(g, newReqPhysProp, costLimit-enforceCost)
 		if err != nil {
 			return nil, err
