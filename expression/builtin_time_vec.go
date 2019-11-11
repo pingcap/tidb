@@ -1467,7 +1467,7 @@ func (b *builtinYearWeekWithModeSig) vectorized() bool {
 	return true
 }
 
-// evalInt evals YEARWEEK(date,mode).
+// vecEvalInt evals YEARWEEK(date,mode).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
