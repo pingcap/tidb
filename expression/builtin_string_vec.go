@@ -323,12 +323,54 @@ func (b *builtinReverseSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 func (b *builtinReverseSig) vectorized() bool {
 	return true
 }
+
 func (b *builtinConcatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a CONCAT(str1,str2,...)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	strs := make([][]byte, n)
+	isNulls := make([]bool, n)
+	result.ReserveString(n)
+	var byteBuf []byte
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if isNulls[i] {
+				continue
+			}
+			if buf.IsNull(i) {
+				isNulls[i] = true
+				continue
+			}
+			byteBuf = buf.GetBytes(i)
+			if uint64(len(strs[i])+len(byteBuf)) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+				isNulls[i] = true
+				continue
+			}
+			strs[i] = append(strs[i], byteBuf...)
+		}
+	}
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+		} else {
+			result.AppendBytes(strs[i])
+		}
+	}
+	return nil
 }
 
 func (b *builtinLocate3ArgsSig) vectorized() bool {
@@ -1287,11 +1329,30 @@ func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinOrdSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		i64s[i] = ord(str)
+	}
+	return nil
 }
 
 func (b *builtinInstrBinarySig) vectorized() bool {
@@ -1747,11 +1808,29 @@ func (b *builtinSubstringBinary3ArgsSig) vecEvalString(input *chunk.Chunk, resul
 }
 
 func (b *builtinHexIntArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinHexIntArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strings.ToUpper(fmt.Sprintf("%x", uint64(i64s[i]))))
+	}
+	return nil
 }
 
 func (b *builtinFieldIntSig) vectorized() bool {

@@ -1285,8 +1285,16 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for quarter
 	result = tk.MustQuery(`select quarter("2012-00-20"), quarter("2012-01-21"), quarter("2012-03-22"), quarter("2012-05-23"), quarter("2012-08-24"), quarter("2012-09-25"), quarter("2012-11-26"), quarter("2012-12-27");`)
 	result.Check(testkit.Rows("0 1 1 2 3 3 4 4"))
-	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("0000-00-00"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
+	result.Check(testkit.Rows("0 0 0 0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for from_days
 	result = tk.MustQuery(`select from_days(0), from_days(-199), from_days(1111), from_days(120), from_days(1), from_days(1111111), from_days(9999999), from_days(22222);`)
@@ -1637,6 +1645,16 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`SELECT DATE_FORMAT('0', '%W %M %e %Y %r %y'), DATE_FORMAT('0.0', '%W %M %e %Y %r %y'), DATE_FORMAT(0, 0);`)
+	result.Check(testkit.Rows("<nil> <nil> 0"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|invalid time format: '0'",
+		"Warning|1292|invalid time format: '0.0'"))
+	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for yearweek
 	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)

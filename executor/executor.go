@@ -132,10 +132,10 @@ func newFirstChunk(e Executor) *chunk.Chunk {
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
-// newList creates a new List to buffer current executor's result.
-func newList(e Executor) *chunk.List {
+// newList creates a new ListInMemory to buffer current executor's result.
+func newList(e Executor) *chunk.ListInMemory {
 	base := e.base()
-	return chunk.NewList(base.retFieldTypes, base.initCap, base.maxChunkSize)
+	return chunk.NewListInMemory(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 // retTypes returns all output column types.
@@ -1115,7 +1115,7 @@ type TableScanExec struct {
 	iter                  kv.Iterator
 	columns               []*model.ColumnInfo
 	isVirtualTable        bool
-	virtualTableChunkList *chunk.List
+	virtualTableChunkList *chunk.ListInMemory
 	virtualTableChunkIdx  int
 }
 
@@ -1146,7 +1146,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewListInMemory(retTypes(e), e.initCap, e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
