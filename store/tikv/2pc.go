@@ -49,7 +49,10 @@ type twoPhaseCommitAction interface {
 type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
-type actionPessimisticLock struct{ killed *uint32 }
+type actionPessimisticLock struct {
+	killed       *uint32
+	lockWaitTime int64
+}
 type actionPessimisticRollback struct{}
 
 var (
@@ -69,7 +72,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64 = 15000 // 15s ~ 40s
+	PessimisticLockTTL uint64 = 20000 // 20s
 )
 
 func (actionPrewrite) String() string {
@@ -648,15 +651,17 @@ const (
 )
 
 type ttlManager struct {
-	state ttlManagerState
-	ch    chan struct{}
+	state  ttlManagerState
+	ch     chan struct{}
+	killed *uint32
 }
 
-func (tm *ttlManager) run(c *twoPhaseCommitter) {
+func (tm *ttlManager) run(c *twoPhaseCommitter, killed *uint32) {
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
 	}
+	tm.killed = killed
 	go tm.keepAlive(c)
 }
 
@@ -668,14 +673,18 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	// Ticker is set to 1/3 of the PessimisticLockTTL.
-	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 3)
+	// Ticker is set to 1/2 of the PessimisticLockTTL.
+	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-tm.ch:
 			return
 		case <-ticker.C:
+			// If kill signal is received, the ttlManager should exit.
+			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
+				return
+			}
 			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
@@ -727,6 +736,8 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		mutations[i] = mut
 	}
 
+	t0 := oracle.GetTimeFromTS(c.forUpdateTS)
+	elapsed := uint64(time.Since(t0) / time.Millisecond)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdPessimisticLock,
 		PessimisticLock: &pb.PessimisticLockRequest{
@@ -734,15 +745,26 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			ForUpdateTs:  c.forUpdateTS,
-			LockTtl:      c.pessimisticTTL,
+			LockTtl:      elapsed + PessimisticLockTTL,
 			IsFirstLock:  c.isFirstLock,
+			WaitTimeout:  action.lockWaitTime,
 		},
 		Context: pb.Context{
 			Priority: c.priority,
 			SyncLog:  c.syncLog,
 		},
 	}
+	lockWaitStartTime := time.Now()
 	for {
+		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
+		if action.lockWaitTime > 0 {
+			timeLeft := action.lockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
+			if timeLeft <= 0 {
+				req.PessimisticLock.WaitTimeout = kv.LockNoWait
+			} else {
+				req.PessimisticLock.WaitTimeout = timeLeft
+			}
+		}
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
@@ -756,7 +778,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
 			return errors.Trace(err)
 		}
 		lockResp := resp.PessimisticLock
@@ -786,6 +808,27 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
 				return errors.Trace(err1)
+			}
+			// Check lock conflict error for nowait, if nowait set and key locked by others,
+			// report error immediately and do no more resolve locks.
+			// if the lock left behind whose related txn is already committed or rollbacked,
+			// (eg secondary locks not committed or rollbacked yet)
+			// we cant return "nowait conflict" directly
+			if lock.LockType == pb.Op_PessimisticLock {
+				if action.lockWaitTime == kv.LockNoWait {
+					// 3.0 release not supported yet
+					return kv.ErrNotImplemented
+				} else if action.lockWaitTime == kv.LockAlwaysWait {
+					// do nothing but keep wait
+				} else {
+					// the lockWaitTime is set, check the lock wait timeout or not
+					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
+					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
+							return ErrLockWaitTimeout
+						}
+					}
+				}
 			}
 			locks = append(locks, lock)
 		}
@@ -1024,8 +1067,8 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {

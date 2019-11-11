@@ -1673,6 +1673,7 @@ var builtinGlobalVariable = []string{
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
 	variable.MaxExecutionTime,
+	variable.InnodbLockWaitTimeout,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
