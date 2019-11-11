@@ -136,11 +136,28 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 }
 
 func (b *builtinSysDateWithoutFspSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	loc := b.ctx.GetSessionVars().Location()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+
+	now := nowTs.In(loc)
+	result.ResizeTime(n, false)
+	times := result.Times()
+	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < n; i++ {
+		times[i] = t
+	}
+	return nil
 }
 
 func (b *builtinExtractDatetimeSig) vectorized() bool {
