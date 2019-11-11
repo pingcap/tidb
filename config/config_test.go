@@ -205,23 +205,6 @@ func (s *testConfigSuite) TestConfigDiff(c *C) {
 	c.Assert(diffs["Performance.FeedbackProbability"][1], Equals, float64(23.33))
 }
 
-func (s *testConfigSuite) TestValid(c *C) {
-	c1 := NewConfig()
-	tests := []struct {
-		ttl   string
-		valid bool
-	}{
-		{"1s", false},
-		{"3s", true},
-		{"13s", true},
-		{"33s", false},
-	}
-	for _, tt := range tests {
-		c1.PessimisticTxn.TTL = tt.ttl
-		c.Assert(c1.Valid() == nil, Equals, tt.valid)
-	}
-}
-
 func (s *testConfigSuite) TestOOMActionValid(c *C) {
 	c1 := NewConfig()
 	tests := []struct {

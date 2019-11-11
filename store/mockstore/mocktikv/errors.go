@@ -13,16 +13,21 @@
 
 package mocktikv
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+)
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
 // backoff or cleanup the lock then retry.
 type ErrLocked struct {
-	Key     MvccKey
-	Primary []byte
-	StartTS uint64
-	TTL     uint64
-	TxnSize uint64
+	Key      MvccKey
+	Primary  []byte
+	StartTS  uint64
+	TTL      uint64
+	TxnSize  uint64
+	LockType kvrpcpb.Op
 }
 
 // Error formats the lock to a string.

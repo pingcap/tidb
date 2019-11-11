@@ -576,7 +576,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		cop.tablePlan = ts
 	}
 
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	is.initSchema(idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{
 		indexFilters:     indexConds,

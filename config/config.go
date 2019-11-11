@@ -36,10 +36,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize    = 4096 // MB
-	MinPessimisticTTL = time.Second * 3
-	MaxPessimisticTTL = time.Second * 30
-	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	MinPessimisticTTL = time.Second * 15
+	MaxPessimisticTTL = time.Second * 120
 )
 
 // Valid config maps
@@ -129,11 +127,12 @@ type Security struct {
 // This is needed only because logging hasn't been set up at the time we parse the config file.
 // This should all be ripped out once strict config checking is made the default behavior.
 type ErrConfigValidationFailed struct {
-	err string
+	confFile       string
+	UndecodedItems []string
 }
 
 func (e *ErrConfigValidationFailed) Error() string {
-	return e.err
+	return fmt.Sprintf("config file %s contained unknown configuration options: %s", e.confFile, strings.Join(e.UndecodedItems, ", "))
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -412,7 +411,6 @@ var defaultConf = Config{
 	PessimisticTxn: PessimisticTxn{
 		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "10s",
 	},
 	StmtSummary: StmtSummary{
 		MaxStmtCount: 100,
@@ -540,7 +538,7 @@ func (c *Config) Load(confFile string) error {
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())
 		}
-		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+		err = &ErrConfigValidationFailed{confFile, undecodedItems}
 	}
 
 	return err
