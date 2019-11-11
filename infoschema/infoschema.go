@@ -51,7 +51,7 @@ var (
 	ErrUserDropExists = terror.ClassSchema.New(codeBadUser, "User %s does not exist.")
 	// ErrColumnExists returns for column already exists.
 	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
-	// ErrReservedColumnConflict returns for conflicting with reserved column name.
+	// ErrReservedColumnConflict returns for conflicting with the reserved column name.
 	ErrReservedColumnConflict = terror.ClassSchema.New(codeReservedColumnConflict, "Conflicting with a reserved column name '%s'")
 	// ErrIndexExists returns for index already exists.
 	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
@@ -335,7 +335,7 @@ const (
 	codeBadTable               = 1051
 	codeBadUser                = 3162
 	codeColumnExists           = 1060
-	codeReservedColumnConflict = 1066
+	codeReservedColumnConflict = 215
 	codeIndexExists            = 1831
 	codeMultiplePriKey         = 1068
 	codeTooManyKeyParts        = 1070

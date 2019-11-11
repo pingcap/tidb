@@ -977,18 +977,20 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 
 func (s *testColumnSuite) TestFieldCase(c *C) {
 	var fields = []string{"field", "Field"}
-	var colDefs = make([]*ast.ColumnDef, len(fields))
 	colNames := make([]model.CIStr, 0, len(fields))
-	for i, name := range fields {
-		colDefs[i] = &ast.ColumnDef{
-			Name: &ast.ColumnName{
-				Schema: model.NewCIStr("TestSchema"),
-				Table:  model.NewCIStr("TestTable"),
-				Name:   model.NewCIStr(name),
-			},
-		}
-		colNames = append(colNames, colDefs[i].Name.Name)
+	for _, name := range fields {
+		colNames = append(colNames, model.NewCIStr(name))
 	}
 	err := checkDuplicateColumn(colNames)
 	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+}
+
+func (s *testColumnSuite) TestReservedColumnsCheck(c *C) {
+	var fields = []string{"a", "_tidb_rowid", "b"}
+	colNames := make([]model.CIStr, 0, len(fields))
+	for _, name := range fields {
+		colNames = append(colNames, model.NewCIStr(name))
+	}
+	err := checkColumnsReserved(colNames)
+	c.Assert(err.Error(), Equals, infoschema.ErrReservedColumnConflict.GenWithStackByArgs("_tidb_rowid").Error())
 }

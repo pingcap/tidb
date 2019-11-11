@@ -1280,6 +1280,39 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 	s.tk.MustExec("drop table test_add_index_with_dup")
 }
 
+func (s *testDBSuite4) TestCreateTableWithReservedCol(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	err1 := infoschema.ErrReservedColumnConflict.GenWithStackByArgs("_tidb_rowid")
+
+	_, err := s.tk.Exec("create table test_table_with_reserved_col (a int, _tidb_rowid int)")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+}
+
+func (s *testDBSuite4) TestAddColWithReservedName(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	err1 := infoschema.ErrReservedColumnConflict.GenWithStackByArgs("_tidb_rowid")
+
+	s.tk.MustExec("create table test_add_col_with_reserved_name (a int, b int)")
+	_, err := s.tk.Exec("alter table test_add_col_with_reserved_name add column _tidb_rowid int")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+
+	s.tk.MustExec("drop table test_add_col_with_reserved_name")
+}
+
+func (s *testDBSuite4) TestChangeColNameToReservedName(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	err1 := infoschema.ErrReservedColumnConflict.GenWithStackByArgs("_tidb_rowid")
+
+	s.tk.MustExec("create table test_change_col_name_to_reserved_name (a int, b int)")
+	_, err := s.tk.Exec("alter table test_change_col_name_to_reserved_name change a _tidb_rowid int")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+
+	s.tk.MustExec("drop table test_change_col_name_to_reserved_name")
+}
+
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 	return s.mustQuery(c, fmt.Sprintf("show columns from %s", tableName))
 }
