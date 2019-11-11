@@ -635,13 +635,13 @@ func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8050]Unsupported modify charset from latin1 to utf8")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify charset from latin1 to utf8")
 	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4")
 	if rs != nil {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8050]Unsupported modify charset from latin1 to utf8mb4")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify charset from latin1 to utf8mb4")
 
 	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
 	if rs != nil {
@@ -675,7 +675,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
-	c.Assert(err.Error(), Equals, "[ddl:8050]Unsupported modify charset from latin1 to utf8")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify charset from latin1 to utf8")
 
 	rs, err = tk.Exec("alter table t charset utf8 collate latin1_bin")
 	if rs != nil {
@@ -686,7 +686,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
-	c.Assert(err.Error(), Equals, "[ddl:8050]Unsupported modify charset from latin1 to utf8mb4")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify charset from latin1 to utf8mb4")
 
 	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
@@ -736,7 +736,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8mb4")
 	_, err = tk.Exec("alter table t convert to charset utf8mb4;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8050]Unsupported modify charset from ascii to utf8mb4")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify charset from ascii to utf8mb4")
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8")
@@ -813,7 +813,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
 
-	errMsg := "[ddl:8050]" // unsupported modify column with references
+	errMsg := "[ddl:8200]" // unsupported modify column with references
 	assertErrCode := func(sql string, errCodeStr string) {
 		_, err := tk.Exec(sql)
 		c.Assert(err, NotNil)

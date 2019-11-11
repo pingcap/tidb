@@ -78,4 +78,4 @@ replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/bb7133/parser v0.0.0-20191110105928-88bcbd1b0719
+replace github.com/pingcap/parser => github.com/bb7133/parser v0.0.0-20191111190237-ac27f54aa627

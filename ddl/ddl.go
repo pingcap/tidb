@@ -81,20 +81,19 @@ var (
 	errInvalidDDLJob         = terror.ClassDDL.New(mysql.ErrInvalidDDLJob, mysql.MySQLErrName[mysql.ErrInvalidDDLJob])
 	errCancelledDDLJob       = terror.ClassDDL.New(mysql.ErrCancelledDDLJob, mysql.MySQLErrName[mysql.ErrCancelledDDLJob])
 	errFileNotFound          = terror.ClassDDL.New(mysql.ErrFileNotFound, mysql.MySQLErrName[mysql.ErrFileNotFound])
-	errInvalidJobFlag        = terror.ClassDDL.New(mysql.ErrInvalidJobFlag, mysql.MySQLErrName[mysql.ErrInvalidJobFlag])
-	errRunMultiSchemaChanges = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" multi schema change")
+	errInvalidDDLJobFlag     = terror.ClassDDL.New(mysql.ErrInvalidDDLJobFlag, mysql.MySQLErrName[mysql.ErrInvalidDDLJobFlag])
+	errRunMultiSchemaChanges = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "multi schema change"))
 	errWaitReorgTimeout      = terror.ClassDDL.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = terror.ClassDDL.New(mysql.ErrInvalidStoreVersion, mysql.MySQLErrName[mysql.ErrInvalidStoreVersion])
 
 	// We don't support dropping column with index covered now.
-	errCantDropColWithIndex     = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" drop column with index")
-	errUnsupportedAddColumn     = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" add column")
-	errUnsupportedModifyColumn  = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" modify column: %s")
-	errUnsupportedModifyCharset = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" modify %s")
-	errUnsupportedPKHandle      = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" drop integer primary key")
-	errUnsupportedCharset       = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" charset %s and collate %s")
-
-	errUnsupportedShardRowIDBits = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" shard_row_id_bits for table with primary key as row id.")
+	errCantDropColWithIndex      = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "drop column with index"))
+	errUnsupportedAddColumn      = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add column"))
+	errUnsupportedModifyColumn   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "modify column: %s"))
+	errUnsupportedModifyCharset  = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "modify %s"))
+	errUnsupportedPKHandle       = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "drop integer primary key"))
+	errUnsupportedCharset        = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "charset %s and collate %s"))
+	errUnsupportedShardRowIDBits = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "shard_row_id_bits for table with primary key as row id"))
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(mysql.ErrBlobKeyWithoutLength, mysql.MySQLErrName[mysql.ErrBlobKeyWithoutLength])
 	errIncorrectPrefixKey        = terror.ClassDDL.New(mysql.ErrWrongSubKey, mysql.MySQLErrName[mysql.ErrWrongSubKey])
 	errTooLongKey                = terror.ClassDDL.New(mysql.ErrTooLongKey,
@@ -102,7 +101,7 @@ var (
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(mysql.ErrUnknownTypeLength, mysql.MySQLErrName[mysql.ErrUnknownTypeLength])
 	errUnknownFractionLength    = terror.ClassDDL.New(mysql.ErrUnknownFractionLength, mysql.MySQLErrName[mysql.ErrUnknownFractionLength])
-	errInvalidJobVersion        = terror.ClassDDL.New(mysql.ErrInvalidJobVersion, mysql.MySQLErrName[mysql.ErrInvalidJobVersion])
+	errInvalidDDLJobVersion     = terror.ClassDDL.New(mysql.ErrInvalidDDLJobVersion, mysql.MySQLErrName[mysql.ErrInvalidDDLJobVersion])
 	errInvalidUseOfNull         = terror.ClassDDL.New(mysql.ErrInvalidUseOfNull, mysql.MySQLErrName[mysql.ErrInvalidUseOfNull])
 	errTooManyFields            = terror.ClassDDL.New(mysql.ErrTooManyFields, mysql.MySQLErrName[mysql.ErrTooManyFields])
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(mysql.ErrInvalidSplitRegionRanges, mysql.MySQLErrName[mysql.ErrInvalidSplitRegionRanges])
@@ -129,34 +128,23 @@ var (
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
 	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(mysql.ErrGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
-	ErrUnsupportedAddPartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" add partitions")
+	ErrUnsupportedAddPartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add partitions"))
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
-	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" coalesce partitions")
+	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "coalesce partitions"))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
 	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnFunctionIsNotAllowed])
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
-	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+
-		" partition by range columns")
-	errUnsupportedCreatePartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" partition type, treat as normal table")
-	errUnsupportedIndexType       = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" index type")
+	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition by range columns"))
+	errUnsupportedCreatePartition         = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
+	errUnsupportedIndexType               = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "index type"))
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
-	// ErrInvalidDBState returns for invalid database state.
-	ErrInvalidDBState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState], "database"))
-	// ErrInvalidTableState returns for invalid Table state.
-	ErrInvalidTableState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState], "table"))
-	// ErrInvalidColumnState returns for invalid column state.
-	ErrInvalidColumnState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState], "column"))
-	// ErrInvalidIndexState returns for invalid index state.
-	ErrInvalidIndexState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState], "index"))
-	// ErrInvalidForeignKeyState returns for invalid foreign key state.
-	ErrInvalidForeignKeyState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState], "foreign key"))
-	// ErrInvalidTableLockState returns for invalid table state.
-	ErrInvalidTableLockState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState], "table lock"))
+	// ErrInvalidDDLState returns for invalid ddl model object state.
+	ErrInvalidDDLState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState]))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
-	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation]+" %s primary key")
+	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "%s primary key"))
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
@@ -682,8 +670,8 @@ func init() {
 		mysql.ErrInvalidDDLWorker:                     mysql.ErrInvalidDDLWorker,
 		mysql.ErrInvalidDefault:                       mysql.ErrInvalidDefault,
 		mysql.ErrInvalidGroupFuncUse:                  mysql.ErrInvalidGroupFuncUse,
-		mysql.ErrInvalidJobFlag:                       mysql.ErrInvalidJobFlag,
-		mysql.ErrInvalidJobVersion:                    mysql.ErrInvalidJobVersion,
+		mysql.ErrInvalidDDLJobFlag:                    mysql.ErrInvalidDDLJobFlag,
+		mysql.ErrInvalidDDLJobVersion:                 mysql.ErrInvalidDDLJobVersion,
 		mysql.ErrInvalidOnUpdate:                      mysql.ErrInvalidOnUpdate,
 		mysql.ErrInvalidSplitRegionRanges:             mysql.ErrInvalidSplitRegionRanges,
 		mysql.ErrInvalidStoreVersion:                  mysql.ErrInvalidStoreVersion,
