@@ -316,7 +316,7 @@ type ImplTopNAsLimit struct {
 func (r *ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
 	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
-	return plannercore.MatchItems(prop, topN.ByItems) && canUseLimit
+	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
