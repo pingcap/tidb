@@ -791,12 +791,27 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, handleInvalidTimeError(b.ctx, err)
 	}
-	if t.InvalidZero() {
-		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
-	}
 	formatMask, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	// MySQL compatibility, #11203
+	// If format mask is 0 then return 0 without warnings
+	if formatMask == "0" {
+		return "0", false, nil
+	}
+
+	if t.InvalidZero() {
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to null without warnings
+		n, isNullInt, errInt := b.args[0].EvalInt(b.ctx, row)
+		isOriginalIntOrDecimalZero := n == 0 && !isNullInt && errInt == nil
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := t.Fsp > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return "", true, nil
+		}
+		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 
 	res, err := t.DateFormat(formatMask)
@@ -1597,11 +1612,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	return &builtinFromUnixTime1ArgSig{bf}, nil
 }
 
-func evalFromUnixTime(ctx sessionctx.Context, fsp int8, row chunk.Row, arg Expression) (res types.Time, isNull bool, err error) {
-	unixTimeStamp, isNull, err := arg.EvalDecimal(ctx, row)
-	if err != nil || isNull {
-		return res, isNull, err
-	}
+func evalFromUnixTime(ctx sessionctx.Context, fsp int8, unixTimeStamp *types.MyDecimal) (res types.Time, isNull bool, err error) {
 	// 0 <= unixTimeStamp <= INT32_MAX
 	if unixTimeStamp.IsNegative() {
 		return res, true, nil
@@ -1664,7 +1675,11 @@ func (b *builtinFromUnixTime1ArgSig) Clone() builtinFunc {
 // evalTime evals a builtinFromUnixTime1ArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func (b *builtinFromUnixTime1ArgSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
-	return evalFromUnixTime(b.ctx, int8(b.tp.Decimal), row, b.args[0])
+	unixTimeStamp, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
+	if err != nil || isNull {
+		return res, isNull, err
+	}
+	return evalFromUnixTime(b.ctx, int8(b.tp.Decimal), unixTimeStamp)
 }
 
 type builtinFromUnixTime2ArgSig struct {
@@ -1684,7 +1699,11 @@ func (b *builtinFromUnixTime2ArgSig) evalString(row chunk.Row) (res string, isNu
 	if isNull || err != nil {
 		return "", true, err
 	}
-	t, isNull, err := evalFromUnixTime(b.ctx, int8(b.tp.Decimal), row, b.args[0])
+	unixTimeStamp, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
+	if err != nil || isNull {
+		return "", isNull, err
+	}
+	t, isNull, err := evalFromUnixTime(b.ctx, int8(b.tp.Decimal), unixTimeStamp)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -5540,6 +5559,15 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to 0 value (not null)
+		n, err := date.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := date.Fsp > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return 0, false, nil
+		}
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
 	}
 
