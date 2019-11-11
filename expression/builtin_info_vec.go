@@ -15,6 +15,7 @@ package expression
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -126,18 +127,12 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		return nil
 	}
 
-	res := ""
 	sortedRes := make([]string, 0, 10)
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
 	}
 	sort.Strings(sortedRes)
-	for i, r := range sortedRes {
-		res += r
-		if i != len(data.ActiveRoles)-1 {
-			res += ","
-		}
-	}
+	res := strings.Join(sortedRes, ",")
 	for i := 0; i < n; i++ {
 		result.AppendString(res)
 	}
