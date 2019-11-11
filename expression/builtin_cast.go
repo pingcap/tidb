@@ -823,8 +823,13 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 	if isNull || err != nil {
 		return types.Time{}, true, err
 	}
+	// MySQL compatibility: 0 should not be converted to null, see #11203
+	fv := strconv.FormatFloat(val, 'f', -1, 64)
+	if fv == "0" {
+		return types.Time{}, false, nil
+	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err := types.ParseTime(sc, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, int8(b.tp.Decimal))
+	res, err := types.ParseTime(sc, fv, b.tp.Tp, int8(b.tp.Decimal))
 	if err != nil {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
