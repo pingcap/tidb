@@ -3946,7 +3946,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		return ErrRepairTableFail.GenWithStackByArgs("repaired table should in same database with the old one")
 	}
 	// Cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset)
+	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
