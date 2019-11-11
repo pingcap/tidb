@@ -100,7 +100,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec: {},
+	ast.TimeToSec: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+	},
 	ast.TimestampAdd: {
 		{
 			retEvalType:   types.ETString,
@@ -158,6 +160,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DayOfMonth: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
+	ast.DayName: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.UTCDate: {
 		{retEvalType: types.ETDatetime},
 	},
@@ -173,11 +180,26 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
 	},
+	ast.YearWeek: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.WeekOfYear: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.FromDays: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.FromUnixTime: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
+			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
+		},
+	},
+	ast.StrToDate: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&timeStrGener{}, &constStrGener{"%y-%m-%d"}},
+		},
 	},
 }
 
