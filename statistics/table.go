@@ -236,7 +236,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount, true)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -247,7 +247,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount, false)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -366,6 +366,12 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := GetOrdinalOfRangeCond(sc, ran)
+		coverAll := len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal)
+		// // In this case, the row count is at most 1.
+		if coverAll && idx.Info.Unique {
+			totalCount += 1.0
+			continue
+		}
 		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
