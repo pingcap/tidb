@@ -550,7 +550,7 @@ func (g *locationGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}
-	switch rand.Uint32() % 4 {
+	switch rand.Uint32() % 5 {
 	case 0:
 		return usaLocation
 	case 1:
@@ -575,7 +575,7 @@ func (g *formatGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}
-	switch rand.Uint32() % 3 {
+	switch rand.Uint32() % 4 {
 	case 0:
 		return dateFormat
 	case 1:
