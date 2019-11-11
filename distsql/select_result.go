@@ -50,17 +50,10 @@ type SelectResult interface {
 	Close() error
 }
 
-type resultWithErr struct {
-	result kv.ResultSubset
-	err    error
-}
 
 type selectResult struct {
 	label string
 	resp  kv.Response
-
-	results chan resultWithErr
-	closed  chan struct{}
 
 	rowLen     int
 	fieldTypes []*types.FieldType
@@ -97,14 +90,12 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		r.selectResp = nil
 		return nil
 	}
-	//r.memConsume(int64(resultSubset.MemSize()))
 	r.selectResp = new(tipb.SelectResponse)
 	err = r.selectResp.Unmarshal(resultSubset.GetData())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	r.selectRespSize = r.selectResp.Size()
-	//r.memConsume(int64(r.selectRespSize))
 	if err := r.selectResp.Error; err != nil {
 		return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 	}
@@ -117,7 +108,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 	r.partialCount++
 	sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
 	if len(r.selectResp.Chunks) == 0 {
-		// TODO(Zhifeng Hu): Under what occasion will this branch be activated? Would this results in infinite recursion?
 		return r.fetchResp(ctx)
 	}
 	return nil
@@ -149,7 +139,6 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	r.partialCount++
 	r.feedback.Invalidate()
 	if resultSubset != nil && err == nil {
-		//r.memConsume(int64(resultSubset.MemSize()))
 		data = resultSubset.GetData()
 	}
 	return data, err
@@ -261,15 +250,5 @@ func (r *selectResult) Close() error {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	// Close this channel to tell the fetch goroutine to exit.
-	//close(r.closed)
-	//for re := range r.results {
-	//	if re.result != nil {
-	//		r.memConsume(-int64(re.result.MemSize()))
-	//	}
-	//}
-	//if r.selectResp != nil {
-	//	r.memConsume(-int64(r.selectRespSize))
-	//}
 	return r.resp.Close()
 }
