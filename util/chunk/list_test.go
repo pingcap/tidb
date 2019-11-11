@@ -63,7 +63,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	c.Assert(l.NumChunks(), check.Equals, 2)
 	c.Assert(ptr.ChkIdx, check.Equals, uint32(1))
 	c.Assert(ptr.RowIdx, check.Equals, uint32(0))
-	row := l.GetRow(ptr)
+	row, _ := l.GetRow(ptr)
 	c.Assert(row.GetInt64(0), check.Equals, int64(1))
 
 	// Test iteration.

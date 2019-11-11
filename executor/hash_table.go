@@ -147,7 +147,7 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 				return
 			}
 		} else {
-			matchedRow = c.records.GetRow(ptr)
+			matchedRow, _ = c.records.GetRow(ptr)
 		}
 		var ok bool
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)

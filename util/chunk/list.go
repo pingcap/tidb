@@ -24,9 +24,9 @@ import (
 
 // List is interface for ListInMemory and ListInDisk
 type List interface {
-	NumRowsOfChunk(int)
-	NumChunks()
-	GetRow(RowPtr)
+	NumRowsOfChunk(int) int
+	NumChunks() int
+	GetRow(RowPtr) (row Row, err error)
 	Add(chk *Chunk) (err error)
 }
 
@@ -136,10 +136,11 @@ func (l *ListInMemory) allocChunk() (chk *Chunk) {
 	return New(l.fieldTypes, l.initChunkSize, l.maxChunkSize)
 }
 
-// GetRow gets a Row from the list by RowPtr.
-func (l *ListInMemory) GetRow(ptr RowPtr) Row {
+// GetRow gets a Row from the list by RowPtr,
+// error will be promised to be nil but due to keeping the same interface with ListInDisk
+func (l *ListInMemory) GetRow(ptr RowPtr) (row Row, err error) {
 	chk := l.chunks[ptr.ChkIdx]
-	return chk.GetRow(int(ptr.RowIdx))
+	return chk.GetRow(int(ptr.RowIdx)), nil
 }
 
 // NumRowsOfChunk returns the number of rows of a chunk.

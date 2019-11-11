@@ -248,7 +248,8 @@ func (it *iterator4RowPtr) Begin() Row {
 		return it.End()
 	}
 	it.cursor = 1
-	return it.li.GetRow(it.ptrs[0])
+	row, _ := it.li.GetRow(it.ptrs[0])
+	return row
 }
 
 // Next implements the Iterator interface.
@@ -257,7 +258,7 @@ func (it *iterator4RowPtr) Next() Row {
 		it.cursor = len + 1
 		return it.End()
 	}
-	row := it.li.GetRow(it.ptrs[it.cursor])
+	row, _ := it.li.GetRow(it.ptrs[it.cursor])
 	it.cursor++
 	return row
 }
@@ -267,7 +268,8 @@ func (it *iterator4RowPtr) Current() Row {
 	if it.cursor == 0 || it.cursor > it.Len() {
 		return it.End()
 	}
-	return it.li.GetRow(it.ptrs[it.cursor-1])
+	row, _ := it.li.GetRow(it.ptrs[it.cursor-1])
+	return row
 }
 
 // End implements the Iterator interface.

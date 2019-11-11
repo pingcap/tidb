@@ -245,7 +245,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 			e.innerIter.Begin()
 		}
 
-		outerRow := task.outerResult.GetRow(task.cursor)
+		outerRow, _ := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
 			matched, isNull, err := e.joiner.tryToMatchInners(outerRow, e.innerIter, req)
 			if err != nil {
@@ -307,7 +307,7 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowPtr chunk
 
 	for _, b := range e.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
-		matchedInner := task.innerResult.GetRow(ptr)
+		matchedInner, _ := task.innerResult.GetRow(ptr)
 		task.matchedInners = append(task.matchedInners, matchedInner)
 	}
 }

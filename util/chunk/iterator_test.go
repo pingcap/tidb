@@ -87,34 +87,40 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
+		row, _ := li.GetRow(ptrs[i])
+		c.Assert(it.Current(), check.Equals, row)
 		it.Next()
 	}
 	it.ReachEnd()
 	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+	row, _ := li.GetRow(ptrs[0])
+	c.Assert(it.Begin(), check.Equals, row)
 
 	it = NewIterator4RowPtr(li, ptrs)
 	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
+		row, _ := li.GetRow(ptrs[i])
+		c.Assert(it.Current(), check.Equals, row)
 		it.Next()
 	}
 	it.ReachEnd()
 	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+	row, _ = li.GetRow(ptrs[0])
+	c.Assert(it.Begin(), check.Equals, row)
 
 	it = NewIterator4RowPtr(li2, ptrs2)
 	checkIterator(c, it, expected)
 	it.Begin()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, li2.GetRow(ptrs2[i]))
+		row, _ = li2.GetRow(ptrs2[i])
+		c.Assert(it.Current(), check.Equals, row)
 		it.Next()
 	}
 	it.ReachEnd()
 	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, li2.GetRow(ptrs2[0]))
+	row, _ = li2.GetRow(ptrs2[0])
+	c.Assert(it.Begin(), check.Equals, row)
 
 	it = NewIterator4Slice(nil)
 	c.Assert(it.Begin(), check.Equals, it.End())

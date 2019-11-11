@@ -572,7 +572,7 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 	matchedRows = make([]chunk.Row, 0, len(iw.matchedOuterPtrs))
 	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {
-		outerRow := task.outerResult.GetRow(ptr)
+		outerRow, _ := task.outerResult.GetRow(ptr)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.keyCols)
 		if err != nil {
 			return nil, nil, err
@@ -680,7 +680,8 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			matchedInnerRows, hasMatched, hasNull = matchedInnerRows[:0], false, false
 			outerRow := task.outerResult.GetChunk(chkIdx).GetRow(outerRowIdx)
 			for _, ptr := range innerRowPtrs {
-				matchedInnerRows = append(matchedInnerRows, task.innerResult.GetRow(ptr))
+				row, _ := task.innerResult.GetRow(ptr)
+				matchedInnerRows = append(matchedInnerRows, row)
 			}
 			iter := chunk.NewIterator4Slice(matchedInnerRows)
 			for iter.Begin(); iter.Current() != iter.End(); {

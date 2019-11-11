@@ -87,7 +87,8 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		rowPtr := e.rowPtrs[e.Idx]
-		req.AppendRow(e.rowChunks.GetRow(rowPtr))
+		row, _ := e.rowChunks.GetRow(rowPtr)
+		req.AppendRow(row)
 		e.Idx++
 	}
 	return nil
@@ -161,8 +162,8 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
-	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
+	rowI, _ := e.rowChunks.GetRow(e.rowPtrs[i])
+	rowJ, _ := e.rowChunks.GetRow(e.rowPtrs[j])
 	return e.lessRow(rowI, rowJ)
 }
 
@@ -184,8 +185,8 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	rowI := h.rowChunks.GetRow(h.rowPtrs[i])
-	rowJ := h.rowChunks.GetRow(h.rowPtrs[j])
+	rowI, _ := h.rowChunks.GetRow(h.rowPtrs[i])
+	rowJ, _ := h.rowChunks.GetRow(h.rowPtrs[j])
 	return h.greaterRow(rowI, rowJ)
 }
 
@@ -250,7 +251,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
+		row, _ := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		req.AppendRow(row)
 		e.Idx++
 	}
@@ -320,7 +321,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 	for i := 0; i < childRowChk.NumRows(); i++ {
 		heapMaxPtr := e.rowPtrs[0]
 		var heapMax, next chunk.Row
-		heapMax = e.rowChunks.GetRow(heapMaxPtr)
+		heapMax, _ = e.rowChunks.GetRow(heapMaxPtr)
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
@@ -339,7 +340,8 @@ func (e *TopNExec) doCompaction() error {
 	newRowChunks := chunk.NewListInMemory(retTypes(e), e.initCap, e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
-		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
+		row, _ := e.rowChunks.GetRow(rowPtr)
+		newRowPtr := newRowChunks.AppendRow(row)
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)

@@ -425,7 +425,8 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if imw.outerMergeCtx.needOuterSort {
 		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
 			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
-			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
+			rowI, _ := task.outerResult.GetRow(idxI)
+			rowJ, _ := task.outerResult.GetRow(idxJ)
 			for id, joinKey := range imw.outerMergeCtx.joinKeys {
 				cmp, _, err := imw.outerMergeCtx.compareFuncs[id](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
@@ -502,7 +503,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	noneInnerRowsRemain := task.innerResult.NumRows() == 0
 
 	for _, outerIdx := range task.outerOrderIdx {
-		outerRow := task.outerResult.GetRow(outerIdx)
+		outerRow, _ := task.outerResult.GetRow(outerIdx)
 		hasMatch, hasNull, cmpResult := false, false, initCmpResult
 		// If it has iterated out all inner rows and the inner rows with same key is empty,
 		// that means the outer row needn't match any inner rows.
@@ -601,7 +602,7 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 }
 
 func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, rowIdx chunk.RowPtr) (*indexJoinLookUpContent, error) {
-	outerRow := task.outerResult.GetRow(rowIdx)
+	outerRow, _ := task.outerResult.GetRow(rowIdx)
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(imw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
@@ -632,7 +633,8 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		dLookupKey = append(dLookupKey, innerValue)
 	}
-	return &indexJoinLookUpContent{keys: dLookupKey, row: task.outerResult.GetRow(rowIdx)}, nil
+	row, _ := task.outerResult.GetRow(rowIdx)
+	return &indexJoinLookUpContent{keys: dLookupKey, row: row}, nil
 }
 
 func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {
