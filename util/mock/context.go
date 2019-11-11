@@ -63,9 +63,13 @@ func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet,
 	return nil, errors.Errorf("Not Support.")
 }
 
+type mockDDLOwnerChecker struct{}
+
+func (c *mockDDLOwnerChecker) IsOwner() bool { return true }
+
 // DDLOwnerChecker returns owner.DDLOwnerChecker.
 func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return nil
+	return &mockDDLOwnerChecker{}
 }
 
 // SetValue implements sessionctx.Context SetValue interface.

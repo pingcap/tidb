@@ -1031,14 +1031,19 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.ranges,
 		AccessCondition: path.accessConds,
 		filterCondition: path.tableFilters,
+		StoreType:       path.storeType,
 	}.Init(ds.ctx, ds.blockOffset)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+	}
+	if ds.preferStoreType&preferTiKV != 0 {
+		ts.StoreType = kv.TiKV
+	}
+	if ts.StoreType == kv.TiFlash {
+		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
+		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-		ts.Ranges = ranger.FullIntRange(false)
-	} else {
-		ts.StoreType = kv.TiKV
 	}
 	if infoschema.IsMemoryDB(ds.DBName.L) && infoschema.IsClusterTable(ds.tableInfo.Name.O) {
 		ts.StoreType = kv.TiDBMem

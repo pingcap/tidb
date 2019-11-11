@@ -177,6 +177,7 @@ token-limit = 0
 enable-table-lock = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
+enable-batch-dml = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -209,6 +210,7 @@ max-sql-length=1024
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
+	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -324,23 +326,6 @@ func (s *testConfigSuite) TestConfigDiff(c *C) {
 	c.Assert(diffs["Performance.CrossJoin"][1], Equals, false)
 	c.Assert(diffs["Performance.FeedbackProbability"][0], Equals, float64(2333))
 	c.Assert(diffs["Performance.FeedbackProbability"][1], Equals, float64(23.33))
-}
-
-func (s *testConfigSuite) TestValid(c *C) {
-	c1 := NewConfig()
-	tests := []struct {
-		ttl   string
-		valid bool
-	}{
-		{"1s", false},
-		{"3s", true},
-		{"13s", true},
-		{"33s", false},
-	}
-	for _, tt := range tests {
-		c1.PessimisticTxn.TTL = tt.ttl
-		c.Assert(c1.Valid() == nil, Equals, tt.valid)
-	}
 }
 
 func (s *testConfigSuite) TestOOMActionValid(c *C) {

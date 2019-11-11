@@ -291,11 +291,35 @@ func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinNEIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfNE(result.Int64s())
+	return nil
 }
 
 func (b *builtinGTIntSig) vectorized() bool {
@@ -330,35 +354,11 @@ func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	return nil
 }
 
-func (b *builtinCoalesceDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinNullEQIntSig) vectorized() bool {
 	return false
 }
 
 func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -453,14 +453,6 @@ func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	return nil
 }
 
-func (b *builtinCoalesceDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinLTIntSig) vectorized() bool {
 	return true
 }
@@ -497,6 +489,17 @@ func vecResOfLT(res []int64) {
 	n := len(res)
 	for i := 0; i < n; i++ {
 		if res[i] < 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
+}
+
+func vecResOfNE(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] != 0 {
 			res[i] = 1
 		} else {
 			res[i] = 0
@@ -551,36 +554,55 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinCoalesceIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinGreatestTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	n := input.NumRows()
+	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dst)
 
-func (b *builtinCoalesceTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dst.ResizeTime(n, false)
+	dstTimes := dst.Times()
+	for i := 0; i < n; i++ {
+		dstTimes[i] = types.ZeroDatetime
+	}
+	var argTime types.Time
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) || dst.IsNull(i) {
+				dst.SetNull(i, true)
+				continue
+			}
+			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				continue
+			}
+			if argTime.Compare(dstTimes[i]) > 0 {
+				dstTimes[i] = argTime
+			}
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if dst.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(dstTimes[i].String())
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestRealSig) vectorized() bool {
