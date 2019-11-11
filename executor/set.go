@@ -197,9 +197,14 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 	}
 
-	if name == variable.TiDBEnableStmtSummary {
+	switch name {
+	case variable.TiDBEnableStmtSummary:
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
-	} else if name == variable.TiDBCapturePlanBaseline {
+	case variable.TiDBStmtSummaryHistoryHours:
+		stmtsummary.StmtSummaryByDigestMap.SetHistoryMaxHours(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryIntervalMinutes:
+		stmtsummary.StmtSummaryByDigestMap.SetIntervalMinutes(valStr, !v.IsGlobal)
+	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
 
