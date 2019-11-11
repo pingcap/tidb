@@ -502,11 +502,70 @@ func (b *builtinJSONTypeSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinJSONExtractSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONExtractSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var err error
+
+	nr := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err = b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+
+	pathArgs := b.args[1:]
+	pathBuffers := make([]*chunk.Column, len(pathArgs))
+	for k := 0; k < len(pathArgs); k++ {
+		if pathBuffers[k], err = b.bufAllocator.get(types.ETString, nr); err != nil {
+			return err
+		}
+		defer func(buf *chunk.Column) {
+			b.bufAllocator.put(buf)
+		}(pathBuffers[k])
+
+		if err := pathArgs[k].VecEvalString(b.ctx, input, pathBuffers[k]); err != nil {
+			return err
+		}
+	}
+
+	result.ReserveJSON(nr)
+	for i := 0; i < nr; i++ {
+		if jsonBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		jsonItem := jsonBuf.GetJSON(i)
+
+		pathExprs := make([]json.PathExpression, len(pathBuffers))
+		hasNullPath := false
+		for k, pathBuf := range pathBuffers {
+			if pathBuf.IsNull(i) {
+				hasNullPath = true
+				break
+			}
+			if pathExprs[k], err = json.ParseJSONPathExpr(pathBuf.GetString(i)); err != nil {
+				return err
+			}
+		}
+		if hasNullPath {
+			result.AppendNull()
+			continue
+		}
+
+		var found bool
+		if jsonItem, found = jsonItem.Extract(pathExprs); !found {
+			result.AppendNull()
+			continue
+		}
+		result.AppendJSON(jsonItem)
+	}
+
+	return nil
 }
 
 func (b *builtinJSONRemoveSig) vectorized() bool {

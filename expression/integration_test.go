@@ -1282,8 +1282,16 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for quarter
 	result = tk.MustQuery(`select quarter("2012-00-20"), quarter("2012-01-21"), quarter("2012-03-22"), quarter("2012-05-23"), quarter("2012-08-24"), quarter("2012-09-25"), quarter("2012-11-26"), quarter("2012-12-27");`)
 	result.Check(testkit.Rows("0 1 1 2 3 3 4 4"))
-	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("0000-00-00"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
+	result.Check(testkit.Rows("0 0 0 0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for from_days
 	result = tk.MustQuery(`select from_days(0), from_days(-199), from_days(1111), from_days(120), from_days(1), from_days(1111111), from_days(9999999), from_days(22222);`)
@@ -1634,6 +1642,16 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`SELECT DATE_FORMAT('0', '%W %M %e %Y %r %y'), DATE_FORMAT('0.0', '%W %M %e %Y %r %y'), DATE_FORMAT(0, 0);`)
+	result.Check(testkit.Rows("<nil> <nil> 0"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|invalid time format: '0'",
+		"Warning|1292|invalid time format: '0.0'"))
+	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for yearweek
 	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)
@@ -2226,10 +2244,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 
 	tk.MustExec(`create table tb5(a float(64));`)
 	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
-	err := tk.QueryToErr(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
-	msg := strings.Split(err.Error(), " ")
-	last := msg[len(msg)-1]
-	c.Assert(last, Equals, "bigint")
+	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
 
 	tk.MustExec(`create table tb5(a double(64));`)
@@ -2253,6 +2268,36 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
 	result = tk.MustQuery(`select * from tb5;`)
 	result.Check(testkit.Rows("13835058000000000000 13835058000000000000", "13835058000000000000 13835058000000000000"))
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastRealAsIntSig
+	tk.MustExec(`create table tb5(a double, b float);`)
+	tk.MustExec(`insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);`)
+	tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=0;`).Check(testkit.Rows())
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	_ = tk.MustQuery(`select * from tb5 where cast(b as unsigned int)=0;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	tk.MustExec(`drop table tb5;`)
+	tk.MustExec(`create table tb5(a double, b bigint unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=b;`)
+	// TODO `obtained string = "[18446744073709552000 18446744073709551615]`
+	// result.Check(testkit.Rows("18446744073709551616 18446744073709551615"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastJSONAsIntSig
+	tk.MustExec(`create table tb5(a json, b bigint unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=b;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	_ = tk.MustQuery(`select * from tb5 where cast(b as unsigned int)=0;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustExec(`drop table tb5;`)
+	tk.MustExec(`create table tb5(a json, b bigint unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values ('92233720368547758080', 18446744073709551615);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as signed int)=b;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 9.223372036854776e+19 overflows bigint"))
 	tk.MustExec(`drop table tb5;`)
 
 	// test builtinCastIntAsStringSig
@@ -2505,7 +2550,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("99999.99"))
 	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
 	result.Check(testkit.Rows("111111.00"))
-	_, err = tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
 	c.Assert(err, NotNil)
 
 	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,
@@ -2758,6 +2803,9 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
 	c.Assert(err, NotNil)
+
+	result = tk.MustQuery(`select 1 / '2007' div 1;`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
@@ -3056,6 +3104,12 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rs.Close(), IsNil)
 	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
 	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
+	tk.MustExec(`create table tb5(a int(10));`)
+	tk.MustExec(`insert into tb5 (a) values (10);`)
+	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
+	c.Assert(e, NotNil)
+	c.Assert(e.Error(), Equals, `other error: [types:1690]BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`)
+	tk.MustExec(`drop table tb5`)
 
 	// for multiply
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
