@@ -258,6 +258,18 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+// selectStringGener select one string randomly from the candidates array
+type selectStringGener struct {
+	candidates []string
+}
+
+func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[rand.Intn(len(g.candidates))]
+}
+
 type constJSONGener struct {
 	jsonStr string
 }
@@ -386,6 +398,18 @@ type ipv6StrGener struct {
 
 func (g *ipv6StrGener) gen() interface{} {
 	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
+// ipv4StrGener is used to generate ipv4 strings. For example 111.111.111.111
+type ipv4StrGener struct {
+}
+
+func (g *ipv4StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv4len)
 	for i := range ip {
 		ip[i] = uint8(rand.Intn(256))
 	}
