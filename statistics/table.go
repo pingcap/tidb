@@ -240,7 +240,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount, true)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -251,7 +251,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount, false)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -387,7 +387,11 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 
 // getEqualCondSelectivity gets the selectivity of the equal conditions. `coverAll` means if the conditions
 // have covered all the index columns.
-func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool) float64 {
+func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
+	// In this case, the row count is at most 1.
+	if unique && coverAll {
+		return 1.0 / float64(idx.TotalCount())
+	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
 		// When the value is out of range, we could not found this value in the CM Sketch,
@@ -434,7 +438,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll)
+			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
 		} else {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
 			if err != nil {
@@ -447,7 +451,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				if err != nil {
 					return 0, err
 				}
-				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll)
+				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
 			}
 		}
 		// use histogram to estimate the range condition
