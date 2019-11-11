@@ -108,3 +108,21 @@ type LimitImpl struct {
 func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
 	return &LimitImpl{baseImpl{plan: limit}}
 }
+
+// TiDBTopNImpl is the implementation of PhysicalTopN in TiDB layer.
+type TiDBTopNImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *TiDBTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	topN := impl.plan.(*plannercore.PhysicalTopN)
+	childCount := children[0].GetPlan().Stats().RowCount
+	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
+	return impl.cost
+}
+
+// NewTiDBTopNImpl creates a new TiDBTopNImpl.
+func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
+	return &TiDBTopNImpl{baseImpl{plan: topN}}
+}
