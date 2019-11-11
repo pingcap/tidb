@@ -200,6 +200,7 @@ func (c *Cluster) AddStore(storeID uint64, addr string) {
 	c.stores[storeID] = newStore(storeID, addr)
 }
 
+// AddStoreWithLabels add a new store to the cluster with labels.
 func (c *Cluster) AddStoreWithLabels(storeID uint64, addr string, labels []*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
