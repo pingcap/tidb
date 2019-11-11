@@ -363,12 +363,10 @@ func (txn *tikvTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	if txn.committer != nil {
-		txn.committer.ttlManager.close()
-	}
 	// Clean up pessimistic lock.
-	if txn.IsPessimistic() {
+	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
+		txn.committer.ttlManager.close()
 		if err != nil {
 			logutil.BgLogger().Error(err.Error())
 		}

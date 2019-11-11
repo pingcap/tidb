@@ -514,9 +514,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		txnSize = math.MaxUint64
 	}
 
-	isPrimary := bytes.Equal(batch.keys[0], c.primary())
 	req := c.buildPrewriteRequest(batch, txnSize)
-
 	if x := bo.ctx.Value("checkLargeTxnEnable"); x != nil {
 		codeRun := x.(*bool)
 		*codeRun = true
@@ -548,10 +546,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			if isPrimary {
-				// TODO: Move killed to a variable shared by session and txn.
-				c.ttlManager.run(c, nil)
-			}
 			return nil
 		}
 		var locks []*Lock
