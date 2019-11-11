@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/distsql"
 	"io"
 	"time"
 
@@ -572,6 +573,9 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
+		if dagReq.TidbSystemEndian != distsql.GetSystemEndian() {
+			panic("Mocktikv endian is must be same as TiDB system endian.")
+		}
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
 		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)

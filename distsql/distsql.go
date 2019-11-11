@@ -175,10 +175,11 @@ func canUseChunkRPC(ctx sessionctx.Context) bool {
 
 // SetSystemEndian sets the system endian for the DAGRequest.
 func SetSystemEndian(dagReq *tipb.DAGRequest) {
-	dagReq.TidbSystemEndian = getSystemEndian()
+	dagReq.TidbSystemEndian = GetSystemEndian()
 }
 
-func getSystemEndian() tipb.Endian {
+// GetSystemEndian gets the system endian.
+func GetSystemEndian() tipb.Endian {
 	var i int = 0x0100
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
