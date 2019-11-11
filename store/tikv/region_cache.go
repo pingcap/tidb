@@ -244,7 +244,6 @@ func NewRegionCache(pdClient pd.Client, locationLabels []*metapb.StoreLabel) *Re
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
-	c.notifyCheckCh <- struct{}{}
 	go c.asyncCheckAndResolveLoop()
 	return c
 }
@@ -262,7 +261,9 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 	} else {
 		c.storeMu.Lock()
 		for _, store := range stores {
-			c.storeMu.stores[store.Id] = c.storeFromMeta(store)
+			if _, ok := c.storeMu.stores[store.Id]; !ok {
+				c.storeMu.stores[store.Id] = c.storeFromMeta(store)
+			}
 		}
 		c.storeMu.Unlock()
 	}
