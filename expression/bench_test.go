@@ -541,6 +541,54 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
+// locationGener is used to generate location for the built-in function GetFormat.
+type locationGener struct {
+	nullRation float64
+}
+
+func (g *locationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 5 {
+	case 0:
+		return usaLocation
+	case 1:
+		return jisLocation
+	case 2:
+		return isoLocation
+	case 3:
+		return eurLocation
+	case 4:
+		return internalLocation
+	default:
+		return nil
+	}
+}
+
+// formatGener is used to generate a format for the built-in function GetFormat.
+type formatGener struct {
+	nullRation float64
+}
+
+func (g *formatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return dateFormat
+	case 1:
+		return datetimeFormat
+	case 2:
+		return timestampFormat
+	case 3:
+		return timeFormat
+	default:
+		return nil
+	}
+}
+
 type vecExprBenchCase struct {
 	// retEvalType is the EvalType of the expression result.
 	// This field is required.
