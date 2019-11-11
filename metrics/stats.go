@@ -82,7 +82,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "statistics",
 			Name:      "get_store_token_error",
-			Help:      "can't get store token, it's up to the limit, single hot point will cause this up.",
+			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
 		}, []string{LblAddress, LblStore})
 
 	SignificantFeedbackCounter = prometheus.NewCounter(
