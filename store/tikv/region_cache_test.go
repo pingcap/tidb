@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util"
 )
 
 type testRegionCacheSuite struct {
@@ -51,7 +53,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	s.cache = NewRegionCache(pdCli)
+	s.cache = NewRegionCache(pdCli, nil)
 	s.bo = NewBackoffer(context.Background(), 5000)
 }
 
@@ -653,7 +655,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	// Create a separated region cache to do this test.
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	cache := NewRegionCache(pdCli)
+	cache := NewRegionCache(pdCli, nil)
 	defer cache.Close()
 
 	region := createSampleRegion([]byte("k1"), []byte("k2"))
@@ -704,7 +706,7 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 
 	client := &RawKVClient{
 		clusterID:   0,
-		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster), nil),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	defer client.Close()
@@ -729,7 +731,7 @@ func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
 
 	client := &RawKVClient{
 		clusterID:   0,
-		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster), nil),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	defer client.Close()
@@ -942,7 +944,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	*/
 	regionCnt, storeCount := 998, 3
 	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
-	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	cache := NewRegionCache(mocktikv.NewPDClient(cluster), nil)
 	defer cache.Close()
 	loadRegionsToCache(cache, regionCnt)
 	bo := NewBackoffer(context.Background(), 1)
@@ -972,4 +974,64 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	if len(cache.mu.regions) != regionCnt*2/3 {
 		b.Fatal(len(cache.mu.regions))
 	}
+}
+
+type testLabelsSuite struct {
+	OneByOneSuite
+	cluster  *mocktikv.Cluster
+	cache    *RegionCache
+	bo       *Backoffer
+	replicas int
+}
+
+var _ = Suite(&testLabelsSuite{})
+
+func (s *testLabelsSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster()
+	s.replicas = 5
+	s.bo = NewBackoffer(context.Background(), 5000)
+	BootstrapWithLabels(s.cluster, s.replicas)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	s.cache = NewRegionCache(pdCli, util.ParseLocationLabels("datacenter=Xian,rack=1"))
+	// Waiting for all stores are resolved.
+	time.Sleep(time.Second)
+}
+
+func (s *testLabelsSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
+func BootstrapWithLabels(cluster *mocktikv.Cluster, replicas int) (storeIDs, peerIDs []uint64, regionID uint64, leaderPeer uint64) {
+	storeIDs = cluster.AllocIDs(replicas)
+	peerIDs = cluster.AllocIDs(replicas)
+	leaderPeer = peerIDs[0]
+	regionID = cluster.AllocID()
+	labels := [5]string{
+		"datacenter=Beijing,rack=1,disk=1",
+		"datacenter=Beijing,rack=1,disk=2",
+		"datacenter=Beijing,rack=2",
+		"datacenter=Xian,rack=1,disk=1",
+		"datacenter=Xian,rack=2,disk=1",
+	}
+	for i, storeID := range storeIDs {
+		locationLabels := util.ParseLocationLabels(labels[i])
+		cluster.AddStoreWithLabels(storeID, fmt.Sprintf("store%d", storeID), locationLabels)
+	}
+	cluster.Bootstrap(regionID, storeIDs, peerIDs, leaderPeer)
+	return
+}
+
+func (s *testLabelsSuite) TestLabels(c *C) {
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	seed := rand.Uint32()
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, seed)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Store.addr == "store4", IsTrue)
+
+	// After a peer fails, will use the second best matched store.
+	atomic.AddUint32(&ctx.Store.fail, 1)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, seed)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Store.addr == "store5", IsTrue)
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -150,4 +151,28 @@ func IsMemOrSysDB(dbLowerName string) bool {
 		return true
 	}
 	return false
+}
+
+// ParseLocationLabels parses `LocationLabels` from a given string.
+func ParseLocationLabels(locationLabels string) (labels []*metapb.StoreLabel) {
+	locationLabels = strings.Trim(locationLabels, " \t")
+	if len(locationLabels) == 0 {
+		return
+	}
+	for _, kvPair := range strings.Split(locationLabels, ",") {
+		if len(kvPair) == 0 {
+			continue
+		}
+		v := strings.Split(kvPair, "=")
+		if len(v) != 2 {
+			logutil.BgLogger().Warn("Ignore invalid locationLabels", zap.String("labels", locationLabels))
+			labels = make([]*metapb.StoreLabel, 0)
+			return
+		}
+		labels = append(labels, &metapb.StoreLabel{
+			Key:   strings.Trim(v[0], " \t"),
+			Value: strings.Trim(v[1], " \t"),
+		})
+	}
+	return
 }

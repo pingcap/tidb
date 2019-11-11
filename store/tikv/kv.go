@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -183,13 +184,14 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	locationLabels := util.ParseLocationLabels(config.GetGlobalConfig().LocationLabels)
 	store := &tikvStore{
 		clusterID:       pdClient.GetClusterID(context.TODO()),
 		uuid:            uuid,
 		oracle:          o,
 		client:          client,
 		pdClient:        pdClient,
-		regionCache:     NewRegionCache(pdClient),
+		regionCache:     NewRegionCache(pdClient, locationLabels),
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
