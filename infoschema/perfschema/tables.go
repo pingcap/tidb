@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
+	tableNameEventsStatementsSummaryByDigest        = "events_statements_summary_by_digest"
 	tableNameEventsStatementsSummaryByDigestHistory = "events_statements_summary_by_digest_history"
 	tableNameTiDBProfileCPU                  = "tidb_profile_cpu"
 	tableNameTiDBProfileMemory               = "tidb_profile_memory"
