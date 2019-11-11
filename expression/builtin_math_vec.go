@@ -889,9 +889,11 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 		if result.IsNull(i) {
 			continue
 		}
-		if err := ds[i].Round(&ds[i], mathutil.Min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
+		result := new(types.MyDecimal)
+		if err := ds[i].Round(result, mathutil.Min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
 			return err
 		}
+		ds[i] = *result
 	}
 	return nil
 }
