@@ -225,7 +225,12 @@ func (g *defaultGener) gen() interface{} {
 		return rand.Float64()
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
-		f := rand.Float64() * 100000
+		var f float64
+		if rand.Float64() < 0.5 {
+			f = rand.Float64() * 100000
+		} else {
+			f = -rand.Float64() * 100000
+		}
 		if err := d.FromFloat64(f); err != nil {
 			panic(err)
 		}
@@ -523,31 +528,52 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
-// locationGener is used to generate location
-type locationGener struct{}
-
-func (g *locationGener) gen() interface{} {
-	var locations = []string{
-		usaLocation,
-		jisLocation,
-		isoLocation,
-		eurLocation,
-		internalLocation,
-	}
-	return locations[rand.Intn(5)]
+// locationGener is used to generate location for the built-in function GetFormat.
+type locationGener struct {
+	nullRation float64
 }
 
-// formatGener is used to generate format
-type formatGener struct{}
+func (g *locationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return usaLocation
+	case 1:
+		return jisLocation
+	case 2:
+		return isoLocation
+	case 3:
+		return eurLocation
+	case 4:
+		return internalLocation
+	default:
+		return nil
+	}
+}
+
+// formatGener is used to generate a format for the built-in function GetFormat.
+type formatGener struct {
+	nullRation float64
+}
 
 func (g *formatGener) gen() interface{} {
-	var formats = []string{
-		dateFormat,
-		datetimeFormat,
-		timestampFormat,
-		timeFormat,
+	if rand.Float64() < g.nullRation {
+		return nil
 	}
-	return formats[rand.Intn(4)]
+	switch rand.Uint32() % 3 {
+	case 0:
+		return dateFormat
+	case 1:
+		return datetimeFormat
+	case 2:
+		return timestampFormat
+	case 3:
+		return timeFormat
+	default:
+		return nil
+	}
 }
 
 type vecExprBenchCase struct {

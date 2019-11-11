@@ -263,7 +263,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
 	_, err := tk.Exec("insert into t values(1)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
+	c.Assert(err.Error(), Equals, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {

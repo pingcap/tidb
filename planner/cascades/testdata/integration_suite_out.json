@@ -275,5 +275,35 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestSimplePlans",
+    "Cases": [
+      {
+        "SQL": "select a from t limit 2",
+        "Plan": [
+          "Limit_6 2.00 root offset:0, count:2",
+          "└─Projection_7 2.00 root Column#1",
+          "  └─TableReader_8 2.00 root data:TableScan_9",
+          "    └─TableScan_9 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select a from t limit 1 offset 2",
+        "Plan": [
+          "Limit_6 1.00 root offset:2, count:1",
+          "└─Projection_7 3.00 root Column#1",
+          "  └─TableReader_8 3.00 root data:TableScan_9",
+          "    └─TableScan_9 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      }
+    ]
   }
 ]
