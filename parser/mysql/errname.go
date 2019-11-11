@@ -968,6 +968,8 @@ var MySQLErrName = map[uint16]string{
 	ErrColumnStateNonPublic:       "can not use non-public column",
 	ErrIndexStateCantNone:         "index %s can't be in none state",
 	ErrInvalidRecordKey:           "invalid record key",
+	ErrUnsupportedValueForVar:     "variable '%s' does not yet support value: %s",
+	ErrUnsupportedIsolationLevel:  "The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",
