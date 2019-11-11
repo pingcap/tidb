@@ -19,3 +19,22 @@ IndexLookUp_11	0.00	root
 ├─IndexScan_8	1.00	cop	table:outdated_statistics, index:a, b, range:[1 1,1 1], keep order:false
 └─Selection_10	0.00	cop	eq(test.outdated_statistics.c, 1)
   └─TableScan_9	1.00	cop	table:outdated_statistics, keep order:false
+CREATE TABLE `access_path_selection` (
+`a` int,
+`b` int,
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
+);
+explain select a, b from access_path_selection order by _tidb_rowid;
+id	count	task	operator info
+Projection_5	10000.00	root	test.access_path_selection.a, test.access_path_selection.b
+└─TableReader_11	10000.00	root	data:TableScan_10
+  └─TableScan_10	10000.00	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
+explain select max(_tidb_rowid) from access_path_selection;
+id	count	task	operator info
+StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)
+└─Limit_17	1.00	root	offset:0, count:1
+  └─TableReader_27	1.00	root	data:Limit_26
+    └─Limit_26	1.00	cop	offset:0, count:1
+      └─TableScan_25	1.25	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
