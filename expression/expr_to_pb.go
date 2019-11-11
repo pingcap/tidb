@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -228,7 +229,10 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 
 	// check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
-	if pbCode < 0 {
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("%T does not set the PbCode", expr.Function))
+		})
 		return nil
 	}
 
