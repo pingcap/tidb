@@ -45,10 +45,13 @@ type testPessimisticSuite struct {
 	dom       *domain.Domain
 }
 
-func (s *testPessimisticSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
+func init() {
 	// Set it to 300ms for testing lock resolve.
 	tikv.PessimisticLockTTL = 300
+}
+
+func (s *testPessimisticSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
