@@ -87,7 +87,7 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *
 		arg1 := buf1.{{ .TypeNameInColumn }}s()
 {{ end }}
 		for j := 0; j < n; j++ {
-			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if i64s[j] > 0 || buf0.IsNull(j) || buf1.IsNull(j) {
 				continue
 			}
 {{ if .Fixed }}

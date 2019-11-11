@@ -53,7 +53,7 @@ func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		arg1 := buf1.Int64s()
 
 		for j := 0; j < n; j++ {
-			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if i64s[j] > 0 || buf0.IsNull(j) || buf1.IsNull(j) {
 				continue
 			}
 
@@ -103,7 +103,7 @@ func (b *builtinFieldRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		arg1 := buf1.Float64s()
 
 		for j := 0; j < n; j++ {
-			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if i64s[j] > 0 || buf0.IsNull(j) || buf1.IsNull(j) {
 				continue
 			}
 
@@ -149,7 +149,7 @@ func (b *builtinFieldStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		}
 
 		for j := 0; j < n; j++ {
-			if buf0.IsNull(j) || buf1.IsNull(j) || i64s[j] > 0 {
+			if i64s[j] > 0 || buf0.IsNull(j) || buf1.IsNull(j) {
 				continue
 			}
 
