@@ -1031,11 +1031,27 @@ func (b *builtinSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinNowWithoutArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	result.ResizeTime(n, false)
+	times := result.Times()
+	t, isNull, err := evalNowWithFsp(b.ctx, int8(0))
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < n; i++ {
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		times[i] = t
+	}
+	return nil
 }
 
 func (b *builtinStringDurationTimeDiffSig) vectorized() bool {
