@@ -159,13 +159,13 @@ func (it *Iterator4Chunk) GetChunk() *Chunk {
 	return it.chk
 }
 
-// NewIterator4List returns a Iterator for List.
-func NewIterator4List(li *List) Iterator {
+// NewIterator4List returns a Iterator for ListInMemory.
+func NewIterator4List(li *ListInMemory) Iterator {
 	return &iterator4List{li: li}
 }
 
 type iterator4List struct {
-	li        *List
+	li        *ListInMemory
 	chkCursor int
 	rowCursor int
 }
@@ -232,12 +232,12 @@ func (it *iterator4List) Len() int {
 }
 
 // NewIterator4RowPtr returns a Iterator for RowPtrs.
-func NewIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
+func NewIterator4RowPtr(li *ListInMemory, ptrs []RowPtr) Iterator {
 	return &iterator4RowPtr{li: li, ptrs: ptrs}
 }
 
 type iterator4RowPtr struct {
-	li     *List
+	li     *ListInMemory
 	ptrs   []RowPtr
 	cursor int
 }
