@@ -883,11 +883,45 @@ func (b *builtinRTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinStrcmpSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	// read left
+	leftBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(leftBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, leftBuf); err != nil {
+		return err
+	}
+	// read right
+	rightBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(rightBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, rightBuf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(leftBuf, rightBuf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		// if left or right is null, then set to null and return 0(which is the default value)
+		if leftBuf.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		if rightBuf.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i)))
+	}
+	return nil
 }
 
 func (b *builtinLocateBinary2ArgsSig) vectorized() bool {
