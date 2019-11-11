@@ -15,8 +15,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/util/admin"
 	"math"
 	"strings"
 
@@ -26,12 +24,14 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/admin"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -523,7 +523,7 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 }
 
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
-	// check create table stmt whether it's is in REPAIR MODE.
+	// Check create table stmt whether it's is in REPAIR MODE.
 	if !domain.GetDomain(p.ctx).InRepairMode() {
 		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("tidb is not in repair mode")
 		return
@@ -768,7 +768,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
-	// tn only has the Schema here.
+	// tableName only has the Schema rather than DBInfo here.
 	var dbInfo *model.DBInfo
 	for _, v := range dbMap {
 		if v.Name.L == tn.Schema.L {
