@@ -562,11 +562,88 @@ func (b *builtinNullTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinGetFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a builtinGetFormatSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
 func (b *builtinGetFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		format := buf0.GetString(i)
+		location := buf1.GetString(i)
+		res := b.getFormat(format, location)
+		result.AppendString(res)
+	}
+	return nil
+}
+
+func (b *builtinGetFormatSig) getFormat(format, location string) string {
+	res := ""
+	switch format {
+	case dateFormat:
+		switch location {
+		case usaLocation:
+			res = "%m.%d.%Y"
+		case jisLocation:
+			res = "%Y-%m-%d"
+		case isoLocation:
+			res = "%Y-%m-%d"
+		case eurLocation:
+			res = "%d.%m.%Y"
+		case internalLocation:
+			res = "%Y%m%d"
+		}
+	case datetimeFormat, timestampFormat:
+		switch location {
+		case usaLocation:
+			res = "%Y-%m-%d %H.%i.%s"
+		case jisLocation:
+			res = "%Y-%m-%d %H:%i:%s"
+		case isoLocation:
+			res = "%Y-%m-%d %H:%i:%s"
+		case eurLocation:
+			res = "%Y-%m-%d %H.%i.%s"
+		case internalLocation:
+			res = "%Y%m%d%H%i%s"
+		}
+	case timeFormat:
+		switch location {
+		case usaLocation:
+			res = "%h:%i:%s %p"
+		case jisLocation:
+			res = "%H:%i:%s"
+		case isoLocation:
+			res = "%H:%i:%s"
+		case eurLocation:
+			res = "%H.%i.%s"
+		case internalLocation:
+			res = "%H%i%s"
+		}
+	}
+	return res
 }
 
 func (b *builtinLastDaySig) vectorized() bool {
