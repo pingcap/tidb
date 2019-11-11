@@ -1332,11 +1332,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if pi != nil {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-			if len(pi.Columns) == 0 {
-				err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
-			} else {
-				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
-			}
+			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
 		case model.PartitionTypeHash:
 			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
@@ -1574,12 +1570,8 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
-	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column, s *ast.CreateTableStmt) error {
+	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
 	}
 
@@ -1591,31 +1583,28 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return err
 	}
 
-	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return err
+	if len(pi.Columns) == 0 {
+		if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+			return err
+		}
+
+		// s maybe nil when add partition.
+		if s == nil {
+			return nil
+		}
+
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, cols, tbInfo)
 	}
 
-	return checkPartitionFuncType(ctx, s, cols, tbInfo)
-}
-
-func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
+	// Check for range columns partition.
 	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
 		return err
 	}
 
-	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
-		return err
-	}
-
-	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return errors.Trace(err)
-	}
-
-	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
+	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
 }
 
 func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
@@ -1651,8 +1640,9 @@ func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.Table
 	if len(curr.LessThan) != len(pi.Columns) {
 		return errors.Trace(ast.ErrPartitionColumnList)
 	}
+	var prev *model.PartitionDefinition
 	for i := 1; i < len(defs); i++ {
-		prev, curr := curr, &defs[i]
+		prev, curr = curr, &defs[i]
 		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
 		if err != nil {
 			return err
@@ -2207,21 +2197,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkPartitionNameUnique(meta, partInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
+	err = checkPartitionByRange(ctx, meta, &tmp, t.Cols(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

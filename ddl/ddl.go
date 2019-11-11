@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
