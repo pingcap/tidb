@@ -196,9 +196,6 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	for i := 0; i < 60; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -207,6 +204,10 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	// construct 5 regions split by {12, 24, 36, 48}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
 	manipulateCluster(cluster, splitKeys)
+
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
 
 	var pkCol *model.ColumnInfo
 	var colsInfo []*model.ColumnInfo
