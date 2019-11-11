@@ -1233,6 +1233,7 @@ func (c *signFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
 	sig := &builtinSignSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Sign)
 	return sig, nil
 }
 
@@ -1272,6 +1273,7 @@ func (c *sqrtFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinSqrtSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Sqrt)
 	return sig, nil
 }
 

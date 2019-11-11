@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"math/rand"
 	"runtime"
@@ -602,6 +603,7 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		fc := funcs[ast.Sign]
 		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.num))
 		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Sign)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", t))
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("%v", t))
@@ -665,6 +667,7 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 		fc := funcs[ast.Sqrt]
 		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.Arg))
 		c.Assert(err, IsNil)
+		c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Sqrt)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
