@@ -463,6 +463,46 @@ func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
 	tk.MustQuery("select * from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("test t 0 PRIMARY 1 a <nil>  0", "test t 1 k1 1 b <nil>  1"))
 }
 
+func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP DATABASE IF EXISTS `sharding_info_test_db`")
+	tk.MustExec("CREATE DATABASE `sharding_info_test_db`")
+
+	assertShardingInfo := func (tableName string, expectInfo interface{}) {
+		querySQL := fmt.Sprintf("select tidb_row_id_sharding_info from information_schema.tables where table_schema = 'sharding_info_test_db' and table_name = '%s'", tableName)
+		info := tk.MustQuery(querySQL).Rows()[0][0]
+		if expectInfo == nil {
+			c.Assert(info, Equals, "<nil>")
+		} else {
+			c.Assert(info, Equals, expectInfo)
+		}
+	}
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t1` (a int)")
+	assertShardingInfo("t1", "NOT_SHARDED")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t2` (a int key)")
+	assertShardingInfo("t2", "NOT_SHARDED(PK_IS_HANDLE)")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t3` (a int) SHARD_ROW_ID_BITS=4")
+	assertShardingInfo("t3", "SHARD_BITS=4")
+
+	tk.MustExec("CREATE VIEW `sharding_info_test_db`.`tv` AS select 1")
+	assertShardingInfo("tv", nil)
+
+	testFunc := func (dbName string, expectInfo interface{}) {
+		dbInfo := model.DBInfo{Name: model.NewCIStr(dbName)}
+		tableInfo := model.TableInfo{}
+
+		info := infoschema.GetShardingInfo(&dbInfo, &tableInfo)
+		c.Assert(info, Equals, expectInfo)
+	}
+
+	testFunc("information_schema", nil)
+	testFunc("mysql", nil)
+	testFunc("performance_schema", nil)
+	testFunc("uucc", "NOT_SHARDED")
+}
+
 func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Prepare slow log file.
