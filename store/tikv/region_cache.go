@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -95,7 +93,7 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32, labelKeys []string, labelValues []string) int32 {
+func (r *RegionStore) follower(seed uint32, locationLabels []*metapb.StoreLabel) int32 {
 	l := uint32(len(r.stores))
 	if l <= 1 {
 		return r.workTiKVIdx
@@ -111,22 +109,26 @@ func (r *RegionStore) follower(seed uint32, labelKeys []string, labelValues []st
 			continue
 		}
 		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
-			if len(labelKeys) == 0 {
+			if len(locationLabels) == 0 {
 				return followerIdx
 			}
 			candidates = append(candidates, followerIdx)
 		}
 		seed++
 	}
+
+	// Find a best follower in candidates if *LocationLabels* is configured.
 	bestMatchedLevel := -1
 	var bestCandidate int32 = -1
 	for _, idx := range candidates {
 		matchedLevel := 0
-		for i, label := range r.stores[idx].labels {
-			if i < len(labelKeys) {
-				if label.Key == labelKeys[i] && label.Value == labelValues[i] {
+		for i, label := range r.stores[idx].locationLabels {
+			if i < len(locationLabels) {
+				if locationLabels[i].Key == label.Key && locationLabels[i].Value == label.Value {
 					matchedLevel += 1
 				}
+			} else {
+				break
 			}
 		}
 		if matchedLevel > bestMatchedLevel {
@@ -137,6 +139,7 @@ func (r *RegionStore) follower(seed uint32, labelKeys []string, labelValues []st
 	if bestCandidate >= 0 {
 		return bestCandidate
 	}
+
 	return r.workTiKVIdx
 }
 
@@ -227,30 +230,21 @@ type RegionCache struct {
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
 
-	labelKeys   []string
-	labelValues []string
+	locationLabels []*metapb.StoreLabel
 }
 
 // NewRegionCache creates a RegionCache.
-func NewRegionCache(pdClient pd.Client) *RegionCache {
-	var labelKeys = make([]string, 0)
-	var labelValues = make([]string, 0)
-	for _, kv := range strings.Split(config.GetGlobalConfig().Labels, ",") {
-		kvPair := strings.Split(kv, "=")
-		labelKeys = append(labelKeys, strings.Trim(kvPair[0], " \t"))
-		labelValues = append(labelValues, strings.Trim(kvPair[1], " \t"))
-	}
-
+func NewRegionCache(pdClient pd.Client, locationLabels []*metapb.StoreLabel) *RegionCache {
 	c := &RegionCache{
-		pdClient:    pdClient,
-		labelKeys:   labelKeys,
-		labelValues: labelValues,
+		pdClient:       pdClient,
+		locationLabels: locationLabels,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
+	c.notifyCheckCh <- struct{}{}
 	go c.asyncCheckAndResolveLoop()
 	return c
 }
@@ -262,6 +256,17 @@ func (c *RegionCache) Close() {
 
 // asyncCheckAndResolveLoop with
 func (c *RegionCache) asyncCheckAndResolveLoop() {
+	stores, err := c.pdClient.GetAllStores(context.Background())
+	if err != nil {
+		logutil.BgLogger().Warn("GetAllStores fail", zap.Error(err))
+	} else {
+		c.storeMu.Lock()
+		for _, store := range stores {
+			c.storeMu.stores[store.Id] = c.storeFromMeta(store)
+		}
+		c.storeMu.Unlock()
+	}
+
 	var needCheckStores []*Store
 	for {
 		select {
@@ -300,6 +305,39 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	}
 }
 
+// Extracts location labels from given labels.
+func (c *RegionCache) extractLocationLabels(labels []*metapb.StoreLabel) (locationLabels []*metapb.StoreLabel) {
+	for _, selfLabel := range c.locationLabels {
+		for _, label := range labels {
+			if selfLabel.Key == label.Key {
+				locationLabels = append(locationLabels, label)
+			}
+		}
+	}
+	return
+}
+
+// Create a `Store` from given meta.
+func (c *RegionCache) storeFromMeta(store *metapb.Store) *Store {
+	storeType := kv.TiKV
+	for _, label := range store.Labels {
+		if label.Key == "engine" {
+			if label.Value == kv.TiFlash.Name() {
+				storeType = kv.TiFlash
+			}
+			break
+		}
+	}
+	state := resolved
+	return &Store{
+		addr:           store.GetAddress(),
+		storeID:        store.Id,
+		locationLabels: c.extractLocationLabels(store.Labels),
+		storeType:      storeType,
+		state:          *(*uint64)(unsafe.Pointer(&state)),
+	}
+}
+
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
 	Region  RegionVerID
@@ -319,8 +357,10 @@ func (c *RPCContext) GetStoreID() uint64 {
 }
 
 func (c *RPCContext) String() string {
-	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d",
-		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
+	return fmt.Sprintf(
+		"region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, location: %v",
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx, c.Store.locationLabels,
+	)
 }
 
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -343,7 +383,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	var storeIdx int
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, c.labelKeys, c.labelValues)
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, c.locationLabels)
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -1073,11 +1113,8 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(
-	rs *RegionStore, followerStoreSeed uint32,
-	labelKeys []string, labelValues []string,
-) (*Store, *metapb.Peer, int) {
-	return r.getStorePeer(rs, rs.follower(followerStoreSeed, labelKeys, labelValues))
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32, locationLabels []*metapb.StoreLabel) (*Store, *metapb.Peer, int) {
+	return r.getStorePeer(rs, rs.follower(followerStoreSeed, locationLabels))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1208,13 +1245,15 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string // loaded store address
-	labels       []*metapb.StoreLabel
+	addr         string       // loaded store address
 	storeID      uint64       // store's id
 	state        uint64       // unsafe store storeState
 	resolveMutex sync.Mutex   // protect pd from concurrent init requests
 	fail         uint32       // store fail count, see RegionStore.storeFails
 	storeType    kv.StoreType // type of the store
+
+	// Extract from `GetAllStores` responses.
+	locationLabels []*metapb.StoreLabel
 }
 
 type resolveState uint64
@@ -1259,7 +1298,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
-		s.labels = store.GetLabels()
+		s.locationLabels = c.extractLocationLabels(store.Labels)
 		s.storeType = kv.TiKV
 		for _, label := range store.Labels {
 			if label.Key == "engine" {
@@ -1284,7 +1323,6 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 
 // reResolve try to resolve addr for store that need check.
 func (s *Store) reResolve(c *RegionCache) {
-	var addr string
 	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
 	if err != nil {
 		tikvRegionCacheCounterWithGetStoreError.Inc()
@@ -1305,21 +1343,8 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
-	storeType := kv.TiKV
-	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
-				storeType = kv.TiFlash
-			}
-			break
-		}
-	}
-	addr = store.GetAddress()
-	labels := store.GetLabels()
-	if s.addr != addr {
-		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, labels: labels, storeType: storeType}
-		newStore.state = *(*uint64)(unsafe.Pointer(&state))
+	if s.addr != store.GetAddress() {
+		newStore := c.storeFromMeta(store)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
 		c.storeMu.Unlock()

@@ -3,6 +3,11 @@
 # TiDB server host.
 host = "0.0.0.0"
 
+# Location labels of the TiDB; useful for multi datacenter; must be sorted.
+# Please also check PD's `location-labels`.
+# For example, location-labels = "datacenter=Beijing,rack=1".
+location-labels = ""
+
 # tidb server advertise IP.
 advertise-address = ""
 

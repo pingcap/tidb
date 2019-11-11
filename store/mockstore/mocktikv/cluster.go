@@ -200,6 +200,13 @@ func (c *Cluster) AddStore(storeID uint64, addr string) {
 	c.stores[storeID] = newStore(storeID, addr)
 }
 
+func (c *Cluster) AddStoreWithLabels(storeID uint64, addr string, labels []*metapb.StoreLabel) {
+	c.Lock()
+	defer c.Unlock()
+
+	c.stores[storeID] = newStoreWithLabels(storeID, addr, labels)
+}
+
 // RemoveStore removes a Store from the cluster.
 func (c *Cluster) RemoveStore(storeID uint64) {
 	c.Lock()
@@ -648,6 +655,16 @@ func newStore(storeID uint64, addr string) *Store {
 		meta: &metapb.Store{
 			Id:      storeID,
 			Address: addr,
+		},
+	}
+}
+
+func newStoreWithLabels(storeID uint64, addr string, labels []*metapb.StoreLabel) *Store {
+	return &Store{
+		meta: &metapb.Store{
+			Id:      storeID,
+			Address: addr,
+			Labels:  labels,
 		},
 	}
 }
