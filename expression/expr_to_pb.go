@@ -222,17 +222,17 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	// check whether this function can be pushed.
-	if !pc.canFuncBePushed(expr) {
-		return nil
-	}
-
 	// check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
 		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
 			panic(errors.Errorf("%T does not set the PbCode", expr.Function))
 		})
+		return nil
+	}
+
+	// check whether this function can be pushed.
+	if !pc.canFuncBePushed(expr) {
 		return nil
 	}
 

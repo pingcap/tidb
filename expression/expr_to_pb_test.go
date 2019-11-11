@@ -428,6 +428,24 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 	}
 }
 
+func (s *testEvaluatorSerialSuites) TestPanicIfPbCodeUnspecified(c *C) {
+	dg := new(dataGen4Expr2PbTest)
+	args := []Expression{dg.genColumn(mysql.TypeLong, 1), dg.genColumn(mysql.TypeLong, 2)}
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.And,
+		types.NewFieldType(mysql.TypeUnspecified),
+		args...,
+	)
+	c.Assert(err, IsNil)
+	fn := fc.(*ScalarFunction)
+	fn.Function.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	c.Assert(fn.Function.PbCode(), Equals, tipb.ScalarFuncSig_Unspecified)
+
+	pc := PbConverter{client: new(mock.Client), sc: new(stmtctx.StatementContext)}
+	c.Assert(func() { pc.ExprToPB(fn) }, PanicMatches, "*expression.builtinBitAndSig does not set the PbCode")
+}
+
 func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	var funcs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
