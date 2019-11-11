@@ -55,7 +55,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Exp: {
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{&rangeRealGener{-1, 1, 0.2}}},
 	},
 	ast.Degrees: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},

@@ -136,11 +136,28 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 }
 
 func (b *builtinSysDateWithoutFspSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	loc := b.ctx.GetSessionVars().Location()
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+
+	now := nowTs.In(loc)
+	result.ResizeTime(n, false)
+	times := result.Times()
+	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < n; i++ {
+		times[i] = t
+	}
+	return nil
 }
 
 func (b *builtinExtractDatetimeSig) vectorized() bool {
@@ -545,11 +562,88 @@ func (b *builtinNullTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinGetFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a builtinGetFormatSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
 func (b *builtinGetFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		format := buf0.GetString(i)
+		location := buf1.GetString(i)
+		res := b.getFormat(format, location)
+		result.AppendString(res)
+	}
+	return nil
+}
+
+func (b *builtinGetFormatSig) getFormat(format, location string) string {
+	res := ""
+	switch format {
+	case dateFormat:
+		switch location {
+		case usaLocation:
+			res = "%m.%d.%Y"
+		case jisLocation:
+			res = "%Y-%m-%d"
+		case isoLocation:
+			res = "%Y-%m-%d"
+		case eurLocation:
+			res = "%d.%m.%Y"
+		case internalLocation:
+			res = "%Y%m%d"
+		}
+	case datetimeFormat, timestampFormat:
+		switch location {
+		case usaLocation:
+			res = "%Y-%m-%d %H.%i.%s"
+		case jisLocation:
+			res = "%Y-%m-%d %H:%i:%s"
+		case isoLocation:
+			res = "%Y-%m-%d %H:%i:%s"
+		case eurLocation:
+			res = "%Y-%m-%d %H.%i.%s"
+		case internalLocation:
+			res = "%Y%m%d%H%i%s"
+		}
+	case timeFormat:
+		switch location {
+		case usaLocation:
+			res = "%h:%i:%s %p"
+		case jisLocation:
+			res = "%H:%i:%s"
+		case isoLocation:
+			res = "%H:%i:%s"
+		case eurLocation:
+			res = "%H.%i.%s"
+		case internalLocation:
+			res = "%H%i%s"
+		}
+	}
+	return res
 }
 
 func (b *builtinLastDaySig) vectorized() bool {
@@ -1588,11 +1682,56 @@ func (b *builtinSubDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, resul
 }
 
 func (b *builtinYearWeekWithModeSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals YEARWEEK(date,mode).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf1)
+	i64s := result.Int64s()
+	ds := buf1.Times()
+	ms := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		date := ds[i]
+		if date.IsZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		mode := int(ms[i])
+		if buf2.IsNull(i) {
+			mode = 0
+		}
+		year, week := date.Time.YearWeek(mode)
+		i64s[i] = int64(week + year*100)
+		if i64s[i] < 0 {
+			i64s[i] = int64(math.MaxUint32)
+		}
+	}
+	return nil
 }
 
 func (b *builtinTimestampDiffSig) vectorized() bool {
