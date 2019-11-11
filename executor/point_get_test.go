@@ -564,3 +564,14 @@ func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	_, err := tk.Exec("commit")
 	c.Assert(session.ErrForUpdateCantRetry.Equal(err), IsTrue)
 }
+
+func (s *testPointGetSuite) TestPointGetByRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20), b int)")
+	tk.MustExec("insert into t values(\"aaa\", 12)")
+	tk.MustQuery("explain select * from t where t._tidb_rowid = 1").Check(testkit.Rows(
+		"Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where t._tidb_rowid = 1").Check(testkit.Rows("aaa 12"))
+}
