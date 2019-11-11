@@ -430,6 +430,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
+	txn.Rollback()
 
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()
