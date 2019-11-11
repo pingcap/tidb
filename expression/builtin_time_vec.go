@@ -1063,11 +1063,70 @@ func (b *builtinAddDateIntDecimalSig) vecEvalTime(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinMakeDateSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf1, buf2)
+
+	times := result.Times()
+	years := buf1.Int64s()
+	days := buf2.Int64s()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if days[i] <= 0 || years[i] < 0 || years[i] > 9999 {
+			result.SetNull(i, true)
+			continue
+		}
+		if years[i] < 70 {
+			years[i] += 2000
+		} else if years[i] < 100 {
+			years[i] += 1900
+		}
+		startTime := types.Time{
+			Time: types.FromDate(int(years[i]), 1, 1, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp:  0,
+		}
+		retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
+		if retTimestamp == 0 {
+			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(startTime.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		ret := types.TimeFromDays(retTimestamp + days[i] - 1)
+		if ret.IsZero() || ret.Time.Year() > 9999 {
+			result.SetNull(i, true)
+			continue
+		}
+		times[i] = ret
+	}
+	return nil
 }
 
 func (b *builtinWeekOfYearSig) vectorized() bool {
