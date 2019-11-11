@@ -16,42 +16,43 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func vecJSONModify(b *baseBuiltinFunc, input *chunk.Chunk, result *chunk.Column, mt json.ModifyType) error {
+func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator columnBufferAllocator, input *chunk.Chunk, result *chunk.Column, mt json.ModifyType) error {
 	nr := input.NumRows()
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := bufAllocator.get(types.ETJson, nr)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(jsonBuf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+	defer bufAllocator.put(jsonBuf)
+	if err := args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
 		return err
 	}
 
-	strBufs := make([]*chunk.Column, (len(b.args)-1)/2)
-	for i := 0; i < (len(b.args)-1)/2; i++ {
-		strBufs[i], err = b.bufAllocator.get(types.ETString, nr)
+	strBufs := make([]*chunk.Column, (len(args)-1)/2)
+	for i := 1; i < len(args); i += 2 {
+		strBufs[(i-1)/2], err = bufAllocator.get(types.ETString, nr)
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(strBufs[i])
-		if err := b.args[i*2+1].VecEvalString(b.ctx, input, strBufs[i]); err != nil {
+		defer bufAllocator.put(strBufs[(i-1)/2])
+		if err := args[i].VecEvalString(ctx, input, strBufs[(i-1)/2]); err != nil {
 			return err
 		}
 	}
-	valueBufs := make([]*chunk.Column, (len(b.args)-1)/2+1)
-	for i := 0; i < (len(b.args)-1)/2; i++ {
-		valueBufs[i], err = b.bufAllocator.get(types.ETJson, nr)
+	valueBufs := make([]*chunk.Column, (len(args)-1)/2+1)
+	for i := 2; i < len(args); i += 2 {
+		valueBufs[i/2-1], err = bufAllocator.get(types.ETJson, nr)
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(valueBufs[i])
-		if err := b.args[(i+1)*2].VecEvalJSON(b.ctx, input, valueBufs[i]); err != nil {
+		defer bufAllocator.put(valueBufs[i/2-1])
+		if err := args[i].VecEvalJSON(ctx, input, valueBufs[i/2-1]); err != nil {
 			return err
 		}
 	}
@@ -61,29 +62,26 @@ func vecJSONModify(b *baseBuiltinFunc, input *chunk.Chunk, result *chunk.Column,
 			result.AppendNull()
 			continue
 		}
-		pathExprs := make([]json.PathExpression, 0, (len(b.args)-1)/2+1)
-		values := make([]json.BinaryJSON, 0, (len(b.args)-1)/2+1)
+		pathExprs := make([]json.PathExpression, 0, (len(args)-1)/2+1)
+		values := make([]json.BinaryJSON, 0, (len(args)-1)/2+1)
 		var pathExpr json.PathExpression
 		isNull := false
-		for j := 1; j < len(b.args); j++ {
-			if j&1 == 0 {
-				// 2,4,6,8,10
-				if valueBufs[j/2-1].IsNull(i) {
-					values = append(values, json.CreateBinary(nil))
-				} else {
-					values = append(values, valueBufs[j/2-1].GetJSON(i))
-				}
+		for j := 1; j < len(args); j += 2 {
+			if strBufs[(j-1)/2].IsNull(i) {
+				isNull = true
+				break
+			}
+			pathExpr, err = json.ParseJSONPathExpr(strBufs[(j-1)/2].GetString(i))
+			if err != nil {
+				return err
+			}
+			pathExprs = append(pathExprs, pathExpr)
+		}
+		for j := 2; j < len(args); j += 2 {
+			if valueBufs[j/2-1].IsNull(i) {
+				values = append(values, json.CreateBinary(nil))
 			} else {
-				// 1,3,5,7,9
-				if strBufs[(j-1)/2].IsNull(i) {
-					isNull = true
-					break
-				}
-				pathExpr, err = json.ParseJSONPathExpr(strBufs[(j-1)/2].GetString(i))
-				if err != nil {
-					return err
-				}
-				pathExprs = append(pathExprs, pathExpr)
+				values = append(values, valueBufs[j/2-1].GetJSON(i))
 			}
 		}
 		if isNull {
@@ -163,7 +161,7 @@ func (b *builtinJSONInsertSig) vectorized() bool {
 }
 
 func (b *builtinJSONInsertSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	err := vecJSONModify(&b.baseBuiltinFunc, input, result, json.ModifyInsert)
+	err := vecJSONModify(b.ctx, b.args, b.bufAllocator, input, result, json.ModifyInsert)
 	return err
 }
 
@@ -172,7 +170,7 @@ func (b *builtinJSONReplaceSig) vectorized() bool {
 }
 
 func (b *builtinJSONReplaceSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	err := vecJSONModify(&b.baseBuiltinFunc, input, result, json.ModifyReplace)
+	err := vecJSONModify(b.ctx, b.args, b.bufAllocator, input, result, json.ModifyReplace)
 	return err
 }
 
@@ -334,7 +332,7 @@ func (b *builtinJSONSetSig) vectorized() bool {
 }
 
 func (b *builtinJSONSetSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	err := vecJSONModify(&b.baseBuiltinFunc, input, result, json.ModifySet)
+	err := vecJSONModify(b.ctx, b.args, b.bufAllocator, input, result, json.ModifySet)
 	return err
 }
 
