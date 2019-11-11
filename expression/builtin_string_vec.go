@@ -1827,11 +1827,29 @@ func (b *builtinSubstringBinary3ArgsSig) vecEvalString(input *chunk.Chunk, resul
 }
 
 func (b *builtinHexIntArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinHexIntArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strings.ToUpper(fmt.Sprintf("%x", uint64(i64s[i]))))
+	}
+	return nil
 }
 
 func (b *builtinFieldIntSig) vectorized() bool {
