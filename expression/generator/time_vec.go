@@ -308,7 +308,6 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{- template "ArgsVecEval" . }}
 			result.MergeNulls(buf0, buf1)
 		{{- end }}
-
 		{{- if .TypeA.Fixed }} 
 			arg0 := buf0.{{.TypeA.TypeNameInColumn}}s()
 		{{- end }}
@@ -327,7 +326,6 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 		{{- end }}
 	for i:=0; i<n ; i++{
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		
@@ -405,9 +403,11 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	{{- end }} {{/* if $noNull */}}
 	return nil

@@ -648,7 +648,6 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		lhsTime := arg0[i]
@@ -664,9 +663,11 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
@@ -702,7 +703,6 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		lhs.Duration = arg0[i]
@@ -719,9 +719,11 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
@@ -757,7 +759,6 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 	)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		lhs.Duration = arg0[i]
@@ -766,9 +767,11 @@ func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk,
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
@@ -805,7 +808,6 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
@@ -821,9 +823,11 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
@@ -859,7 +863,6 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
@@ -876,9 +879,11 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
@@ -914,7 +919,6 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
@@ -941,9 +945,11 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
@@ -981,7 +987,6 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			result.SetNull(i, true)
 			continue
 		}
 		lhsTime := arg0[i]
@@ -990,9 +995,11 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 		if err != nil {
 			return err
 		}
-		if !isNull {
-			r64s[i] = d.Duration
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
+		r64s[i] = d.Duration
 	}
 	return nil
 }
