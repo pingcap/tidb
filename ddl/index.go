@@ -139,6 +139,10 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 }
 
 func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
+	if err := checkTooLongIndex(indexName); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	idxColumns, err := buildIndexColumns(tblInfo.Columns, idxColNames)
 	if err != nil {
 		return nil, errors.Trace(err)
