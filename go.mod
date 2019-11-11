@@ -29,8 +29,6 @@ require (
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/onsi/ginkgo v1.10.3 // indirect
-	github.com/onsi/gomega v1.7.1 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4
