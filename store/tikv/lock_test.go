@@ -391,6 +391,12 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 	c.Assert(err, IsNil)
 }
 
+func mustNewTwoPhaseCommitter(c *C, txn *tikvTxn) *twoPhaseCommitter {
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	return committer
+}
+
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
@@ -427,10 +433,12 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	committer := mustNewTwoPhaseCommitter(c, txn.(*tikvTxn))
+	c.Assert(committer.prewriteKeys(bo, committer.keys), IsNil)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
-	txn.Rollback()
+	committer.cleanupKeys(bo, committer.keys)
 
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()
@@ -441,9 +449,11 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 		k, v := randKV(1024, 1024)
 		txn.Set(kv.Key(k), []byte(v))
 	}
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	committer = mustNewTwoPhaseCommitter(c, txn.(*tikvTxn))
+	c.Assert(committer.prewriteKeys(bo, committer.keys), IsNil)
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, uint64(ttlFactor*2)+uint64(time.Since(start)/time.Millisecond))
+	committer.cleanupKeys(bo, committer.keys)
 
 	// Txn with long read time.
 	start = time.Now()
