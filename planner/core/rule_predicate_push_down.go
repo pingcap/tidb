@@ -335,6 +335,12 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			_, child := p.baseLogicalPlan.PredicatePushDown(nil)
+			return predicates, child
+		}
+	}
 	for _, cond := range predicates {
 		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
 		if !expression.HasGetSetVarFunc(newFilter) {
