@@ -235,6 +235,7 @@ func buildDescTableScanDAG(ctx sessionctx.Context, startTS uint64, tbl table.Phy
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	distsql.SetEncodeType(ctx, dagReq)
+	distsql.SetSystemEndian(dagReq)
 	return dagReq, nil
 }
 

@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -170,4 +171,18 @@ func canUseChunkRPC(ctx sessionctx.Context) bool {
 		return false
 	}
 	return true
+}
+
+// SetSystemEndian sets the system endian for the DAGRequest.
+func SetSystemEndian(dagReq *tipb.DAGRequest) {
+	dagReq.TidbSystemEndian = getSystemEndian()
+}
+
+func getSystemEndian() tipb.Endian {
+	var i int = 0x0100
+	ptr := unsafe.Pointer(&i)
+	if 0x01 == *(*byte)(ptr) {
+		return tipb.Endian_BigEndian
+	}
+	return tipb.Endian_SmallEndian
 }
