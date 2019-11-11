@@ -228,6 +228,14 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Elt: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&rangeInt64Gener{-1, 5}}},
 	},
+	ast.FromUnixTime: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}},
+				&constStrGener{"%y-%m-%d"},
+			},
+		},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinStringEvalOneVec(c *C) {
