@@ -132,8 +132,8 @@ func newFirstChunk(e Executor) *chunk.Chunk {
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
-// newList creates a new List to buffer current executor's result.
-func newList(e Executor) *chunk.List {
+// newList creates a new ListInMemory to buffer current executor's result.
+func newList(e Executor) *chunk.ListInMemory {
 	base := e.base()
 	return chunk.NewList(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
@@ -1115,7 +1115,7 @@ type TableScanExec struct {
 	iter                  kv.Iterator
 	columns               []*model.ColumnInfo
 	isVirtualTable        bool
-	virtualTableChunkList *chunk.List
+	virtualTableChunkList *chunk.ListInMemory
 	virtualTableChunkIdx  int
 }
 

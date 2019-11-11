@@ -86,7 +86,7 @@ type innerMergeCtx struct {
 }
 
 type lookUpMergeJoinTask struct {
-	outerResult   *chunk.List
+	outerResult   *chunk.ListInMemory
 	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
@@ -346,7 +346,10 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 			break
 		}
 
-		task.outerResult.Add(execChk)
+		err = task.outerResult.Add(execChk)
+		if err != nil {
+			return task, err
+		}
 		requiredRows -= execChk.NumRows()
 		task.memTracker.Consume(execChk.MemoryUsage())
 	}

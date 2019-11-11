@@ -120,7 +120,7 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4Chunk(new(Chunk))
 	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewIterator4List(new(List))
+	it = NewIterator4List(new(ListInMemory))
 	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4RowPtr(li, nil)
 	c.Assert(it.Begin(), check.Equals, it.End())

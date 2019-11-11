@@ -555,7 +555,7 @@ type NestedLoopApplyExec struct {
 	outerChunk       *chunk.Chunk
 	outerChunkCursor int
 	outerSelected    []bool
-	innerList        *chunk.List
+	innerList        *chunk.ListInMemory
 	innerChunk       *chunk.Chunk
 	innerSelected    []bool
 	innerIter        chunk.Iterator
@@ -628,7 +628,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 	}
 }
 
-// fetchAllInners reads all data from the inner table and stores them in a List.
+// fetchAllInners reads all data from the inner table and stores them in a ListInMemory.
 func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	err := e.innerExec.Open(ctx)
 	defer terror.Call(e.innerExec.Close)

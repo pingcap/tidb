@@ -91,7 +91,7 @@ type hashRowContainer struct {
 	memTracker *memory.Tracker
 
 	// records stores the chunks in memory.
-	records *chunk.List
+	records *chunk.ListInMemory
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *chunk.ListInDisk
 
@@ -202,7 +202,10 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 		}
 	} else {
 		chkIdx = uint32(c.records.NumChunks())
-		c.records.Add(chk)
+		err := c.records.Add(chk)
+		if err != nil {
+			return err
+		}
 		if atomic.LoadUint32(&c.exceeded) != 0 {
 			err := c.spillToDisk()
 			if err != nil {
@@ -269,7 +272,7 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return &spillDiskAction{c: c}
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// spillDiskAction implements memory.ActionOnExceed for chunk.ListInMemory. If
 // the memory quota of a query is exceeded, spillDiskAction.Action is
 // triggered.
 type spillDiskAction struct {

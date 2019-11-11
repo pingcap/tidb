@@ -45,7 +45,7 @@ type SortExec struct {
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
 	// rowChunks is the chunks to store row values.
-	rowChunks *chunk.List
+	rowChunks *chunk.ListInMemory
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
@@ -108,7 +108,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if rowCount == 0 {
 			break
 		}
-		e.rowChunks.Add(chk)
+		err = e.rowChunks.Add(chk)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -270,7 +273,10 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		if srcChk.NumRows() == 0 {
 			break
 		}
-		e.rowChunks.Add(srcChk)
+		err = e.rowChunks.Add(srcChk)
+		if err != nil {
+			return err
+		}
 	}
 	e.initPointers()
 	e.initCompareFuncs()
