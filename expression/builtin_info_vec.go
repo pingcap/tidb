@@ -118,12 +118,9 @@ func (b *builtinUserSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.User == nil {
-		for i := 0; i < n; i++ {
-			result.AppendNull()
-		}
+		return errors.Errorf("Missing session variable when eval builtin")
 	}
 
 	result.ReserveString(n)
