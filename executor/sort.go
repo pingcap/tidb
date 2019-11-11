@@ -45,7 +45,7 @@ type SortExec struct {
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
 	// rowChunks is the chunks to store row values.
-	rowChunks *chunk.List
+	rowChunks *chunk.ListInMemory
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
@@ -95,7 +95,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := retTypes(e)
-	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
+	e.rowChunks = chunk.NewListInMemory(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for {
@@ -108,7 +108,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if rowCount == 0 {
 			break
 		}
-		e.rowChunks.Add(chk)
+		err = e.rowChunks.Add(chk)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -256,7 +259,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	e.rowChunks = chunk.NewListInMemory(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
@@ -270,7 +273,10 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		if srcChk.NumRows() == 0 {
 			break
 		}
-		e.rowChunks.Add(srcChk)
+		err = e.rowChunks.Add(srcChk)
+		if err != nil {
+			return err
+		}
 	}
 	e.initPointers()
 	e.initCompareFuncs()
@@ -330,7 +336,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	newRowChunks := chunk.NewListInMemory(retTypes(e), e.initCap, e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
