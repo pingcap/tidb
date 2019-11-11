@@ -221,9 +221,9 @@ func (g *defaultGener) gen() interface{} {
 		return rand.Int63()
 	case types.ETReal:
 		if rand.Float64() < 0.5 {
-			return -rand.Float64()
+			return -rand.Float64() * 1000000
 		}
-		return rand.Float64()
+		return rand.Float64() * 1000000
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
 		var f float64
@@ -541,6 +541,54 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
+// locationGener is used to generate location for the built-in function GetFormat.
+type locationGener struct {
+	nullRation float64
+}
+
+func (g *locationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 5 {
+	case 0:
+		return usaLocation
+	case 1:
+		return jisLocation
+	case 2:
+		return isoLocation
+	case 3:
+		return eurLocation
+	case 4:
+		return internalLocation
+	default:
+		return nil
+	}
+}
+
+// formatGener is used to generate a format for the built-in function GetFormat.
+type formatGener struct {
+	nullRation float64
+}
+
+func (g *formatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return dateFormat
+	case 1:
+		return datetimeFormat
+	case 2:
+		return timestampFormat
+	case 3:
+		return timeFormat
+	default:
+		return nil
+	}
+}
+
 type vecExprBenchCase struct {
 	// retEvalType is the EvalType of the expression result.
 	// This field is required.
@@ -661,7 +709,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(testCase.retEvalType)}, 1024, 1024)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, 1024, 1024)
 	return expr, fts, input, output
 }
 
@@ -681,7 +729,7 @@ func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 			c.Assert(evalOneColumn(ctx, expr, it, output2, 0), IsNil, Commentf("func: %v, case: %+v", funcName, testCase))
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch testCase.retEvalType {
+			switch expr.GetType().EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))

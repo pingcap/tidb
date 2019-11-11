@@ -58,6 +58,7 @@ require (
 	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.5.0
+	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.12.0
 	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
