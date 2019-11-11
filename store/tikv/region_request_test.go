@@ -94,15 +94,15 @@ func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	oldStoreLimit := atomic.LoadUint32(&config.GetGlobalConfig().TiKVClient.StoreLimit)
-	atomic.StoreUint32(&config.GetGlobalConfig().TiKVClient.StoreLimit, 500)
+	oldStoreLimit := atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit)
+	atomic.StoreUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit, 500)
 	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount = 500
 	// cause there is only one region in this cluster, regionID maps this leader.
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
-	atomic.StoreUint32(&config.GetGlobalConfig().TiKVClient.StoreLimit, oldStoreLimit)
+	atomic.StoreUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit, oldStoreLimit)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {

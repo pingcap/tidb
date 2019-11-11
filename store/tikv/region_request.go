@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -169,7 +170,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	if atomic.LoadUint32(&config.GetGlobalConfig().TiKVClient.StoreLimit) > 0 {
+	if atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit) > 0 {
 		if err := s.getStoreToken(ctx.Store); err != nil {
 			return nil, false, err
 		}
@@ -188,13 +189,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 func (s *RegionRequestSender) getStoreToken(store *Store) error {
 	for {
-		count := atomic.LoadUint32(&store.tokenCount)
-		if count < atomic.LoadUint32(&config.GetGlobalConfig().TiKVClient.StoreLimit) {
-			if atomic.CompareAndSwapUint32(&store.tokenCount, count, count+1) {
+		count := atomic.LoadUint64(&store.tokenCount)
+		if count < atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit) {
+			if atomic.CompareAndSwapUint64(&store.tokenCount, count, count+1) {
 				return nil
 			}
 		} else {
-			metrics.GetStoreLimitErrorCounter.WithLabelValues(store.addr, string(store.storeID)).Inc()
+			metrics.GetStoreLimitErrorCounter.WithLabelValues(store.addr, strconv.FormatUint(store.storeID, 10)).Inc()
 			return ErrTokenLimit.GenWithStackByArgs(store.storeID)
 		}
 	}
@@ -202,9 +203,9 @@ func (s *RegionRequestSender) getStoreToken(store *Store) error {
 
 func (s *RegionRequestSender) releaseStoreToken(store *Store) {
 	for {
-		count := atomic.LoadUint32(&store.tokenCount)
+		count := atomic.LoadUint64(&store.tokenCount)
 		if count > 0 {
-			if atomic.CompareAndSwapUint32(&store.tokenCount, count, count-1) {
+			if atomic.CompareAndSwapUint64(&store.tokenCount, count, count-1) {
 				return
 			}
 		} else {

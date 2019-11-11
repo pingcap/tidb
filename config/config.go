@@ -378,7 +378,7 @@ type TiKVClient struct {
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
-	StoreLimit uint32 `toml:"store-limit" json:"store-limit"`
+	StoreLimit uint64 `toml:"store-limit" json:"store-limit"`
 }
 
 // Binlog is the config for binlog.

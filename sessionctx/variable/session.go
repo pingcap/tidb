@@ -983,6 +983,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiFlash] = struct{}{}
 			}
 		}
+	case TiDBStoreLimit:
+		atomic.StoreUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit, uint64(tidbOptPositiveInt32(val, DefTiDBStoreLimit)))
 	}
 	s.systems[name] = val
 	return nil

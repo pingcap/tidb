@@ -294,9 +294,8 @@ enable-chunk-rpc = true
 region-cache-ttl = 600
 
 # store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
-# It is useful when some stores are broken and block any request sent to it, which will finally
-# cause all token limits are occupied by this store, consequently leading QPS to decrease sharply.
-# [token-limit/stores, token-limit) is temporary recommended, 0 means shutting off store limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# [token-limit/stores, token-limit) is temporary recommended, default 0 means shutting off store limit.
 store-limit = 0
 
 [txn-local-latches]
