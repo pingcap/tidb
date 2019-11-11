@@ -279,7 +279,7 @@ func (b *builtinConnectionIDSig) Clone() builtinFunc {
 func (b *builtinConnectionIDSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
-		return 0, true, errors.Errorf("Missing session variable when evalue builtin")
+		return 0, true, errors.Errorf("Missing session variable `builtinConnectionIDSig.evalInt`")
 	}
 	return int64(data.ConnectionID), false, nil
 }
