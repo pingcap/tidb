@@ -1152,11 +1152,12 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		if err != nil {
 			return err
 		}
-		if str == "0" {
-			result.AppendString("0")
+		if buf0.GetString(i) == "" {
+			result.AppendString("")
 			continue
 		}
 		if ds[i].InvalidZero() {
+			result.AppendString("")
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
 				return err
 			}
