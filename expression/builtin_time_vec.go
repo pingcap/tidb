@@ -155,11 +155,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 	ds := buf1.Decimals()
 	fsp := int8(b.tp.Decimal)
 	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-		if buf2.IsNull(i) {
+		if buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
