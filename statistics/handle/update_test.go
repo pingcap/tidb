@@ -16,6 +16,7 @@ package handle_test
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func (s *testStatsSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStatsSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
 	lg := zap.New(s.hook)
