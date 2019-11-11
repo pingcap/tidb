@@ -37,6 +37,11 @@ type testCommitterSuite struct {
 
 var _ = Suite(&testCommitterSuite{})
 
+func (s *testCommitterSuite) SetUpSuite(c *C) {
+	PessimisticLockTTL = 3000 // 3s
+	s.OneByOneSuite.SetUpSuite(c)
+}
+
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
@@ -538,14 +543,14 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	err = txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL
-	c.Assert(elapsedTTL, GreaterEqual, uint64(100))
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
+	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
 	lr := newLockResolver(s.store)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	status, err := lr.getTxnStatus(bo, txn.startTS, key2, txn.startTS)
 	c.Assert(err, IsNil)
-	c.Assert(status.ttl, Equals, lockInfo.LockTtl)
+	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
 	// Check primary lock TTL is auto increasing while the pessimistic txn is ongoing.
 	for i := 0; i < 50; i++ {

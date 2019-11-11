@@ -35,9 +35,9 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize    = 4096 // MB
-	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 120
+	MaxLogFileSize = 4096 // MB
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -308,8 +308,6 @@ type PessimisticTxn struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-	// The pessimistic lock ttl.
-	TTL string `toml:"ttl" json:"ttl"`
 }
 
 // StmtSummary is the config for statement summary.
@@ -411,7 +409,6 @@ var defaultConf = Config{
 	PessimisticTxn: PessimisticTxn{
 		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "40s",
 	},
 	StmtSummary: StmtSummary{
 		MaxStmtCount: 100,
@@ -585,16 +582,6 @@ func (c *Config) Valid() error {
 	}
 	if c.TiKVClient.MaxTxnTimeUse == 0 {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
-	}
-	if c.PessimisticTxn.TTL != "" {
-		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
-		if err != nil {
-			return err
-		}
-		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
-				dur, MinPessimisticTTL, MaxPessimisticTTL)
-		}
 	}
 	return nil
 }
