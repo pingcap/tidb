@@ -1564,12 +1564,13 @@ func (b *builtinMakeSetSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 
 	bits := bitsBuf.Int64s()
 	result.ReserveString(nr)
+	sets := make([]string, 0, len(b.args)-1)
 	for i := 0; i < nr; i++ {
 		if bitsBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		sets := make([]string, 0, len(b.args)-1)
+		sets = sets[:0]
 		for j := 0; j < len(b.args)-1; j++ {
 			if strBuf[j].IsNull(i) || (bits[i]&(1<<uint(j))) == 0 {
 				continue
