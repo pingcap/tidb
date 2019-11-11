@@ -221,9 +221,9 @@ func (g *defaultGener) gen() interface{} {
 		return rand.Int63()
 	case types.ETReal:
 		if rand.Float64() < 0.5 {
-			return -rand.Float64()
+			return -rand.Float64() * 1000000
 		}
-		return rand.Float64()
+		return rand.Float64() * 1000000
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
 		var f float64
