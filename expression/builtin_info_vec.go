@@ -121,7 +121,9 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.User == nil {
-		return errors.Errorf("Missing session variable when eval builtin")
+		for i := 0; i < n; i++ {
+			result.AppendNull()
+		}
 	}
 
 	result.ReserveString(n)
