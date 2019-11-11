@@ -102,6 +102,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Hex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.Unhex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
@@ -155,10 +156,12 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&numStrGener{rangeInt64Gener{-10, 10}}}},
 	},
+	ast.Quote: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.Ord: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.Quote: {},
 	ast.Bin: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},

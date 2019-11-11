@@ -161,6 +161,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DayOfMonth: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
+	ast.DayName: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.UTCDate: {
 		{retEvalType: types.ETDatetime},
 	},
@@ -189,6 +194,23 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
 			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
 		},
+	},
+	ast.StrToDate: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&timeStrGener{}, &constStrGener{"%y-%m-%d"}},
+		},
+	},
+	ast.GetFormat: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&formatGener{0.2}, &locationGener{0.2}},
+		},
+	},
+	ast.Sysdate: {
+		{retEvalType: types.ETDatetime},
 	},
 }
 
