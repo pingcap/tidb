@@ -16,6 +16,7 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash"
 	"io"
 	"time"
@@ -91,7 +92,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
-			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
+			b, err = EncodeMySQLTime(sc, vals[i].GetMysqlTime(), mysql.TypeUnspecified, b)
 			if err != nil {
 				return b, err
 			}
@@ -169,8 +170,7 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 }
 
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
-func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
-	t := d.GetMysqlTime()
+func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []byte) (_ []byte, err error) {
 	// Encoding timestamp need to consider timezone. If it's not in UTC, transform to UTC first.
 	// This is compatible with `PBToExpr > convertTime`, and coprocessor assumes the passed timestamp is in UTC as well.
 	if tp == mysql.TypeUnspecified {
@@ -1072,4 +1072,50 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 	} else {
 		chk.AppendFloat64(colIdx, val)
 	}
+}
+
+// EncodeTo encodes one row and append encoded data into buf.
+func EncodeTo(sc *stmtctx.StatementContext, col *chunk.Column, rowID int, buf []byte, ft *types.FieldType) ([]byte, error) {
+	var err error
+	if col.IsNull(rowID) {
+		buf = append(buf, NilFlag)
+		return buf, nil
+	}
+	switch ft.EvalType() {
+	case types.ETInt:
+		buf = encodeSignedInt(buf, col.GetInt64(rowID), true)
+	case types.ETReal:
+		buf = append(buf, floatFlag)
+		buf = EncodeFloat(buf, col.GetFloat64(rowID))
+	case types.ETDecimal:
+		buf = append(buf, decimalFlag)
+		buf, err = EncodeDecimal(buf, col.GetDecimal(rowID), ft.Flen, ft.Decimal)
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			err = sc.HandleTruncate(err)
+		} else if terror.ErrorEqual(err, types.ErrOverflow) {
+			err = sc.HandleOverflow(err, err)
+		}
+		if err != nil {
+			return nil, err
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		buf = append(buf, uintFlag)
+		buf, err = EncodeMySQLTime(sc, col.GetTime(rowID), mysql.TypeUnspecified, buf)
+		if err != nil {
+			return nil, err
+		}
+	case types.ETDuration:
+		buf = append(buf, durationFlag)
+		buf = EncodeInt(buf, int64(col.GetGoDuration(rowID)))
+	case types.ETJson:
+		buf = append(buf, jsonFlag)
+		j := col.GetJSON(rowID)
+		buf = append(buf, j.TypeCode)
+		buf = append(buf, j.Value...)
+	case types.ETString:
+		buf = encodeBytes(buf, col.GetBytes(rowID), true)
+	default:
+		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+	}
+	return buf, nil
 }

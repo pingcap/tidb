@@ -1033,12 +1033,12 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 			return false, err
 		}
 
-		e.firstGroupKey, err = col.Encode(e.firstGroupKey, eType, 0)
+		e.firstGroupKey, err = codec.EncodeTo(e.StmtCtx, col, 0, e.firstGroupKey, item.GetType())
 		if err != nil {
 			return false, err
 		}
 
-		e.lastGroupKey, err = col.Encode(e.firstGroupKey, eType, numRows-1)
+		e.lastGroupKey, err = codec.EncodeTo(e.StmtCtx, col, numRows-1, e.firstGroupKey, item.GetType())
 		if err != nil {
 			return false, err
 		}
