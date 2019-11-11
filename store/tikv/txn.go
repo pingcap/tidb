@@ -382,11 +382,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 				return err
 			}
 		}
-		if txn.committer.pessimisticTTL == 0 {
-			// add elapsed time to pessimistic TTL on the first LockKeys request.
-			elapsed := uint64(time.Since(txn.startTime) / time.Millisecond)
-			txn.committer.pessimisticTTL = PessimisticLockTTL + elapsed
-		}
 		var assignedPrimaryKey bool
 		if txn.committer.primaryKey == nil {
 			txn.committer.primaryKey = keys[0]
@@ -428,7 +423,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer)
+			txn.committer.ttlManager.run(txn.committer, killed)
 		}
 	}
 	txn.mu.Lock()

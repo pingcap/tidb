@@ -421,6 +421,24 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
+	// Test killing an idle pessimistic session stop its ttlManager.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+	sessVars := tk.Se.GetSessionVars()
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	c.Assert(succ, IsTrue)
+
+	// This query should success rather than returning a ResolveLock error.
+	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
+}
+
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")

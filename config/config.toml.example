@@ -307,10 +307,6 @@ enable = true
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "120s".
-ttl = "40s"
-
 [stmt-summary]
 # max number of statements kept in memory.
 max-stmt-count = 100
