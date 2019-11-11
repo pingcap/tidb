@@ -747,6 +747,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
 		// Skip resolving the table to avoid error.
+		p.checkNotInRepair(tn)
 		return
 	}
 	// repairStmt: admin repair table A create table B ...
@@ -766,6 +767,30 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.DBInfo = dbInfo
 }
 
+func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
+	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
+	var dbInfo *model.DBInfo
+	for _, v := range dbMap {
+		if v.Name.L == tn.Schema.L {
+			dbInfo = v
+			break
+		}
+	}
+	if dbInfo == nil {
+		return
+	}
+	var found bool
+	for _, t := range dbInfo.Tables {
+		if t.Name.L == tn.Name.L {
+			found = true
+			break
+		}
+	}
+	if found {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Schema.L)
+	}
+}
+
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
 	// tableName only has the Schema rather than DBInfo here.
@@ -777,7 +802,7 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		}
 	}
 	if dbInfo == nil {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs()
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(tn.Schema.L)
 		return
 	}
 	var repairTable *model.TableInfo
@@ -788,7 +813,7 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		}
 	}
 	if repairTable == nil {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs()
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
 		return
 	}
 	p.ctx.SetValue(admin.RepairedTable, repairTable)
