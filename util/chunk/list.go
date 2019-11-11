@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+// List is interface for ListInMemory and ListInDisk
 type List interface {
 	NumRowsOfChunk(int)
 	NumChunks()
