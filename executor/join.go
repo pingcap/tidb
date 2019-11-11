@@ -317,7 +317,7 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	e.joinWorkerWaitGroup.Done()
 }
 
-// Handling unmatched rows from the hash table
+// Concurrently handling unmatched rows from the hash table
 func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
