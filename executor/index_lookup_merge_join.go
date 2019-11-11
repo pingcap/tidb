@@ -86,7 +86,7 @@ type innerMergeCtx struct {
 }
 
 type lookUpMergeJoinTask struct {
-	outerResult   *chunk.List
+	outerResult   *chunk.ListInMemory
 	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
@@ -323,7 +323,7 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
-		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
+		outerResult: chunk.NewListInMemory(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
@@ -346,7 +346,10 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 			break
 		}
 
-		task.outerResult.Add(execChk)
+		err = task.outerResult.Add(execChk)
+		if err != nil {
+			return task, err
+		}
 		requiredRows -= execChk.NumRows()
 		task.memTracker.Consume(execChk.MemoryUsage())
 	}
