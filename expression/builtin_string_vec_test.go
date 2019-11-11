@@ -102,6 +102,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Hex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.Unhex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
