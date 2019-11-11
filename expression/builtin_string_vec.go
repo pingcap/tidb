@@ -576,7 +576,7 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			return err
 		}
 		for i := 0; i < n; i++ {
-			if buf.IsNull(i) {
+			if isNulls[i] || buf.IsNull(i) {
 				// CONCAT_WS() does not skip empty strings. However,
 				// it does skip any NULL values after the separator argument.
 				continue
@@ -588,6 +588,7 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			}
 			if uint64(targetLengths[i]) > b.maxAllowedPacket {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+				isNulls[i] = true
 				continue
 			}
 			strs[i] = append(strs[i], string(strBuf))

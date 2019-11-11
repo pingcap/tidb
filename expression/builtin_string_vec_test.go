@@ -63,6 +63,11 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString, types.ETString},
 			geners:        []dataGenerator{&constStrGener{","}},
 		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString, types.ETString},
+			geners:        []dataGenerator{&defaultGener{1, types.ETString}},
+		},
 	},
 	ast.Convert: {},
 	ast.Substring: {
