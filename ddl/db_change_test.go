@@ -1087,8 +1087,7 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
-
+		c.Assert(err2.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
