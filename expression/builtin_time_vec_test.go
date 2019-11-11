@@ -87,7 +87,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
 	},
-	ast.MakeDate: {},
+	ast.MakeDate: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{0, 2200}, &rangeInt64Gener{0, 365}},
+		},
+	},
 	ast.MakeTime: {},
 	ast.PeriodAdd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
@@ -161,6 +165,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DayOfMonth: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
+	ast.DayName: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.UTCDate: {
 		{retEvalType: types.ETDatetime},
 	},
@@ -178,6 +187,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.YearWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
 	},
 	ast.WeekOfYear: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -189,6 +199,23 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
 			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
 		},
+	},
+	ast.StrToDate: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&timeStrGener{}, &constStrGener{"%y-%m-%d"}},
+		},
+	},
+	ast.GetFormat: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&formatGener{0.2}, &locationGener{0.2}},
+		},
+	},
+	ast.Sysdate: {
+		{retEvalType: types.ETDatetime},
 	},
 }
 
