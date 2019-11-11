@@ -31,7 +31,7 @@ const (
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
 	Invalid = "invalid"
-	// PendingVerify means the bind info need to verified.
+	// PendingVerify means the bind info needs to be verified.
 	PendingVerify = "pending verify"
 )
 
