@@ -427,7 +427,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			newTp.Flen = 0
 			tp = &newTp
 		}
-		groupKey, err = codec.EncodeColumnTo(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
+		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
 		if err != nil {
 			expression.PutColumn(buf)
 			return nil, err

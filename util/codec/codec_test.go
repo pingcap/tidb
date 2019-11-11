@@ -1334,7 +1334,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
 	}
 }
 
-func (s *testCodecSuite) TestEncodeColumnTo(c *C) {
+func (s *testCodecSuite) TestHashGroupKey(c *C) {
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
@@ -1354,7 +1354,7 @@ func (s *testCodecSuite) TestEncodeColumnTo(c *C) {
 		}
 		var err error
 		err = expression.VecEval(ctx, colExpr, input, colBuf)
-		if bufs, err = EncodeColumnTo(ctx.GetSessionVars().StmtCtx, 1024, colBuf, bufs, ft); err != nil {
+		if bufs, err = HashGroupKey(ctx.GetSessionVars().StmtCtx, 1024, colBuf, bufs, ft); err != nil {
 			c.Fatal(err)
 		}
 
