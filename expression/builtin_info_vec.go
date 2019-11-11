@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"sort"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -103,11 +105,42 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinCurrentRoleSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinCurrentUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	data := b.ctx.GetSessionVars()
+	if data == nil || data.ActiveRoles == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+
+	result.ReserveString(n)
+	if len(data.ActiveRoles) == 0 {
+		for i := 0; i < n; i++ {
+			result.AppendString("")
+		}
+	}
+
+	res := ""
+	sortedRes := make([]string, 0, 10)
+	for _, r := range data.ActiveRoles {
+		sortedRes = append(sortedRes, r.String())
+	}
+	sort.Strings(sortedRes)
+	for i, r := range sortedRes {
+		res += r
+		if i != len(data.ActiveRoles)-1 {
+			res += ","
+		}
+	}
+	for i := 0; i < n; i++ {
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinUserSig) vectorized() bool {
