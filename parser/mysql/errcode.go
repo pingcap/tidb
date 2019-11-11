@@ -972,6 +972,8 @@ const (
 	ErrIndexStateCantNone         = 8044
 	ErrInvalidRecordKey           = 8045
 	ErrColumnStateCantNone        = 8046
+	ErrUnsupportedValueForVar     = 8047
+	ErrUnsupportedIsolationLevel  = 8048
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
