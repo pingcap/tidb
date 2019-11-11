@@ -171,6 +171,19 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	_, err = tk.Exec(`CREATE TABLE t9 (
+		a INT NOT NULL,
+		b INT NOT NULL,
+		c INT NOT NULL
+	)
+	partition by range columns(a) (
+	partition p0 values less than (10),
+	partition p2 values less than (20),
+	partition p3 values less than (20)
+	);`)
+	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
+
+	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	tk.MustExec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
 	tk.MustExec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
@@ -533,6 +546,13 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p2 values less than (-1) );`)
 	tk.MustExec(`ALTER TABLE tt5 add partition ( partition p3 values less than (5-1) );`)
 
+	// Test add partition for the table partition by range columns.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime) partition by range columns (a) (partition p1 values less than ('2019-06-01'), partition p2 values less than ('2019-07-01'));")
+	sql := "alter table t add partition ( partition p3 values less than ('2019-07-01'));"
+	assertErrorCode(c, tk, sql, tmysql.ErrRangeNotIncreasing)
+	tk.MustExec("alter table t add partition ( partition p3 values less than ('2019-08-01'));")
+
 	// Add partition value's type should be the same with the column's type.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (
@@ -540,7 +560,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
                 partition by range columns (col) (
 		PARTITION p0 VALUES LESS THAN ('20190905'),
 		PARTITION p1 VALUES LESS THAN ('20190906'));`)
-	sql := "alter table t add partition (partition p2 values less than (20190907));"
+	sql = "alter table t add partition (partition p2 values less than (20190907));"
 	assertErrorCode(c, tk, sql, tmysql.ErrWrongTypeColumnValue)
 }
 

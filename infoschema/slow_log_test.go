@@ -38,6 +38,7 @@ func (s *testSuite) TestParseSlowLogFile(c *C) {
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
 # Succ: false
+# Prev_stmt: update t set i = 1;
 select * from t;`)
 	reader := bufio.NewReader(slowLog)
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -54,7 +55,7 @@ select * from t;`)
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,0,select * from t;"
+	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,0,update t set i = 1;,select * from t;"
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
