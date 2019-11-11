@@ -563,11 +563,44 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 }
 
 func (b *builtinNowWithArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	bufFsp, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufFsp)
+	if err = b.args[0].VecEvalInt(b.ctx, input, bufFsp); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(bufFsp)
+	times := result.Times()
+	fsps := bufFsp.Int64s()
+
+	for i := 0; i < n; i++ {
+		fsp := int8(0)
+		if !result.IsNull(i) {
+			fsp = int8(fsps[i])
+		}
+
+		t, isNull, err := evalNowWithFsp(b.ctx, fsp)
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+
+		if err != nil {
+			return err
+		}
+
+		times[i] = t
+	}
+	return nil
 }
 
 func (b *builtinSubDateStringRealSig) vectorized() bool {
