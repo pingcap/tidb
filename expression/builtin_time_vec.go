@@ -1119,6 +1119,8 @@ func (b *builtinDateFormatSig) vectorized() bool {
 	return true
 }
 
+// vecEvalString evals a builtinDateFormatSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETDatetime, n)
@@ -1127,9 +1129,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 
 	buf0, err := b.bufAllocator.get(types.ETString, n)
@@ -1144,9 +1144,13 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	result.ReserveString(n)
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if buf.IsNull(i) || buf0.IsNull(i) {
 			result.AppendNull()
 			continue
+		}
+		str, err := ds[i].DateFormat(buf0.GetString(i))
+		if err != nil {
+			return err
 		}
 		if ds[i].InvalidZero() {
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
@@ -1154,14 +1158,6 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			}
 			result.AppendNull()
 			continue
-		}
-		if buf0.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-		str, err := ds[i].DateFormat(buf0.GetString(i))
-		if err != nil {
-			return err
 		}
 		result.AppendString(str)
 	}
