@@ -91,7 +91,7 @@ type hashRowContainer struct {
 	memTracker *memory.Tracker
 
 	// records stores the chunks in memory.
-	records *chunk.ListInMemory
+	records *chunk.List
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *chunk.ListInDisk
 
@@ -117,7 +117,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	if estCount < maxChunkSize*estCountMinFactor {
 		estCount = 0
 	}
-	initList := chunk.NewListInMemory(hCtx.allTypes, maxChunkSize, maxChunkSize)
+	initList := chunk.NewList(hCtx.allTypes, maxChunkSize, maxChunkSize)
 	c := &hashRowContainer{
 		sc:   sCtx.GetSessionVars().StmtCtx,
 		hCtx: hCtx,
@@ -202,10 +202,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 		}
 	} else {
 		chkIdx = uint32(c.records.NumChunks())
-		err := c.records.Add(chk)
-		if err != nil {
-			return err
-		}
+		c.records.Add(chk)
 		if atomic.LoadUint32(&c.exceeded) != 0 {
 			err := c.spillToDisk()
 			if err != nil {
@@ -272,7 +269,7 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return &spillDiskAction{c: c}
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.ListInMemory. If
+// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, spillDiskAction.Action is
 // triggered.
 type spillDiskAction struct {
