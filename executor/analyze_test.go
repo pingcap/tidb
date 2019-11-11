@@ -249,7 +249,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 			vals[i] = append(vals[i], s)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
+	c.Assert(fmt.Sprintln(vals), Equals, "[[1 2 16 19 20 22 23 24 25 28 29 31 34 39 42 43 44 45 57 59] [1 2 16 19 20 22 23 24 25 28 29 31 34 39 42 43 44 45 57 59]]\n")
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
