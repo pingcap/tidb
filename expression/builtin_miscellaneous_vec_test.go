@@ -53,6 +53,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.AnyValue: {
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETTimestamp}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
@@ -61,24 +62,25 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.NameConst: {
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString, types.ETReal}},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}},
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousCasesEvalOneVec(c *C) {
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousEvalOneVec(c *C) {
 	testVectorizedEvalOneVec(c, vecBuiltinMiscellaneousCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousCasesFunc(c *C) {
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinMiscellaneousCases)
 }
 
-func BenchmarkVectorizedBuiltinMiscellaneousCasesEvalOneVec(b *testing.B) {
+func BenchmarkVectorizedBuiltinMiscellaneousEvalOneVec(b *testing.B) {
 	benchmarkVectorizedEvalOneVec(b, vecBuiltinMiscellaneousCases)
 }
 
-func BenchmarkVectorizedBuiltinMiscellaneousCasesFunc(b *testing.B) {
+func BenchmarkVectorizedBuiltinMiscellaneousFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinMiscellaneousCases)
 }
