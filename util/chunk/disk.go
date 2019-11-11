@@ -83,7 +83,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	return l
 }
 
-// GetDiskTracker returns the memory tracker of this List.
+// GetDiskTracker returns the memory tracker of this ListInMemory.
 func (l *ListInDisk) GetDiskTracker() *disk.Tracker {
 	return l.diskTracker
 }
@@ -92,7 +92,7 @@ func (l *ListInDisk) GetDiskTracker() *disk.Tracker {
 // is not empty and not used any more and has the same field types.
 func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
-		return errors.New("chunk appended to List should have at least 1 row")
+		return errors.New("chunk appended to ListInMemory should have at least 1 row")
 	}
 	if l.disk == nil {
 		l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
