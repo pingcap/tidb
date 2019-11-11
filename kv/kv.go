@@ -175,6 +175,8 @@ type Transaction interface {
 	// SetAssertion sets an assertion for an operation on the key.
 	SetAssertion(key Key, assertion AssertionType)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	// Do not use len(value) == 0 or value == nil to represent non-exist.
+	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
 }
