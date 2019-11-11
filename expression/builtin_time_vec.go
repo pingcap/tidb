@@ -1024,13 +1024,12 @@ func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	defer b.bufAllocator.put(buf2)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf2); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(buf1)
-	result.MergeNulls(buf2)
+	result.MergeNulls(buf1, buf2)
 
 	times := result.Times()
 	years := buf1.Int64s()
