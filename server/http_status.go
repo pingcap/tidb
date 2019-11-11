@@ -269,7 +269,6 @@ func (s *Server) startHTTPServer() {
 }
 
 func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	// Create the status port listener.
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
@@ -282,10 +281,8 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 	grpcL := m.Match(cmux.Any())
 
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	//s.grpcServer = rpcserver.CreateRPCServer()
 	s.grpcServer = mocktikv.CreateRPCServer()
 
-	// Use the muxed listeners for your servers.
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)
 		logutil.BgLogger().Error("grpc server error", zap.Error(err))

@@ -243,7 +243,7 @@ const (
 func (t StoreType) Name() string {
 	if t == TiFlash {
 		return "tiflash"
-	} else if t == TiFlash {
+	} else if t == TiDBMem {
 		return "tidbs_mem"
 	}
 	return "tikv"

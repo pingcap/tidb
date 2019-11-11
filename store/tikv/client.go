@@ -287,7 +287,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	// req.GetRegionId() == 0 means its a mem table scan.
+	// req.GetRegionId() == 0 means its a mpp request, mpp not support stream now.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.GetRegionId() != 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)

@@ -297,10 +297,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 }
 
 func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error) {
-	cmdType := tikvrpc.CmdCop
-	if req.Streaming {
-		cmdType = tikvrpc.CmdCopStream
-	}
 	servers, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return nil, err
@@ -311,7 +307,7 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
 			respChan:  make(chan *copResponse, 2),
-			cmdType:   cmdType,
+			cmdType:   tikvrpc.CmdCop,
 			storeType: req.StoreType,
 			storeAddr: addr,
 		})
