@@ -1617,7 +1617,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat.GenWithStackByArgs(buf), err) {
 		return err
 	}
 
