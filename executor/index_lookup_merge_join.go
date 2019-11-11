@@ -425,8 +425,14 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if imw.outerMergeCtx.needOuterSort {
 		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
 			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
-			rowI, _ := task.outerResult.GetRow(idxI)
-			rowJ, _ := task.outerResult.GetRow(idxJ)
+			rowI, err := task.outerResult.GetRow(idxI)
+			if err != nil {
+				return false
+			}
+			rowJ, err := task.outerResult.GetRow(idxJ)
+			if err != nil {
+				return false
+			}
 			for id, joinKey := range imw.outerMergeCtx.joinKeys {
 				cmp, _, err := imw.outerMergeCtx.compareFuncs[id](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
@@ -503,7 +509,10 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	noneInnerRowsRemain := task.innerResult.NumRows() == 0
 
 	for _, outerIdx := range task.outerOrderIdx {
-		outerRow, _ := task.outerResult.GetRow(outerIdx)
+		outerRow, err := task.outerResult.GetRow(outerIdx)
+		if err != nil {
+			return err
+		}
 		hasMatch, hasNull, cmpResult := false, false, initCmpResult
 		// If it has iterated out all inner rows and the inner rows with same key is empty,
 		// that means the outer row needn't match any inner rows.
@@ -602,7 +611,10 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 }
 
 func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, rowIdx chunk.RowPtr) (*indexJoinLookUpContent, error) {
-	outerRow, _ := task.outerResult.GetRow(rowIdx)
+	outerRow, err := task.outerResult.GetRow(rowIdx)
+	if err != nil {
+		return nil, err
+	}
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(imw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
@@ -633,7 +645,10 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		dLookupKey = append(dLookupKey, innerValue)
 	}
-	row, _ := task.outerResult.GetRow(rowIdx)
+	row, err := task.outerResult.GetRow(rowIdx)
+	if err != nil {
+		return nil, err
+	}
 	return &indexJoinLookUpContent{keys: dLookupKey, row: row}, nil
 }
 

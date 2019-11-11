@@ -248,7 +248,10 @@ func (it *iterator4RowPtr) Begin() Row {
 		return it.End()
 	}
 	it.cursor = 1
-	row, _ := it.li.GetRow(it.ptrs[0])
+	row, err := it.li.GetRow(it.ptrs[0])
+	if err != nil {
+		return row
+	}
 	return row
 }
 
@@ -258,7 +261,10 @@ func (it *iterator4RowPtr) Next() Row {
 		it.cursor = len + 1
 		return it.End()
 	}
-	row, _ := it.li.GetRow(it.ptrs[it.cursor])
+	row, err := it.li.GetRow(it.ptrs[it.cursor])
+	if err != nil {
+		return row
+	}
 	it.cursor++
 	return row
 }
@@ -268,7 +274,10 @@ func (it *iterator4RowPtr) Current() Row {
 	if it.cursor == 0 || it.cursor > it.Len() {
 		return it.End()
 	}
-	row, _ := it.li.GetRow(it.ptrs[it.cursor-1])
+	row, err := it.li.GetRow(it.ptrs[it.cursor-1])
+	if err != nil {
+		return row
+	}
 	return row
 }
 

@@ -87,7 +87,10 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		rowPtr := e.rowPtrs[e.Idx]
-		row, _ := e.rowChunks.GetRow(rowPtr)
+		row, err := e.rowChunks.GetRow(rowPtr)
+		if err != nil {
+			return err
+		}
 		req.AppendRow(row)
 		e.Idx++
 	}
@@ -162,8 +165,14 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	rowI, _ := e.rowChunks.GetRow(e.rowPtrs[i])
-	rowJ, _ := e.rowChunks.GetRow(e.rowPtrs[j])
+	rowI, err := e.rowChunks.GetRow(e.rowPtrs[i])
+	if err != nil {
+		return false
+	}
+	rowJ, err := e.rowChunks.GetRow(e.rowPtrs[j])
+	if err != nil {
+		return false
+	}
 	return e.lessRow(rowI, rowJ)
 }
 
@@ -185,8 +194,14 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	rowI, _ := h.rowChunks.GetRow(h.rowPtrs[i])
-	rowJ, _ := h.rowChunks.GetRow(h.rowPtrs[j])
+	rowI, err := h.rowChunks.GetRow(h.rowPtrs[i])
+	if err != nil {
+		return false
+	}
+	rowJ, err := h.rowChunks.GetRow(h.rowPtrs[j])
+	if err != nil {
+		return false
+	}
 	return h.greaterRow(rowI, rowJ)
 }
 
@@ -251,7 +266,10 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		row, _ := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
+		row, err := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
+		if err != nil {
+			return err
+		}
 		req.AppendRow(row)
 		e.Idx++
 	}
@@ -321,7 +339,10 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 	for i := 0; i < childRowChk.NumRows(); i++ {
 		heapMaxPtr := e.rowPtrs[0]
 		var heapMax, next chunk.Row
-		heapMax, _ = e.rowChunks.GetRow(heapMaxPtr)
+		heapMax, err := e.rowChunks.GetRow(heapMaxPtr)
+		if err != nil {
+			return err
+		}
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
@@ -340,7 +361,10 @@ func (e *TopNExec) doCompaction() error {
 	newRowChunks := chunk.NewListInMemory(retTypes(e), e.initCap, e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
-		row, _ := e.rowChunks.GetRow(rowPtr)
+		row, err := e.rowChunks.GetRow(rowPtr)
+		if err != nil {
+			return err
+		}
 		newRowPtr := newRowChunks.AppendRow(row)
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
