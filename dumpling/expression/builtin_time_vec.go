@@ -128,11 +128,52 @@ func (b *builtinDateSig) vectorized() bool {
 }
 
 func (b *builtinFromUnixTime2ArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err = b.args[1].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	ds := buf1.Decimals()
+	fsp := int8(b.tp.Decimal)
+	for i := 0; i < n; i++ {
+		if buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		t, isNull, err := evalFromUnixTime(b.ctx, fsp, &ds[i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		res, err := t.DateFormat(buf2.GetString(i))
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinSysDateWithoutFspSig) vectorized() bool {
