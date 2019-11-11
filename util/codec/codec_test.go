@@ -1354,6 +1354,9 @@ func (s *testCodecSuite) TestHashGroupKey(c *C) {
 		}
 		var err error
 		err = expression.VecEval(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
 		if bufs, err = HashGroupKey(ctx.GetSessionVars().StmtCtx, 1024, colBuf, bufs, ft); err != nil {
 			c.Fatal(err)
 		}
