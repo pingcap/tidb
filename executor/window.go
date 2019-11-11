@@ -39,7 +39,6 @@ type WindowExec struct {
 	resultChunks []*chunk.Chunk
 	// remainingRowsInChunk indicates how many rows the resultChunks[i] is not prepared.
 	remainingRowsInChunk []int
-	groupRows            []chunk.Row
 
 	numWindowFuncs int
 	processor      windowProcessor
@@ -74,38 +73,27 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
-	inputChk := e.inputIter.GetChunk()
-	numRows := inputChk.NumRows()
-	begin, end := e.groupChecker.getOneGroup()
-	e.groupRows = e.groupRows[:0]
-	for i := begin; i < end; i++ {
-		e.groupRows = append(e.groupRows, inputChk.GetRow(i))
-	}
-
-	if end == numRows {
+	var groupRows []chunk.Row
+	for {
 		eof, err := e.fetchChildIfNecessary(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if eof {
 			e.executed = true
-			return e.consumeGroupRows(e.groupRows)
+			return e.consumeGroupRows(groupRows)
 		}
-
-		flag, err := e.groupChecker.splitChunk(inputChk)
-		if err != nil {
-			return err
-		}
-
-		if flag {
-			begin, end = e.groupChecker.getOneGroup()
-			e.groupRows = e.groupRows[:0]
-			for i := begin; i < end; i++ {
-				e.groupRows = append(e.groupRows, inputChk.GetRow(i))
+		for inputRow := e.inputIter.Current(); inputRow != e.inputIter.End(); inputRow = e.inputIter.Next() {
+			meetNewGroup, err := e.groupChecker.meetNewGroup(inputRow)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			if meetNewGroup {
+				return e.consumeGroupRows(groupRows)
+			}
+			groupRows = append(groupRows, inputRow)
 		}
 	}
-	return e.consumeGroupRows(e.groupRows)
 }
 
 func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
@@ -138,6 +126,10 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 }
 
 func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err error) {
+	if e.inputIter != nil && e.inputIter.Current() != e.inputIter.End() {
+		return false, nil
+	}
+
 	childResult := newFirstChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {

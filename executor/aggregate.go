@@ -762,7 +762,7 @@ type StreamAggExec struct {
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
 	defaultVal         *chunk.Chunk
-	groupChecker       *groupChecker
+	groupChecker       *vecGroupChecker
 	inputIter          *chunk.Iterator4Chunk
 	inputRow           chunk.Row
 	aggFuncs           []aggfuncs.AggFunc
@@ -919,6 +919,64 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 }
 
 type groupChecker struct {
+	StmtCtx      *stmtctx.StatementContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
+}
+
+func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
+	return &groupChecker{
+		StmtCtx:      stmtCtx,
+		GroupByItems: items,
+	}
+}
+
+// meetNewGroup returns a value that represents if the new group is different from last group.
+// TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
+func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
+	if len(e.GroupByItems) == 0 {
+		return false, nil
+	}
+	e.tmpGroupKey = e.tmpGroupKey[:0]
+	matched, firstGroup := true, false
+	if len(e.curGroupKey) == 0 {
+		matched, firstGroup = false, true
+	}
+	for i, item := range e.GroupByItems {
+		v, err := item.Eval(row)
+		if err != nil {
+			return false, err
+		}
+		if matched {
+			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
+			if err != nil {
+				return false, err
+			}
+			matched = c == 0
+		}
+		e.tmpGroupKey = append(e.tmpGroupKey, v)
+	}
+	if matched {
+		return false, nil
+	}
+	e.curGroupKey = e.curGroupKey[:0]
+	for _, v := range e.tmpGroupKey {
+		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
+	}
+	return !firstGroup, nil
+}
+
+func (e *groupChecker) reset() {
+	if e.curGroupKey != nil {
+		e.curGroupKey = e.curGroupKey[:0]
+	}
+	if e.tmpGroupKey != nil {
+		e.tmpGroupKey = e.tmpGroupKey[:0]
+	}
+}
+
+type vecGroupChecker struct {
 	ctx                  sessionctx.Context
 	StmtCtx              *stmtctx.StatementContext
 	GroupByItems         []expression.Expression
@@ -930,9 +988,9 @@ type groupChecker struct {
 	sameGroup            []bool
 }
 
-func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
+func newVecGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *vecGroupChecker {
 	sameGroup := make([]bool, 1024)
-	return &groupChecker{
+	return &vecGroupChecker{
 		ctx:          ctx,
 		StmtCtx:      stmtCtx,
 		GroupByItems: items,
@@ -943,7 +1001,7 @@ func newGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, 
 
 // splitChunk divide the chunk into more groups which the row in the same group have the same groupKey
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *groupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
+func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	numRows := chk.NumRows()
 	e.curGroupID = 0
 	e.groupRowsIndex = e.groupRowsIndex[:0]
@@ -1133,7 +1191,7 @@ func (e *groupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	return flag, nil
 }
 
-func (e *groupChecker) getOneGroup() (begin, end int) {
+func (e *vecGroupChecker) getOneGroup() (begin, end int) {
 	if e.curGroupID == 0 {
 		begin = 0
 	} else {
@@ -1144,7 +1202,7 @@ func (e *groupChecker) getOneGroup() (begin, end int) {
 	return begin, end
 }
 
-func (e *groupChecker) reset() {
+func (e *vecGroupChecker) reset() {
 	if e.groupRowsIndex != nil {
 		e.groupRowsIndex = e.groupRowsIndex[:0]
 	}
