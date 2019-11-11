@@ -151,7 +151,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	var wg sync.WaitGroup
 	cnt := 4
 	wg.Add(cnt)
-	num := 100
+	num := 20
 
 	for i := 0; i < cnt; i++ {
 		go func() {
@@ -2018,7 +2018,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	c.Assert(count, Equals, 100)
 	// FIXME: revert this result to new group value after distsql can handle initChunkSize.
-	c.Assert(numChunks, Equals, 10)
+	c.Assert(numChunks, Equals, 1)
 	rs.Close()
 }
 
@@ -2443,6 +2443,8 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 		}
 		wg.Done()
 	}()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC", "return"), IsNil)
 	go func() {
 		for {
 			tk.MustExec("update kvvars set b = b + 1 where a = 1")
@@ -2453,6 +2455,7 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 		wg.Done()
 	}()
 	wg.Wait()
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC"), IsNil)
 	for {
 		tk2.MustQuery("select * from kvvars")
 		if atomic.LoadInt32(backOffWeightVal) != 0 {
