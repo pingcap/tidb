@@ -901,7 +901,7 @@ func (b *builtinNowWithoutArgSig) vectorized() bool {
 
 func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	Now, isNull, err := evalNowWithFsp(b.ctx, int8(0))
+	nowTs, isNull, err := evalNowWithFsp(b.ctx, int8(0))
 	if err != nil {
 		return err
 	}
@@ -912,7 +912,7 @@ func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	result.ResizeTime(n, false)
 	times := result.Times()
 	for i := 0; i < n; i++ {
-		times[i] = Now
+		times[i] = nowTs
 	}
 	return nil
 }
