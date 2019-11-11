@@ -586,7 +586,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerRows = e.innerRows[:0]
 	e.outerChunk = newFirstChunk(e.outerExec)
 	e.innerChunk = newFirstChunk(e.innerExec)
-	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
+	e.innerList = chunk.NewListInMemory(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)

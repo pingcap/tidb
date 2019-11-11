@@ -52,8 +52,8 @@ type RowPtr struct {
 
 var chunkListLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInMemory")
 
-// NewList creates a new ListInMemory with field types, init chunk size and max chunk size.
-func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *ListInMemory {
+// NewListInMemory creates a new ListInMemory with field types, init chunk size and max chunk size.
+func NewListInMemory(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *ListInMemory {
 	l := &ListInMemory{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,

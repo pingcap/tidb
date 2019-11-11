@@ -604,7 +604,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return err
 	}
 	defer terror.Call(innerExec.Close)
-	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewListInMemory(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(buildSideResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {

@@ -117,7 +117,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	if estCount < maxChunkSize*estCountMinFactor {
 		estCount = 0
 	}
-	initList := chunk.NewList(hCtx.allTypes, maxChunkSize, maxChunkSize)
+	initList := chunk.NewListInMemory(hCtx.allTypes, maxChunkSize, maxChunkSize)
 	c := &hashRowContainer{
 		sc:   sCtx.GetSessionVars().StmtCtx,
 		hCtx: hCtx,

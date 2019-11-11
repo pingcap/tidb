@@ -49,8 +49,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 		expected = append(expected, int64(i))
 	}
 	var rows []Row
-	li := NewList(fields, 1, 2)
-	li2 := NewList(fields, 8, 16)
+	li := NewListInMemory(fields, 1, 2)
+	li2 := NewListInMemory(fields, 8, 16)
 	var ptrs []RowPtr
 	var ptrs2 []RowPtr
 	for i := 0; i < n; i++ {

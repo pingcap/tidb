@@ -323,7 +323,7 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
-		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
+		outerResult: chunk.NewListInMemory(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
