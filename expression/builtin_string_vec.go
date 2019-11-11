@@ -959,7 +959,7 @@ func (b *builtinRpadBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			repeatCount := tailLen/padLength + 1
 			str = str + strings.Repeat(padStr, repeatCount)
 		}
-		result.AppendString(str)
+		result.AppendString(str[:targetLength])
 	}
 	return nil
 }
