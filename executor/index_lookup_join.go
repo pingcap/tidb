@@ -94,10 +94,10 @@ type innerCtx struct {
 }
 
 type lookUpJoinTask struct {
-	outerResult *chunk.ListInMemory
+	outerResult *chunk.List
 	outerMatch  [][]bool
 
-	innerResult       *chunk.ListInMemory
+	innerResult       *chunk.List
 	encodedLookUpKeys []*chunk.Chunk
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
@@ -392,10 +392,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			break
 		}
 
-		err = task.outerResult.Add(chk)
-		if err != nil {
-			return nil, err
-		}
+		task.outerResult.Add(chk)
 	}
 	if task.outerResult.Len() == 0 {
 		return nil, nil
@@ -604,7 +601,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return err
 	}
 	defer terror.Call(innerExec.Close)
-	innerResult := chunk.NewListInMemory(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(buildSideResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -620,10 +617,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		if iw.executorChk.NumRows() == 0 {
 			break
 		}
-		err = innerResult.Add(iw.executorChk)
-		if err != nil {
-			return err
-		}
+		innerResult.Add(iw.executorChk)
 		iw.executorChk = newFirstChunk(innerExec)
 	}
 	task.innerResult = innerResult
