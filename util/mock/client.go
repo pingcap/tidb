@@ -24,9 +24,15 @@ import (
 type Client struct {
 	kv.RequestTypeSupportedChecker
 	MockResponse kv.Response
+	Req *kv.Request
 }
 
 // Send implement kv.Client interface.
 func (c *Client) Send(ctx context.Context, req *kv.Request, kv *kv.Variables) kv.Response {
+	c.Req = req
 	return c.MockResponse
+}
+
+func (c *Client) IsRequestTypeSupported(reqType, subType int64) bool {
+	return false
 }

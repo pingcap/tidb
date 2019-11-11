@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	mock "github.com/pingcap/tidb/util/mock"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +83,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	c.Assert(result.label, Equals, "dag")
 	c.Assert(result.sqlType, Equals, "general")
 	c.Assert(result.rowLen, Equals, len(colTypes))
+	c.Assert(s.sctx.GetClient().(*mock.Client).Req.MaxExecutionTime, Equals, uint64(42))
 
 	resp, ok := result.resp.(*mockResponse)
 	c.Assert(ok, IsTrue)

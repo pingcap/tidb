@@ -252,6 +252,13 @@ func (c *Context) PrepareTxnFuture(ctx context.Context) {
 func (c *Context) Close() {
 }
 
+// ShowProcess implements the Session interface.
+func (s *Context ) ShowProcess() *util.ProcessInfo {
+	return &util.ProcessInfo{
+		MaxExecutionTime: 42,
+	}
+}
+
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
