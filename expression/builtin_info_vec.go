@@ -45,11 +45,22 @@ func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinConnectionIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
+	}
+	connectionID := int64(data.ConnectionID)
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = connectionID
+	}
+	return nil
 }
 
 func (b *builtinTiDBVersionSig) vectorized() bool {
