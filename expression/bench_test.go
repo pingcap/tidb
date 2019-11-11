@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -225,7 +226,12 @@ func (g *defaultGener) gen() interface{} {
 		return rand.Float64()
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
-		f := rand.Float64() * 100000
+		var f float64
+		if rand.Float64() < 0.5 {
+			f = rand.Float64() * 100000
+		} else {
+			f = -rand.Float64() * 100000
+		}
 		if err := d.FromFloat64(f); err != nil {
 			panic(err)
 		}
@@ -839,6 +845,10 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
+			if funcName == ast.AesEncrypt {
+				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+				c.Assert(err, IsNil)
+			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -983,6 +993,40 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	}
 }
 
+// testVectorizedBuiltinFuncForRand is used to verify that the vectorized
+// expression is evaluated correctly
+func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
+	for funcName, testCases := range vecExprCases {
+		c.Assert(strings.EqualFold("rand", funcName), Equals, true)
+
+		for _, testCase := range testCases {
+			c.Assert(len(testCase.childrenTypes), Equals, 0)
+
+			ctx := mock.NewContext()
+			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+			tmp := strings.Split(baseFuncName, ".")
+			baseFuncName = tmp[len(tmp)-1]
+			// do not forget to implement the vectorized method.
+			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
+			switch testCase.retEvalType {
+			case types.ETReal:
+				err := baseFunc.vecEvalReal(input, output)
+				c.Assert(err, IsNil)
+				// do not forget to call ResizeXXX/ReserveXXX
+				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				// check result
+				res := output.Float64s()
+				for _, v := range res {
+					c.Assert((0 <= v) && (v < 1), Equals, true)
+				}
+			default:
+				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+			}
+		}
+	}
+}
+
 // benchmarkVectorizedBuiltinFunc is used to get the effect of
 // using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
@@ -995,6 +1039,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
+			if funcName == ast.AesEncrypt {
+				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+				if err != nil {
+					panic(err)
+				}
+			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
