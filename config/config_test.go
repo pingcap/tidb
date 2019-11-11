@@ -215,7 +215,7 @@ max-sql-length=1024
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.EnableBatchDML, Equals, true)
-	c.Assert(conf.RepairTableList, DeepEquals, []string{})
+	c.Assert(conf.RepairTableList, DeepEquals, []string{nil})
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

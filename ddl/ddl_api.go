@@ -3983,6 +3983,20 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 			return ErrRepairTableFail.GenWithStackByArgs("some old index id has lost")
 		}
 	}
+	// If any old columnInfo has lost, that means the old column id lost too, repair failed.
+	for i, new := range newTableInfo.Columns {
+		found := false
+		for _, old := range oldTableInfo.Columns {
+			if new.Name.L == old.Name.L {
+				newTableInfo.Columns[i].ID = old.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrRepairTableFail.GenWithStackByArgs("some old column id has lost")
+		}
+	}
 
 	newTableInfo.State = model.StatePublic
 	err = checkTableInfoValid(newTableInfo)
