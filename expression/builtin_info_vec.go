@@ -123,6 +123,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		for i := 0; i < n; i++ {
 			result.AppendString("")
 		}
+		return nil
 	}
 
 	res := ""
