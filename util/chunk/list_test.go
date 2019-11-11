@@ -32,7 +32,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 	}
-	l := NewListInMemory(fields, 2, 2)
+	l := NewList(fields, 2, 2)
 	srcChunk := NewChunkWithCapacity(fields, 32)
 	srcChunk.AppendInt64(0, 1)
 	srcRow := srcChunk.GetRow(0)
@@ -104,7 +104,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	srcChk.AppendTime(3, timeObj)
 	srcChk.AppendDuration(4, durationObj)
 
-	list := NewListInMemory(fieldTypes, maxChunkSize, maxChunkSize*2)
+	list := NewList(fieldTypes, maxChunkSize, maxChunkSize*2)
 	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
 
 	list.AppendRow(srcChk.GetRow(0))
@@ -133,8 +133,8 @@ func (s *testChunkSuite) TestListPrePreAlloc4RowAndInsert(c *check.C) {
 		srcChk.AppendString(3, strings.Repeat(strconv.FormatInt(i, 10), int(i)))
 	}
 
-	srcList := NewListInMemory(fieldTypes, 3, 3)
-	destList := NewListInMemory(fieldTypes, 5, 5)
+	srcList := NewList(fieldTypes, 3, 3)
+	destList := NewList(fieldTypes, 5, 5)
 	destRowPtr := make([]RowPtr, srcChk.NumRows())
 	for i := 0; i < srcChk.NumRows(); i++ {
 		srcList.AppendRow(srcChk.GetRow(i))
@@ -176,7 +176,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	row := chk.GetRow(0)
 
 	initCap := 50
-	list := NewListInMemory(fieldTypes, 2, 8)
+	list := NewList(fieldTypes, 2, 8)
 	for i := 0; i < initCap; i++ {
 		list.AppendRow(row)
 	}
@@ -194,7 +194,7 @@ func BenchmarkPreAllocList(b *testing.B) {
 	row := chk.GetRow(0)
 
 	b.ResetTimer()
-	list := NewListInMemory(fieldTypes, 1024, 1024)
+	list := NewList(fieldTypes, 1024, 1024)
 	for i := 0; i < b.N; i++ {
 		list.Reset()
 		// 32768 indicates the number of int64 rows to fill 256KB L2 cache.
@@ -225,7 +225,7 @@ func BenchmarkListAdd(b *testing.B) {
 	numChk, numRow := 1, 2
 	chks, fields := initChunks(numChk, numRow)
 	chk := chks[0]
-	l := NewListInMemory(fields, numRow, numRow)
+	l := NewList(fields, numRow, numRow)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -236,7 +236,7 @@ func BenchmarkListAdd(b *testing.B) {
 func BenchmarkListGetRow(b *testing.B) {
 	numChk, numRow := 10000, 2
 	chks, fields := initChunks(numChk, numRow)
-	l := NewListInMemory(fields, numRow, numRow)
+	l := NewList(fields, numRow, numRow)
 	for _, chk := range chks {
 		l.Add(chk)
 	}
