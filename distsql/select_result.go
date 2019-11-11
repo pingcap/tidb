@@ -50,7 +50,6 @@ type SelectResult interface {
 	Close() error
 }
 
-
 type selectResult struct {
 	label string
 	resp  kv.Response
