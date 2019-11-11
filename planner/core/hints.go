@@ -186,6 +186,8 @@ func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
 func GenHintsFromPhysicalPlan(p Plan) string {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
+	case *Explain:
+		return GenHintsFromPhysicalPlan(pp.TargetPlan)
 	case *Update:
 		hints = genHintsFromPhysicalPlan(pp.SelectPlan, typeUpdate)
 	case *Delete:

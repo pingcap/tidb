@@ -717,7 +717,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	return ds.TblColHists.GetAvgRowSize(scanCols, true)
 }
 
-func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
+func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
 	copy(indexCols, is.IdxCols)
 	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
@@ -1026,14 +1026,19 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.ranges,
 		AccessCondition: path.accessConds,
 		filterCondition: path.tableFilters,
+		StoreType:       path.storeType,
 	}.Init(ds.ctx, ds.blockOffset)
 	if ds.preferStoreType&preferTiFlash != 0 {
 		ts.StoreType = kv.TiFlash
+	}
+	if ds.preferStoreType&preferTiKV != 0 {
+		ts.StoreType = kv.TiKV
+	}
+	if ts.StoreType == kv.TiFlash {
+		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
+		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-		ts.Ranges = ranger.FullIntRange(false)
-	} else {
-		ts.StoreType = kv.TiKV
 	}
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
@@ -1114,7 +1119,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.countAfterAccess
-	is.initSchema(ds.id, idx, path.fullIdxCols, !isSingleScan)
+	is.initSchema(idx, path.fullIdxCols, !isSingleScan)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.

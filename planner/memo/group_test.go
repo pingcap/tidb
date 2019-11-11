@@ -161,3 +161,17 @@ func (s *testMemoSuite) TestEngineTypeSet(c *C) {
 	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiKV), IsTrue)
 	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiFlash), IsTrue)
 }
+
+func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
+	oldExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	g := NewGroupWithSchema(oldExpr, nil)
+	newExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	g.Insert(newExpr)
+	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
+	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, oldExpr)
+	g.Delete(oldExpr)
+	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
+	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, newExpr)
+	g.Delete(newExpr)
+	c.Assert(g.GetFirstElem(OperandLimit), IsNil)
+}

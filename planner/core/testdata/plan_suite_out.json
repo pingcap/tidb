@@ -375,7 +375,7 @@
       },
       {
         "SQL": "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
-        "Best": "MergeRightOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#1,Column#13)->TableReader(Table(t))}(Column#1,Column#25)"
+        "Best": "RightHashJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#1,Column#13)->TableReader(Table(t))}(Column#1,Column#25)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",

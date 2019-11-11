@@ -290,7 +290,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
-	ret := PushDownNot(ctx, notFunc, false)
+	ret := PushDownNot(ctx, notFunc)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 }

@@ -21,13 +21,13 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -254,10 +255,21 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if err != nil {
 			return false, nil, err
 		}
+		if canSkipSchemaCheckerDDL(diff.Type) {
+			continue
+		}
 		tblIDs = append(tblIDs, ids...)
 	}
 	builder.Build()
 	return true, tblIDs, nil
+}
+
+func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+		return true
+	}
+	return false
 }
 
 // InfoSchema gets information schema from domain.
@@ -1101,21 +1113,19 @@ func recoverInDomain(funcName string, quit bool) {
 	}
 }
 
-// Domain error codes.
-const (
-	codeInfoSchemaExpired terror.ErrCode = 1
-	codeInfoSchemaChanged terror.ErrCode = 2
-)
-
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
+	ErrInfoSchemaExpired = terror.ClassDomain.New(mysql.ErrInfoSchemaExpired, mysql.MySQLErrName[mysql.ErrInfoSchemaExpired])
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged,
-		"Information schema is changed. "+kv.TxnRetryableMark)
+	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
+		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
 )
 
 func init() {
 	// Map error codes to mysql error codes.
-	terror.ErrClassToMySQLCodes[terror.ClassDomain] = make(map[terror.ErrCode]uint16)
+	domainMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInfoSchemaExpired: mysql.ErrInfoSchemaExpired,
+		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
 }

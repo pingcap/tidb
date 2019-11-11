@@ -35,17 +35,17 @@ const (
 	// estCountMaxFactor defines the factor of estCountMax with maxChunkSize.
 	// estCountMax is maxChunkSize * estCountMaxFactor, the maximum threshold of estCount.
 	// if estCount is larger than estCountMax, set estCount to estCountMax.
-	// Set this threshold to prevent innerEstCount being too large and causing a performance and memory regression.
+	// Set this threshold to prevent buildSideEstCount being too large and causing a performance and memory regression.
 	estCountMaxFactor = 10 * 1024
 
 	// estCountMinFactor defines the factor of estCountMin with maxChunkSize.
 	// estCountMin is maxChunkSize * estCountMinFactor, the minimum threshold of estCount.
 	// If estCount is smaller than estCountMin, set estCount to 0.
-	// Set this threshold to prevent innerEstCount being too small and causing a performance regression.
+	// Set this threshold to prevent buildSideEstCount being too small and causing a performance regression.
 	estCountMinFactor = 8
 
-	// estCountDivisor defines the divisor of innerEstCount.
-	// Set this divisor to prevent innerEstCount being too large and causing a performance regression.
+	// estCountDivisor defines the divisor of buildSideEstCount.
+	// Set this divisor to prevent buildSideEstCount being too large and causing a performance regression.
 	estCountDivisor = 8
 )
 
@@ -91,7 +91,7 @@ type hashRowContainer struct {
 	memTracker *memory.Tracker
 
 	// records stores the chunks in memory.
-	records *chunk.List
+	records *chunk.ListInMemory
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *chunk.ListInDisk
 
@@ -117,7 +117,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	if estCount < maxChunkSize*estCountMinFactor {
 		estCount = 0
 	}
-	initList := chunk.NewList(hCtx.allTypes, maxChunkSize, maxChunkSize)
+	initList := chunk.NewListInMemory(hCtx.allTypes, maxChunkSize, maxChunkSize)
 	c := &hashRowContainer{
 		sc:   sCtx.GetSessionVars().StmtCtx,
 		hCtx: hCtx,
@@ -133,12 +133,8 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
-	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
-	if err != nil || hasNull {
-		return
-	}
-	innerPtrs := c.hashTable.Get(key)
+func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
+	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
 	}
@@ -206,7 +202,10 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 		}
 	} else {
 		chkIdx = uint32(c.records.NumChunks())
-		c.records.Add(chk)
+		err := c.records.Add(chk)
+		if err != nil {
+			return err
+		}
 		if atomic.LoadUint32(&c.exceeded) != 0 {
 			err := c.spillToDisk()
 			if err != nil {
@@ -273,7 +272,7 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return &spillDiskAction{c: c}
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// spillDiskAction implements memory.ActionOnExceed for chunk.ListInMemory. If
 // the memory quota of a query is exceeded, spillDiskAction.Action is
 // triggered.
 type spillDiskAction struct {
