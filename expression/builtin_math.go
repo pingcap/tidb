@@ -818,8 +818,10 @@ func (c *logFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 	if argsLen == 1 {
 		sig = &builtinLog1ArgSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Log1Arg)
 	} else {
 		sig = &builtinLog2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Log2Args)
 	}
 
 	return sig, nil
@@ -888,6 +890,7 @@ func (c *log2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinLog2Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Log2)
 	return sig, nil
 }
 
@@ -924,6 +927,7 @@ func (c *log10FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinLog10Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Log10)
 	return sig, nil
 }
 

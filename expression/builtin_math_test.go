@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"math/rand"
 	"runtime"
@@ -271,7 +272,13 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Log].getFunction(s.ctx, []Expression{Zero})
+	f, err := funcs[ast.Log].getFunction(s.ctx, []Expression{Zero})
+	switch f.(type) {
+	case *builtinLog1ArgSig:
+		c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Log1Arg)
+	case *builtinLog2ArgsSig:
+		c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Log2Args)
+	}
 	c.Assert(err, IsNil)
 }
 
@@ -307,8 +314,9 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{Zero})
+	f, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+	c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Log2)
 }
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
@@ -343,8 +351,9 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{Zero})
+	f, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+	c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Log10)
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
