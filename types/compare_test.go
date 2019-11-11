@@ -14,6 +14,7 @@
 package types
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -184,5 +185,83 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		ret, err = t.rhs.CompareDatum(sc, &t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
+	}
+}
+
+func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
+	defer testleak.AfterTest(c)()
+	cmpTblUU := []struct {
+		lhs []uint64
+		rhs []uint64
+		ret []int64
+	}{
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+		{[]uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxInt64 + 2, math.MaxInt64 + 3, math.MaxInt64 + 4, math.MaxInt64 + 5, math.MaxInt64 + 6, math.MaxInt64 + 7, math.MaxInt64 + 8, math.MaxInt64 + 9}, []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxInt64 + 2, math.MaxInt64 + 3, math.MaxInt64 + 4, math.MaxInt64 + 5, math.MaxInt64 + 6, math.MaxInt64 + 7, math.MaxInt64 + 8, math.MaxInt64 + 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, t := range cmpTblUU {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareUU(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
+	}
+
+	cmpTblII := []struct {
+		lhs []int64
+		rhs []int64
+		ret []int64
+	}{
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []int64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, -1, -1, -1, -1, -1}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, t := range cmpTblII {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareII(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
+	}
+
+	cmpTblIU := []struct {
+		lhs []int64
+		rhs []uint64
+		ret []int64
+	}{
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []uint64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+	}
+	for _, t := range cmpTblIU {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareIU(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
+	}
+
+	cmpTblUI := []struct {
+		lhs []uint64
+		rhs []int64
+		ret []int64
+	}{
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+		{[]uint64{math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+	}
+	for _, t := range cmpTblUI {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareUI(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
 	}
 }

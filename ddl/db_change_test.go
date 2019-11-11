@@ -82,6 +82,7 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
+	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
 
 	var checkErr error
 	testCases := []struct {
@@ -94,6 +95,10 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
 		{"alter table t add column c int",
 			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
+		{"alter table t2 add column c varchar(1)",
+			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
+		{"alter table t2 add column d varchar(1)",
+			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,\n  `c` varchar(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
 	}
 	prevState := model.StateNone
 	callback := &ddl.TestDDLCallback{}
@@ -106,7 +111,13 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			currTestCaseOffset++
 		}
 		if job.SchemaState != model.StatePublic {
-			result := tk.MustQuery("show create table t")
+			var result *testkit.Result
+			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+			if job.TableID == tbl2.Meta().ID {
+				result = tk.MustQuery("show create table t2")
+			} else {
+				result = tk.MustQuery("show create table t")
+			}
 			got := result.Rows()[0][1]
 			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
@@ -1076,8 +1087,7 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
-
+		c.Assert(err2.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }

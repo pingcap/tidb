@@ -543,6 +543,24 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, "CREATE USER 'hasgrant'")
+	mustExec(c, se, "CREATE USER 'withoutgrant'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant'")
+	mustExec(c, se, "GRANT ALL ON mysql.* TO 'withoutgrant'")
+	// Without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	c.Assert(e, NotNil)
+	// With grant option
+	se = newSession(c, s.store, s.dbName)
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+}
+
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
@@ -643,6 +661,12 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {

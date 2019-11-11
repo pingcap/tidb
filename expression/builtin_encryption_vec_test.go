@@ -22,18 +22,28 @@ import (
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
-	ast.AesEncrypt: {},
-	ast.Uncompress: {},
+	ast.AesEncrypt: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &constStrGener{"iv"}}},
+	},
+	ast.Uncompress: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.AesDecrypt: {},
-	ast.Compress:   {},
+	ast.Compress: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.MD5: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.SHA: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.RandomBytes:        {},
-	ast.UncompressedLength: {},
+	ast.RandomBytes: {},
+	ast.UncompressedLength: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{1, 5}}},
+	},
 	ast.SHA1: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},

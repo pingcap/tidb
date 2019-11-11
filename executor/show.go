@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -187,7 +188,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindMeta
+	var bindRecords []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		bindRecords = handle.GetAllBindRecord()
@@ -195,16 +196,18 @@ func (e *ShowExec) fetchShowBind() error {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
 	for _, bindData := range bindRecords {
-		e.appendRow([]interface{}{
-			bindData.OriginalSQL,
-			bindData.BindSQL,
-			bindData.Db,
-			bindData.Status,
-			bindData.CreateTime,
-			bindData.UpdateTime,
-			bindData.Charset,
-			bindData.Collation,
-		})
+		for _, hint := range bindData.Bindings {
+			e.appendRow([]interface{}{
+				bindData.OriginalSQL,
+				hint.BindSQL,
+				bindData.Db,
+				hint.Status,
+				hint.CreateTime,
+				hint.UpdateTime,
+				hint.Charset,
+				hint.Collation,
+			})
+		}
 	}
 	return nil
 }
@@ -388,10 +391,11 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			return err
 		}
 		viewSchema := viewLogicalPlan.Schema()
+		viewOutputNames := viewLogicalPlan.OutputNames()
 		for _, col := range cols {
-			viewColumn := viewSchema.FindColumnByName(col.Name.L)
-			if viewColumn != nil {
-				col.FieldType = *viewColumn.GetType()
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col.FieldType = *viewSchema.Columns[idx].GetType()
 			}
 		}
 	}
