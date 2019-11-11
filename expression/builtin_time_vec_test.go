@@ -183,6 +183,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.YearWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
 	},
 	ast.WeekOfYear: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -208,6 +209,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			geners:        []dataGenerator{&formatGener{0.2}, &locationGener{0.2}},
 		},
+	},
+	ast.Sysdate: {
+		{retEvalType: types.ETDatetime},
 	},
 }
 
