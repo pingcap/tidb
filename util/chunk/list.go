@@ -22,16 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// List is interface for ListInMemory and ListInDisk
-type List interface {
-	NumRowsOfChunk(int)
-	NumChunks()
-	GetRow(RowPtr)
-	Add(chk *Chunk) (err error)
-}
-
-// ListInMemory holds a slice of chunks, use to append rows with max chunk size properly handled.
-type ListInMemory struct {
+// List holds a slice of chunks, use to append rows with max chunk size properly handled.
+type List struct {
 	fieldTypes    []*types.FieldType
 	initChunkSize int
 	maxChunkSize  int
@@ -50,11 +42,11 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
-var chunkListLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInMemory")
+var chunkListLabel fmt.Stringer = stringutil.StringerStr("chunk.List")
 
-// NewListInMemory creates a new ListInMemory with field types, init chunk size and max chunk size.
-func NewListInMemory(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *ListInMemory {
-	l := &ListInMemory{
+// NewList creates a new List with field types, init chunk size and max chunk size.
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+	l := &List{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
@@ -64,28 +56,28 @@ func NewListInMemory(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize 
 	return l
 }
 
-// GetMemTracker returns the memory tracker of this ListInMemory.
-func (l *ListInMemory) GetMemTracker() *memory.Tracker {
+// GetMemTracker returns the memory tracker of this List.
+func (l *List) GetMemTracker() *memory.Tracker {
 	return l.memTracker
 }
 
-// Len returns the length of the ListInMemory.
-func (l *ListInMemory) Len() int {
+// Len returns the length of the List.
+func (l *List) Len() int {
 	return l.length
 }
 
-// NumChunks returns the number of chunks in the ListInMemory.
-func (l *ListInMemory) NumChunks() int {
+// NumChunks returns the number of chunks in the List.
+func (l *List) NumChunks() int {
 	return len(l.chunks)
 }
 
 // GetChunk gets the Chunk by ChkIdx.
-func (l *ListInMemory) GetChunk(chkIdx int) *Chunk {
+func (l *List) GetChunk(chkIdx int) *Chunk {
 	return l.chunks[chkIdx]
 }
 
-// AppendRow appends a row to the ListInMemory, the row is copied to the ListInMemory.
-func (l *ListInMemory) AppendRow(row Row) RowPtr {
+// AppendRow appends a row to the List, the row is copied to the List.
+func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
@@ -103,12 +95,13 @@ func (l *ListInMemory) AppendRow(row Row) RowPtr {
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }
 
-// Add adds a chunk to the ListInMemory, the chunk may be modified later by the list.
+// Add adds a chunk to the List, the chunk may be modified later by the list.
 // Caller must make sure the input chk is not empty and not used any more and has the same field types.
-func (l *ListInMemory) Add(chk *Chunk) (err error) {
+func (l *List) Add(chk *Chunk) {
 	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
-		return errors.New("chunk appended to ListInMemory should have at least 1 row")
+		// TODO: return error here.
+		panic("chunk appended to List should have at least 1 row")
 	}
 	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
 		l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
@@ -118,10 +111,10 @@ func (l *ListInMemory) Add(chk *Chunk) (err error) {
 	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
-	return nil
+	return
 }
 
-func (l *ListInMemory) allocChunk() (chk *Chunk) {
+func (l *List) allocChunk() (chk *Chunk) {
 	if len(l.freelist) > 0 {
 		lastIdx := len(l.freelist) - 1
 		chk = l.freelist[lastIdx]
@@ -137,18 +130,13 @@ func (l *ListInMemory) allocChunk() (chk *Chunk) {
 }
 
 // GetRow gets a Row from the list by RowPtr.
-func (l *ListInMemory) GetRow(ptr RowPtr) Row {
+func (l *List) GetRow(ptr RowPtr) Row {
 	chk := l.chunks[ptr.ChkIdx]
 	return chk.GetRow(int(ptr.RowIdx))
 }
 
-// NumRowsOfChunk returns the number of rows of a chunk.
-func (l *ListInMemory) NumRowsOfChunk(chkID int) int {
-	return l.GetChunk(chkID).NumRows()
-}
-
-// Reset resets the ListInMemory.
-func (l *ListInMemory) Reset() {
+// Reset resets the List.
+func (l *List) Reset() {
 	if lastIdx := len(l.chunks) - 1; lastIdx != l.consumedIdx {
 		l.memTracker.Consume(l.chunks[lastIdx].MemoryUsage())
 	}
@@ -160,11 +148,11 @@ func (l *ListInMemory) Reset() {
 
 // preAlloc4Row pre-allocates the storage memory for a Row.
 // NOTE: only used in test
-// 1. The ListInMemory must be empty or holds no useful data.
-// 2. The schema of the Row must be the same with the ListInMemory.
+// 1. The List must be empty or holds no useful data.
+// 2. The schema of the Row must be the same with the List.
 // 3. This API is paired with the `Insert()` function, which inserts all the
-//    rows data into the ListInMemory after the pre-allocation.
-func (l *ListInMemory) preAlloc4Row(row Row) (ptr RowPtr) {
+//    rows data into the List after the pre-allocation.
+func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
 		newChk := l.allocChunk()
@@ -184,7 +172,7 @@ func (l *ListInMemory) preAlloc4Row(row Row) (ptr RowPtr) {
 // Insert inserts `row` on the position specified by `ptr`.
 // Note: Insert will cover the origin data, it should be called after
 // PreAlloc.
-func (l *ListInMemory) Insert(ptr RowPtr, row Row) {
+func (l *List) Insert(ptr RowPtr, row Row) {
 	l.chunks[ptr.ChkIdx].insert(int(ptr.RowIdx), row)
 }
 
@@ -193,7 +181,7 @@ func (l *ListInMemory) Insert(ptr RowPtr, row Row) {
 type ListWalkFunc = func(row Row) error
 
 // Walk iterate the list and call walkFunc for each row.
-func (l *ListInMemory) Walk(walkFunc ListWalkFunc) error {
+func (l *List) Walk(walkFunc ListWalkFunc) error {
 	for i := 0; i < len(l.chunks); i++ {
 		chk := l.chunks[i]
 		for j := 0; j < chk.NumRows(); j++ {
