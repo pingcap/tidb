@@ -821,11 +821,25 @@ func (b *builtinSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinNowWithoutArgSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	Now, isNull, err := evalNowWithFsp(b.ctx, int8(0))
+	if err != nil {
+		return err
+	}
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
+	}
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		times[i] = Now
+	}
+	return nil
 }
 
 func (b *builtinStringDurationTimeDiffSig) vectorized() bool {
