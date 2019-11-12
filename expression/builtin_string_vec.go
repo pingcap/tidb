@@ -494,14 +494,6 @@ func (b *builtinLTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	return nil
 }
 
-func (b *builtinFieldStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFieldStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinQuoteSig) vectorized() bool {
 	return true
 }
@@ -1075,14 +1067,6 @@ func (b *builtinInstrSig) vectorized() bool {
 }
 
 func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinFieldRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFieldRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -1859,11 +1843,74 @@ func (b *builtinRightBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinSubstringBinary3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstringBinary3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	positions := buf1.Int64s()
+	lengths := buf2.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		str := buf.GetString(i)
+		pos := positions[i]
+		length := lengths[i]
+
+		byteLen := int64(len(str))
+		if pos < 0 {
+			pos += byteLen
+		} else {
+			pos--
+		}
+		if pos > byteLen || pos < 0 {
+			pos = byteLen
+		}
+		end := pos + length
+		if end < pos {
+			result.AppendString("")
+			continue
+		} else if end < byteLen {
+			result.AppendString(str[pos:end])
+			continue
+		}
+		result.AppendString(str[pos:])
+	}
+
+	return nil
 }
 
 func (b *builtinHexIntArgSig) vectorized() bool {
@@ -1890,14 +1937,6 @@ func (b *builtinHexIntArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		result.AppendString(strings.ToUpper(fmt.Sprintf("%x", uint64(i64s[i]))))
 	}
 	return nil
-}
-
-func (b *builtinFieldIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinFieldIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
 }
 
 func (b *builtinFromBase64Sig) vectorized() bool {
