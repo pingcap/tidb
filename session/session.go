@@ -1840,6 +1840,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBIsolationReadEngines,
+	variable.TiDBStoreLimit,
 }
 
 var (
