@@ -68,6 +68,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 	}
+	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
@@ -389,6 +390,8 @@ type copIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
+
+	minCommitTSPushed
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -510,8 +513,9 @@ func (it *copIterator) open(ctx context.Context) {
 			clientHelper: clientHelper{
 				LockResolver:      it.store.lockResolver,
 				RegionCache:       it.store.regionCache,
+				minCommitTSPushed: &it.minCommitTSPushed,
 				Client:            it.store.client,
-				minCommitTSPushed: make(map[uint64]struct{}, 5),
+				resolvedLocks:     make([]uint64, 0, 5),
 			},
 
 			memTracker: it.memTracker,
@@ -716,6 +720,27 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil, costTime)
 }
 
+type minCommitTSPushed struct {
+	data map[uint64]struct{}
+	sync.RWMutex
+}
+
+func (m *minCommitTSPushed) Update(from []uint64) {
+	m.Lock()
+	for _, v := range from {
+		m.data[v] = struct{}{}
+	}
+	m.Unlock()
+}
+
+func (m *minCommitTSPushed) Get(to []uint64) {
+	m.RLock()
+	for k, _ := range m.data {
+		to = append(to, k)
+	}
+	m.RUnlock()
+}
+
 // clientHelper wraps LockResolver and RegionRequestSender.
 // It's introduced to support the new lock resolving pattern in the large transaction.
 // In the large transaction protocol, sending requests and resolving locks are
@@ -726,21 +751,23 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 type clientHelper struct {
 	*LockResolver
 	*RegionCache
+	*minCommitTSPushed
 	Client
 
-	// The same content as minCommitTSPushed, used to reduce allocs.
-	resolvedLocks     []uint64
-	minCommitTSPushed map[uint64]struct{}
+	// Cache used to reduce allocs.
+	resolvedLocks []uint64
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
 func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, minCommitTSPushed, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	minCommitTSPushed := ch.resolvedLocks[:0]
+	msBeforeTxnExpired, minCommitTSPushed, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks, minCommitTSPushed)
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
-	for _, v := range minCommitTSPushed {
-		ch.minCommitTSPushed[v] = struct{}{}
+	if len(minCommitTSPushed) > 0 {
+		ch.minCommitTSPushed.Update(minCommitTSPushed)
+		return 0, nil
 	}
 	return msBeforeTxnExpired, nil
 }
@@ -748,18 +775,9 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
 func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, string, error) {
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
-	if len(ch.minCommitTSPushed) > 0 {
-		if len(ch.resolvedLocks) == 0 {
-			ch.resolvedLocks = make([]uint64, 0, len(ch.minCommitTSPushed))
-		} else {
-			ch.resolvedLocks = ch.resolvedLocks[:0]
-		}
-
-		for k := range ch.minCommitTSPushed {
-			ch.resolvedLocks = append(ch.resolvedLocks, k)
-		}
-		req.Context.ResolvedLocks = ch.resolvedLocks
-	}
+	ch.resolvedLocks = ch.resolvedLocks[:0]
+	ch.minCommitTSPushed.Get(ch.resolvedLocks)
+	req.Context.ResolvedLocks = ch.resolvedLocks
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
 	return resp, ctx, sender.storeAddr, err
 }

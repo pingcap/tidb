@@ -244,7 +244,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
-			msBeforeExpired, _, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, locks)
+			msBeforeExpired, _, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, locks, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -332,7 +332,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			msBeforeExpired, _, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+			msBeforeExpired, _, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, []*Lock{lock}, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
