@@ -1913,7 +1913,10 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		if isDefaultExpr {
 			defaultExpr.Name = assign.Column
 		}
-		if _, ok := generatedColumns[assign.Column.Name.L]; ok && !isDefaultExpr {
+		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
+			if isDefaultExpr {
+				continue
+			}
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
 		}
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
