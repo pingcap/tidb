@@ -17,10 +17,10 @@ Delete_4	N/A	root	N/A
     └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain update t set b = 100 where a = 200;
 id	count	task	operator info
-Update_3	N/A	root	N/A
-└─TableReader_6	10.00	root	data:Selection_5
-  └─Selection_5	10.00	cop[tikv]	eq(Column#1, 200)
-    └─TableScan_4	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+Update_4	N/A	root	N/A
+└─TableReader_8	10.00	root	data:Selection_7
+  └─Selection_7	10.00	cop[tikv]	eq(Column#1, 200)
+    └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain replace into t select a, 100 from t;
 id	count	task	operator info
 Insert_1	N/A	root	N/A

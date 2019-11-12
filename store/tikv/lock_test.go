@@ -208,12 +208,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
-	c.Assert(err, IsNil)
-	// Increase lock TTL to make CI more stable.
-	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 200*1024*1024)
-	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
-	c.Assert(err, IsNil)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	lr := newLockResolver(s.store)
@@ -279,12 +274,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	txn.Set(kv.Key("second"), []byte("xxx"))
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
-	c.Assert(err, IsNil)
-	// Increase lock TTL to make CI more stable.
-	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 200*1024*1024)
-	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
-	c.Assert(err, IsNil)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
@@ -387,8 +377,16 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
+	s.prewriteTxnWithTTL(c, txn, 0)
+}
+
+func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
+	if ttl > 0 {
+		elapsed := time.Since(txn.startTime) / time.Millisecond
+		committer.lockTTL = uint64(elapsed) + ttl
+	}
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
 }
@@ -429,7 +427,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
@@ -461,7 +459,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 	l := s.mustGetLock(c, []byte("key"))
 	msBeforeLockExpired := s.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
