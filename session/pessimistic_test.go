@@ -598,39 +598,54 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("select * from tk where c1 = 1 for update") // lock succ c1 = 1
 
-	// tk3 try lock c1 = 1 timeout 1sec
-	tk3.MustExec("begin pessimistic")
-	start := time.Now()
-	_, err := tk3.Exec("select * from tk where c1 = 1 for update")
-	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
-	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	// Parallel the blocking tests to accelerate CI.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// tk3 try lock c1 = 1 timeout 1sec
+		tk3.MustExec("begin pessimistic")
+		start := time.Now()
+		_, err := tk3.Exec("select * from tk where c1 = 1 for update")
+		c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+		c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		tk3.MustExec("commit")
+	}()
 
+	go func() {
+		defer wg.Done()
+		// tk5 try lock c1 = 1 timeout 2sec
+		tk5 := testkit.NewTestKitWithInit(c, s.store)
+		tk5.MustExec("set innodb_lock_wait_timeout = 2")
+		tk5.MustExec("begin pessimistic")
+		start := time.Now()
+		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
+		c.Check(time.Since(start), GreaterEqual, time.Duration(2000*time.Millisecond))
+		c.Check(time.Since(start), LessEqual, time.Duration(2100*time.Millisecond)) // unit test diff should not be too big
+		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		tk5.MustExec("rollback")
+	}()
+
+	// tk4 lock c1 = 2
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("update tk set c2 = c2 + 1 where c1 = 2") // lock succ c1 = 2 by update
-	start = time.Now()
-	_, err = tk2.Exec("update tk set c2 = c2 - 1 where c1 = 2")
-	c.Check(time.Since(start), GreaterEqual, time.Duration(2000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(2100*time.Millisecond)) // unit test diff should not be too big
-	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
-	start = time.Now()
-	_, err = tk2.Exec("delete from tk where c1 = 2")
+
+	start := time.Now()
+	_, err := tk2.Exec("delete from tk where c1 = 2")
 	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
 	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
 	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
-	tk2.MustExec("commit")
-	tk3.MustExec("commit")
 	tk4.MustExec("commit")
 
 	tk.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 50"))
 	tk.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 3")) // tk4 update commit work, tk2 delete should be rollbacked
 
 	// test stmtRollBack caused by timeout but not the whole transaction
-	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("update tk set c2 = c2 + 2 where c1 = 2")                    // tk2 lock succ c1 = 2 by update
 	tk2.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 5")) // tk2 update c2 succ
 
@@ -654,4 +669,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	// clean
 	tk.MustExec("drop table if exists tk")
+	tk4.MustExec("commit")
+
+	wg.Wait()
 }
