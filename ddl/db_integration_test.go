@@ -2043,19 +2043,7 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
 	tk.MustGetErrCode("insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
 
-	// generated columns with `ON DUPLICATE KEY UPDATE b=DEFAULT` statement
-	tk.MustExec("create table t6 (a int unique, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
-	tk.MustExec("insert into t6 values (1,default,default);")
-	tk.MustExec("insert into t6 values (1,default,default) on duplicate key update a=2, b=default;")
-	tk.MustQuery("select * from t6").Check(testkit.Rows("2 -2 -2"))
-	tk.MustExec("insert into t6 values (2,default,default) on duplicate key update a=3, c=default;")
-	tk.MustQuery("select * from t6").Check(testkit.Rows("3 -3 -3"))
-	tk.MustExec("insert into t6 values (3,default,default) on duplicate key update c=default, b=default, a=4;")
-	tk.MustQuery("select * from t6").Check(testkit.Rows("4 -4 -4"))
-	tk.MustExec("insert into t6 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
-	tk.MustQuery("select * from t6").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
-
-	tk.MustExec("drop table t1, t2, t3, t4, t5, t6")
+	tk.MustExec("drop table t1, t2, t3, t4, t5")
 }
 
 func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
