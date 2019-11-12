@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -216,6 +217,13 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	if planHint == "" {
 		return
 	}
+	paramChecker := &paramMarkerChecker{}
+	stmtNode.Accept(paramChecker)
+	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+	// so just ignore them now.
+	if paramChecker.hasParamMarker {
+		return
+	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	bindinfo.BindHint(stmtNode, &bindinfo.HintsSet{})
@@ -230,6 +238,22 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	binding := bindinfo.Binding{BindSQL: bindsql, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
+}
+
+type paramMarkerChecker struct {
+	hasParamMarker bool
+}
+
+func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParamMarker = true
+		return in, true
+	}
+	return in, false
+}
+
+func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 // isPointGetWithoutDoubleRead returns true when meets following conditions:
