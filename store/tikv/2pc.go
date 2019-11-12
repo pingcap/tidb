@@ -489,6 +489,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 			isPessimisticLock[i] = true
 		}
 	}
+	var minCommitTS uint64
+	if c.forUpdateTS > 0 {
+		minCommitTS = c.forUpdateTS + 1
+	} else {
+		minCommitTS = c.startTS + 1
+	}
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
@@ -497,7 +503,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
-		MinCommitTs:       c.startTS + 1,
+		MinCommitTs:       minCommitTS,
 	}
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
