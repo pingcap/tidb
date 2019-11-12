@@ -226,7 +226,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
 		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
-			panic(errors.Errorf("%T does not set the PbCode", expr.Function))
+			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
 		})
 		return nil
 	}
