@@ -3112,6 +3112,11 @@ func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
 	tk.MustExec("create table t1(a int default 9, b int as (default(a)));")
 	tk.MustExec("insert into t1 values(1, default);")
 	tk.MustExec("select * from t1;")
+
+	tk.MustExec("create table t2(f1 int(11) default 11);")
+	tk.MustExec("insert into t2 value ();")
+	tk.MustQuery("select default(f1) from (select * from t2) t1;").Check(testkit.Rows("11"))
+	tk.MustQuery("select default(f1) from (select * from (select * from t2) t1 ) t1;").Check(testkit.Rows("11"))
 }
 
 func (s *testDBSuite4) TestIssue9100(c *C) {
