@@ -286,11 +286,9 @@ func (c *RPCContext) String() string {
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
 }
 
-// GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
+// GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
-
-	engine := kv.TiKV
+func (c *RegionCache) GetRPCContext(engine kv.StoreType, bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -303,15 +301,15 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	regionStore := cachedRegion.getStore()
-	var store *Store
-	var peer *metapb.Peer
-	var storeIdx int
+	var sg RouteStrategy
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, storeIdx = cachedRegion.FollowerStorePeer(engine, regionStore, followerStoreSeed)
+		sg = cachedRegion.KeepSendLast
 	default:
-		store, peer, storeIdx = cachedRegion.WorkStorePeer(engine, regionStore)
+		sg = cachedRegion.SendCurrRetryNextOnFail
 	}
+
+	store, peer, storeIdx := cachedRegion.WorkStorePeer(engine, regionStore, followerStoreSeed, sg)
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 	if err != nil {
 		return nil, err
@@ -1031,14 +1029,29 @@ func (r *Region) getStorePeer(engine kv.StoreType, rs *RegionStore, pidx int32) 
 	return
 }
 
-// WorkStorePeer returns current work store with work peer.
-func (r *Region) WorkStorePeer(engine kv.StoreType, rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	return r.getStorePeer(engine, rs, rs.currIdx[engine])
+// SendCurrRetryNextOnFail is a RouteStrategy that try route request to currIndex node.
+// if send fail will try next node for current engine in OnSendFail method.
+//
+// TiKV normal request will use this to send request to region leader and try next node on failure.
+// TiFlash request also use this to send curr node and round-robin others on failure.
+func (r *Region) SendCurrRetryNextOnFail(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32 {
+	return rs.currIdx[engine]
 }
 
-// FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
-	return r.getStorePeer(engine, rs, rs.follower(engine, followerStoreSeed))
+// KeepSendLast is a RouteStrategy that try route request to last send node via followerStoreSeed.
+// it will find next available node for current engine in current method.
+//
+// TiKV follower read will use this.
+func (r *Region) KeepSendLast(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32 {
+	return rs.follower(engine, followerStoreSeed)
+}
+
+// RouteStrategy defines how choose a store from region's store lists.
+type RouteStrategy func(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32
+
+// WorkStorePeer returns current work store with work peer.
+func (r *Region) WorkStorePeer(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32, strategy RouteStrategy) (store *Store, peer *metapb.Peer, idx int) {
+	return r.getStorePeer(engine, rs, strategy(engine, rs, followerStoreSeed))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1095,7 +1108,7 @@ func (c *RegionCache) switchPeerForNextRetry(engine kv.StoreType, forceLeader bo
 	}
 
 	// send follower read request fail no need to change work index.
-	if !forceLeader {
+	if !forceLeader && int(rs.currIdx[engine]) != currentPeerIdx {
 		return
 	}
 
