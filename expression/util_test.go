@@ -16,6 +16,7 @@ package expression
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -318,6 +320,52 @@ func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
 	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
 	c.Assert(len(filtered), check.Equals, 1)
 	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
+}
+
+func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
+	ctx := mock.NewContext()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		if eTypes[i] == types.ETDecimal {
+			ft.Flen = 0
+		}
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		bufs := make([][]byte, 1024)
+		for i := 0; i < 1024; i++ {
+			bufs[i] = bufs[i][:0]
+		}
+		var err error
+		err = VecEval(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		if bufs, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, 1024, colBuf, bufs, ft); err != nil {
+			c.Fatal(err)
+		}
+
+		it := chunk.NewIterator4Chunk(input)
+		var buf []byte
+		i := 0
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			d, err := colExpr.Eval(row)
+			if err != nil {
+				c.Fatal(err)
+			}
+			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			if err != nil {
+				c.Fatal(err)
+			}
+			c.Assert(bufs[i], check.Equals, buf)
+			i++
+		}
+
+	}
 }
 
 func isLogicOrFunction(e Expression) bool {

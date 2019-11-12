@@ -15,24 +15,20 @@ package codec
 
 import (
 	"bytes"
-	"fmt"
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
 	"math"
-	"math/rand"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -1220,162 +1216,5 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
 		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
 		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
-	}
-}
-
-func eType2FieldType(eType types.EvalType) *types.FieldType {
-	switch eType {
-	case types.ETInt:
-		return types.NewFieldType(mysql.TypeLonglong)
-	case types.ETReal:
-		return types.NewFieldType(mysql.TypeDouble)
-	case types.ETDecimal:
-		return types.NewFieldType(mysql.TypeNewDecimal)
-	case types.ETDatetime, types.ETTimestamp:
-		return types.NewFieldType(mysql.TypeDatetime)
-	case types.ETDuration:
-		return types.NewFieldType(mysql.TypeDuration)
-	case types.ETJson:
-		return types.NewFieldType(mysql.TypeJSON)
-	case types.ETString:
-		return types.NewFieldType(mysql.TypeVarString)
-	default:
-		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
-	}
-}
-
-func randString() string {
-	n := 10 + rand.Intn(10)
-	buf := make([]byte, n)
-	for i := range buf {
-		x := rand.Intn(62)
-		if x < 10 {
-			buf[i] = byte('0' + x)
-		} else if x-10 < 26 {
-			buf[i] = byte('a' + x - 10)
-		} else {
-			buf[i] = byte('A' + x - 10 - 26)
-		}
-	}
-	return string(buf)
-}
-
-func gen(eType types.EvalType, nullRation float64) interface{} {
-	if rand.Float64() < nullRation {
-		return nil
-	}
-	switch eType {
-	case types.ETInt:
-		if rand.Float64() < 0.5 {
-			return -rand.Int63()
-		}
-		return rand.Int63()
-	case types.ETReal:
-		if rand.Float64() < 0.5 {
-			return -rand.Float64()
-		}
-		return rand.Float64()
-	case types.ETDecimal:
-		d := new(types.MyDecimal)
-		f := rand.Float64() * 100000
-		if err := d.FromFloat64(f); err != nil {
-			panic(err)
-		}
-		return d
-	case types.ETDatetime, types.ETTimestamp:
-		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
-		t := types.Time{Time: gt, Type: mysql.TypeDatetime}
-		return t
-	case types.ETDuration:
-		d := types.Duration{
-			// use rand.Int32() to make it not overflow when AddDuration
-			Duration: time.Duration(rand.Int31()),
-		}
-		return d
-	case types.ETJson:
-		j := new(json.BinaryJSON)
-		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int()))); err != nil {
-			panic(err)
-		}
-		return *j
-	case types.ETString:
-		return randString()
-	}
-	return nil
-}
-
-func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int) {
-	batchSize := 1024
-
-	col := chk.Column(colIdx)
-	col.Reset()
-	for i := 0; i < batchSize; i++ {
-		v := gen(eType, 0.2)
-		if v == nil {
-			col.AppendNull()
-			continue
-		}
-		switch eType {
-		case types.ETInt:
-			col.AppendInt64(v.(int64))
-		case types.ETReal:
-			col.AppendFloat64(v.(float64))
-		case types.ETDecimal:
-			col.AppendMyDecimal(v.(*types.MyDecimal))
-		case types.ETDatetime, types.ETTimestamp:
-			col.AppendTime(v.(types.Time))
-		case types.ETDuration:
-			col.AppendDuration(v.(types.Duration))
-		case types.ETJson:
-			col.AppendJSON(v.(json.BinaryJSON))
-		case types.ETString:
-			col.AppendString(v.(string))
-		}
-	}
-}
-
-func (s *testCodecSuite) TestHashGroupKey(c *C) {
-	ctx := mock.NewContext()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for i := 0; i < len(tNames); i++ {
-		ft := eType2FieldType(eTypes[i])
-		if eTypes[i] == types.ETDecimal {
-			ft.Flen = 0
-		}
-		colExpr := &expression.Column{Index: 0, RetType: ft}
-		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
-		fillColumn(eTypes[i], input, 0)
-		colBuf := chunk.NewColumn(ft, 1024)
-		bufs := make([][]byte, 1024)
-		for i := 0; i < 1024; i++ {
-			bufs[i] = bufs[i][:0]
-		}
-		var err error
-		err = expression.VecEval(ctx, colExpr, input, colBuf)
-		if err != nil {
-			c.Fatal(err)
-		}
-		if bufs, err = HashGroupKey(ctx.GetSessionVars().StmtCtx, 1024, colBuf, bufs, ft); err != nil {
-			c.Fatal(err)
-		}
-
-		it := chunk.NewIterator4Chunk(input)
-		var buf []byte
-		i := 0
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			d, err := colExpr.Eval(row)
-			if err != nil {
-				c.Fatal(err)
-			}
-			buf, err = EncodeValue(sc, buf[:0], d)
-			if err != nil {
-				c.Fatal(err)
-			}
-			c.Assert(bufs[i], Equals, buf)
-			i++
-		}
-
 	}
 }
