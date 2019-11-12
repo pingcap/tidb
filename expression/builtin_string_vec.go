@@ -806,11 +806,11 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			result.SetNull(i, true)
 			continue
 		}
-		strlist_i := strlist.GetString(i)
-		if len(strlist_i) == 0 {
+		strlistI := strlist.GetString(i)
+		if len(strlistI) == 0 {
 			res[i] = 0
 		}
-		for j, strInSet := range strings.Split(strlist_i, ",") {
+		for j, strInSet := range strings.Split(strlistI, ",") {
 			if str.GetString(i) == strInSet {
 				res[i] = int64(j + 1)
 			}
