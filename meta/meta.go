@@ -118,7 +118,7 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	return m.txn.Inc(mNextGlobalIDKey, 1)
 }
 
-// GenGlobalServerID generates next id globally.
+// GenGlobalServerID generates the next ID globally.
 func (m *Meta) GenGlobalServerID() (int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
