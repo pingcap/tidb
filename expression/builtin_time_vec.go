@@ -1500,11 +1500,47 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinSubDateAndDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubDateAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		arg0 := buf.GetDuration(i, 0)
+		arg1 := buf1.GetDuration(i, 0)
+
+		res, err := arg0.Sub(arg1)
+		if err != nil {
+			return err
+		}
+		result.AppendString(res.String())
+	}
+
+	return nil
 }
 
 func (b *builtinDayOfYearSig) vectorized() bool {
