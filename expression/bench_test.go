@@ -199,6 +199,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func getRandomTime() types.MysqlTime {
+	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
+		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+
+}
+
 // dataGenerator is used to generate data for test.
 type dataGenerator interface {
 	gen() interface{}
@@ -237,7 +243,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return d
 	case types.ETDatetime, types.ETTimestamp:
-		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+		gt := getRandomTime()
 		t := types.Time{Time: gt, Type: convertETType(g.eType)}
 		return t
 	case types.ETDuration:
@@ -256,6 +262,18 @@ func (g *defaultGener) gen() interface{} {
 		return randString()
 	}
 	return nil
+}
+
+// selectStringGener select one string randomly from the candidates array
+type selectStringGener struct {
+	candidates []string
+}
+
+func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[rand.Intn(len(g.candidates))]
 }
 
 type constJSONGener struct {
@@ -278,6 +296,13 @@ func (g *jsonStringGener) gen() interface{} {
 		panic(err)
 	}
 	return j.String()
+}
+
+type jsonTimeGener struct{}
+
+func (g *jsonTimeGener) gen() interface{} {
+	tm := types.Time{Time: getRandomTime(), Type: mysql.TypeDatetime, Fsp: types.DefaultFsp}
+	return json.CreateBinary(tm.String())
 }
 
 type rangeDurationGener struct {
@@ -386,6 +411,18 @@ type ipv6StrGener struct {
 
 func (g *ipv6StrGener) gen() interface{} {
 	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
+// ipv4StrGener is used to generate ipv4 strings. For example 111.111.111.111
+type ipv4StrGener struct {
+}
+
+func (g *ipv4StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv4len)
 	for i := range ip {
 		ip[i] = uint8(rand.Intn(256))
 	}
