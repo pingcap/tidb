@@ -178,12 +178,10 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new session failed %v", err)
 	}
-	childCtx, cancel = context.WithTimeout(ctx, time.Second)
-	err = PutKVToEtcd(childCtx, cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
+	err = PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		t.Fatalf("put kv to etcd failed %v", err)
 	}
-	cancel()
 	// Make sure the ttlKey is exist in etcd.
 	resp, err = cli.Get(ctx, ttlKey)
 	if err != nil {
