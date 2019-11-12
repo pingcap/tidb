@@ -19,3 +19,14 @@ insert into outdated_statistics values (1, 3, 3);
 # This wrong case is solved by Skyline Pruning.
 analyze table outdated_statistics index idx_ab;
 explain select * from outdated_statistics where a=1 and b=1 and c=1;
+
+CREATE TABLE `access_path_selection` (
+`a` int,
+`b` int,
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
+);
+# _tidb_rowid should also be considered as PK.
+explain select a, b from access_path_selection order by _tidb_rowid;
+explain select max(_tidb_rowid) from access_path_selection;
