@@ -38,7 +38,7 @@ import (
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
-	testLease := 2 * time.Millisecond
+	testLease := 5 * time.Millisecond
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
 	defer func() {
