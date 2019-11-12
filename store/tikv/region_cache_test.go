@@ -127,7 +127,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, seed), Equals, s.storeAddr(s.store2))
 	s.checkCache(c, 1)
 	c.Assert(r.GetMeta(), DeepEquals, r.meta)
-	c.Assert(r.GetLeaderID(), Equals, r.meta.Peers[r.getStore().workTiKVIdx].Id)
+	c.Assert(r.GetLeaderID(), Equals, r.meta.Peers[r.getStore().currIdx[kv.TiKV]].Id)
 	s.cache.mu.regions[r.VerID()].lastAccess = 0
 	r = s.cache.searchCachedRegion([]byte("a"), true)
 	c.Assert(r, IsNil)
