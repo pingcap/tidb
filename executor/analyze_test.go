@@ -310,6 +310,8 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	// Should not panic.
+	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
