@@ -803,7 +803,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 	if err = e.fetchChildIfNecessary(ctx, req); err != nil {
 		return err
 	}
-	if !e.executed {
+	if !e.executed && !req.IsFull() {
 		_, err := e.groupChecker.splitChunk(e.childResult)
 		if err != nil {
 			return err
@@ -820,15 +820,14 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
-	numRows := e.childResult.NumRows()
-
 	begin, end := e.groupChecker.getOneGroup()
 	e.groupRows = e.groupRows[:0]
 	for i := begin; i < end; i++ {
 		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 	}
 
-	if end == numRows {
+	for end == e.childResult.NumRows() {
+		end = -1
 		if err = e.fetchChildIfNecessary(ctx, chk); err != nil || e.executed {
 			return err
 		}
@@ -1023,7 +1022,8 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	}
 
 	for _, item := range e.GroupByItems {
-		eType := item.GetType().EvalType()
+		tp := item.GetType()
+		eType := tp.EvalType()
 		col, err := expression.GetColumn(eType, numRows)
 		if err != nil {
 			return false, err
@@ -1033,12 +1033,12 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 			return false, err
 		}
 
-		e.firstGroupKey, err = codec.EncodeTo(e.StmtCtx, col, 0, e.firstGroupKey, item.GetType())
+		e.firstGroupKey, err = codec.EncodeTo(e.StmtCtx, col, 0, e.firstGroupKey, tp)
 		if err != nil {
 			return false, err
 		}
 
-		e.lastGroupKey, err = codec.EncodeTo(e.StmtCtx, col, numRows-1, e.firstGroupKey, item.GetType())
+		e.lastGroupKey, err = codec.EncodeTo(e.StmtCtx, col, numRows-1, e.firstGroupKey, tp)
 		if err != nil {
 			return false, err
 		}
