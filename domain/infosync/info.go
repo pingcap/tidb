@@ -181,7 +181,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("[info-syncer] store server info to pd successful", zap.Int64("server id", int64(id)))
+	logutil.BgLogger().Info("[info-syncer] store server info to PD successful", zap.Int64("server ID", int64(id)))
 	return nil
 }
 
@@ -194,7 +194,7 @@ func GetGlobalServerID() int64 {
 	return info.ServerID
 }
 
-// GenGlobalServerID generates the global server id.
+// GenGlobalServerID generates the global server ID.
 func (is *InfoSyncer) GenGlobalServerID(ctx context.Context) (int64, error) {
 	var id int64
 	err := kv.RunInNewTxn(is.store, true, func(txn kv.Transaction) error {

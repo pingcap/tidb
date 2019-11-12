@@ -62,7 +62,7 @@ func init() {
 		tableNameToColumns[clusterTableName] = cols
 		clusterTableMap[clusterTableName] = struct{}{}
 	}
-	// This is used for avoid circle import, use for memTableReader in mpp.
+	// This is used for avoid circle import, use for memTableReader in TiDB RPC server.
 	mocktikv.GetClusterMemTableRows = getClusterMemTableRows
 	mocktikv.IsClusterTable = IsClusterTable
 }
