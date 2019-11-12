@@ -68,12 +68,16 @@ func (c *testSlowClient) GetDelay(regionID uint64) time.Duration {
 
 // manipulateCluster splits this cluster's region by splitKeys and returns regionIDs after split
 func manipulateCluster(cluster *mocktikv.Cluster, splitKeys [][]byte) []uint64 {
-	regions := cluster.GetAllRegions()
-	if len(regions) != 1 {
-		panic("this cluster has already split")
+	if len(splitKeys) == 0 {
+		return nil
 	}
-
-	allRegionIDs := []uint64{regions[0].Meta.Id}
+	region, _ := cluster.GetRegionByKey(splitKeys[0])
+	for _, key := range splitKeys {
+		if r, _ := cluster.GetRegionByKey(key); r.Id != region.Id {
+			panic("all split keys should belong to the same region")
+		}
+	}
+	allRegionIDs := []uint64{region.Id}
 	for i, key := range splitKeys {
 		newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
 		cluster.Split(allRegionIDs[i], newRegionID, key, []uint64{newPeerID}, newPeerID)
