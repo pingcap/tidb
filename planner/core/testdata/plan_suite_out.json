@@ -1271,5 +1271,22 @@
         "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(Column#29,Column#23)}->HashAgg"
       }
     ]
+  },
+  {
+    "Name": "TestIndexJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(Column#1))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(Column#4))]))}(Column#4,Column#1)"
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(Column#1))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(Column#4))]))}(Column#4,Column#1)"
+      },
+      {
+        "SQL": "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(Column#1))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(Column#4))]))}(Column#4,Column#1)"
+      }
+    ]
   }
 ]

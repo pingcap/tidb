@@ -79,41 +79,6 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite1) TestIndexJoinHint(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec(`drop table if exists t1, t2;`)
-	tk.MustExec(`create table t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
-	tk.MustExec(`create table t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
-	tk.MustQuery("explain select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;").Check(testkit.Rows(
-		"IndexJoin_25 12487.50 root inner join, inner:IndexLookUp_24, outer key:Column#4, inner key:Column#1",
-		"├─IndexLookUp_24 1.25 root ",
-		"│ ├─Selection_23 1.25 cop[tikv] not(isnull(Column#1))",
-		"│ │ └─IndexScan_21 1.25 cop[tikv] table:t1, index:a, range: decided by [eq(Column#1, Column#4)], keep order:false, stats:pseudo",
-		"│ └─TableScan_22 1.25 cop[tikv] table:t1, keep order:false, stats:pseudo",
-		"└─TableReader_37 9990.00 root data:Selection_36",
-		"  └─Selection_36 9990.00 cop[tikv] not(isnull(Column#4))",
-		"    └─TableScan_35 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
-	tk.MustQuery("explain select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;").Check(testkit.Rows(
-		"IndexHashJoin_34 12487.50 root inner join, inner:IndexLookUp_24, outer key:Column#4, inner key:Column#1",
-		"├─IndexLookUp_24 1.25 root ",
-		"│ ├─Selection_23 1.25 cop[tikv] not(isnull(Column#1))",
-		"│ │ └─IndexScan_21 1.25 cop[tikv] table:t1, index:a, range: decided by [eq(Column#1, Column#4)], keep order:false, stats:pseudo",
-		"│ └─TableScan_22 1.25 cop[tikv] table:t1, keep order:false, stats:pseudo",
-		"└─TableReader_37 9990.00 root data:Selection_36",
-		"  └─Selection_36 9990.00 cop[tikv] not(isnull(Column#4))",
-		"    └─TableScan_35 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
-	tk.MustQuery("explain select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;").Check(testkit.Rows(
-		"IndexMergeJoin_32 12487.50 root inner join, inner:Projection_30, outer key:Column#4, inner key:Column#1",
-		"├─Projection_30 1.25 root Column#1, Column#2",
-		"│ └─IndexLookUp_29 1.25 root ",
-		"│   ├─Selection_28 1.25 cop[tikv] not(isnull(Column#1))",
-		"│   │ └─IndexScan_26 1.25 cop[tikv] table:t1, index:a, range: decided by [eq(Column#1, Column#4)], keep order:true, stats:pseudo",
-		"│   └─TableScan_27 1.25 cop[tikv] table:t1, keep order:false, stats:pseudo",
-		"└─TableReader_37 9990.00 root data:Selection_36",
-		"  └─Selection_36 9990.00 cop[tikv] not(isnull(Column#4))",
-		"    └─TableScan_35 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
-}
-
 func (s *testSuite1) TestInapplicableIndexJoinHint(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t1, t2;`)
