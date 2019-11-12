@@ -1085,7 +1085,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
-				buf[i] = encodeSignedInt(buf[i], i64s[i], true)
+				buf[i] = encodeSignedInt(buf[i], i64s[i], false)
 			}
 		}
 	case types.ETReal:
@@ -1155,7 +1155,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
-				buf[i] = encodeBytes(buf[i], col.GetBytes(i), true)
+				buf[i] = encodeBytes(buf[i], col.GetBytes(i), false)
 			}
 		}
 	default:

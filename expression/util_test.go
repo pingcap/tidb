@@ -345,7 +345,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 		if err != nil {
 			c.Fatal(err)
 		}
-		if bufs, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, 1024, colBuf, bufs, ft); err != nil {
+		if bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft); err != nil {
 			c.Fatal(err)
 		}
 
@@ -361,10 +361,9 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			if err != nil {
 				c.Fatal(err)
 			}
-			c.Assert(bufs[i], check.Equals, buf)
+			c.Assert(string(bufs[i]), check.Equals, string(buf))
 			i++
 		}
-
 	}
 }
 
