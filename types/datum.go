@@ -1195,10 +1195,10 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 				if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
 					// fix https://github.com/pingcap/tidb/issues/3895
 					// fix https://github.com/pingcap/tidb/issues/5532
-					sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", dec))
+					sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 					err = nil
 				} else {
-					err = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", dec))
+					err = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 				}
 			}
 		}

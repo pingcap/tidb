@@ -209,7 +209,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.00'"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -1341,7 +1341,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	// A warning rather than data truncated error.
 	tk.MustExec("update decimals set a = a + 1.23;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '202'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '202.23'"))
 	r = tk.MustQuery("select * from decimals")
 	r.Check(testkit.Rows("202"))
 
