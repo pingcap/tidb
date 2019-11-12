@@ -19,6 +19,7 @@ import (
 	"hash/fnv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +41,8 @@ type testStmtSummarySuite struct {
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
 	s.ssMap.SetEnabled("1", false)
+	s.ssMap.SetIntervalMinutes("30", false)
+	s.ssMap.SetHistoryMaxHours("12", false)
 }
 
 func TestT(t *testing.T) {
@@ -50,6 +53,10 @@ func TestT(t *testing.T) {
 // Test stmtSummaryByDigest.AddStatement.
 func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now
+	// to disable expiring
+	s.ssMap.lastCheckExpireTime = now + 60
 
 	// first statement
 	stmtExecInfo1 := &StmtExecInfo{
@@ -97,6 +104,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		planHash:   hash.Sum64(),
 	}
 	expectedSummaryElement := stmtSummaryByDigestElement{
+		beginTime:            now,
 		user:                 stmtExecInfo1.User,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
@@ -114,11 +122,17 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
 		maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
 		sumProcessTime:       stmtExecInfo1.ExecDetail.ProcessTime,
+		maxProcessTime:       stmtExecInfo1.ExecDetail.ProcessTime,
 		sumWaitTime:          stmtExecInfo1.ExecDetail.WaitTime,
+		maxWaitTime:          stmtExecInfo1.ExecDetail.WaitTime,
 		sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
+		maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
 		sumRequestCount:      int64(stmtExecInfo1.ExecDetail.RequestCount),
+		maxRequestCount:      int64(stmtExecInfo1.ExecDetail.RequestCount),
 		sumTotalKeys:         stmtExecInfo1.ExecDetail.TotalKeys,
+		maxTotalKeys:         stmtExecInfo1.ExecDetail.TotalKeys,
 		sumProcessedKeys:     stmtExecInfo1.ExecDetail.ProcessedKeys,
+		maxProcessedKeys:     stmtExecInfo1.ExecDetail.ProcessedKeys,
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
 		sumAffectedRows:      stmtExecInfo1.AffectedRows,
@@ -126,7 +140,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		lastSeen:             stmtExecInfo1.StartTime,
 	}
 	history := list.New()
-	history.PushBack(expectedSummaryElement)
+	history.PushBack(&expectedSummaryElement)
 	expectedSummary := stmtSummaryByDigest{
 		history:       history,
 		schemaName:    stmtExecInfo1.SchemaName,
@@ -197,11 +211,17 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.maxCopWaitTime = stmtExecInfo2.CopTasks.MaxWaitTime
 	expectedSummaryElement.maxCopWaitAddress = stmtExecInfo2.CopTasks.MaxWaitAddress
 	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.ProcessTime
+	expectedSummaryElement.maxProcessTime = stmtExecInfo2.ExecDetail.ProcessTime
 	expectedSummaryElement.sumWaitTime += stmtExecInfo2.ExecDetail.WaitTime
+	expectedSummaryElement.maxWaitTime = stmtExecInfo2.ExecDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo2.ExecDetail.BackoffTime
+	expectedSummaryElement.maxBackoffTime = stmtExecInfo2.ExecDetail.BackoffTime
 	expectedSummaryElement.sumRequestCount += int64(stmtExecInfo2.ExecDetail.RequestCount)
+	expectedSummaryElement.maxRequestCount = int64(stmtExecInfo2.ExecDetail.RequestCount)
 	expectedSummaryElement.sumTotalKeys += stmtExecInfo2.ExecDetail.TotalKeys
+	expectedSummaryElement.maxTotalKeys = stmtExecInfo2.ExecDetail.TotalKeys
 	expectedSummaryElement.sumProcessedKeys += stmtExecInfo2.ExecDetail.ProcessedKeys
+	expectedSummaryElement.maxProcessedKeys = stmtExecInfo2.ExecDetail.ProcessedKeys
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo2.AffectedRows
@@ -252,6 +272,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	}
 	expectedSummaryElement.execCount++
 	expectedSummaryElement.sumLatency += stmtExecInfo3.TotalLatency
+	expectedSummaryElement.minLatency = stmtExecInfo3.TotalLatency
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo3.CompileLatency
 	expectedSummaryElement.numCopTasks += int64(stmtExecInfo3.CopTasks.NumCopTasks)
@@ -461,28 +482,71 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 // Test stmtSummaryByDigest.ToDatum
 func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now
 
 	stmtExecInfo1 := &StmtExecInfo{
-		SchemaName:    "schema_name",
-		OriginalSQL:   "original_sql1",
-		NormalizedSQL: "normalized_sql",
-		Digest:        "digest",
-		TotalLatency:  10000,
-		AffectedRows:  100,
-		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		SchemaName:     "schema_name",
+		OriginalSQL:    "original_sql1",
+		NormalizedSQL:  "normalized_sql",
+		Digest:         "digest",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		Plan:         "plan",
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums := s.ssMap.ToCurrentDatum()
 	c.Assert(len(datums), Equals, 1)
+	n := types.Time{Time: types.FromGoTime(time.Unix(now, 0)), Type: mysql.TypeTimestamp}
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
-	match(c, datums[0], stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
-		1, stmtExecInfo1.TotalLatency, stmtExecInfo1.TotalLatency, stmtExecInfo1.TotalLatency, stmtExecInfo1.TotalLatency,
+	match(c, datums[0], n, stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL, stmtExecInfo1.Plan,
+		stmtExecInfo1.TableIDs, stmtExecInfo1.IndexNames, stmtExecInfo1.User,
+		1, int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
+		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency), int64(stmtExecInfo1.CompileLatency),
+		stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.AvgProcessTime), int64(stmtExecInfo1.CopTasks.MaxProcessTime),
+		stmtExecInfo1.CopTasks.MaxProcessAddress, int64(stmtExecInfo1.CopTasks.AvgWaitTime), int64(stmtExecInfo1.CopTasks.MaxWaitTime),
+		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.ProcessTime),
+		int64(stmtExecInfo1.ExecDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
+		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.RequestCount, stmtExecInfo1.ExecDetail.RequestCount,
+		stmtExecInfo1.ExecDetail.TotalKeys, stmtExecInfo1.ExecDetail.TotalKeys, stmtExecInfo1.ExecDetail.ProcessedKeys,
+		stmtExecInfo1.ExecDetail.ProcessedKeys, stmtExecInfo1.MemMax, stmtExecInfo1.MemMax,
 		stmtExecInfo1.AffectedRows, t, t, stmtExecInfo1.OriginalSQL)
 }
 
 // Test AddStatement and ToDatum parallel
 func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now
+	// to disable expiring
+	s.ssMap.lastCheckExpireTime = now + 60
 
 	threads := 8
 	loops := 32
@@ -492,13 +556,40 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	addStmtFunc := func() {
 		defer wg.Done()
 		stmtExecInfo1 := &StmtExecInfo{
-			SchemaName:    "schema_name",
-			OriginalSQL:   "original_sql1",
-			NormalizedSQL: "normalized_sql",
-			Digest:        "digest",
-			TotalLatency:  10000,
-			AffectedRows:  100,
-			StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+			SchemaName:     "schema_name",
+			OriginalSQL:    "original_sql1",
+			NormalizedSQL:  "normalized_sql",
+			Digest:         "digest",
+			User:           "user",
+			TotalLatency:   10000,
+			ParseLatency:   100,
+			CompileLatency: 1000,
+			TableIDs:       "1,2",
+			IndexNames:     "1,2",
+			CopTasks: &stmtctx.CopTasksDetails{
+				NumCopTasks:       10,
+				AvgProcessTime:    1000,
+				P90ProcessTime:    10000,
+				MaxProcessAddress: "127",
+				MaxProcessTime:    15000,
+				AvgWaitTime:       100,
+				P90WaitTime:       1000,
+				MaxWaitAddress:    "128",
+				MaxWaitTime:       1500,
+			},
+			ExecDetail: &execdetails.ExecDetails{
+				CalleeAddress: "129",
+				ProcessTime:   500,
+				WaitTime:      50,
+				BackoffTime:   80,
+				RequestCount:  10,
+				TotalKeys:     1000,
+				ProcessedKeys: 500,
+			},
+			MemMax:       10000,
+			Plan:         "plan",
+			AffectedRows: 100,
+			StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 		}
 
 		// Add 32 times with different digest
@@ -526,13 +617,40 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	s.ssMap.Clear()
 
 	stmtExecInfo1 := &StmtExecInfo{
-		SchemaName:    "schema_name",
-		OriginalSQL:   "original_sql1",
-		NormalizedSQL: "normalized_sql",
-		Digest:        "digest",
-		TotalLatency:  10000,
-		AffectedRows:  100,
-		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		SchemaName:     "schema_name",
+		OriginalSQL:    "original_sql1",
+		NormalizedSQL:  "normalized_sql",
+		Digest:         "digest",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		Plan:         "plan",
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
@@ -548,11 +666,15 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	sm := s.ssMap.summaryMap
 	c.Assert(sm.Size(), Equals, int(maxStmtCount))
 
+	hash := fnv.New64()
+	_, err := hash.Write(hack.Slice(stmtExecInfo1.Plan))
+	c.Assert(err, IsNil)
 	// LRU cache should work
 	for i := loops - int(maxStmtCount); i < loops; i++ {
 		key := &stmtSummaryByDigestKey{
 			schemaName: stmtExecInfo1.SchemaName,
 			digest:     fmt.Sprintf("digest%d", i),
+			planHash:   hash.Sum64(),
 		}
 		_, ok := sm.Get(key)
 		c.Assert(ok, IsTrue)
@@ -569,19 +691,51 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := &StmtExecInfo{
-		SchemaName:    "schema_name",
-		OriginalSQL:   str,
-		NormalizedSQL: str,
-		Digest:        "digest",
-		TotalLatency:  10000,
-		AffectedRows:  100,
-		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		SchemaName:     "schema_name",
+		OriginalSQL:    str,
+		NormalizedSQL:  str,
+		Digest:         "digest",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		Plan:         str,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 
 	s.ssMap.AddStatement(stmtExecInfo1)
+
+	hash := fnv.New64()
+	_, err := hash.Write(hack.Slice(stmtExecInfo1.Plan))
+	c.Assert(err, IsNil)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planHash:   hash.Sum64(),
 	}
 	value, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
@@ -589,22 +743,55 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	summary := value.(*stmtSummaryByDigest)
 	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
 	c.Assert(len(summary.sampleSQL), Equals, int(maxSQLLength))
+	c.Assert(len(summary.plan), Equals, int(maxSQLLength))
 }
 
 // Test setting EnableStmtSummary to 0
 func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now
+	// to disable expiring
+	s.ssMap.lastCheckExpireTime = now + 60
+
 	// Set false in global scope, it should work.
 	s.ssMap.SetEnabled("0", false)
 
 	stmtExecInfo1 := &StmtExecInfo{
-		SchemaName:    "schema_name",
-		OriginalSQL:   "original_sql1",
-		NormalizedSQL: "normalized_sql",
-		Digest:        "digest",
-		TotalLatency:  10000,
-		AffectedRows:  100,
-		StartTime:     time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		SchemaName:     "schema_name",
+		OriginalSQL:    "original_sql1",
+		NormalizedSQL:  "normalized_sql",
+		Digest:         "digest",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		Plan:         "plan",
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 
 	s.ssMap.AddStatement(stmtExecInfo1)
@@ -622,13 +809,40 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	s.ssMap.SetEnabled("0", false)
 
 	stmtExecInfo2 := &StmtExecInfo{
-		SchemaName:    "schema_name",
-		OriginalSQL:   "original_sql2",
-		NormalizedSQL: "normalized_sql2",
-		Digest:        "digest2",
-		TotalLatency:  50000,
-		AffectedRows:  500,
-		StartTime:     time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
+		SchemaName:     "schema_name",
+		OriginalSQL:    "original_sql2",
+		NormalizedSQL:  "normalized_sql2",
+		Digest:         "digest2",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		Plan:         "plan",
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 	s.ssMap.AddStatement(stmtExecInfo2)
 	datums = s.ssMap.ToCurrentDatum()
@@ -648,4 +862,21 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	// Set back
 	s.ssMap.SetEnabled("1", false)
+}
+
+// Set setting interval minutes and history hours.
+func (s *testStmtSummarySuite) TestSetSysVars(c *C) {
+	s.ssMap.SetIntervalMinutes("60", false)
+	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.intervalMinutes), Equals, int32(60))
+	s.ssMap.SetIntervalMinutes("30", true)
+	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.intervalMinutes), Equals, int32(30))
+	s.ssMap.SetIntervalMinutes("", true)
+	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.intervalMinutes), Equals, int32(60))
+
+	s.ssMap.SetHistoryMaxHours("24", false)
+	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.historyHours), Equals, int32(24))
+	s.ssMap.SetHistoryMaxHours("12", true)
+	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.historyHours), Equals, int32(12))
+	s.ssMap.SetHistoryMaxHours("", true)
+	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.historyHours), Equals, int32(24))
 }

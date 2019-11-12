@@ -467,8 +467,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
-		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel,
-		TiDBStmtSummaryHistoryHours, TiDBStmtSummaryIntervalMinutes:
+		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -627,6 +626,18 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBStmtSummaryHistoryHours, TiDBStmtSummaryIntervalMinutes:
+		if value == "" {
+			return "", nil
+		}
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string

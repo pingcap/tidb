@@ -41,7 +41,8 @@ type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
-	planHash   uint64
+	// Hash value of the plan before truncating.
+	planHash uint64
 	// `hash` is the hash value of this object
 	hash []byte
 }
@@ -250,7 +251,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.oldestBeginTime = 0
 }
 
-// ToCurrentDatum converts statement summary in current interval to Datum
+// ToCurrentDatum converts statement summary in current interval to Datum.
 func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum() [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
@@ -266,6 +267,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum() [][]types.Datum {
 	return rows
 }
 
+// ToHistoryDatum converts statement summary in the history to Datum.
 func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum() [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
@@ -375,6 +377,7 @@ func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
 	return value != ""
 }
 
+// SetHistoryMaxHours sets history hours in ssMap.sysVars.
 func (ssMap *stmtSummaryByDigestMap) SetHistoryMaxHours(value string, inSession bool) {
 	ssMap.sysVars.Lock()
 	if inSession {
@@ -409,10 +412,7 @@ func (ssMap *stmtSummaryByDigestMap) SetHistoryMaxHours(value string, inSession 
 	}
 }
 
-func (ssMap *stmtSummaryByDigestMap) HistoryMaxHours() int32 {
-	return atomic.LoadInt32(&ssMap.sysVars.historyHours)
-}
-
+// SetIntervalMinutes sets interval minutes in ssMap.sysVars.
 func (ssMap *stmtSummaryByDigestMap) SetIntervalMinutes(value string, inSession bool) {
 	ssMap.sysVars.Lock()
 	if inSession {
@@ -447,10 +447,6 @@ func (ssMap *stmtSummaryByDigestMap) SetIntervalMinutes(value string, inSession 
 	}
 }
 
-func (ssMap *stmtSummaryByDigestMap) IntervalMinutes() int32 {
-	return atomic.LoadInt32(&ssMap.sysVars.intervalMinutes)
-}
-
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo
 func newStmtSummaryByDigest(sei *StmtExecInfo, latestBeginTime int64, oldestBeginTime int64) *stmtSummaryByDigest {
 	// Trim SQL to size MaxSQLLength
@@ -463,11 +459,15 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, latestBeginTime int64, oldestBegi
 	if len(sampleSQL) > int(maxSQLLength) {
 		sampleSQL = sampleSQL[:maxSQLLength]
 	}
+	plan := sei.Plan
+	if len(plan) > int(maxSQLLength) {
+		plan = plan[:maxSQLLength]
+	}
 
 	ssbd := &stmtSummaryByDigest{
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
-		plan:          sei.Plan,
+		plan:          plan,
 		normalizedSQL: normalizedSQL,
 		sampleSQL:     sampleSQL,
 		tableIDs:      sei.TableIDs,
@@ -614,8 +614,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo) {
 		ssElement.maxWaitTime = sei.ExecDetail.WaitTime
 	}
 	ssElement.sumBackoffTime += sei.ExecDetail.BackoffTime
-	if sei.ExecDetail.BackoffTime > ssElement.maxWaitTime {
-		ssElement.maxWaitTime = sei.ExecDetail.BackoffTime
+	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
+		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
 	ssElement.sumRequestCount += int64(sei.ExecDetail.RequestCount)
 	if int64(sei.ExecDetail.RequestCount) > ssElement.maxRequestCount {
