@@ -486,9 +486,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
 		conflictCommitTS := extractConflictCommitTS(err.Error())
-		if conflictCommitTS == 0 {
-			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
-		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),

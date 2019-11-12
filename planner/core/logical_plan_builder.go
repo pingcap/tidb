@@ -2679,8 +2679,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
-	tableAsName := make(map[*model.TableInfo][]*model.CIStr)
-	extractTableAsNameForUpdate(p, tableAsName)
 
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
@@ -2696,12 +2694,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if _, ok := modifyColumns[columnFullName]; ok {
 				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
-			for _, asName := range tableAsName[tableInfo] {
-				virtualAssignments = append(virtualAssignments, &ast.Assignment{
-					Column: &ast.ColumnName{Table: *asName, Name: colInfo.Name},
-					Expr:   tableVal.Cols()[i].GeneratedExpr,
-				})
-			}
+			virtualAssignments = append(virtualAssignments, &ast.Assignment{
+				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+				Expr:   tableVal.Cols()[i].GeneratedExpr,
+			})
 		}
 	}
 
@@ -2758,47 +2754,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
 	return newList, p, nil
-}
-
-// extractTableAsNameForUpdate extracts tables' alias names for update.
-func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*model.CIStr) {
-	switch x := p.(type) {
-	case *DataSource:
-		alias := extractTableAlias(p)
-		if alias != nil {
-			if _, ok := asNames[x.tableInfo]; !ok {
-				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
-			}
-			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
-		}
-	case *LogicalProjection:
-		if !x.calculateGenCols {
-			return
-		}
-
-		ds, isDS := x.Children()[0].(*DataSource)
-		if !isDS {
-			// try to extract the DataSource below a LogicalUnionScan.
-			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
-				ds, isDS = us.Children()[0].(*DataSource)
-			}
-		}
-		if !isDS {
-			return
-		}
-
-		alias := extractTableAlias(x)
-		if alias != nil {
-			if _, ok := asNames[ds.tableInfo]; !ok {
-				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-			}
-			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
-		}
-	default:
-		for _, child := range p.Children() {
-			extractTableAsNameForUpdate(child, asNames)
-		}
-	}
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
@@ -3550,6 +3505,7 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
+				newTableName.Schema = model.NewCIStr("")
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)
