@@ -1042,123 +1042,130 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 		if err != nil {
 			return false, err
 		}
-		isNull := col.IsNull(0)
+		previousIsNull := col.IsNull(0)
 		switch eType {
 		case types.ETInt:
 			i64s := col.Int64s()
 			for i := 1; i < numRows; i++ {
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if i64s[i] != i64s[i-1] {
 								e.sameGroup[i] = false
 							}
 						}
 					}
 				}
+				previousIsNull = isNull
 			}
 		case types.ETReal:
 			i64s := col.Float64s()
 			for i := 1; i < numRows; i++ {
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if i64s[i] != i64s[i-1] {
 								e.sameGroup[i] = false
 							}
 						}
 					}
 				}
+				previousIsNull = isNull
 			}
 		case types.ETDecimal:
 			i64s := col.Decimals()
 			for i := 1; i < numRows; i++ {
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if i64s[i] != i64s[i-1] {
 								e.sameGroup[i] = false
 							}
 						}
 					}
 				}
+				previousIsNull = isNull
 			}
 		case types.ETDatetime, types.ETTimestamp:
 			i64s := col.Times()
 			for i := 1; i < numRows; i++ {
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if i64s[i] != i64s[i-1] {
 								e.sameGroup[i] = false
 							}
 						}
 					}
 				}
+				previousIsNull = isNull
 			}
 		case types.ETDuration:
 			i64s := col.GoDurations()
 			for i := 1; i < numRows; i++ {
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if i64s[i] != i64s[i-1] {
 								e.sameGroup[i] = false
 							}
 						}
 					}
 				}
+				previousIsNull = isNull
 			}
 		case types.ETJson:
 			previousKey := col.GetJSON(0)
 			for i := 1; i < numRows; i++ {
+				key := col.GetJSON(i)
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					key := col.GetJSON(i)
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if json.CompareBinary(previousKey, key) != 0 {
 								e.sameGroup[i] = false
 							}
 						}
 					}
-					previousKey = key
 				}
+				previousKey = key
+				previousIsNull = isNull
 			}
 		case types.ETString:
 			previousKey := col.GetString(0)
 			for i := 1; i < numRows; i++ {
+				key := col.GetString(i)
+				isNull := col.IsNull(i)
 				if e.sameGroup[i] {
-					key := col.GetString(i)
-					if col.IsNull(i) != isNull {
-						isNull = !isNull
+					if isNull != previousIsNull {
 						e.sameGroup[i] = false
 					} else {
-						if !isNull {
+						if !previousIsNull {
 							if previousKey != key {
 								e.sameGroup[i] = false
 							}
 						}
 					}
-					previousKey = key
 				}
+				previousKey = key
+				previousIsNull = isNull
 			}
 		default:
 			err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
