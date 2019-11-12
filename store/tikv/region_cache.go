@@ -70,62 +70,63 @@ type Region struct {
 	lastAccess int64          // last region access time, see checkRegionCacheTTL
 }
 
+// EngineCnt presents max engine type supported by TiDB.
+const EngineCnt = 2
+
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workTiKVIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
-	workTiFlashIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
-	stores         []*Store // stores in this region
-	storeFails     []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
+	currIdx    [EngineCnt]int32
+	stores     [EngineCnt][]*Store // stores in this region
+	storeFails [EngineCnt][]uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
-	storeFails := make([]uint32, len(r.stores))
-	for i, e := range r.storeFails {
-		storeFails[i] = e
+	nr := &RegionStore{
+		currIdx: r.currIdx,
 	}
-	return &RegionStore{
-		workTiFlashIdx: r.workTiFlashIdx,
-		workTiKVIdx:    r.workTiKVIdx,
-		stores:         r.stores,
-		storeFails:     storeFails,
+	for engineType := range r.stores {
+		nr.stores[engineType] = make([]*Store, len(r.stores[engineType]))
+		for j, store := range r.stores[engineType] {
+			nr.stores[engineType][j] = store
+		}
 	}
+	for engineType := range r.storeFails {
+		nr.storeFails[engineType] = make([]uint32, len(r.storeFails[engineType]))
+		for j, e := range r.storeFails[engineType] {
+			nr.storeFails[engineType][j] = e
+		}
+	}
+	return nr
 }
 
 // return next follower store's index
 func (r *RegionStore) follower(seed uint32) int32 {
-	l := uint32(len(r.stores))
+	engine := kv.TiKV
+	l := uint32(len(r.stores[engine]))
 	if l <= 1 {
-		return r.workTiKVIdx
+		return r.currIdx[engine]
 	}
 
 	for retry := l - 1; retry > 0; retry-- {
 		followerIdx := int32(seed % (l - 1))
-		if followerIdx >= r.workTiKVIdx {
+		if followerIdx >= r.currIdx[engine] {
 			followerIdx++
 		}
-		if r.stores[followerIdx].storeType != kv.TiKV {
-			continue
-		}
-		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
+		if r.storeFails[engine][followerIdx] == atomic.LoadUint32(&r.stores[engine][followerIdx].fail) {
 			return followerIdx
 		}
 		seed++
 	}
-	return r.workTiKVIdx
+	return r.currIdx[engine]
 }
 
 // init initializes region after constructed.
 func (r *Region) init(c *RegionCache) {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
-	rs := &RegionStore{
-		workTiKVIdx:    0,
-		workTiFlashIdx: 0,
-		stores:         make([]*Store, 0, len(r.meta.Peers)),
-		storeFails:     make([]uint32, 0, len(r.meta.Peers)),
-	}
+	rs := &RegionStore{}
 	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
 		store, exists := c.storeMu.stores[p.StoreId]
@@ -133,8 +134,8 @@ func (r *Region) init(c *RegionCache) {
 		if !exists {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
-		rs.stores = append(rs.stores, store)
-		rs.storeFails = append(rs.storeFails, atomic.LoadUint32(&store.fail))
+		rs.stores[store.storeType] = append(rs.stores[store.storeType], store)
+		rs.storeFails[store.storeType] = append(rs.storeFails[store.storeType], atomic.LoadUint32(&store.fail))
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
 
@@ -289,6 +290,8 @@ func (c *RPCContext) String() string {
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
 func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
+
+	engine := kv.TiKV
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -327,7 +330,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	storeFailEpoch := atomic.LoadUint32(&store.fail)
-	if storeFailEpoch != regionStore.storeFails[storeIdx] {
+	if storeFailEpoch != regionStore.storeFails[engine][storeIdx] {
 		cachedRegion.invalidate()
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
@@ -349,6 +352,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 // must be out of date and already dropped from cache or not flash store found.
 func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
 	ts := time.Now().Unix()
+	engine := kv.TiFlash
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
@@ -361,10 +365,10 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 	regionStore := cachedRegion.getStore()
 
 	// sIdx is for load balance of TiFlash store.
-	sIdx := int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
-	for i := range regionStore.stores {
-		storeIdx := (sIdx + i) % len(regionStore.stores)
-		store := regionStore.stores[storeIdx]
+	sIdx := int(atomic.AddInt32(&regionStore.currIdx[engine], 1))
+	for i := range regionStore.stores[engine] {
+		storeIdx := (sIdx + i) % len(regionStore.stores[engine])
+		store := regionStore.stores[engine][storeIdx]
 		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 		if err != nil {
 			return nil, err
@@ -376,13 +380,10 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		if store.getResolveState() == needCheck {
 			store.reResolve(c)
 		}
-		if store.storeType != kv.TiFlash {
-			continue
-		}
-		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(storeIdx))
+		atomic.StoreInt32(&regionStore.currIdx[engine], int32(storeIdx))
 		peer := cachedRegion.meta.Peers[storeIdx]
 		storeFailEpoch := atomic.LoadUint32(&store.fail)
-		if storeFailEpoch != regionStore.storeFails[storeIdx] {
+		if storeFailEpoch != regionStore.storeFails[engine][storeIdx] {
 			cachedRegion.invalidate()
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
@@ -897,12 +898,14 @@ func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx
 	for {
 		oldRegionStore := region.getStore()
 		newRegionStore := oldRegionStore.clone()
-		newRegionStore.stores = make([]*Store, 0, len(oldRegionStore.stores))
-		for i, s := range oldRegionStore.stores {
-			if i == storeIdx {
-				newRegionStore.stores = append(newRegionStore.stores, store)
-			} else {
-				newRegionStore.stores = append(newRegionStore.stores, s)
+		for engineType := range oldRegionStore.stores {
+			newRegionStore.stores[engineType] = make([]*Store, 0, len(oldRegionStore.stores[engineType]))
+			for i, s := range oldRegionStore.stores[engineType] {
+				if i == storeIdx {
+					newRegionStore.stores[engineType] = append(newRegionStore.stores[engineType], store)
+				} else {
+					newRegionStore.stores[engineType] = append(newRegionStore.stores[engineType], s)
+				}
 			}
 		}
 		if region.compareAndSwapStore(oldRegionStore, newRegionStore) {
@@ -1007,24 +1010,27 @@ func (r *Region) GetMeta() *metapb.Region {
 
 // GetLeaderID returns leader region ID.
 func (r *Region) GetLeaderID() uint64 {
+	engine := kv.TiKV
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.currIdx[engine]) >= len(r.meta.Peers) {
 		return 0
 	}
-	return r.meta.Peers[int(r.getStore().workTiKVIdx)].Id
+	return r.meta.Peers[int(r.getStore().currIdx[engine])].Id
 }
 
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	engine := kv.TiKV
+	if int(store.currIdx[engine]) >= len(r.meta.Peers) {
 		return 0
 	}
-	return r.meta.Peers[int(r.getStore().workTiKVIdx)].StoreId
+	return r.meta.Peers[int(r.getStore().currIdx[engine])].StoreId
 }
 
 func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
-	store = rs.stores[pidx]
+	engine := kv.TiKV
+	store = rs.stores[engine][pidx]
 	peer = r.meta.Peers[pidx]
 	idx = int(pidx)
 	return
@@ -1032,7 +1038,8 @@ func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *
 
 // WorkStorePeer returns current work store with work peer.
 func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	return r.getStorePeer(rs, rs.workTiKVIdx)
+	engine := kv.TiKV
+	return r.getStorePeer(rs, rs.currIdx[engine])
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
@@ -1080,45 +1087,47 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 }
 
 func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err error) {
+	engine := kv.TiFlash
 	rs := r.getStore()
 
 	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeFails[currentPeerIdx]
+		s := rs.stores[engine][currentPeerIdx]
+		epoch := rs.storeFails[engine][currentPeerIdx]
 		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
 	}
 
-	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
+	nextIdx := (currentPeerIdx + 1) % len(rs.stores[engine])
 	newRegionStore := rs.clone()
-	newRegionStore.workTiFlashIdx = int32(nextIdx)
+	newRegionStore.currIdx[engine] = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
 func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
+	engine := kv.TiKV
 
 	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeFails[currentPeerIdx]
+		s := rs.stores[engine][currentPeerIdx]
+		epoch := rs.storeFails[engine][currentPeerIdx]
 		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
 	}
 
-	if int(rs.workTiKVIdx) != currentPeerIdx {
+	if int(rs.currIdx[engine]) != currentPeerIdx {
 		return
 	}
 
-	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
-	for rs.stores[nextIdx].storeType == kv.TiFlash {
-		nextIdx = (nextIdx + 1) % len(rs.stores)
+	nextIdx := (currentPeerIdx + 1) % len(rs.stores[engine])
+	for rs.stores[engine][nextIdx].storeType == kv.TiFlash {
+		nextIdx = (nextIdx + 1) % len(rs.stores[engine])
 	}
 	newRegionStore := rs.clone()
-	newRegionStore.workTiKVIdx = int32(nextIdx)
+	newRegionStore.currIdx[engine] = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
@@ -1137,14 +1146,15 @@ func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bo
 }
 
 func (c *RegionCache) switchWorkIdx(r *Region, leaderIdx int) {
+	engine := kv.TiKV
 retry:
 	// switch to new leader.
 	oldRegionStore := r.getStore()
-	if oldRegionStore.workTiKVIdx == int32(leaderIdx) {
+	if oldRegionStore.currIdx[engine] == int32(leaderIdx) {
 		return
 	}
 	newRegionStore := oldRegionStore.clone()
-	newRegionStore.workTiKVIdx = int32(leaderIdx)
+	newRegionStore.currIdx[engine] = int32(leaderIdx)
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
