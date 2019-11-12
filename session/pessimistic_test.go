@@ -502,15 +502,19 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
 	tk2.MustExec("begin pessimistic")
+	// The lock rollback of this statement is delayed by failpoint AsyncRollBackSleep.
 	_, err := tk2.Exec("select * from tk where c1 > 0 for update nowait")
 	c.Check(err, NotNil)
 	tk.MustExec("commit")
+	// This statement success for now, but its lock will be rollbacked later by the
+	// lingering rollback request, as forUpdateTS doesn't change.
 	tk2.MustQuery("select * from tk where c1 > 0 for update nowait")
 	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
 	tk3.MustExec("begin pessimistic")
-	tk3.MustExec("update tk set c2 = 1 where c1 = 5")        // here lock succ happen in getTs failed from pd
-	tk2.MustExec("update tk set c2 = c2 + 100 where c1 > 0") // this will not get effect
-	time.Sleep(3 * time.Second)
+	// tk3 succ because tk2 rollback itself.
+	tk3.MustExec("update tk set c2 = 1 where c1 = 5")
+	// This will not take effect because the lock of tk2 was gone.
+	tk2.MustExec("update tk set c2 = c2 + 100 where c1 > 0")
 	_, err = tk2.Exec("commit")
 	c.Check(err, NotNil) // txn abort because pessimistic lock not found
 	tk3.MustExec("commit")
