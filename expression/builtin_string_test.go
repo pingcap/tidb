@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"strconv"
 	"strings"
 	"time"
@@ -71,8 +72,9 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	f, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+	c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_Length)
 }
 
 func (s *testEvaluatorSuite) TestASCII(c *C) {

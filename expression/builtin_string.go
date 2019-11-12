@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/text/transform"
 )
@@ -186,6 +187,7 @@ func (c *lengthFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
 	sig := &builtinLengthSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Length)
 	return sig, nil
 }
 
