@@ -390,7 +390,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		err = ErrInvalidIndexState.GenWithStack("invalid index state %v", tblInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -447,7 +447,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = ErrInvalidIndexState.GenWithStack("invalid index state %v", indexInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
