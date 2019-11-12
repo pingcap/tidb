@@ -578,24 +578,28 @@ func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Col
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(bufFsp)
 	times := result.Times()
 	fsps := bufFsp.Int64s()
 
 	for i := 0; i < n; i++ {
 		fsp := int8(0)
-		if !result.IsNull(i) {
+		if !bufFsp.IsNull(i) {
+			if fsps[i] > int64(types.MaxFsp) {
+				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", fsps[i], types.MaxFsp)
+			}
+			if fsps[i] < int64(types.MinFsp) {
+				return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsps[i])
+			}
 			fsp = int8(fsps[i])
 		}
 
 		t, isNull, err := evalNowWithFsp(b.ctx, fsp)
+		if err != nil {
+			return err
+		}
 		if isNull {
 			result.SetNull(i, true)
 			continue
-		}
-
-		if err != nil {
-			return err
 		}
 
 		times[i] = t
