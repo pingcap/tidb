@@ -907,11 +907,72 @@ func (b *builtinExportSet4ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinRpadBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals RPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
 func (b *builtinRpadBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+		return err
+	}
+	lenBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lenBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, lenBuf); err != nil {
+		return err
+	}
+	padBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(padBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, padBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := lenBuf.Int64s()
+	lenBuf.MergeNulls(strBuf)
+	for i := 0; i < n; i++ {
+		if lenBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		targetLength := int(i64s[i])
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+
+		if padBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := strBuf.GetString(i)
+		strLength := len(str)
+		padStr := padBuf.GetString(i)
+		padLength := len(padStr)
+		if targetLength < 0 || targetLength > b.tp.Flen || (strLength < targetLength && padLength == 0) {
+			result.AppendNull()
+			continue
+		}
+		if tailLen := targetLength - strLength; tailLen > 0 {
+			repeatCount := tailLen/padLength + 1
+			str = str + strings.Repeat(padStr, repeatCount)
+		}
+		result.AppendString(str[:targetLength])
+	}
+	return nil
 }
 
 func (b *builtinFormatWithLocaleSig) vectorized() bool {
