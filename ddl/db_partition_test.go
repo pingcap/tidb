@@ -386,6 +386,13 @@ create table log_message_1 (
 				"partition p1 values less than (1, 'a'))",
 			ddl.ErrRangeNotIncreasing,
 		},
+		{
+			"create table t (col datetime not null default '2000-01-01')" +
+				"partition by range columns (col) (" +
+				"PARTITION p0 VALUES LESS THAN (20190905)," +
+				"PARTITION p1 VALUES LESS THAN (20190906));",
+			ddl.ErrWrongTypeColumnValue,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
@@ -545,6 +552,16 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	sql := "alter table t add partition ( partition p3 values less than ('2019-07-01'));"
 	assertErrorCode(c, tk, sql, tmysql.ErrRangeNotIncreasing)
 	tk.MustExec("alter table t add partition ( partition p3 values less than ('2019-08-01'));")
+
+	// Add partition value's type should be the same with the column's type.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (
+		col date not null default '2000-01-01')
+                partition by range columns (col) (
+		PARTITION p0 VALUES LESS THAN ('20190905'),
+		PARTITION p1 VALUES LESS THAN ('20190906'));`)
+	sql = "alter table t add partition (partition p2 values less than (20190907));"
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongTypeColumnValue)
 }
 
 func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
