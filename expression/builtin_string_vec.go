@@ -778,6 +778,10 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinFindInSetSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	str, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -813,10 +817,6 @@ func (b *builtinFindInSetSig) vectorized() bool {
 		}
 	}
 	return nil
-}
-
-func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
 }
 
 func (b *builtinLeftBinarySig) vectorized() bool {
