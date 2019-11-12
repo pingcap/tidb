@@ -350,9 +350,8 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 		}
 
 		var buf []byte
-		i := 0
-		for j := 0; j < input.NumRows(); j++ {
-			d, err := colExpr.Eval(input.GetRow(j))
+		for i := 0; i < input.NumRows(); i++ {
+			d, err := colExpr.Eval(input.GetRow(i))
 			if err != nil {
 				c.Fatal(err)
 			}
@@ -361,7 +360,6 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 				c.Fatal(err)
 			}
 			c.Assert(string(bufs[i]), check.Equals, string(buf))
-			i++
 		}
 	}
 }
