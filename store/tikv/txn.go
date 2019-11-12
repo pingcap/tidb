@@ -477,7 +477,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg.Add(1)
 	go func() {
 		failpoint.Inject("AsyncRollBackSleep", func() {
-			time.Sleep(2 * time.Second)
+			time.Sleep(100 * time.Millisecond)
 		})
 		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
 		if err != nil {
