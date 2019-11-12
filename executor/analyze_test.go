@@ -196,9 +196,6 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	for i := 0; i < 60; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -207,6 +204,10 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	// construct 5 regions split by {12, 24, 36, 48}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
 	manipulateCluster(cluster, splitKeys)
+
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
 
 	var pkCol *model.ColumnInfo
 	var colsInfo []*model.ColumnInfo
@@ -248,7 +249,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 			vals[i] = append(vals[i], s)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
+	c.Assert(fmt.Sprintln(vals), Equals, "[[1 2 16 19 20 22 23 24 25 28 29 31 34 39 42 43 44 45 57 59] [1 2 16 19 20 22 23 24 25 28 29 31 34 39 42 43 44 45 57 59]]\n")
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
@@ -309,6 +310,8 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	// Should not panic.
+	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
