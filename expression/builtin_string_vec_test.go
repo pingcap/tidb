@@ -54,7 +54,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.ASCII: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
 	},
-	ast.Concat:   {},
+	ast.Concat: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}},
+	},
 	ast.ConcatWS: {},
 	ast.Convert:  {},
 	ast.Substring: {
@@ -100,6 +102,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Hex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.Unhex: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randHexStrGener{10, 100}}},
@@ -146,13 +149,19 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.FindInSet: {},
 	ast.Field:     {},
-	ast.MakeSet:   {},
+	ast.MakeSet: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString}},
+	},
 	ast.Oct: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&numStrGener{rangeInt64Gener{-10, 10}}}},
 	},
-	ast.Ord:   {},
-	ast.Quote: {},
+	ast.Quote: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
+	ast.Ord: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.Bin: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
 	},
@@ -220,6 +229,14 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Elt: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&rangeInt64Gener{-1, 5}}},
+	},
+	ast.FromUnixTime: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}},
+				&constStrGener{"%y-%m-%d"},
+			},
+		},
 	},
 }
 
