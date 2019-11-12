@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -545,43 +546,45 @@ func (b *builtinConcatWSSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-
-	strs := make([][]string, n)
-	seps := make([]string, n)
-	isNulls := make([]bool, n)
-	targetLengths := make([]int, n)
 	argsLen := len(b.args)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return err
+
+	bufs := make([]*chunk.Column, argsLen)
+	var err error
+	for i := 0; i < argsLen; i++ {
+		bufs[i], err = b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(bufs[i])
+		if err := b.args[i].VecEvalString(b.ctx, input, bufs[i]); err != nil {
+			return err
+		}
 	}
+
+	isNulls := make([]bool, n)
+	seps := make([]string, n)
+	strs := make([][]string, n)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if bufs[0].IsNull(i) {
 			// If the separator is NULL, the result is NULL.
 			isNulls[i] = true
 			continue
 		}
 		isNulls[i] = false
-		strs[i] = make([]string, 0, argsLen)
-		seps[i] = buf.GetString(i)
+		seps[i] = bufs[0].GetString(i)
+		strs[i] = make([]string, 0, argsLen-1)
 	}
 
-	var strBuf []byte
+	var strBuf string
+	targetLengths := make([]int, n)
 	for j := 1; j < argsLen; j++ {
-		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
-			return err
-		}
 		for i := 0; i < n; i++ {
-			if isNulls[i] || buf.IsNull(i) {
+			if isNulls[i] || bufs[j].IsNull(i) {
 				// CONCAT_WS() does not skip empty strings. However,
 				// it does skip any NULL values after the separator argument.
 				continue
 			}
-			strBuf = buf.GetBytes(i)
+			strBuf = bufs[j].GetString(i)
 			targetLengths[i] += len(strBuf)
 			if i > 1 {
 				targetLengths[i] += len(seps[i])
@@ -591,7 +594,7 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 				isNulls[i] = true
 				continue
 			}
-			strs[i] = append(strs[i], string(strBuf))
+			strs[i] = append(strs[i], strBuf)
 		}
 	}
 	result.ReserveString(n)
