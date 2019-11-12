@@ -439,17 +439,17 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		c.Assert(err, IsNil)
 		switch f.(type) {
 		case *builtinRoundWithFracIntSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracInt)
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracInt)
 		case *builtinRoundWithFracDecSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracDec)
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracDec)
 		case *builtinRoundWithFracRealSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracReal)
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracReal)
 		case *builtinRoundIntSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_RoundInt)
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundInt)
 		case *builtinRoundDecSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_RoundDec)
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundDec)
 		case *builtinRoundRealSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_RoundReal)
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundReal)
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
