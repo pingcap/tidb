@@ -101,8 +101,7 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32) int32 {
-	engine := kv.TiKV
+func (r *RegionStore) follower(engine kv.StoreType, seed uint32) int32 {
 	l := uint32(len(r.stores[engine]))
 	if l <= 1 {
 		return r.currIdx[engine]
@@ -308,9 +307,9 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	var storeIdx int
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(engine, regionStore, followerStoreSeed)
 	default:
-		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
+		store, peer, storeIdx = cachedRegion.WorkStorePeer(engine, regionStore)
 	}
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 	if err != nil {
@@ -492,9 +491,9 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
 		if ctx.Store.storeType == kv.TiKV {
-			c.switchNextPeer(r, ctx.PeerIdx, err)
+			c.switchNextPeer(ctx.Store.storeType, r, ctx.PeerIdx, err)
 		} else {
-			c.switchNextFlashPeer(r, ctx.PeerIdx, err)
+			c.switchNextFlashPeer(ctx.Store.storeType, r, ctx.PeerIdx, err)
 		}
 		if scheduleReload {
 			r.scheduleReload()
@@ -654,7 +653,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 
 	if leaderStoreID == 0 {
-		c.switchNextPeer(r, currentPeerIdx, nil)
+		c.switchNextPeer(kv.TiKV, r, currentPeerIdx, nil)
 		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("regionID", regionID.GetID()))
@@ -1027,8 +1026,7 @@ func (r *Region) GetLeaderStoreID() uint64 {
 	return r.meta.Peers[int(r.getStore().currIdx[engine])].StoreId
 }
 
-func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
-	engine := kv.TiKV
+func (r *Region) getStorePeer(engine kv.StoreType, rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
 	store = rs.stores[engine][pidx]
 	peer = r.meta.Peers[pidx]
 	idx = int(pidx)
@@ -1036,14 +1034,13 @@ func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *
 }
 
 // WorkStorePeer returns current work store with work peer.
-func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	engine := kv.TiKV
-	return r.getStorePeer(rs, rs.currIdx[engine])
+func (r *Region) WorkStorePeer(engine kv.StoreType, rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
+	return r.getStorePeer(engine, rs, rs.currIdx[engine])
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
-	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
+func (r *Region) FollowerStorePeer(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
+	return r.getStorePeer(engine, rs, rs.follower(engine, followerStoreSeed))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1081,12 +1078,12 @@ func (r *Region) EndKey() []byte {
 // false if no peer matches the storeID.
 func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool) {
 	leaderIdx, found := c.getPeerStoreIndex(r, targetStoreID)
-	c.switchWorkIdx(r, leaderIdx)
+	engine := kv.TiKV // now, we only support leader in TiKV store.
+	c.switchWorkIdx(engine, r, leaderIdx)
 	return
 }
 
-func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err error) {
-	engine := kv.TiFlash
+func (c *RegionCache) switchNextFlashPeer(engine kv.StoreType, r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
 
 	if err != nil { // TODO: refine err, only do this for some errors.
@@ -1104,9 +1101,8 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
-func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
+func (c *RegionCache) switchNextPeer(engine kv.StoreType, r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
-	engine := kv.TiKV
 
 	if err != nil { // TODO: refine err, only do this for some errors.
 		s := rs.stores[engine][currentPeerIdx]
@@ -1144,8 +1140,7 @@ func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bo
 	return
 }
 
-func (c *RegionCache) switchWorkIdx(r *Region, leaderIdx int) {
-	engine := kv.TiKV
+func (c *RegionCache) switchWorkIdx(engine kv.StoreType, r *Region, leaderIdx int) {
 retry:
 	// switch to new leader.
 	oldRegionStore := r.getStore()
