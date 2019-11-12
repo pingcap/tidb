@@ -146,16 +146,12 @@ func TestInfo(t *testing.T) {
 	}
 	<-dom.ddl.SchemaSyncer().Done()
 	time.Sleep(15 * time.Millisecond)
-	syncerStarted := false
-	for i := 0; i < 20; i++ {
+	// Wait for syncer to start
+	for ; ; {
 		if dom.SchemaValidator.IsStarted() {
-			syncerStarted = true
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
-	}
-	if !syncerStarted {
-		t.Fatal("start syncer failed")
 	}
 	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
 	if err != nil {
