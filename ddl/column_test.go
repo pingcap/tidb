@@ -992,5 +992,5 @@ func (s *testColumnSuite) TestReservedColumnsCheck(c *C) {
 		colNames = append(colNames, model.NewCIStr(name))
 	}
 	err := checkColumnsReserved(colNames)
-	c.Assert(err.Error(), Equals, infoschema.ErrReservedColumnConflict.GenWithStackByArgs("_tidb_rowid").Error())
+	c.Assert(err.Error(), Equals, ErrReservedColumnConflict.GenWithStackByArgs("_tidb_rowid").Error())
 }

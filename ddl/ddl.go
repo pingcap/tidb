@@ -141,6 +141,8 @@ var (
 		"unsupported partition by range columns")
 	errUnsupportedCreatePartition = terror.ClassDDL.New(codeUnsupportedCreatePartition, "unsupported partition type, treat as normal table")
 	errUnsupportedIndexType       = terror.ClassDDL.New(codeUnsupportedIndexType, "unsupported index type")
+	// ErrReservedColumnConflict returns for conflicting with the reserved column name.
+	ErrReservedColumnConflict = terror.ClassDDL.New(codeReservedColumnConflict, "Conflicting with a reserved column name '%s'")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -689,6 +691,7 @@ const (
 	codeUnsupportedPartitionByRangeColumns = 211
 	codeUnsupportedCreatePartition         = 212
 	codeUnsupportedIndexType               = 213
+	codeReservedColumnConflict             = 214
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025

@@ -897,7 +897,7 @@ func checkColumnsReserved(colNames []model.CIStr) error {
 
 func checkColumnReserved(colName model.CIStr) error {
 	if colName.L == "_tidb_rowid" {
-		return infoschema.ErrReservedColumnConflict.GenWithStackByArgs(colName.O)
+		return ErrReservedColumnConflict.GenWithStackByArgs(colName.O)
 	}
 	return nil
 }
