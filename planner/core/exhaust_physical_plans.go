@@ -1241,10 +1241,18 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				}
 			}
 		}
-		if len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || forceLeftOuter && !forceRightOuter) {
-			return forcedLeftOuterJoins, forceLeftOuter
-		} else if !supportRightOuter {
+		switch {
+		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() < p.Children()[1].statsInfo().Count():
+			if len(forcedLeftOuterJoins) != 0 {
+				return forcedLeftOuterJoins, forceLeftOuter
+			}
+			if len(allLeftOuterJoins) != 0 {
+				return allLeftOuterJoins, forceLeftOuter
+			}
+		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
 			return allLeftOuterJoins, false
+		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || forceLeftOuter && !forceRightOuter):
+			return forcedLeftOuterJoins, forceLeftOuter
 		}
 	}
 	if supportRightOuter {
@@ -1266,10 +1274,18 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				}
 			}
 		}
-		if len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || forceRightOuter && !forceLeftOuter) {
-			return forcedRightOuterJoins, forceRightOuter
-		} else if !supportLeftOuter {
+		switch {
+		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() > p.Children()[1].statsInfo().Count():
+			if len(forcedRightOuterJoins) != 0 {
+				return forcedRightOuterJoins, forceRightOuter
+			}
+			if len(allRightOuterJoins) != 0 {
+				return allRightOuterJoins, forceRightOuter
+			}
+		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
 			return allRightOuterJoins, false
+		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || forceRightOuter && !forceLeftOuter):
+			return forcedRightOuterJoins, forceRightOuter
 		}
 	}
 

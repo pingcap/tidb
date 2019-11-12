@@ -152,15 +152,14 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	count	task	operator info
 Projection_10	0.00	root	Column#1, Column#2, Column#4, Column#5, Column#3, Column#24, Column#25, Column#26, Column#11, Column#12, Column#13, Column#14, Column#15, Column#16, Column#17
 └─Limit_13	0.00	root	offset:0, count:2000
-  └─IndexMergeJoin_41	0.00	root	inner join, inner:IndexLookUp_39, outer key:Column#21, Column#23, inner key:Column#2, Column#5
-    ├─IndexLookUp_39	0.00	root	
-    │ ├─Selection_37	0.00	cop[tikv]	not(isnull(Column#5))
-    │ │ └─IndexScan_35	0.00	cop[tikv]	table:dt, index:aid, dic, range: decided by [eq(Column#2, Column#21) eq(Column#5, Column#23)], keep order:true, stats:pseudo
-    │ └─Selection_38	0.00	cop[tikv]	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592)
-    │   └─TableScan_36	0.00	cop[tikv]	table:dt, keep order:false, stats:pseudo
-    └─TableReader_61	3.33	root	data:Selection_60
-      └─Selection_60	3.33	cop[tikv]	eq(Column#22, "ios"), gt(Column#26, 1478185592)
-        └─TableScan_59	10000.00	cop[tikv]	table:rr, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:Column#2, Column#5, inner key:Column#21, Column#23
+    ├─TableReader_43	0.00	root	data:Selection_42
+    │ └─Selection_42	0.00	cop[tikv]	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592), not(isnull(Column#5))
+    │   └─TableScan_41	10000.00	cop[tikv]	table:dt, range:[0,+inf], keep order:false, stats:pseudo
+    └─IndexLookUp_18	0.00	root	
+      ├─IndexScan_15	1.25	cop[tikv]	table:rr, index:aid, dic, range: decided by [eq(Column#21, Column#2) eq(Column#23, Column#5)], keep order:false, stats:pseudo
+      └─Selection_17	0.00	cop[tikv]	eq(Column#22, "ios"), gt(Column#26, 1478185592)
+        └─TableScan_16	1.25	cop[tikv]	table:rr, keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info
 Projection_5	1.00	root	Column#14, Column#16, Column#22, Column#23, Column#24

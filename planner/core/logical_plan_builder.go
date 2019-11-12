@@ -55,7 +55,7 @@ const (
 	HintSMJ = "sm_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
-	// HintINLJ is hint enforce index nested loop hash/sort merge join.
+	// HintINLJ is hint enforce index nested loop join.
 	HintINLJ = "inl_join"
 	// HintINLHJ is hint enforce index nested loop hash join.
 	HintINLHJ = "inl_hash_join"
@@ -408,12 +408,7 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.hintInfo = hintInfo
 	}
 
-	// If there're multiple join types and at least one of them is not index
-	// join hint, then there must exist conflict of join types.
-	mask := preferRightAsINLJInner ^ preferLeftAsINLJInner ^
-		preferRightAsINLHJInner ^ preferLeftAsINLHJInner ^
-		preferRightAsINLMJInner ^ preferLeftAsINLMJInner
-	if onesCount := bits.OnesCount(p.preferJoinType & ^mask); onesCount > 1 || onesCount == 1 && p.preferJoinType&mask > 0 {
+	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -3995,4 +3990,30 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
 	return expr
+}
+
+// containDifferentJoinTypes checks whether `preferJoinType` contains different
+// join types.
+func containDifferentJoinTypes(preferJoinType uint) bool {
+	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
+	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
+	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
+
+	mask := inlMask ^ inlhjMask ^ inlmjMask
+	onesCount := bits.OnesCount(preferJoinType & ^mask)
+	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
+		return true
+	}
+
+	cnt := 0
+	if preferJoinType&inlMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlhjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlmjMask > 0 {
+		cnt++
+	}
+	return cnt > 1
 }
