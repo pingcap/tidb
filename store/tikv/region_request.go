@@ -170,8 +170,9 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	if storeutil.StoreLimit.Load() > 0 {
-		if err := s.getStoreToken(ctx.Store); err != nil {
+	limit := storeutil.StoreLimit.Load()
+	if limit > 0 {
+		if err := s.getStoreToken(ctx.Store, limit); err != nil {
 			return nil, false, err
 		}
 		defer s.releaseStoreToken(ctx.Store)
@@ -187,10 +188,10 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	return
 }
 
-func (s *RegionRequestSender) getStoreToken(st *Store) error {
+func (s *RegionRequestSender) getStoreToken(st *Store, limit uint64) error {
 	for {
 		count := atomic.LoadUint64(&st.tokenCount)
-		if count < storeutil.StoreLimit.Load() {
+		if count < limit {
 			if atomic.CompareAndSwapUint64(&st.tokenCount, count, count+1) {
 				return nil
 			}
