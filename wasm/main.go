@@ -35,6 +35,14 @@ func main() {
 	k := setup()
 	term := NewTerm()
 
+	registerExecuteSQL(k, term)
+	registerQuerySQL(k)
+
+	c := make(chan bool)
+	<-c
+}
+
+func registerExecuteSQL(k *Kit, term Terminal) {
 	js.Global().Set("executeSQL", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		go func() {
 			start := time.Now()
@@ -68,7 +76,36 @@ func main() {
 		}()
 		return nil
 	}))
+}
 
-	c := make(chan bool)
-	<-c
+func registerQuerySQL(k *Kit) {
+	js.Global().Set("querySQL", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		go func() {
+			sql := args[0].String()
+			cb := args[1]
+
+			if rs, err := k.Exec(sql); err != nil {
+				cb.Invoke(err)
+			} else if rs == nil {
+				cb.Invoke()
+			} else if rows, err := k.ResultSetToStringSlice(rs); err != nil {
+				cb.Invoke(err)
+			} else {
+				headers := []interface{}{}
+				for _, f := range rs.Fields() {
+					headers = append(headers, js.ValueOf(f.Column.Name.O))
+				}
+				rr := []interface{}{}
+				for _, rx := range rows {
+					ry := []interface{}{}
+					for _, c := range rx {
+						ry = append(ry, c)
+					}
+					rr = append(rr, ry)
+				}
+				cb.Invoke(nil, headers, rr)
+			}
+		}()
+		return nil
+	}))
 }
