@@ -110,6 +110,7 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
+		{`a%a%a%a%a%a%a%b`, `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, '\\', false},
 		// We may reopen these test when like function go back to case insensitive.
 		/*
 			{"_ab", "AAB", '\\', true},
