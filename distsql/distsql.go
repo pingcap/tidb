@@ -185,5 +185,5 @@ func GetSystemEndian() tipb.Endian {
 	if 0x01 == *(*byte)(ptr) {
 		return tipb.Endian_BigEndian
 	}
-	return tipb.Endian_SmallEndian
+	return tipb.Endian_LittleEndian
 }
