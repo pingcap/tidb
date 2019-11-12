@@ -3105,18 +3105,64 @@ func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
 	tk.MustExec("insert into t1 set a=1;")
 	tk.MustExec("alter table t1 modify column b int;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+}
 
-	// Issue #12471
-	// Unexpect error when use `default` sql function in expression of generated column
-	tk.MustExec("drop table t1;")
-	tk.MustExec("create table t1(a int default 9, b int as (default(a)));")
-	tk.MustExec("insert into t1 values(1, default);")
-	tk.MustExec("select * from t1;")
+func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2, t3;")
 
-	tk.MustExec("create table t2(f1 int(11) default 11);")
+	// For issue #13189
+	// Use `DEFAULT()` in `INSERT` / `INSERT ON DUPLICATE KEY UPDATE` statement
+	tk.MustExec("create table t1(a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("insert into t1 set a = 1, b = default(c);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40"))
+	tk.MustExec("insert into t1 set a = 2, b = default(c), c = default(d), d = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40", "2 30 40 20"))
+	tk.MustExec("insert into t1 values (2, 3, 4, 5) on duplicate key update b = default(d), c = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40", "2 40 20 20"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a = default(b) + default(c) - default(d)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20 30 40"))
+	// Use `DEFAULT()` in `UPDATE` statement
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
+	tk.MustExec("update t1 set a = 1, c = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 2 20 4"))
+	tk.MustExec("insert into t1 value (2, 2, 3, 4);")
+	tk.MustExec("update t1 set c = default(b), b = default(c) where a = 2;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 2 20 4", "2 30 20 4"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a = 10")
+	tk.MustExec("update t1 set a = 10, b = default(c) + default(d)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	// Use `DEFAULT()` in `REPLACE` statement
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
+	tk.MustExec("replace into t1 set a = 1, c = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 20 40"))
+	tk.MustExec("insert into t1 value (2, 2, 3, 4);")
+	tk.MustExec("replace into t1 set a = 2, d = default(b), c = default(d);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 20 40", "2 20 40 20"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a = 10, c = 3")
+	tk.MustExec("replace into t1 set a = 10, b = default(c) + default(d)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	tk.MustExec("replace into t1 set a = 20, d = default(c) + default(b)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40", "20 20 30 50"))
+
+	// Use `DEFAULT()` with subquery, issue #13390
+	tk.MustExec("create table t2(f1 int default 11);")
 	tk.MustExec("insert into t2 value ();")
 	tk.MustQuery("select default(f1) from (select * from t2) t1;").Check(testkit.Rows("11"))
 	tk.MustQuery("select default(f1) from (select * from (select * from t2) t1 ) t1;").Check(testkit.Rows("11"))
+
+	// Use `DEFAULT()` in expression of generate columns, issue #12471
+	tk.MustExec("create table t3(a int default 9, b int as (1 + default(a)));")
+	tk.MustExec("insert into t3 values(1, default);")
+	tk.MustQuery("select * from t3;").Check(testkit.Rows("1 10"))
+	tk.MustExec("drop table t1, t2, t3;")
 }
 
 func (s *testDBSuite4) TestIssue9100(c *C) {
