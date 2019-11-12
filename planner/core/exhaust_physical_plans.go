@@ -394,19 +394,15 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if hasPrefixCol {
 			continue
 		}
-		// If join keys is not prefix of inner index. The order of merge join can't be granted.
-		// So index merge join can't be constructed in this case
+
 		idxOff2KeyOff := make([]int, len(join.OuterJoinKeys))
-		isKeyPrefixIndex := true
 		for keyOff, idxOff := range join.KeyOff2IdxOff {
+			// If idxOff >= len(join.OuterJoinKeys), then means the idx is as the equal condition.
+			// In this case, we can also build index merge join.
 			if idxOff >= len(join.OuterJoinKeys) {
-				isKeyPrefixIndex = false
-				break
+				continue
 			}
 			idxOff2KeyOff[idxOff] = keyOff
-		}
-		if !isKeyPrefixIndex {
-			continue
 		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
