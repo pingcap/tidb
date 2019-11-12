@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -29,6 +30,14 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+func init() {
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		panic(errors.Errorf("enable global failpoint `%s` failed: %v", fpname, err))
+	}
+}
 
 type dataGen4Expr2PbTest struct {
 }
@@ -417,6 +426,24 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(string(js), Equals, "null")
 	}
+}
+
+func (s *testEvaluatorSerialSuites) TestPanicIfPbCodeUnspecified(c *C) {
+	dg := new(dataGen4Expr2PbTest)
+	args := []Expression{dg.genColumn(mysql.TypeLong, 1), dg.genColumn(mysql.TypeLong, 2)}
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.And,
+		types.NewFieldType(mysql.TypeUnspecified),
+		args...,
+	)
+	c.Assert(err, IsNil)
+	fn := fc.(*ScalarFunction)
+	fn.Function.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	c.Assert(fn.Function.PbCode(), Equals, tipb.ScalarFuncSig_Unspecified)
+
+	pc := PbConverter{client: new(mock.Client), sc: new(stmtctx.StatementContext)}
+	c.Assert(func() { pc.ExprToPB(fn) }, PanicMatches, "unspecified PbCode: .*")
 }
 
 func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {

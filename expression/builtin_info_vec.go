@@ -14,8 +14,12 @@
 package expression
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -44,11 +48,22 @@ func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinConnectionIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
+	}
+	connectionID := int64(data.ConnectionID)
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = connectionID
+	}
+	return nil
 }
 
 func (b *builtinTiDBVersionSig) vectorized() bool {
@@ -91,11 +106,37 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinCurrentRoleSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinCurrentUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	data := b.ctx.GetSessionVars()
+	if data == nil || data.ActiveRoles == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+
+	result.ReserveString(n)
+	if len(data.ActiveRoles) == 0 {
+		for i := 0; i < n; i++ {
+			result.AppendString("")
+		}
+		return nil
+	}
+
+	sortedRes := make([]string, 0, 10)
+	for _, r := range data.ActiveRoles {
+		sortedRes = append(sortedRes, r.String())
+	}
+	sort.Strings(sortedRes)
+	res := strings.Join(sortedRes, ",")
+	for i := 0; i < n; i++ {
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinUserSig) vectorized() bool {
@@ -188,9 +229,26 @@ func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(decodeKey(b.ctx, buf.GetString(i)))
+	}
+	return nil
 }
