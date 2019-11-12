@@ -114,14 +114,7 @@ func (s *RegionRequestSender) SendReqCtx(
 		replicaRead = kv.ReplicaReadLeader
 	}
 	for {
-		switch sType {
-		case kv.TiKV:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
-		case kv.TiFlash:
-			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
-		default:
-			err = errors.Errorf("unsupported storage type: %v", sType)
-		}
+		rpcCtx, err = s.regionCache.GetRPCContext(sType, bo, regionID, replicaRead, req.ReplicaReadSeed)
 		if err != nil {
 			return nil, nil, err
 		}
