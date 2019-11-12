@@ -54,6 +54,27 @@ func HasGetSetVarFunc(expr Expression) bool {
 	return false
 }
 
+// HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value
+func HasAssignSetVarFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar {
+		for _, arg := range scalaFunc.GetArgs() {
+			if _, ok := arg.(*ScalarFunction); ok {
+				return true
+			}
+		}
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if HasAssignSetVarFunc(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
 func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
 	for colID, expr := range exprs {

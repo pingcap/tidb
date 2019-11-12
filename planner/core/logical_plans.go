@@ -596,6 +596,12 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	if !ds.tableInfo.PKIsHandle {
+		// If the PKIsHandle is false, return the ExtraHandleColumn.
+		for i, col := range ds.Columns {
+			if col.ID == model.ExtraHandleID {
+				return ds.schema.Columns[i]
+			}
+		}
 		return nil
 	}
 	for i, col := range ds.Columns {
