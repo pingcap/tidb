@@ -173,6 +173,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
 	case *ast.TableSource:
+		var isTableName bool
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			p, err = b.buildSelect(ctx, v)
@@ -180,6 +181,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			p, err = b.buildUnion(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
+			isTableName = true
 		default:
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
@@ -196,7 +198,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				name.TblName = x.AsName
 			}
 		}
-		if b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
+		// `TableName` is not a select block, so we do not need to handle it.
+		if !isTableName && b.ctx.GetSessionVars().PlannerSelectBlockAsName != nil {
 			b.ctx.GetSessionVars().PlannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -345,7 +348,7 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 // extractTableAlias returns table alias of the LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the logicalPlan match some optimizer hints, and hints are not expected to take effect in this case.
-func extractTableAlias(p Plan) *hintTableInfo {
+func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
@@ -353,7 +356,13 @@ func extractTableAlias(p Plan) *hintTableInfo {
 				return nil
 			}
 		}
-		return &hintTableInfo{dbName: firstName.DBName, tblName: firstName.TblName, selectOffset: p.SelectBlockOffset()}
+		blockOffset := p.SelectBlockOffset()
+		blockAsNames := p.SCtx().GetSessionVars().PlannerSelectBlockAsName
+		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
+			blockOffset = parentOffset
+		}
+		return &hintTableInfo{dbName: firstName.DBName, tblName: firstName.TblName, selectOffset: blockOffset}
 	}
 	return nil
 }
@@ -363,8 +372,8 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0])
-	rhsAlias := extractTableAlias(p.children[1])
+	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
+	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 	}
@@ -2782,8 +2791,8 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	if b.TableHints() != nil {
-		outerAlias := extractTableAlias(outerPlan)
-		innerAlias := extractTableAlias(innerPlan)
+		outerAlias := extractTableAlias(outerPlan, joinPlan.blockOffset)
+		innerAlias := extractTableAlias(innerPlan, joinPlan.blockOffset)
 		if b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferMergeJoin
 		}
@@ -2927,16 +2936,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
-	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
-	if p.Schema().Len() != oldSchemaLen {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
-		proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
-		proj.names = make(types.NameSlice, len(p.OutputNames()))
-		copy(proj.names, p.OutputNames())
-		copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
-		proj.SetChildren(p)
-		p = proj
-	}
+
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
 		if err != nil {
@@ -2949,6 +2949,15 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
+
+	// Add project to freeze the order of output columns.
+	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
+	proj.names = make(types.NameSlice, len(p.OutputNames()))
+	copy(proj.names, p.OutputNames())
+	copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+	proj.SetChildren(p)
+	p = proj
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
