@@ -238,6 +238,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	// Should not panic.
+	tk.MustExec("analyze table t")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
