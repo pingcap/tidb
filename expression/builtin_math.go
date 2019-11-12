@@ -275,10 +275,13 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		switch argTp {
 		case types.ETInt:
 			sig = &builtinRoundWithFracIntSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RoundWithFracInt)
 		case types.ETDecimal:
 			sig = &builtinRoundWithFracDecSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RoundWithFracDec)
 		case types.ETReal:
 			sig = &builtinRoundWithFracRealSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RoundWithFracReal)
 		default:
 			panic("unexpected argTp")
 		}
@@ -286,10 +289,13 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		switch argTp {
 		case types.ETInt:
 			sig = &builtinRoundIntSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RoundInt)
 		case types.ETDecimal:
 			sig = &builtinRoundDecSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RoundDec)
 		case types.ETReal:
 			sig = &builtinRoundRealSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RoundReal)
 		default:
 			panic("unexpected argTp")
 		}
