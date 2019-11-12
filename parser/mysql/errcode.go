@@ -975,6 +975,23 @@ const (
 	ErrUnsupportedValueForVar     = 8047
 	ErrUnsupportedIsolationLevel  = 8048
 
+	// Error codes used by TiDB ddl package
+	ErrUnsupportedDDLOperation  = 8200
+	ErrNotOwner                 = 8201
+	ErrCantDecodeIndex          = 8202
+	ErrInvalidDDLWorker         = 8203
+	ErrInvalidDDLJob            = 8204
+	ErrInvalidDDLJobFlag        = 8205
+	ErrWaitReorgTimeout         = 8206
+	ErrInvalidStoreVersion      = 8207
+	ErrUnknownTypeLength        = 8208
+	ErrUnknownFractionLength    = 8209
+	ErrInvalidDDLState          = 8210
+	ErrReorgPanic               = 8211
+	ErrInvalidSplitRegionRanges = 8212
+	ErrInvalidDDLJobVersion     = 8213
+	ErrCancelledDDLJob          = 8214
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
 	ErrTiKVServerTimeout  = 9002
