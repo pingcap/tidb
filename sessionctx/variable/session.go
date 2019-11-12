@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/util/storeutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
