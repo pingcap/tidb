@@ -14,7 +14,7 @@ require (
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.1
 	github.com/golang/protobuf v1.3.2
-	github.com/golang/snappy v0.0.1 // indirect
+	github.com/golang/snappy v0.0.1
 	github.com/google/btree v1.0.0
 	github.com/google/pprof v0.0.0-20190930153522-6ce02741cba3
 	github.com/google/uuid v1.1.1
@@ -34,7 +34,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20191018025622-fbf07f9804da
 	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
-	github.com/pingcap/parser v0.0.0-20191011160321-0c4055ef2c1d
+	github.com/pingcap/parser v0.0.0-20191108104421-a8f0a51789f3
 	github.com/pingcap/pd v1.1.0-beta.0.20191018040858-0d9d9d67d029
 	github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible
 	github.com/pingcap/tipb v0.0.0-20191101114505-cbd0e985c780

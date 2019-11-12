@@ -415,7 +415,6 @@ var funcs = map[string]functionClass{
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
-	ast.TiDBParseTso:     &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
@@ -486,9 +485,6 @@ var funcs = map[string]functionClass{
 	ast.RowCount:     &rowCountFunctionClass{baseFunctionClass{ast.RowCount, 0, 0}},
 	ast.SessionUser:  &userFunctionClass{baseFunctionClass{ast.SessionUser, 0, 0}},
 	ast.SystemUser:   &userFunctionClass{baseFunctionClass{ast.SystemUser, 0, 0}},
-	// This function is used to show tidb-server version info.
-	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
-	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
@@ -600,4 +596,11 @@ var funcs = map[string]functionClass{
 	ast.JSONDepth:         &jsonDepthFunctionClass{baseFunctionClass{ast.JSONDepth, 1, 1}},
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
+
+	// TiDB internal function.
+	// This function is used to show tidb-server version info.
+	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
+	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
+	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
+	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
 }
