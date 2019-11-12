@@ -749,6 +749,41 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	r.Check(testkit.Rows("1 1", "2 2"))
 }
 
+func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Assign `DEFAULT` in `INSERT ... ON DUPLICATE KEY UPDATE ...` statement
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int unique, b int default 20, c int default 30);")
+	tk.MustExec("insert into t1 values (1,default,default);")
+	tk.MustExec("insert into t1 values (1,default,default) on duplicate key update b=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30"))
+	tk.MustExec("insert into t1 values (1,default,default) on duplicate key update c=default, b=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30"))
+	tk.MustExec("insert into t1 values (1,default,default) on duplicate key update c=default, a=2")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 20 30"))
+	tk.MustExec("insert into t1 values (2,default,default) on duplicate key update c=default(b)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 20 20"))
+	tk.MustExec("insert into t1 values (2,default,default) on duplicate key update a=default(b)+default(c)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("50 20 20"))
+	// With generated columns
+	tk.MustExec("create table t2 (a int unique, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t2 values (1,default,default);")
+	tk.MustExec("insert into t2 values (1,default,default) on duplicate key update a=2, b=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 -2 -2"))
+	tk.MustExec("insert into t2 values (2,default,default) on duplicate key update a=3, c=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("3 -3 -3"))
+	tk.MustExec("insert into t2 values (3,default,default) on duplicate key update c=default, b=default, a=4;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4"))
+	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("drop table t1, t2")
+}
+
 func (s *testSuite4) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

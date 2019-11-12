@@ -1834,13 +1834,17 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
+		defaultExpr, isDefaultExpr := extractDefaultExpr(assign.Expr)
+		if isDefaultExpr {
+			defaultExpr.Name = assign.Column
+		}
 		if column.IsGenerated() {
-			// only `DEFAULT` can be assigned to generated columns
-			if _, ok := assign.Expr.(*ast.DefaultExpr); ok {
+			if isDefaultExpr {
 				continue
 			}
 			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
 		}
+
 		onDupColSet[column.Name.L] = struct{}{}
 
 		expr, err := yield(assign.Expr)

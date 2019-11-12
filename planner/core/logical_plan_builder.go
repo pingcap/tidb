@@ -3101,6 +3101,17 @@ func (b *PlanBuilder) buildUpdateLists(
 	return newList, p, allAssignmentsAreConstant, nil
 }
 
+// extractDefaultExpr extract a `DefaultExpr` without any parameter from a `ExprNode`
+// return it and if successful extract it
+// Note the sql function `DEFAULT(a)` is not same with keyword `DEFAULT`
+// Sql function `DEFAULT(a)` will return `false`
+func extractDefaultExpr(node ast.ExprNode) (*ast.DefaultExpr, bool) {
+	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
+		return expr, true
+	}
+	return nil, false
+}
+
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(delete.TableHints, typeDelete, 0)
