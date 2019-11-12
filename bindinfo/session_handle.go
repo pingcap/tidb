@@ -18,7 +18,9 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -35,53 +37,50 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 	return sessionHandle
 }
 
-// appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
+// appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
+func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 	// Make sure there is only one goroutine writes the cache.
-	h.ch.removeStaleBindMetas(hash, meta, metrics.ScopeSession)
-	h.ch[hash] = append(h.ch[hash], meta)
-	meta.updateMetrics(metrics.ScopeSession, true)
-}
-
-func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
-	hash = parser.DigestHash(record.OriginalSQL)
-	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
-	if err != nil {
-		return "", nil, err
-	}
-	meta = &BindMeta{BindRecord: record, HintsSet: CollectHint(stmtNodes[0])}
-	return hash, meta, nil
+	oldRecord := h.ch.getBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newRecord := merge(oldRecord, meta)
+	h.ch.setBindRecord(hash, newRecord)
+	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 }
 
 // AddBindRecord new a BindRecord with BindMeta, add it to the cache.
-func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
-	record.CreateTime = types.Time{
-		Time: types.FromGoTime(time.Now()),
-		Type: mysql.TypeDatetime,
-		Fsp:  3,
+func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
+	for i := range record.Bindings {
+		record.Bindings[i].CreateTime = types.Time{
+			Time: types.FromGoTime(time.Now()),
+			Type: mysql.TypeDatetime,
+			Fsp:  3,
+		}
+		record.Bindings[i].UpdateTime = record.Bindings[i].CreateTime
 	}
-	record.UpdateTime = record.CreateTime
 
+	err := record.prepareHintsForUsing(sctx, is)
 	// update the BindMeta to the cache.
-	hash, meta, err := h.newBindMeta(record)
 	if err == nil {
-		h.appendBindMeta(hash, meta)
+		h.appendBindRecord(parser.DigestHash(record.OriginalSQL), record)
 	}
 	return err
 }
 
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(record *BindRecord) {
-	meta := &BindMeta{BindRecord: record}
-	meta.Status = deleted
-	hash := parser.DigestHash(record.OriginalSQL)
-	h.ch.removeDeletedBindMeta(hash, meta, metrics.ScopeSession)
-	h.appendBindMeta(hash, meta)
+	oldRecord := h.GetBindRecord(record.OriginalSQL, record.Db)
+	var newRecord *BindRecord
+	if oldRecord != nil {
+		newRecord = oldRecord.remove(record)
+	} else {
+		newRecord = record
+	}
+	h.ch.setBindRecord(parser.DigestHash(record.OriginalSQL), newRecord)
+	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
+func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
 	hash := parser.DigestHash(normdOrigSQL)
 	bindRecords := h.ch[hash]
 	if bindRecords != nil {
@@ -95,7 +94,7 @@ func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
 }
 
 // GetAllBindRecord return all session bind info.
-func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
+func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
 	for _, bindRecord := range h.ch {
 		bindRecords = append(bindRecords, bindRecord...)
 	}
@@ -106,7 +105,7 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 func (h *SessionHandle) Close() {
 	for _, bindRecords := range h.ch {
 		for _, bindRecord := range bindRecords {
-			bindRecord.updateMetrics(metrics.ScopeSession, false)
+			updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
 		}
 	}
 }

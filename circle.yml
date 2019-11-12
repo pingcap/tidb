@@ -3,7 +3,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: golang:1.12
+      - image: golang:1.13
     working_directory: /go/src/github.com/pingcap/tidb
     steps:
       - checkout

@@ -21,17 +21,18 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -62,7 +64,7 @@ type Domain struct {
 	statsHandle          unsafe.Pointer
 	statsLease           time.Duration
 	ddl                  ddl.DDL
-	info                 *InfoSyncer
+	info                 *infosync.InfoSyncer
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
@@ -253,10 +255,21 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if err != nil {
 			return false, nil, err
 		}
+		if canSkipSchemaCheckerDDL(diff.Type) {
+			continue
+		}
 		tblIDs = append(tblIDs, ids...)
 	}
 	builder.Build()
 	return true, tblIDs, nil
+}
+
+func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+		return true
+	}
+	return false
 }
 
 // InfoSchema gets information schema from domain.
@@ -290,7 +303,7 @@ func (do *Domain) DDL() ddl.DDL {
 }
 
 // InfoSyncer gets infoSyncer from domain.
-func (do *Domain) InfoSyncer() *InfoSyncer {
+func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
@@ -420,7 +433,7 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer do.wg.Done()
 	defer recoverInDomain("infoSyncerKeeper", false)
-	ticker := time.NewTicker(time.Second * time.Duration(InfoSessionTTL) / 2)
+	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -660,8 +673,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
-	err = do.info.Init(ctx)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
 	if err != nil {
 		return err
 	}
@@ -826,25 +838,31 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 		return err
 	}
 
-	do.loadBindInfoLoop()
+	do.globalBindHandleWorkerLoop()
 	do.handleInvalidBindTaskLoop()
 	return nil
 }
 
-func (do *Domain) loadBindInfoLoop() {
+func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
-		defer recoverInDomain("loadBindInfoLoop", false)
+		defer recoverInDomain("globalBindHandleWorkerLoop", false)
+		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
+		defer bindWorkerTicker.Stop()
 		for {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(bindinfo.Lease):
-			}
-			err := do.bindHandle.Update(false)
-			if err != nil {
-				logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+			case <-bindWorkerTicker.C:
+				err := do.bindHandle.Update(false)
+				if err != nil {
+					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+				}
+				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					continue
+				}
+				do.bindHandle.CaptureBaselines()
 			}
 		}
 	}()
@@ -1095,21 +1113,19 @@ func recoverInDomain(funcName string, quit bool) {
 	}
 }
 
-// Domain error codes.
-const (
-	codeInfoSchemaExpired terror.ErrCode = 1
-	codeInfoSchemaChanged terror.ErrCode = 2
-)
-
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
+	ErrInfoSchemaExpired = terror.ClassDomain.New(mysql.ErrInfoSchemaExpired, mysql.MySQLErrName[mysql.ErrInfoSchemaExpired])
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged,
-		"Information schema is changed. "+kv.TxnRetryableMark)
+	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
+		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
 )
 
 func init() {
 	// Map error codes to mysql error codes.
-	terror.ErrClassToMySQLCodes[terror.ClassDomain] = make(map[terror.ErrCode]uint16)
+	domainMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInfoSchemaExpired: mysql.ErrInfoSchemaExpired,
+		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
 }

@@ -603,17 +603,22 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
 func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
-	// TODO: Remove the test 's.Partition.Expr == nil' when we support 'PARTITION BY RANGE COLUMNS'
-	if len(constraints) == 0 || s.Partition.Expr == nil {
+	if len(constraints) == 0 {
 		return nil
 	}
 
-	// Parse partitioning key, extract the column names in the partitioning key to slice.
-	buf := new(bytes.Buffer)
-	s.Partition.Expr.Format(buf)
-	partCols, err := extractPartitionColumns(buf.String(), tblInfo)
-	if err != nil {
-		return err
+	var partCols stringSlice
+	if s.Partition.Expr != nil {
+		// Parse partitioning key, extract the column names in the partitioning key to slice.
+		buf := new(bytes.Buffer)
+		s.Partition.Expr.Format(buf)
+		partColumns, err := extractPartitionColumns(buf.String(), tblInfo)
+		if err != nil {
+			return err
+		}
+		partCols = columnInfoSlice(partColumns)
+	} else if len(s.Partition.ColumnNames) > 0 {
+		partCols = columnNameSlice(s.Partition.ColumnNames)
 	}
 
 	// Checks that the partitioning key is included in the constraint.
@@ -659,7 +664,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.In
 
 	// Every unique key on the table must use every column in the table's partitioning expression.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(partCols, idxColNames) {
+	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), idxColNames) {
 		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 	}
 	return nil
@@ -706,14 +711,44 @@ func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*mode
 	return extractor.extractedColumns, nil
 }
 
+// stringSlice is defined for checkUniqueKeyIncludePartKey.
+// if Go supports covariance, the code shouldn't be so complex.
+type stringSlice interface {
+	Len() int
+	At(i int) string
+}
+
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
-func checkUniqueKeyIncludePartKey(partCols []*model.ColumnInfo, idxCols []*ast.IndexColName) bool {
-	for _, partCol := range partCols {
+func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.IndexColName) bool {
+	for i := 0; i < partCols.Len(); i++ {
+		partCol := partCols.At(i)
 		if !findColumnInIndexCols(partCol, idxCols) {
 			return false
 		}
 	}
 	return true
+}
+
+// columnInfoSlice implements the stringSlice interface.
+type columnInfoSlice []*model.ColumnInfo
+
+func (cis columnInfoSlice) Len() int {
+	return len(cis)
+}
+
+func (cis columnInfoSlice) At(i int) string {
+	return cis[i].Name.L
+}
+
+// columnNameSlice implements the stringSlice interface.
+type columnNameSlice []*ast.ColumnName
+
+func (cns columnNameSlice) Len() int {
+	return len(cns)
+}
+
+func (cns columnNameSlice) At(i int) string {
+	return cns[i].Name.L
 }
 
 // isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.

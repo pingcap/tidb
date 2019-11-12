@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type mockVecPlusIntBuiltinFunc struct {
@@ -517,7 +516,6 @@ func vecEvalType(f builtinFunc, eType types.EvalType, input *chunk.Chunk, result
 }
 
 func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, false)
@@ -542,7 +540,6 @@ func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, true)
@@ -764,6 +761,26 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 		c.Assert(v, Equals, result.GetFloat64(i))
 		i++
 	}
+
+	// set Sel
+	n := chk.NumRows()
+	sel := make([]int, n/2)
+	for i := 0; i < n; i += 2 {
+		sel = append(sel, i)
+	}
+	chk.SetSel(sel)
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := col.EvalReal(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
+		i++
+	}
+
+	// set an empty Sel
+	sel = sel[:0]
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 }
 
 func BenchmarkFloat32ColRow(b *testing.B) {

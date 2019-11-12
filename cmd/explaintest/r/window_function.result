@@ -7,45 +7,45 @@ id	count	task	operator info
 Projection_7	10000.00	root	Column#7
 └─Window_8	10000.00	root	sum(cast(Column#1)) over()
   └─IndexReader_12	10000.00	root	index:IndexScan_11
-    └─IndexScan_11	10000.00	cop	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+    └─IndexScan_11	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#7
 └─Window_8	10000.00	root	sum(cast(Column#1)) over(partition by Column#1)
   └─IndexReader_10	10000.00	root	index:IndexScan_9
-    └─IndexScan_9	10000.00	cop	table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    └─IndexScan_9	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select sum(a) over(partition by a order by b) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#8
 └─Window_8	10000.00	root	sum(cast(Column#1)) over(partition by Column#1 order by Column#2 asc range between unbounded preceding and current row)
   └─Sort_11	10000.00	root	Column#1:asc, Column#2:asc
     └─TableReader_10	10000.00	root	data:TableScan_9
-      └─TableScan_9	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by b rows unbounded preceding) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#8
 └─Window_8	10000.00	root	sum(cast(Column#1)) over(partition by Column#1 order by Column#2 asc rows between unbounded preceding and current row)
   └─Sort_11	10000.00	root	Column#1:asc, Column#2:asc
     └─TableReader_10	10000.00	root	data:TableScan_9
-      └─TableScan_9	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#8
 └─Window_8	10000.00	root	sum(cast(Column#1)) over(partition by Column#1 order by Column#2 asc rows between 1 preceding and 1 following)
   └─Sort_11	10000.00	root	Column#1:asc, Column#2:asc
     └─TableReader_10	10000.00	root	data:TableScan_9
-      └─TableScan_9	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#8
 └─Window_8	10000.00	root	sum(cast(Column#1)) over(partition by Column#1 order by Column#2 asc range between 1 preceding and 1 following)
   └─Sort_11	10000.00	root	Column#1:asc, Column#2:asc
     └─TableReader_10	10000.00	root	data:TableScan_9
-      └─TableScan_9	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#8
 └─Window_8	10000.00	root	sum(cast(Column#1)) over(partition by Column#1 order by Column#3 asc range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
   └─Sort_11	10000.00	root	Column#1:asc, Column#3:asc
     └─TableReader_10	10000.00	root	data:TableScan_9
-      └─TableScan_9	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo

@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/integration"
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"go.etcd.io/etcd/integration"
 )
 
 func TestT(t *testing.T) {
@@ -116,21 +117,21 @@ func TestInfo(t *testing.T) {
 
 	// Test for GetServerInfo and GetServerInfoByID.
 	ddlID := dom.ddl.GetID()
-	serverInfo := dom.InfoSyncer().GetServerInfo()
-	info, err := dom.info.GetServerInfoByID(goCtx, ddlID)
+	serverInfo := infosync.GetServerInfo()
+	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if serverInfo.ID != info.ID {
 		t.Fatalf("server self info %v, info %v", serverInfo, info)
 	}
-	_, err = dom.info.GetServerInfoByID(goCtx, "not_exist_id")
+	_, err = infosync.GetServerInfoByID(goCtx, "not_exist_id")
 	if err == nil || (err != nil && err.Error() != "[info-syncer] get /tidb/server/info/not_exist_id failed") {
 		t.Fatal(err)
 	}
 
 	// Test for GetAllServerInfo.
-	infos, err := dom.info.GetAllServerInfo(goCtx)
+	infos, err := infosync.GetAllServerInfo(goCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +181,7 @@ func TestInfo(t *testing.T) {
 
 	// Test for RemoveServerInfo.
 	dom.info.RemoveServerInfo()
-	infos, err = dom.info.GetAllServerInfo(goCtx)
+	infos, err = infosync.GetAllServerInfo(goCtx)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
@@ -372,7 +373,7 @@ func (*testSuite) TestT(c *C) {
 	beforeTS := variable.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := variable.GoTimeToTS(time.Now())
-	c.Assert(infoSyncer.minStartTS > beforeTS && infoSyncer.minStartTS < afterTS, IsFalse)
+	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
 	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
 	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
 	sm.PS = []*util.ProcessInfo{
@@ -383,7 +384,7 @@ func (*testSuite) TestT(c *C) {
 	}
 	infoSyncer.SetSessionManager(sm)
 	infoSyncer.ReportMinStartTS(dom.Store())
-	c.Assert(infoSyncer.minStartTS == validTS, IsTrue)
+	c.Assert(infoSyncer.GetMinStartTS() == validTS, IsTrue)
 
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -421,6 +422,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrUnknown)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrUnknown)
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrInfoSchemaExpired)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrInfoSchemaChanged)
 }

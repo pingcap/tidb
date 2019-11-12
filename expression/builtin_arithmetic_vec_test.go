@@ -14,10 +14,12 @@
 package expression
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -25,18 +27,105 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.LE: {},
 	ast.Minus: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{-100000, 100000}, &rangeInt64Gener{-100000, 100000}}},
 	},
-	ast.Div:    {},
+	ast.Div: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 0}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{nil, &rangeDecimalGener{0, 0, 0.2}}},
+	},
 	ast.IntDiv: {},
-	ast.Mod:    {},
-	ast.Or:     {},
+	ast.Mod: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 0}}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{&rangeRealGener{0, 0, 0}, nil}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 0, 1}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{nil, &rangeDecimalGener{0, 0, 0}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{&rangeDecimalGener{0, 0, 0}, nil}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{nil, &rangeDecimalGener{0, 0, 1}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{0, 1}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 1}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+			},
+		},
+	},
+	ast.Or: {},
 	ast.Mul: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{-10000, 10000}, &rangeInt64Gener{-10000, 10000}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}, {Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: 10000},
+				&rangeInt64Gener{begin: 0, end: 10000},
+			},
+		},
 	},
 	ast.Round: {},
 	ast.And:   {},
 	ast.Plus: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+			},
+		},
 	},
 	ast.NE: {},
 }

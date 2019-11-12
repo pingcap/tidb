@@ -14,40 +14,87 @@
 package expression
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 func (b *builtinDatabaseSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinDatabaseSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	currentDB := b.ctx.GetSessionVars().CurrentDB
+	result.ReserveString(n)
+	if currentDB == "" {
+		for i := 0; i < n; i++ {
+			result.AppendNull()
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			result.AppendString(currentDB)
+		}
+	}
+	return nil
 }
 
 func (b *builtinConnectionIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
+	}
+	connectionID := int64(data.ConnectionID)
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = connectionID
+	}
+	return nil
 }
 
 func (b *builtinTiDBVersionSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	info := printer.GetTiDBInfo()
+	for i := 0; i < n; i++ {
+		result.AppendString(info)
+	}
+	return nil
 }
 
 func (b *builtinRowCountSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals ROW_COUNT().
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
 func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	res := int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinCurrentUserSig) vectorized() bool {
@@ -59,11 +106,37 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinCurrentRoleSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinCurrentUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	data := b.ctx.GetSessionVars()
+	if data == nil || data.ActiveRoles == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+
+	result.ReserveString(n)
+	if len(data.ActiveRoles) == 0 {
+		for i := 0; i < n; i++ {
+			result.AppendString("")
+		}
+		return nil
+	}
+
+	sortedRes := make([]string, 0, 10)
+	for _, r := range data.ActiveRoles {
+		sortedRes = append(sortedRes, r.String())
+	}
+	sort.Strings(sortedRes)
+	res := strings.Join(sortedRes, ",")
+	for i := 0; i < n; i++ {
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinUserSig) vectorized() bool {
@@ -75,11 +148,22 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
+	var res int64
+	if ddlOwnerChecker.IsOwner() {
+		res = 1
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinFoundRowsSig) vectorized() bool {
@@ -99,33 +183,72 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinLastInsertIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLastInsertIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	res := int64(b.ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	for i := 0; i < n; i++ {
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinLastInsertIDWithIDSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := len(i64s) - 1; i >= 0; i-- {
+		if !result.IsNull(i) {
+			b.ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
+			break
+		}
+	}
+	return nil
 }
 
 func (b *builtinVersionSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		result.AppendString(mysql.ServerVersion)
+	}
+	return nil
 }
 
 func (b *builtinTiDBDecodeKeySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(decodeKey(b.ctx, buf.GetString(i)))
+	}
+	return nil
 }

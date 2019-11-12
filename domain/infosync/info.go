@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package infosync
 
 import (
 	"context"
@@ -20,20 +20,21 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -43,13 +44,14 @@ const (
 	// ServerMinStartTSPath store the server min start timestamp.
 	ServerMinStartTSPath = "/tidb/server/minstartts"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
-	keyOpDefaultRetryCnt = 2
+	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
+	// InfoSessionTTL is the ETCD session's TTL in seconds.
+	InfoSessionTTL = 10 * 60
+	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
+	ReportInterval = 30 * time.Second
 )
-
-// InfoSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
-var InfoSessionTTL = 1 * 60
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
@@ -66,11 +68,12 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID         string `json:"ddl_id"`
-	IP         string `json:"ip"`
-	Port       uint   `json:"listening_port"`
-	StatusPort uint   `json:"status_port"`
-	Lease      string `json:"lease"`
+	ID           string `json:"ddl_id"`
+	IP           string `json:"ip"`
+	Port         uint   `json:"listening_port"`
+	StatusPort   uint   `json:"status_port"`
+	Lease        string `json:"lease"`
+	BinlogStatus string `json:"binlog_status"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -79,18 +82,21 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-// NewInfoSyncer return new InfoSyncer. It is exported for testing.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
-	return &InfoSyncer{
+var globalInfoSyncer *InfoSyncer
+
+// GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+	globalInfoSyncer = &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
+	return globalInfoSyncer, globalInfoSyncer.init(ctx)
 }
 
 // Init creates a new etcd session and stores server info to etcd.
-func (is *InfoSyncer) Init(ctx context.Context) error {
+func (is *InfoSyncer) init(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
@@ -100,12 +106,22 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 }
 
 // GetServerInfo gets self server static information.
-func (is *InfoSyncer) GetServerInfo() *ServerInfo {
-	return is.info
+func GetServerInfo() *ServerInfo {
+	if globalInfoSyncer == nil {
+		return nil
+	}
+	return globalInfoSyncer.info
 }
 
-// GetServerInfoByID gets server static information from etcd.
-func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+// GetServerInfoByID gets specified server static information from etcd.
+func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+	if globalInfoSyncer == nil {
+		return nil, errors.New("infoSyncer is not initialized")
+	}
+	return globalInfoSyncer.getServerInfoByID(ctx, id)
+}
+
+func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
 	}
@@ -122,7 +138,14 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 }
 
 // GetAllServerInfo gets all servers static information from etcd.
-func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	if globalInfoSyncer == nil {
+		return nil, errors.New("infoSyncer is not initialized")
+	}
+	return globalInfoSyncer.getAllServerInfo(ctx)
+}
+
+func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		allInfo[is.info.ID] = is.info
@@ -158,6 +181,12 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}
+}
+
+// GetMinStartTS get min start timestamp.
+// Export for testing.
+func (is *InfoSyncer) GetMinStartTS() uint64 {
+	return is.minStartTS
 }
 
 // storeMinStartTS stores self server min start timestamp to etcd.
@@ -236,7 +265,11 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-
+	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
+		is.info.BinlogStatus = status.String()
+		err := is.storeServerInfo(ctx)
+		return errors.Trace(err)
+	})
 	err = is.storeServerInfo(ctx)
 	return err
 }
@@ -262,7 +295,9 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			info := &ServerInfo{}
+			info := &ServerInfo{
+				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
+			}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
@@ -280,11 +315,12 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
-		ID:         id,
-		IP:         cfg.AdvertiseAddress,
-		Port:       cfg.Port,
-		StatusPort: cfg.Status.StatusPort,
-		Lease:      cfg.Lease,
+		ID:           id,
+		IP:           cfg.AdvertiseAddress,
+		Port:         cfg.Port,
+		StatusPort:   cfg.Status.StatusPort,
+		Lease:        cfg.Lease,
+		BinlogStatus: binloginfo.GetStatus().String(),
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash

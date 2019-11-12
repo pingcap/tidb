@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
@@ -323,7 +323,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
 func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
-	kvs, err := w.store.GetSafePointKV().GetWithPrefix(domain.ServerMinStartTSPath)
+	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
 	if err != nil {
 		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
 		return safePoint

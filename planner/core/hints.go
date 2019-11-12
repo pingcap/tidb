@@ -186,6 +186,8 @@ func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
 func GenHintsFromPhysicalPlan(p Plan) string {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
+	case *Explain:
+		return GenHintsFromPhysicalPlan(pp.TargetPlan)
 	case *Update:
 		hints = genHintsFromPhysicalPlan(pp.SelectPlan, typeUpdate)
 	case *Delete:
@@ -216,51 +218,54 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 	return tblName
 }
 
-func extractTableAsName(p PhysicalPlan) *model.CIStr {
+func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	if len(p.Children()) > 1 {
-		return nil
+		return nil, nil
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
 		if ts.TableAsName.L != "" {
-			return ts.TableAsName
+			return &ts.DBName, ts.TableAsName
 		}
-		return &ts.Table.Name
+		return &ts.DBName, &ts.Table.Name
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		if is.TableAsName.L != "" {
-			return is.TableAsName
+			return &is.DBName, is.TableAsName
 		}
-		return &is.Table.Name
+		return &is.DBName, &is.Table.Name
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		if is.TableAsName.L != "" {
-			return is.TableAsName
+			return &is.DBName, is.TableAsName
 		}
-		return &is.Table.Name
+		return &is.DBName, &is.Table.Name
 	}
-	return nil
+	return nil, nil
 }
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	for _, child := range children {
-		if child.SelectBlockOffset() == -1 {
+		blockOffset := child.SelectBlockOffset()
+		if blockOffset == -1 {
 			continue
 		}
-		var tableName *model.CIStr
+		var dbName, tableName *model.CIStr
 		if child.SelectBlockOffset() != parentOffset {
-			tableName = &sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+			hintTable := sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
-			tableName = extractTableAsName(child)
+			dbName, tableName = extractTableAsName(child)
 		}
 		if tableName == nil {
 			continue
 		}
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
+			QBName:   generateQBName(nodeType, blockOffset),
 			HintName: model.NewCIStr(joinType),
-			Tables:   []ast.HintTable{{TableName: *tableName}},
+			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
 		})
 		break
 	}
@@ -277,14 +282,14 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
 			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 		})
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
 			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexReader:
@@ -292,7 +297,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
 			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
 	case *PhysicalHashAgg:

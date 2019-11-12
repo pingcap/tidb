@@ -14,9 +14,6 @@
 package core
 
 import (
-	"fmt"
-
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
@@ -45,13 +42,13 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 
 	switch p := plan.(type) {
 	case *PhysicalHashAgg:
-		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
-		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalSort:
-		plan = injectProjBelowSort(p, p.ByItems)
+		plan = InjectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
-		plan = injectProjBelowSort(p, p.ByItems)
+		plan = InjectProjBelowSort(p, p.ByItems)
 	}
 	return plan
 }
@@ -67,10 +64,10 @@ func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFun
 	}
 }
 
-// injectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
+// InjectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
 // of `aggFuncs`, and all the item of `groupByItems` are columns or constants,
 // we do not need to build the `proj`.
-func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
+func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
 	wrapCastForAggFuncs(aggPlan.SCtx(), aggFuncs)
@@ -99,9 +96,9 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			}
 			projExprs = append(projExprs, arg)
 			newArg := &expression.Column{
-				RetType: arg.GetType(),
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
-				Index:   cursor,
+				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  arg.GetType(),
+				Index:    cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
 			f.Args[i] = newArg
@@ -117,7 +114,6 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 		newArg := &expression.Column{
 			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  item.GetType(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 			Index:    cursor,
 		}
 		projSchemaCols = append(projSchemaCols, newArg)
@@ -138,14 +134,14 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	return aggPlan
 }
 
-// injectProjBelowSort extracts the ScalarFunctions of `orderByItems` into a
+// InjectProjBelowSort extracts the ScalarFunctions of `orderByItems` into a
 // PhysicalProjection and injects it below PhysicalTopN/PhysicalSort. The schema
 // of PhysicalSort and PhysicalTopN are the same as the schema of their
 // children. When a projection is injected as the child of PhysicalSort and
 // PhysicalTopN, some extra columns will be added into the schema of the
 // Projection, thus we need to add another Projection upon them to prune the
 // redundant columns.
-func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
+func InjectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
@@ -187,7 +183,6 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 			RetType:  itemExpr.GetType(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(bottomProjSchemaCols))),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)

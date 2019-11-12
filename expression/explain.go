@@ -37,8 +37,8 @@ func (expr *ScalarFunction) ExplainInfo() string {
 }
 
 // ExplainInfo implements the Expression interface.
-func (expr *Column) ExplainInfo() string {
-	return expr.String()
+func (col *Column) ExplainInfo() string {
+	return col.String()
 }
 
 // ExplainInfo implements the Expression interface.

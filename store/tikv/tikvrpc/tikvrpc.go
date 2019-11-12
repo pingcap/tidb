@@ -442,6 +442,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Resp: res.Empty}
 	case *tikvpb.BatchCommandsResponse_Response_TxnHeartBeat:
 		return &Response{Resp: res.TxnHeartBeat}
+	case *tikvpb.BatchCommandsResponse_Response_CheckTxnStatus:
+		return &Response{Resp: res.CheckTxnStatus}
 	}
 	return nil
 }
