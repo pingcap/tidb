@@ -202,7 +202,7 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		Args:       []interface{}{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err.Error(), Equals, "[ddl:3]invalid ddl job type: none")
+	c.Assert(err.Error(), Equals, "[ddl:8204]invalid ddl job type: none")
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {

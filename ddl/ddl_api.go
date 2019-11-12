@@ -2456,7 +2456,7 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 	if toCollate != origCollate {
-		msg := fmt.Sprintf("collate from %s to %s", origCollate, toCollate)
+		msg := fmt.Sprintf("change collate from %s to %s", origCollate, toCollate)
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 	return nil
@@ -2469,7 +2469,7 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
 	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
-		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+		return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
 	}
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
@@ -2486,7 +2486,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
-		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
+		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	switch origin.Tp {
@@ -2511,20 +2511,20 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+					msg := fmt.Sprintf("can't change enum value %s to %s", originElem, toElem)
 					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 			return nil
 		}
-		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+		msg := fmt.Sprintf("can't change enum type to %s", to.String())
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	default:
 		if origin.Tp == to.Tp {
 			return nil
 		}
 	}
-	msg := fmt.Sprintf("type %v not match origin %v", to.Tp, origin.Tp)
+	msg := fmt.Sprintf(":type not match, before: %v, after: %v", origin.Tp, to.Tp)
 	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 }
 
@@ -2586,7 +2586,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedModifyColumn.GenWithStack("unsupported modify column constraint - %v", opt.Tp)
+			return errUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
@@ -2614,9 +2614,9 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionCollate:
 			col.Collate = opt.StrValue
 		case ast.ColumnOptionReference:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with references"))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with references"))
 		case ast.ColumnOptionFulltext:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with full text"))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
 		default:
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
@@ -2727,11 +2727,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
 	}
 	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
 	if !ctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("to remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
 	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.
@@ -3284,10 +3284,17 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
-		return errErrorOnRename.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)
+		return ErrErrorOnRename.GenWithStackByArgs(
+			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
+			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
+			168,
+			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -3321,7 +3328,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("unsupported add primary key, alter-primary-key is false")
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -3602,7 +3609,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey || t.Meta().PKIsHandle {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack(fmt.Sprintf(
-				"unsupported drop primary key when alter-primary-key is %v and the table's pkIsHandle is %v",
+				"Unsupported drop primary key when alter-primary-key is %v and the table's pkIsHandle is %v",
 				config.GetGlobalConfig().AlterPrimaryKey, t.Meta().PKIsHandle))
 		}
 		if indexInfo == nil {
