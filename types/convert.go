@@ -673,7 +673,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(handleTruncateError(sc, ErrTruncated))
+		err = errors.Trace(handleTruncateError(sc, ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", s)))
 	}
 	return valid, err
 }

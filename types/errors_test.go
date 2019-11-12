@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package types
 
 import (
 	. "github.com/pingcap/check"
@@ -25,16 +25,31 @@ var _ = Suite(testErrorSuite{})
 
 func (s testErrorSuite) TestError(c *C) {
 	kvErrs := []*terror.Error{
-		ErrNotExist,
-		ErrTxnRetryable,
-		ErrCannotSetNilValue,
-		ErrInvalidTxn,
-		ErrTxnTooLarge,
-		ErrEntryTooLarge,
-		ErrKeyExists,
-		ErrNotImplemented,
-		ErrWriteConflict,
-		ErrWriteConflictInTiDB,
+		ErrInvalidDefault,
+		ErrDataTooLong,
+		ErrIllegalValueForType,
+		ErrTruncated,
+		ErrOverflow,
+		ErrDivByZero,
+		ErrTooBigDisplayWidth,
+		ErrTooBigFieldLength,
+		ErrTooBigSet,
+		ErrTooBigScale,
+		ErrTooBigPrecision,
+		ErrBadNumber,
+		ErrInvalidFieldSize,
+		ErrMBiggerThanD,
+		ErrWarnDataOutOfRange,
+		ErrDuplicatedValueInType,
+		ErrDatetimeFunctionOverflow,
+		ErrCastAsSignedOverflow,
+		ErrCastNegIntAsUnsigned,
+		ErrInvalidYearFormat,
+		ErrInvalidYear,
+		ErrTruncatedWrongVal,
+		ErrIncorrectDatetimeValue,
+		ErrInvalidTimeFormat,
+		ErrInvalidWeekModeFormat,
 	}
 	for _, err := range kvErrs {
 		code := err.ToSQLError().Code

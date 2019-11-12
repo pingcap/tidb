@@ -1421,8 +1421,8 @@ func (s *testTimeSuite) TestParseDurationValue(c *C) {
 		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
 		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
 		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongValue},
-		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongValue},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongVal},
+		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
 		comment := Commentf("Extract %v Unit %v", col.format, col.unit)

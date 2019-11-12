@@ -209,7 +209,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.00'"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -268,7 +268,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value: '-20070219173709.055870'")
+	c.Assert(err.Error(), Equals, "[types:8036]Incorrect time value: '-20070219173709.055870'")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -496,13 +496,13 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
 	testSQL = "insert ignore into t values ('1a')"
 	_, err = tk.Exec(testSQL)
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
@@ -1278,7 +1278,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 
 	tk.MustExec("update ignore t set a = 42 where a = 2;")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "42"))
@@ -1341,7 +1341,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	// A warning rather than data truncated error.
 	tk.MustExec("update decimals set a = a + 1.23;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '202'"))
 	r = tk.MustQuery("select * from decimals")
 	r.Check(testkit.Rows("202"))
 
@@ -1494,7 +1494,7 @@ func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'"))
 
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
@@ -1656,7 +1656,7 @@ func (s *testSuite) TestDelete(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'"))
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
@@ -1702,7 +1702,7 @@ func (s *testSuite4) TestPartitionedTableDelete(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'"))
 
 	// Test delete without using index, involve multiple partitions.
 	tk.MustExec("delete from t ignore index(id) where id >= 13 and id <= 17")

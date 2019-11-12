@@ -73,7 +73,7 @@ func init() {
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
-		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err
 	}

@@ -767,7 +767,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			truncatedOrIncorrect = err != nil
 		}
 		if truncatedOrIncorrect && sc != nil {
-			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", str))
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
 	case 2:
@@ -1668,7 +1668,7 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 			riv += sign
 		}
 		if unit != "SECOND" {
-			err = ErrTruncatedWrongValue.GenWithStackByArgs(format)
+			err = ErrTruncatedWrongVal.GenWithStackByArgs(format)
 		}
 		dv *= sign
 	}
