@@ -349,11 +349,10 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			c.Fatal(err)
 		}
 
-		it := chunk.NewIterator4Chunk(input)
 		var buf []byte
 		i := 0
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			d, err := colExpr.Eval(row)
+		for j := 0; j < input.NumRows(); j++ {
+			d, err := colExpr.Eval(input.GetRow(j))
 			if err != nil {
 				c.Fatal(err)
 			}
