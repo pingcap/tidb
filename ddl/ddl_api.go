@@ -2737,7 +2737,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -3321,7 +3321,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("unsupported add primary key, alter-primary-key is true")
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("unsupported add primary key, alter-primary-key is false")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -3602,7 +3602,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey || t.Meta().PKIsHandle {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack(fmt.Sprintf(
-				"unsupported drop primary key, alter-primary-key is %v, the table's pk-is-handle is %v",
+				"unsupported drop primary key when alter-primary-key is %v and the table's pkIsHandle is %v",
 				config.GetGlobalConfig().AlterPrimaryKey, t.Meta().PKIsHandle))
 		}
 		if indexInfo == nil {

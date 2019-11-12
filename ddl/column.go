@@ -387,8 +387,11 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		err = modifyColumnFromNull2NotNull(w, dbInfo, tblInfo, job, oldCol, newCol)
+		err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.Tp)
 		if err != nil {
+			if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
+				job.State = model.JobStateRollingback
+			}
 			return ver, err
 		}
 		// The column should get into prevent null status first.
@@ -489,9 +492,9 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 	rowCount := len(rows)
 	if rowCount != 0 {
 		if isDataTruncated {
-			return errInvalidUseOfNull
+			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
 		}
-		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
+		return errInvalidUseOfNull
 	}
 	return nil
 }
@@ -560,33 +563,10 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 	return ver, nil
 }
 
-// modifyColumnFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
-// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-func modifyColumnFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job,
-	oldCol, newCol *model.ColumnInfo) error {
-	// Get sessionctx from context resource pool.
-	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.put(ctx)
-
-	// If there is a null value inserted, it cannot be modified and needs to be rollback.
-	err = checkForNullValue(ctx, oldCol.Tp == newCol.Tp, dbInfo.Name, tblInfo.Name, newCol.Name, oldCol)
-	if err != nil {
-		job.State = model.JobStateRollingback
-		return errors.Trace(err)
-	}
-
-	// Prevent this field from inserting null values.
-	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
-	return nil
-}
-
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 // Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo) error {
+func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo,
+	newColName model.CIStr, isModifiedType bool) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
@@ -596,7 +576,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	defer w.sessPool.put(ctx)
 
 	// If there is a null value inserted, it cannot be modified and needs to be rollback.
-	err = checkForNullValue(ctx, true, dbInfo.Name, tblInfo.Name, model.NewCIStr(""), cols...)
+	err = checkForNullValue(ctx, isModifiedType, dbInfo.Name, tblInfo.Name, newColName, cols...)
 	if err != nil {
 		return errors.Trace(err)
 	}
