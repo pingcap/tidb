@@ -632,18 +632,18 @@ func (s *testSuiteAgg) TestInjectProjBelowTopN(c *C) {
 	tk.MustExec("create table t (i int);")
 	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
 	tk.MustQuery("explain select * from t order by i + 1").Check(testkit.Rows(
-		"Projection_8 10000.00 root Column#3",
-		"└─Sort_4 10000.00 root Column#4:asc",
-		"  └─Projection_9 10000.00 root Column#3, plus(Column#3, 1)",
+		"Projection_8 10000.00 root Column#1",
+		"└─Sort_4 10000.00 root Column#3:asc",
+		"  └─Projection_9 10000.00 root Column#1, plus(Column#1, 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
 		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("select * from t order by i + 1 ")
 	rs.Check(testkit.Rows(
 		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
 	tk.MustQuery("explain select * from t order by i + 1 limit 2").Check(testkit.Rows(
-		"Projection_15 2.00 root Column#3",
-		"└─TopN_7 2.00 root Column#4:asc, offset:0, count:2",
-		"  └─Projection_16 2.00 root Column#3, plus(Column#1, 1)",
+		"Projection_15 2.00 root Column#1",
+		"└─TopN_7 2.00 root Column#3:asc, offset:0, count:2",
+		"  └─Projection_16 2.00 root Column#1, plus(Column#1, 1)",
 		"    └─TableReader_12 2.00 root data:TopN_11",
 		"      └─TopN_11 2.00 cop[tikv] plus(Column#1, 1):asc, offset:0, count:2",
 		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
@@ -755,11 +755,11 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 
 	// make sure the plan is Apply -> Apply -> Apply -> HashAgg, and the count of Apply is equal to HashAggFinalConcurrency-1.
 	tk.MustQuery("explain select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("" +
-		"Projection_28 1.00 root Column#3, Column#7, Column#11, Column#15]\n" +
+		"Projection_28 1.00 root Column#3, Column#6, Column#9, Column#12]\n" +
 		"[└─Apply_30 1.00 root CARTESIAN left outer join, inner:Projection_65]\n" +
 		"[  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:Projection_54]\n" +
 		"[  │ ├─Apply_34 1.00 root CARTESIAN left outer join, inner:Projection_43]\n" +
-		"[  │ │ ├─HashAgg_39 1.00 root funcs:sum(Column#26), firstrow(Column#27)]\n" +
+		"[  │ │ ├─HashAgg_39 1.00 root funcs:sum(Column#22), firstrow(Column#23)]\n" +
 		"[  │ │ │ └─TableReader_40 1.00 root data:HashAgg_35]\n" +
 		"[  │ │ │   └─HashAgg_35 1.00 cop[tikv] funcs:sum(Column#1), firstrow(Column#1)]\n" +
 		"[  │ │ │     └─TableScan_38 10000.00 cop[tikv] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
@@ -767,18 +767,18 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 		"[  │ │   └─Limit_44 1.00 root offset:0, count:1]\n" +
 		"[  │ │     └─TableReader_50 1.00 root data:Limit_49]\n" +
 		"[  │ │       └─Limit_49 1.00 cop[tikv] offset:0, count:1]\n" +
-		"[  │ │         └─Selection_48 1.00 cop[tikv] eq(Column#1, Column#5)]\n" +
+		"[  │ │         └─Selection_48 1.00 cop[tikv] eq(Column#1, Column#4)]\n" +
 		"[  │ │           └─TableScan_47 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
 		"[  │ └─Projection_54 1.00 root NULL]\n" +
 		"[  │   └─Limit_55 1.00 root offset:0, count:1]\n" +
 		"[  │     └─TableReader_61 1.00 root data:Limit_60]\n" +
 		"[  │       └─Limit_60 1.00 cop[tikv] offset:0, count:1]\n" +
-		"[  │         └─Selection_59 1.00 cop[tikv] eq(Column#1, Column#9)]\n" +
+		"[  │         └─Selection_59 1.00 cop[tikv] eq(Column#1, Column#7)]\n" +
 		"[  │           └─TableScan_58 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
 		"[  └─Projection_65 1.00 root NULL]\n" +
 		"[    └─Limit_66 1.00 root offset:0, count:1]\n" +
 		"[      └─TableReader_72 1.00 root data:Limit_71]\n" +
 		"[        └─Limit_71 1.00 cop[tikv] offset:0, count:1]\n" +
-		"[          └─Selection_70 1.00 cop[tikv] eq(Column#1, Column#13)]\n" +
+		"[          └─Selection_70 1.00 cop[tikv] eq(Column#1, Column#10)]\n" +
 		"[            └─TableScan_69 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo"))
 }

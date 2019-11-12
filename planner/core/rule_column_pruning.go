@@ -42,13 +42,10 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bo
 		}
 	})
 
+	tmpSchema := expression.NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
-	for _, col := range usedCols {
-		idx := schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, errors.Errorf("Can't find column %s from schema %s.", col, schema)
-		}
-		used[idx] = true
+	for i, col := range schema.Columns {
+		used[i] = tmpSchema.Contains(col)
 	}
 	return used, nil
 }

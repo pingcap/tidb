@@ -248,7 +248,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg_9 2.00 root group by:Column#6, funcs:count(Column#5)",
+		"HashAgg_9 2.00 root group by:Column#5, funcs:count(Column#4)",
 		"└─TableReader_10 2.00 root data:HashAgg_5",
 		"  └─HashAgg_5 2.00 cop[tikv] group by:Column#1, funcs:count(1)",
 		"    └─TableScan_8 8.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
@@ -700,7 +700,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
-			"Projection_11 10.00 root Column#15",
+			"Projection_11 10.00 root Column#14",
 			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",

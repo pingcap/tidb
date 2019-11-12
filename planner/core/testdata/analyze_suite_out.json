@@ -47,13 +47,13 @@
         ],
         "Plan": [
           "Limit_17 1.00 root offset:0, count:1",
-          "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:Column#1, inner key:Column#8",
+          "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:Column#1, inner key:Column#5",
           "  ├─TopN_29 1.00 root Column#1:asc, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root index:TopN_36",
           "  │   └─TopN_36 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
           "  │     └─IndexScan_35 6.00 cop[tikv] table:t1, index:b, c, range:[-inf,6], keep order:false",
           "  └─IndexReader_68 1.04 root index:IndexScan_67",
-          "    └─IndexScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true"
+          "    └─IndexScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(Column#5, Column#1)], keep order:true"
         ]
       },
       {

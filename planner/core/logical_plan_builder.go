@@ -790,16 +790,19 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 			return nil, nil, err
 		}
 	}
-	newCol := &expression.Column{
-		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
-	}
 	name := &types.FieldName{
 		TblName:     tblName,
 		OrigTblName: origTblName,
 		ColName:     colName,
 		OrigColName: origColName,
 		DBName:      dbName,
+	}
+	if isCol {
+		return col, name, nil
+	}
+	newCol := &expression.Column{
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  expr.GetType(),
 	}
 	return newCol, name, nil
 }
