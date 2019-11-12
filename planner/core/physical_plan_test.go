@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -685,7 +684,6 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		logrus.Warning("test:------", test)
 		p, _, err := planner.Optimize(context.Background(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
