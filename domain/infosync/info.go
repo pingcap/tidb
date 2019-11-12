@@ -185,7 +185,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	return nil
 }
 
-// GetGlobalServerID gets the global server id.
+// GetGlobalServerID gets the global server ID.
 func GetGlobalServerID() int64 {
 	info := GetServerInfo()
 	if info == nil {
