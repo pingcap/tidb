@@ -193,7 +193,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			if name.Hidden {
 				continue
 			}
-			name.OrigTblName = name.TblName
+			if name.OrigTblName.L == "" {
+				name.OrigTblName = name.TblName
+			}
 			if x.AsName.L != "" {
 				name.TblName = x.AsName
 			}
