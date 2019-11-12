@@ -31,9 +31,7 @@ import (
 var CPUProfileInterval = 30 * time.Second
 
 // Collector is used to collect the profile results
-type Collector struct {
-	Rows [][]types.Datum
-}
+type Collector struct{}
 
 func (c *Collector) profileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
 	p, err := profile.Parse(f)
@@ -54,10 +52,9 @@ func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error)
 		root.add(sample)
 	}
 
-	col := newFlamegraphCollector(p, c.Rows)
+	col := newFlamegraphCollector(p)
 	col.collect(root)
-	c.Rows = col.rows
-	return c.Rows, nil
+	return col.rows, nil
 }
 
 // cpuProfileGraph returns the CPU profile flamegraph which is organized by tree form

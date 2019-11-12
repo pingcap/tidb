@@ -104,12 +104,12 @@ type flamegraphCollector struct {
 	rootChild int
 }
 
-func newFlamegraphCollector(p *profile.Profile, rows [][]types.Datum) *flamegraphCollector {
+func newFlamegraphCollector(p *profile.Profile) *flamegraphCollector {
 	locations := make(map[uint64]*profile.Location, len(p.Location))
 	for _, loc := range p.Location {
 		locations[loc.ID] = loc
 	}
-	return &flamegraphCollector{rows: rows, locations: locations}
+	return &flamegraphCollector{locations: locations}
 }
 
 func (c *flamegraphCollector) locationName(locID uint64) (funcName, fileLine string) {

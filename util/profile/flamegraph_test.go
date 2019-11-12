@@ -30,7 +30,7 @@ func TestT(t *testing.T) {
 }
 
 func (s *profileInternalSuite) TestProfileToDatum(c *C) {
-	file, err := os.Open("test.pprof")
+	file, err := os.Open("testdata/test.pprof")
 	c.Assert(err, IsNil)
 	defer file.Close()
 
