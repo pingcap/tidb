@@ -70,6 +70,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.MicroSecond: {},
 	ast.Now: {
+		{retEvalType: types.ETDatetime},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
 			geners: []dataGenerator{&rangeInt64Gener{0, 7}},
 		},
