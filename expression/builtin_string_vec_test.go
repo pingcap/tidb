@@ -70,6 +70,13 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
 			geners:        []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{-25, 25}, &rangeInt64Gener{-25, 25}},
 		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong}, {Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{-25, 25}, &rangeInt64Gener{-25, 25}},
+		},
 	},
 	ast.SubstringIndex: {
 		{
