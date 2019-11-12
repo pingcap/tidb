@@ -272,11 +272,11 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	sctx.sessionVars.User = &auth.UserIdentity{
-		Username:     "tidb",
+		Username:     "root",
 		Hostname:     "localhost",
 		CurrentUser:  true,
 		AuthHostname: "localhost",
-		AuthUsername: "tidb",
+		AuthUsername: "root",
 	}
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
