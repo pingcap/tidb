@@ -789,7 +789,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(len(scannedRegions), Equals, 5)
 	for i := 0; i < 5; i++ {
 		r := scannedRegions[i]
-		_, p, _ := r.WorkStorePeer(r.getStore())
+		_, p, _ := r.WorkStorePeer(kv.TiKV, r.getStore())
 
 		c.Assert(r.meta.Id, Equals, regions[i])
 		c.Assert(p.Id, Equals, peers[i][0])
@@ -800,7 +800,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(len(scannedRegions), Equals, 3)
 	for i := 1; i < 4; i++ {
 		r := scannedRegions[i-1]
-		_, p, _ := r.WorkStorePeer(r.getStore())
+		_, p, _ := r.WorkStorePeer(kv.TiKV, r.getStore())
 
 		c.Assert(r.meta.Id, Equals, regions[i])
 		c.Assert(p.Id, Equals, peers[i][0])
@@ -811,7 +811,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(len(scannedRegions), Equals, 1)
 
 	r0 := scannedRegions[0]
-	_, p0, _ := r0.WorkStorePeer(r0.getStore())
+	_, p0, _ := r0.WorkStorePeer(kv.TiKV, r0.getStore())
 	c.Assert(r0.meta.Id, Equals, regions[1])
 	c.Assert(p0.Id, Equals, peers[1][0])
 
@@ -822,7 +822,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(err, IsNil)
 	for i := 0; i < 3; i++ {
 		r := scannedRegions[i]
-		_, p, _ := r.WorkStorePeer(r.getStore())
+		_, p, _ := r.WorkStorePeer(kv.TiKV, r.getStore())
 
 		c.Assert(r.meta.Id, Equals, regions[i*2])
 		c.Assert(p.Id, Equals, peers[i*2][0])
@@ -953,7 +953,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	region := cache.getRegionByIDFromCache(loc.Region.id)
 	b.ResetTimer()
 	regionStore := region.getStore()
-	store, peer, idx := region.WorkStorePeer(regionStore)
+	store, peer, idx := region.WorkStorePeer(kv.TiKV, regionStore)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			rpcCtx := &RPCContext{
@@ -965,7 +965,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r == nil {
-				cache.switchNextPeer(r, rpcCtx.PeerIdx, nil)
+				cache.switchNextPeer(kv.TiKV, r, rpcCtx.PeerIdx, nil)
 			}
 		}
 	})
