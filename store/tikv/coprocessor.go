@@ -776,7 +776,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *ti
 			logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
-		lastRange = resp.Range
+		if resp.Range != nil {
+			lastRange = resp.Range
+		}
 	}
 }
 
