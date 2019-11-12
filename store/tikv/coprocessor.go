@@ -735,7 +735,7 @@ func (m *minCommitTSPushed) Update(from []uint64) {
 
 func (m *minCommitTSPushed) Get(to []uint64) {
 	m.RLock()
-	for k, _ := range m.data {
+	for k := range m.data {
 		to = append(to, k)
 	}
 	m.RUnlock()

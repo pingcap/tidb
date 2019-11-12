@@ -220,7 +220,7 @@ func (l *mvccLock) check(ts uint64, key []byte, resolvedLocks []uint64) (uint64,
 	// Skip lock if the lock is resolved.
 	for _, resolved := range resolvedLocks {
 		if l.startTS == resolved {
-			return l.startTS, nil
+			return ts, nil
 		}
 	}
 	return 0, l.lockErr(key)
