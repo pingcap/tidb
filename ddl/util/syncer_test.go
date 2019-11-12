@@ -132,13 +132,13 @@ func TestSyncerSimple(t *testing.T) {
 	cancel()
 
 	// for UpdateSelfVersion
-	childCtx, cancel = goctx.WithTimeout(ctx, 100*time.Millisecond)
+	childCtx, cancel = goctx.WithTimeout(ctx, time.Second)
 	err = d.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
 	if err != nil {
 		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
 	}
 	cancel()
-	childCtx, cancel = goctx.WithTimeout(ctx, 100*time.Millisecond)
+	childCtx, cancel = goctx.WithTimeout(ctx, time.Second)
 	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
 	if err != nil {
 		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
@@ -151,12 +151,12 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for CheckAllVersions
-	childCtx, _ = goctx.WithTimeout(ctx, 100*time.Millisecond)
+	childCtx, _ = goctx.WithTimeout(ctx, time.Second)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer-1)
 	if err != nil {
 		t.Fatalf("check all versions failed %v", err)
 	}
-	childCtx, _ = goctx.WithTimeout(ctx, 100*time.Millisecond)
+	childCtx, _ = goctx.WithTimeout(ctx, time.Second)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
 	if err != nil {
 		t.Fatalf("check all versions failed %v", err)
@@ -178,7 +178,7 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new session failed %v", err)
 	}
-	childCtx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+	childCtx, cancel = context.WithTimeout(ctx, time.Second)
 	err = PutKVToEtcd(childCtx, cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		t.Fatalf("put kv to etcd failed %v", err)
