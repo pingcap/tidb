@@ -1074,6 +1074,96 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 	}
 }
 
+// HashGroupKey encodes each row of this column and append encoded data into buf.
+// Only use in the aggregate executor.
+func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldType) ([][]byte, error) {
+	var err error
+	switch ft.EvalType() {
+	case types.ETInt:
+		i64s := col.Int64s()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = encodeSignedInt(buf[i], i64s[i], false)
+			}
+		}
+	case types.ETReal:
+		f64s := col.Float64s()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], floatFlag)
+				buf[i] = EncodeFloat(buf[i], f64s[i])
+			}
+		}
+	case types.ETDecimal:
+		ds := col.Decimals()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], decimalFlag)
+				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.Flen, ft.Decimal)
+				if terror.ErrorEqual(err, types.ErrTruncated) {
+					err = sc.HandleTruncate(err)
+				} else if terror.ErrorEqual(err, types.ErrOverflow) {
+					err = sc.HandleOverflow(err, err)
+				}
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		ts := col.Times()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], uintFlag)
+				buf[i], err = EncodeMySQLTime(sc, ts[i], mysql.TypeUnspecified, buf[i])
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	case types.ETDuration:
+		ds := col.GoDurations()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], durationFlag)
+				buf[i] = EncodeInt(buf[i], int64(ds[i]))
+			}
+		}
+	case types.ETJson:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], jsonFlag)
+				j := col.GetJSON(i)
+				buf[i] = append(buf[i], j.TypeCode)
+				buf[i] = append(buf[i], j.Value...)
+			}
+		}
+	case types.ETString:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = encodeBytes(buf[i], col.GetBytes(i), false)
+			}
+		}
+	default:
+		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+	}
+	return buf, nil
+}
+
 // EncodeTo encodes one row and append encoded data into buf.
 func EncodeTo(sc *stmtctx.StatementContext, col *chunk.Column, rowID int, buf []byte, ft *types.FieldType) ([]byte, error) {
 	var err error

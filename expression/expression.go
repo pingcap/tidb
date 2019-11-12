@@ -419,7 +419,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	return errors.Trace(err)
 }
 
-// VecEval evaluates the expression in a vectorized manner.
+// VecEval evaluates this expr according to its type.
 func VecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	switch expr.GetType().EvalType() {
 	case types.ETInt:

@@ -60,32 +60,18 @@ func GetSysVar(name string) *SysVar {
 // PluginVarNames is global plugin var names set.
 var PluginVarNames []string
 
-// Variable error codes.
-const (
-	CodeUnknownStatusVar            terror.ErrCode = 1
-	CodeUnknownSystemVar            terror.ErrCode = mysql.ErrUnknownSystemVariable
-	CodeIncorrectScope              terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
-	CodeUnknownTimeZone             terror.ErrCode = mysql.ErrUnknownTimeZone
-	CodeReadOnly                    terror.ErrCode = mysql.ErrVariableIsReadonly
-	CodeWrongValueForVar            terror.ErrCode = mysql.ErrWrongValueForVar
-	CodeWrongTypeForVar             terror.ErrCode = mysql.ErrWrongTypeForVar
-	CodeTruncatedWrongValue         terror.ErrCode = mysql.ErrTruncatedWrongValue
-	CodeMaxPreparedStmtCountReached terror.ErrCode = mysql.ErrMaxPreparedStmtCountReached
-)
-
 // Variable errors
 var (
-	UnknownStatusVar               = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar               = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope              = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone             = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly                    = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
-	ErrWrongValueForVar            = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
-	ErrWrongTypeForVar             = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
-	ErrTruncatedWrongValue         = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(CodeMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
-	ErrUnsupportedValueForVar      = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
-	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(CodeUnknownStatusVar, "The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+	ErrUnsupportedValueForVar      = terror.ClassVariable.New(mysql.ErrUnsupportedValueForVar, mysql.MySQLErrName[mysql.ErrUnsupportedValueForVar])
+	ErrUnknownSystemVar            = terror.ClassVariable.New(mysql.ErrUnknownSystemVariable, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope              = terror.ClassVariable.New(mysql.ErrIncorrectGlobalLocalVar, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone             = terror.ClassVariable.New(mysql.ErrUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly                    = terror.ClassVariable.New(mysql.ErrVariableIsReadonly, mysql.MySQLErrName[mysql.ErrVariableIsReadonly])
+	ErrWrongValueForVar            = terror.ClassVariable.New(mysql.ErrWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar             = terror.ClassVariable.New(mysql.ErrWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue         = terror.ClassVariable.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(mysql.ErrMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
+	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(mysql.ErrUnsupportedIsolationLevel, mysql.MySQLErrName[mysql.ErrUnsupportedIsolationLevel])
 )
 
 func init() {
@@ -97,14 +83,16 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownSystemVar:            mysql.ErrUnknownSystemVariable,
-		CodeIncorrectScope:              mysql.ErrIncorrectGlobalLocalVar,
-		CodeUnknownTimeZone:             mysql.ErrUnknownTimeZone,
-		CodeReadOnly:                    mysql.ErrVariableIsReadonly,
-		CodeWrongValueForVar:            mysql.ErrWrongValueForVar,
-		CodeWrongTypeForVar:             mysql.ErrWrongTypeForVar,
-		CodeTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
-		CodeMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
+		mysql.ErrUnsupportedValueForVar:      mysql.ErrUnsupportedValueForVar,
+		mysql.ErrUnknownSystemVariable:       mysql.ErrUnknownSystemVariable,
+		mysql.ErrIncorrectGlobalLocalVar:     mysql.ErrIncorrectGlobalLocalVar,
+		mysql.ErrUnknownTimeZone:             mysql.ErrUnknownTimeZone,
+		mysql.ErrVariableIsReadonly:          mysql.ErrVariableIsReadonly,
+		mysql.ErrWrongValueForVar:            mysql.ErrWrongValueForVar,
+		mysql.ErrWrongTypeForVar:             mysql.ErrWrongTypeForVar,
+		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
+		mysql.ErrMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
+		mysql.ErrUnsupportedIsolationLevel:   mysql.ErrUnsupportedIsolationLevel,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
