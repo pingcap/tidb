@@ -35,6 +35,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime},
@@ -61,6 +62,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&datetimeJSONGener{}}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
@@ -69,6 +71,13 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 				&dataTimeStrGener{},
 				&timeStrGener{},
 				&dataStrGener{},
+			}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETTimestamp}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETJson},
+			geners: []dataGenerator{
+				&jsonTimeGener{},
 			}},
 	},
 }
@@ -93,6 +102,23 @@ func (g *randJSONDuration) gen() interface{} {
 	d := types.Duration{
 		Duration: time.Duration(time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond),
 		Fsp:      3}
+	return json.CreateBinary(d.String())
+}
+
+type datetimeJSONGener struct{}
+
+func (g *datetimeJSONGener) gen() interface{} {
+	year := rand.Intn(2200)
+	month := rand.Intn(10) + 1
+	day := rand.Intn(20) + 1
+	hour := rand.Intn(12)
+	minute := rand.Intn(60)
+	second := rand.Intn(60)
+	microsecond := rand.Intn(1000000)
+	d := types.Time{
+		Time: types.FromDate(year, month, day, hour, minute, second, microsecond),
+		Fsp:  3,
+	}
 	return json.CreateBinary(d.String())
 }
 
