@@ -1604,7 +1604,24 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return err
 	}
 
-	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
+	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
+		return err
+	}
+
+	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
+		return errors.Trace(err)
+	}
+
+	if s != nil {
+		for _, def := range s.Partition.Definitions {
+			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, pi.Columns, exprs); err != nil {
+				return err
+			}
+		}
+	}
+
+	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
 }
 
 func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
@@ -2192,7 +2209,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := buildPartitionInfo(meta, d, spec)
+	partInfo, err := buildPartitionInfo(ctx, meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3341,7 +3358,7 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 	return comment, nil
 }
 
-func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	if meta.Partition.Type == model.PartitionTypeRange {
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -3368,6 +3385,11 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+		if len(part.Columns) > 0 {
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, part.Columns, clause.Exprs); err != nil {
+				return nil, err
+			}
+		}
 
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
@@ -3385,6 +3407,41 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, colNames []model.CIStr, exprs []ast.ExprNode) error {
+	// Validate() has already checked len(colNames) = len(exprs)
+	// create table ... partition by range columns (cols)
+	// partition p0 values less than (expr)
+	// check the type of cols[i] and expr is consistent.
+	for i, colExpr := range exprs {
+		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			continue
+		}
+
+		colName := colNames[i]
+		colInfo := getColumnInfoByName(meta, colName.L)
+		if colInfo == nil {
+			return errors.Trace(ErrFieldNotFoundPart)
+		}
+		colType := &colInfo.FieldType
+
+		val, err := expression.EvalAstExpr(ctx, colExpr)
+		if err != nil {
+			return err
+		}
+
+		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		switch colType.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			switch val.Kind() {
+			case types.KindString, types.KindBytes:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
 }
 
 // extractCollateFromOption take collates(may multiple) in option into consideration
