@@ -1387,7 +1387,7 @@ func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 		return err
 	}
 	defer b.bufAllocator.put(numberOfBits)
-	if err := b.args[4].VecEvalString(b.ctx, input, numberOfBits); err != nil {
+	if err := b.args[4].VecEvalInt(b.ctx, input, numberOfBits); err != nil {
 		return err
 	}
 	result.ReserveString(n)
