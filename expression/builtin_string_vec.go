@@ -888,7 +888,6 @@ func (b *builtinStrcmpSig) vectorized() bool {
 
 func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	// read left
 	leftBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -897,7 +896,6 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalString(b.ctx, input, leftBuf); err != nil {
 		return err
 	}
-	// read right
 	rightBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -911,12 +909,7 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		// if left or right is null, then set to null and return 0(which is the default value)
-		if leftBuf.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
-		if rightBuf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i)))
