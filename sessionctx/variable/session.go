@@ -206,7 +206,7 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams []types.Datum
+	PreparedParams PreparedParams
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -406,7 +406,17 @@ type SessionVars struct {
 	DurationCompile time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt string
+	PrevStmt fmt.Stringer
+}
+
+// PreparedParams contains the parameters of the current prepared statement when executing it.
+type PreparedParams []types.Datum
+
+func (pps PreparedParams) String() string {
+	if len(pps) == 0 {
+		return ""
+	}
+	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
 // ConnectionInfo present connection used by audit.
@@ -582,26 +592,6 @@ func (s *SessionVars) Location() *time.Location {
 		loc = timeutil.SystemLocation()
 	}
 	return loc
-}
-
-// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
-func (s *SessionVars) GetExecuteArgumentsInfo() string {
-	if len(s.PreparedParams) == 0 {
-		return ""
-	}
-	args := make([]string, 0, len(s.PreparedParams))
-	for _, v := range s.PreparedParams {
-		if v.IsNull() {
-			args = append(args, "<nil>")
-		} else {
-			str, err := v.ToString()
-			if err != nil {
-				terror.Log(err)
-			}
-			args = append(args, str)
-		}
-	}
-	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
 }
 
 // GetSystemVar gets the string value of a system variable.
@@ -799,6 +789,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBRecordPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -1006,6 +998,10 @@ const (
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogParseTimeStr is the parse sql time.
+	SlowLogParseTimeStr = "Parse_time"
+	// SlowLogCompileTimeStr is the compile plan time.
+	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1038,10 +1034,20 @@ const (
 	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
+	SlowLogPrepared = "Prepared"
+	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
+	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
+	// SlowLogPlan is used to record the query plan.
+	SlowLogPlan = "Plan"
+	// SlowLogPlanPrefix is the prefix of the plan value.
+	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogPlanSuffix is the suffix of the plan value.
+	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
 )
@@ -1049,19 +1055,22 @@ const (
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS       uint64
-	SQL         string
-	Digest      string
-	TimeTotal   time.Duration
-	TimeParse   time.Duration
-	TimeCompile time.Duration
-	IndexNames  string
-	StatsInfos  map[string]uint64
-	CopTasks    *stmtctx.CopTasksDetails
-	ExecDetail  execdetails.ExecDetails
-	MemMax      int64
-	Succ        bool
-	PrevStmt    string
+	TxnTS          uint64
+	SQL            string
+	Digest         string
+	TimeTotal      time.Duration
+	TimeParse      time.Duration
+	TimeCompile    time.Duration
+	IndexNames     string
+	StatsInfos     map[string]uint64
+	CopTasks       *stmtctx.CopTasksDetails
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	Succ           bool
+	Prepared       bool
+	Plan           string
+	HasMoreResults bool
+	PrevStmt       string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1095,6 +1104,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
@@ -1148,7 +1159,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
 
+	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
+	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	if len(logItems.Plan) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)

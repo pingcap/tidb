@@ -212,3 +212,24 @@ func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 		tk.MustQuery(tt.query).Check(tt.result)
 	}
 }
+
+func (s *testUpdateSuite) TestUpdateWithSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id varchar(30) not null, status varchar(1) not null default 'N', id2 varchar(30))")
+	tk.MustExec("create table t2(id varchar(30) not null, field varchar(4) not null)")
+	tk.MustExec("insert into t1 values('abc', 'F', 'abc')")
+	tk.MustExec("insert into t2 values('abc', 'MAIN')")
+	tk.MustExec("update t1 set status = 'N' where status = 'F' and (id in (select id from t2 where field = 'MAIN') or id2 in (select id from t2 where field = 'main'))")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("abc N abc"))
+}
+
+func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table t(a int, b int generated always  as (a+1) virtual)")
+	tk.MustExec("create table test2.t(a int, b int generated always  as (a+1) virtual)")
+	tk.MustExec("update t, test2.t set test.t.a=1")
+}

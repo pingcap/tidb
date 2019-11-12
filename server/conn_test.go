@@ -23,12 +23,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type ConnTestSuite struct {
@@ -283,4 +287,39 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(time.Since(now) < 3*time.Second, IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
+}
+
+type mockTiDBCtx struct {
+	TiDBContext
+	rs  []ResultSet
+	err error
+}
+
+func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, error) {
+	return c.rs, c.err
+}
+
+func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
+	return &variable.SessionVars{}
+}
+
+type mockRecordSet struct{}
+
+func (m mockRecordSet) Fields() []*ast.ResultField                       { return nil }
+func (m mockRecordSet) Next(ctx context.Context, req *chunk.Chunk) error { return nil }
+func (m mockRecordSet) NewChunk() *chunk.Chunk                           { return nil }
+func (m mockRecordSet) Close() error                                     { return nil }
+
+func (ts *ConnTestSuite) TestShutDown(c *C) {
+	cc := &clientConn{}
+
+	rs := &tidbResultSet{recordSet: mockRecordSet{}}
+	// mock delay response
+	cc.ctx = &mockTiDBCtx{rs: []ResultSet{rs}, err: nil}
+	// set killed flag
+	cc.status = connStatusShutdown
+	// assert ErrQueryInterrupted
+	err := cc.handleQuery(context.Background(), "dummy")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
+	c.Assert(rs.closed, Equals, int32(1))
 }

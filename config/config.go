@@ -104,10 +104,11 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 // Security is the security section of the config.
@@ -126,11 +127,12 @@ type Security struct {
 // This is needed only because logging hasn't been set up at the time we parse the config file.
 // This should all be ripped out once strict config checking is made the default behavior.
 type ErrConfigValidationFailed struct {
-	err string
+	confFile       string
+	UndecodedItems []string
 }
 
 func (e *ErrConfigValidationFailed) Error() string {
-	return e.err
+	return fmt.Sprintf("config file %s contained unknown configuration options: %s", e.confFile, strings.Join(e.UndecodedItems, ", "))
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -341,13 +343,14 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+		Level:               "info",
+		Format:              "text",
+		File:                logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:       "tidb-slow.log",
+		SlowThreshold:       logutil.DefaultSlowThreshold,
+		ExpensiveThreshold:  10000,
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -536,7 +539,7 @@ func (c *Config) Load(confFile string) error {
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())
 		}
-		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+		err = &ErrConfigValidationFailed{confFile, undecodedItems}
 	}
 
 	return err
