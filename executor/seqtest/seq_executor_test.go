@@ -110,9 +110,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table earlyclose (id int primary key)")
 
-	// Insert 1000 rows.
+	N := 100
+	// Insert N rows.
 	var values []string
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < N; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
@@ -125,10 +126,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+	s.cluster.SplitTable(s.mvccStore, tblID, N/2)
 
 	ctx := context.Background()
-	for i := 0; i < 500; i++ {
+	for i := 0; i < N/2; i++ {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
