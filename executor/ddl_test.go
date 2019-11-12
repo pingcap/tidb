@@ -556,6 +556,11 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+
+	// for create table with index.
+	tk.MustExec("drop table t;")
+	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
 func (s *testSuite8) TestShardRowIDBits(c *C) {

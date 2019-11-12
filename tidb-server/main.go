@@ -59,6 +59,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/struCoder/pidusage"
+	_ "go.uber.org/automaxprocs"
 	"go.uber.org/zap"
 )
 

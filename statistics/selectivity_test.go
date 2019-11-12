@@ -72,7 +72,7 @@ func (s *testStatsSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStatsSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
 	lg := zap.New(s.hook)
@@ -422,6 +422,38 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
+}
+
+func (s *testStatsSuite) TestEstimationUniqueKeyEqualConds(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, unique key(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7)")
+	testKit.MustExec("analyze table t with 4 cmsketch width, 1 cmsketch depth;")
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := s.do.StatsHandle().GetTableStats(table.Meta())
+
+	sc := &stmtctx.StatementContext{}
+	idxID := table.Meta().Indices[0].ID
+	count, err := statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(7, 7))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 1.0)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(6, 6))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 1.0)
+
+	colID := table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByIntColumnRanges(sc, colID, getRange(7, 7))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 1.0)
+
+	count, err = statsTbl.GetRowCountByIntColumnRanges(sc, colID, getRange(6, 6))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 1.0)
 }
 
 func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {

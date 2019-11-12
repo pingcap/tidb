@@ -151,7 +151,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	var wg sync.WaitGroup
 	cnt := 4
 	wg.Add(cnt)
-	num := 100
+	num := 20
 
 	for i := 0; i < cnt; i++ {
 		go func() {

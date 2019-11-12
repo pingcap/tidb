@@ -18,11 +18,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-	ast.SetVar:   {},
-	ast.GetVar:   {},
+	ast.SetVar: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+	},
+	ast.GetVar: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.BitCount: {},
 	ast.GetParam: {},
 }
