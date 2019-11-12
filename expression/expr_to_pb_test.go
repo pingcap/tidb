@@ -443,7 +443,7 @@ func (s *testEvaluatorSerialSuites) TestPanicIfPbCodeUnspecified(c *C) {
 	c.Assert(fn.Function.PbCode(), Equals, tipb.ScalarFuncSig_Unspecified)
 
 	pc := PbConverter{client: new(mock.Client), sc: new(stmtctx.StatementContext)}
-	c.Assert(func() { pc.ExprToPB(fn) }, PanicMatches, "*expression.builtinBitAndSig does not set the PbCode")
+	c.Assert(func() { pc.ExprToPB(fn) }, PanicMatches, "unspecified PbCode: *expression.builtinBitAndSig")
 }
 
 func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
