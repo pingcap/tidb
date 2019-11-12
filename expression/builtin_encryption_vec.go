@@ -73,17 +73,23 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	result.ReserveString(n)
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
+		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		if isWarning {
+			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
 			stmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
 		if !isConstKey {
 			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
 		}
-		plainText, err := encrypt.AESDecryptWithECB([]byte(strBuf.GetString(i)), key)
+		// ANNOTATION:
+		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
+		// and the memory will be modified in AESEncryptWithECB & AESDecryptWithECB
+		str := []byte(strBuf.GetString(i))
+		plainText, err := encrypt.AESDecryptWithECB(str, key)
 		if err != nil {
 			result.AppendNull()
 			continue
