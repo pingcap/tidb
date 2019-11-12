@@ -806,7 +806,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 }
 
 // getColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64) (float64, error) {
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64, pkIsHandle bool) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
@@ -816,6 +816,11 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
+				// In this case, the row count is at most 1.
+				if pkIsHandle {
+					rowCount += 1
+					continue
+				}
 				var cnt float64
 				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
@@ -909,6 +914,11 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 				continue
 			}
 			if fullLen {
+				// At most 1 in this case.
+				if idx.Info.Unique {
+					totalCount += 1
+					continue
+				}
 				count, err := idx.equalRowCount(sc, lb, modifyCount)
 				if err != nil {
 					return 0, err
