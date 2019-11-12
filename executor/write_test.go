@@ -1398,6 +1398,11 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("update v set a = '2000-11-11'")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, d int, e int, index idx(a))")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("update t1 join t2 on t1.a=t2.a set t1.a=1 where t2.b=1 and t2.c=2")
 }
 
 func (s *testSuite4) TestPartitionedTableUpdate(c *C) {

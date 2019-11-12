@@ -246,17 +246,17 @@ id	count	task	operator info
 Sort_10	1.00	root	Column#31:asc
 └─HashAgg_15	1.00	root	group by:Column#1, funcs:firstrow(Column#1), firstrow(Column#2), firstrow(Column#3), firstrow(Column#4), firstrow(Column#5), firstrow(Column#6), firstrow(Column#7), firstrow(Column#8), firstrow(Column#9), firstrow(Column#10)
   └─Selection_22	0.01	root	or(eq(Column#22, 62), or(eq(Column#1, 20), eq(Column#1, 20)))
-    └─HashLeftJoin_23	0.02	root	left outer join, inner:TableReader_70, equal:[eq(Column#11, Column#23)]
-      ├─IndexMergeJoin_39	0.01	root	left outer join, inner:IndexLookUp_37, outer key:Column#1, inner key:Column#17
-      │ ├─IndexLookUp_60	0.01	root	
-      │ │ ├─IndexScan_57	10.00	cop[tikv]	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection_59	0.01	cop[tikv]	eq(Column#8, 1000)
-      │ │   └─TableScan_58	10.00	cop[tikv]	table:d, keep order:false, stats:pseudo
-      │ └─IndexLookUp_37	0.00	root	
-      │   ├─Selection_35	1.25	cop[tikv]	not(isnull(Column#17))
-      │   │ └─IndexScan_33	1.25	cop[tikv]	table:p, index:department_id, range: decided by [eq(Column#17, Column#1)], keep order:true, stats:pseudo
-      │   └─Selection_36	0.00	cop[tikv]	eq(Column#18, 1000)
-      │     └─TableScan_34	1.25	cop[tikv]	table:p, keep order:false, stats:pseudo
-      └─TableReader_70	9.99	root	data:Selection_69
-        └─Selection_69	9.99	cop[tikv]	eq(Column#24, 1000), not(isnull(Column#23))
-          └─TableScan_68	10000.00	cop[tikv]	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─HashLeftJoin_24	0.02	root	left outer join, inner:IndexMergeJoin_40 (REVERSED), equal:[eq(Column#11, Column#23)]
+      ├─IndexMergeJoin_40	0.01	root	left outer join, inner:IndexLookUp_38, outer key:Column#1, inner key:Column#17
+      │ ├─IndexLookUp_62	0.01	root	
+      │ │ ├─IndexScan_59	10.00	cop[tikv]	table:d, index:ctx, range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_61	0.01	cop[tikv]	eq(Column#8, 1000)
+      │ │   └─TableScan_60	10.00	cop[tikv]	table:d, keep order:false, stats:pseudo
+      │ └─IndexLookUp_38	0.00	root	
+      │   ├─Selection_36	1.25	cop[tikv]	not(isnull(Column#17))
+      │   │ └─IndexScan_34	1.25	cop[tikv]	table:p, index:department_id, range: decided by [eq(Column#17, Column#1)], keep order:true, stats:pseudo
+      │   └─Selection_37	0.00	cop[tikv]	eq(Column#18, 1000)
+      │     └─TableScan_35	1.25	cop[tikv]	table:p, keep order:false, stats:pseudo
+      └─TableReader_72	9.99	root	data:Selection_71
+        └─Selection_71	9.99	cop[tikv]	eq(Column#24, 1000), not(isnull(Column#23))
+          └─TableScan_70	10000.00	cop[tikv]	table:ep, range:[-inf,+inf], keep order:false, stats:pseudo
