@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -270,6 +271,13 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	sctx.sessionVars.User = &auth.UserIdentity{
+		Username:     "tidb",
+		Hostname:     "localhost",
+		CurrentUser:  true,
+		AuthHostname: "localhost",
+		AuthUsername: "tidb",
+	}
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
