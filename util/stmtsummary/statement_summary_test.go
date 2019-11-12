@@ -612,6 +612,91 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	c.Assert(len(datums), Equals, loops)
 }
 
+func (s *testStmtSummarySuite) TestExpireToHistory(c *C) {
+	s.ssMap.Clear()
+	s.ssMap.SetIntervalMinutes("30", true)
+	s.ssMap.SetHistoryMaxHours("12", true)
+
+	now := time.Now().Unix() / 1800 * 1800
+	s.ssMap.beginTimeForCurInterval = now
+	// to disable expiring
+	s.ssMap.lastCheckExpireTime = now + 60
+
+	// first statement
+	stmtExecInfo1 := &StmtExecInfo{
+		SchemaName:     "schema_name",
+		OriginalSQL:    "original_sql1",
+		NormalizedSQL:  "normalized_sql",
+		Digest:         "digest",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		Plan:         "plan",
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+	}
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums := s.ssMap.ToCurrentDatum()
+	c.Assert(len(datums), Equals, 1)
+
+	// Expire the current summary to history.
+	s.ssMap.beginTimeForCurInterval = now - 1800
+	s.ssMap.lastCheckExpireTime = now - 60
+	hash := fnv.New64()
+	_, err := hash.Write(hack.Slice(stmtExecInfo1.Plan))
+	c.Assert(err, IsNil)
+	key := &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo1.SchemaName,
+		digest:     stmtExecInfo1.Digest,
+		planHash:   hash.Sum64(),
+	}
+	value, ok := s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	ssElement := value.(*stmtSummaryByDigest).history.Back().Value.(*stmtSummaryByDigestElement)
+	ssElement.beginTime = now - 1800
+
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums = s.ssMap.ToCurrentDatum()
+	c.Assert(len(datums), Equals, 1)
+	datums = s.ssMap.ToHistoryDatum()
+	c.Assert(len(datums), Equals, 2)
+
+	// Expire the old summaries out of the history.
+	s.ssMap.beginTimeForCurInterval = now - 13*3600
+	s.ssMap.lastCheckExpireTime = now - 60
+	value, ok = s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	ssElement = value.(*stmtSummaryByDigest).history.Back().Value.(*stmtSummaryByDigestElement)
+	ssElement.beginTime = now - 13*3600
+	s.ssMap.AddStatement(stmtExecInfo1)
+	datums = s.ssMap.ToHistoryDatum()
+	c.Assert(len(datums), Equals, 2)
+}
+
 // Test max number of statement count.
 func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	s.ssMap.Clear()
@@ -866,6 +951,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 // Set setting interval minutes and history hours.
 func (s *testStmtSummarySuite) TestSetSysVars(c *C) {
+	s.ssMap.SetIntervalMinutes("", true)
 	s.ssMap.SetIntervalMinutes("60", false)
 	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.intervalMinutes), Equals, int32(60))
 	s.ssMap.SetIntervalMinutes("30", true)
@@ -873,6 +959,7 @@ func (s *testStmtSummarySuite) TestSetSysVars(c *C) {
 	s.ssMap.SetIntervalMinutes("", true)
 	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.intervalMinutes), Equals, int32(60))
 
+	s.ssMap.SetHistoryMaxHours("", true)
 	s.ssMap.SetHistoryMaxHours("24", false)
 	c.Assert(atomic.LoadInt32(&s.ssMap.sysVars.historyHours), Equals, int32(24))
 	s.ssMap.SetHistoryMaxHours("12", true)

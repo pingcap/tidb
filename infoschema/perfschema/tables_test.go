@@ -79,6 +79,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
+	// Disable expiration.
+	tk.MustExec("set global tidb_stmt_summary_interval_minutes = 99999999999")
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
 
@@ -90,23 +92,26 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("insert into t    values(2, 'b')")
 	tk.MustExec("insert into t VALUES(3, 'c')")
 	tk.MustExec("/**/insert into t values(4, 'd')")
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
+	).Check(testkit.Rows("test 4 0 0 0 0 0 0 0 4 insert into t values(1, 'a')"))
 
 	// Test SELECT
 	tk.MustQuery("select * from t where a=2")
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("test 1 0 select * from t where a=2"))
+	).Check(testkit.Rows("test 1 1 1 1 0 0 0 0 0 select * from t where a=2"))
 
 	// select ... order by
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		order by exec_count desc limit 1`,
-	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
+	).Check(testkit.Rows("test 4 0 0 0 0 0 0 0 4 insert into t values(1, 'a')"))
 
 	// Disable it again
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -119,7 +124,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select * from t where a=2")
 
 	// The table should be cleared
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
 
@@ -127,10 +133,11 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set session tidb_enable_stmt_summary = on")
 	// It should work immediately
 	tk.MustQuery("select * from t where a=2")
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("test 1 0 select * from t where a=2"))
+	).Check(testkit.Rows("test 1 1 1 1 0 0 0 0 0 select * from t where a=2"))
 
 	// Disable it in global scope
 	tk.MustExec("set global tidb_enable_stmt_summary = off")
@@ -141,17 +148,120 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select * from t where a=2")
 
 	// Statement summary is still enabled
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("test 2 0 select * from t where a=2"))
+	).Check(testkit.Rows("test 2 2 1 1 0 0 0 0 0 select * from t where a=2"))
 
 	// Unset session variable
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select * from t where a=2")
 
 	// Statement summary is disabled
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest`,
+	).Check(testkit.Rows())
+}
+
+// Test events_statements_summary_by_digest_history
+func (s *testTableSuite) TestStmtSummaryTableHistory(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+
+	// Statement summary is disabled by default
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest_history").Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+
+	// Disable expiration.
+	tk.MustExec("set global tidb_stmt_summary_interval_minutes = 99999999999")
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// Test INSERT
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustExec("insert into t    values(2, 'b')")
+	tk.MustExec("insert into t VALUES(3, 'c')")
+	tk.MustExec("/**/insert into t values(4, 'd')")
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'insert into t%'`,
+	).Check(testkit.Rows("test 4 0 0 0 0 0 0 0 4 insert into t values(1, 'a')"))
+
+	// Test SELECT
+	tk.MustQuery("select * from t where a=2")
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("test 1 1 1 1 0 0 0 0 0 select * from t where a=2"))
+
+	// select ... order by
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history
+		order by exec_count desc limit 1`,
+	).Check(testkit.Rows("test 4 0 0 0 0 0 0 0 4 insert into t values(1, 'a')"))
+
+	// Disable it again
+	tk.MustExec("set global tidb_enable_stmt_summary = false")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// This statement shouldn't be summarized
+	tk.MustQuery("select * from t where a=2")
+
+	// The table should be cleared
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history`,
+	).Check(testkit.Rows())
+
+	// Enable it in session scope
+	tk.MustExec("set session tidb_enable_stmt_summary = on")
+	// It should work immediately
+	tk.MustQuery("select * from t where a=2")
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("test 1 1 1 1 0 0 0 0 0 select * from t where a=2"))
+
+	// Disable it in global scope
+	tk.MustExec("set global tidb_enable_stmt_summary = off")
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is still enabled
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("test 2 2 1 1 0 0 0 0 0 select * from t where a=2"))
+
+	// Unset session variable
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is disabled
+	tk.MustQuery(`select schema_name, exec_count, cop_task_num, avg_request_count, max_request_count, 
+		avg_total_keys, max_total_keys, avg_processed_keys, max_processed_keys, sum_rows_affected, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history`,
 	).Check(testkit.Rows())
 }
