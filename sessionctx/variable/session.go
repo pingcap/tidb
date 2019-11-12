@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/util/storeutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -984,7 +985,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			}
 		}
 	case TiDBStoreLimit:
-		atomic.StoreUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit, uint64(tidbOptPositiveInt32(val, DefTiDBStoreLimit)))
+		storeutil.StoreLimit.Store(uint64(tidbOptPositiveInt32(val, DefTiDBStoreLimit)))
 	}
 	s.systems[name] = val
 	return nil

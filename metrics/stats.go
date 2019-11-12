@@ -81,7 +81,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
-			Name:      "get_store_token_error",
+			Name:      "get_store_limit_token_error",
 			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
 		}, []string{LblAddress, LblStore})
 

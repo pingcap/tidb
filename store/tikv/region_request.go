@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/storeutil"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -170,7 +170,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	if atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit) > 0 {
+	if storeutil.StoreLimit.Load() > 0 {
 		if err := s.getStoreToken(ctx.Store); err != nil {
 			return nil, false, err
 		}
@@ -187,25 +187,25 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	return
 }
 
-func (s *RegionRequestSender) getStoreToken(store *Store) error {
+func (s *RegionRequestSender) getStoreToken(st *Store) error {
 	for {
-		count := atomic.LoadUint64(&store.tokenCount)
-		if count < atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit) {
-			if atomic.CompareAndSwapUint64(&store.tokenCount, count, count+1) {
+		count := atomic.LoadUint64(&st.tokenCount)
+		if count < storeutil.StoreLimit.Load() {
+			if atomic.CompareAndSwapUint64(&st.tokenCount, count, count+1) {
 				return nil
 			}
 		} else {
-			metrics.GetStoreLimitErrorCounter.WithLabelValues(store.addr, strconv.FormatUint(store.storeID, 10)).Inc()
-			return ErrTokenLimit.GenWithStackByArgs(store.storeID)
+			metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+			return ErrTokenLimit.GenWithStackByArgs(st.storeID)
 		}
 	}
 }
 
-func (s *RegionRequestSender) releaseStoreToken(store *Store) {
+func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 	for {
-		count := atomic.LoadUint64(&store.tokenCount)
+		count := atomic.LoadUint64(&st.tokenCount)
 		if count > 0 {
-			if atomic.CompareAndSwapUint64(&store.tokenCount, count, count-1) {
+			if atomic.CompareAndSwapUint64(&st.tokenCount, count, count-1) {
 				return
 			}
 		} else {

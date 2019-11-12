@@ -720,7 +720,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash"},
-	{ScopeSession, TiDBStoreLimit, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
+	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

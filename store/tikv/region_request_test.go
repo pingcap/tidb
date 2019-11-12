@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/storeutil"
 	"google.golang.org/grpc"
 )
 
@@ -94,15 +94,15 @@ func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	oldStoreLimit := atomic.LoadUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit)
-	atomic.StoreUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit, 500)
+	oldStoreLimit := storeutil.StoreLimit.Load()
+	storeutil.StoreLimit.Store(500)
 	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount = 500
 	// cause there is only one region in this cluster, regionID maps this leader.
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
-	atomic.StoreUint64(&config.GetGlobalConfig().TiKVClient.StoreLimit, oldStoreLimit)
+	storeutil.StoreLimit.Store(oldStoreLimit)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
