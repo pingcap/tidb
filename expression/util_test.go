@@ -337,8 +337,8 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 		fillColumnWithGener(eTypes[i], input, 0, nil)
 		colBuf := chunk.NewColumn(ft, 1024)
 		bufs := make([][]byte, 1024)
-		for i := 0; i < 1024; i++ {
-			bufs[i] = bufs[i][:0]
+		for j := 0; j < 1024; j++ {
+			bufs[j] = bufs[j][:0]
 		}
 		var err error
 		err = VecEval(ctx, colExpr, input, colBuf)
@@ -350,8 +350,8 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 		}
 
 		var buf []byte
-		for i := 0; i < input.NumRows(); i++ {
-			d, err := colExpr.Eval(input.GetRow(i))
+		for j := 0; j < input.NumRows(); j++ {
+			d, err := colExpr.Eval(input.GetRow(j))
 			if err != nil {
 				c.Fatal(err)
 			}
@@ -359,7 +359,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			if err != nil {
 				c.Fatal(err)
 			}
-			c.Assert(string(bufs[i]), check.Equals, string(buf))
+			c.Assert(string(bufs[j]), check.Equals, string(buf))
 		}
 	}
 }
