@@ -172,7 +172,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 		c.Assert(err, IsNil)
 		input.AppendBytes(0, num)
 	}
-	result, err := newBuffer(types.ETInt, 1024)
+	result, err := newBuffer(types.ETString, 1024)
 	c.Assert(err, IsNil)
 	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 
