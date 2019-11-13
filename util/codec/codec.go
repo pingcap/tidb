@@ -1173,7 +1173,7 @@ func EncodeTo(sc *stmtctx.StatementContext, col *chunk.Column, rowID int, buf []
 	}
 	switch ft.EvalType() {
 	case types.ETInt:
-		buf = encodeSignedInt(buf, col.GetInt64(rowID), true)
+		buf = encodeSignedInt(buf, col.GetInt64(rowID), false)
 	case types.ETReal:
 		buf = append(buf, floatFlag)
 		buf = EncodeFloat(buf, col.GetFloat64(rowID))
@@ -1203,7 +1203,7 @@ func EncodeTo(sc *stmtctx.StatementContext, col *chunk.Column, rowID int, buf []
 		buf = append(buf, j.TypeCode)
 		buf = append(buf, j.Value...)
 	case types.ETString:
-		buf = encodeBytes(buf, col.GetBytes(rowID), true)
+		buf = encodeBytes(buf, col.GetBytes(rowID), false)
 	default:
 		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
 	}
