@@ -674,7 +674,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		KeepOrder:       keepOrder,
 		Desc:            desc,
 	}.Init(ds.ctx, ds.blockOffset)
-	ts.SetSchema(ds.schema)
+	ts.SetSchema(ds.schema.Clone())
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
 		RowCount:     math.Min(1.0, rowCount),

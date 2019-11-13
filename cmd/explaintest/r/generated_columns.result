@@ -135,3 +135,40 @@ Union_13	23263.33	root
 └─TableReader_34	3323.33	root	data:Selection_33
   └─Selection_33	3323.33	cop[tikv]	lt(Column#2, 7)
     └─TableScan_32	10000.00	cop[tikv]	table:sgc3, partition:max, range:[-inf,+inf], keep order:false, stats:pseudo
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
+INSERT INTO t1 (a) VALUES (0);
+EXPLAIN SELECT b FROM t1 WHERE b=1;
+id	count	task	operator info
+IndexReader_6	10.00	root	index:IndexScan_5
+└─IndexScan_5	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
+EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
+id	count	task	operator info
+Projection_4	10.00	root	Column#2, Column#3, Column#4
+└─IndexLookUp_10	10.00	root	
+  ├─IndexScan_8	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_9	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+EXPLAIN SELECT * FROM t1 WHERE b=1;
+id	count	task	operator info
+IndexLookUp_10	10.00	root	
+├─IndexScan_8	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
+└─TableScan_9	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+EXPLAIN SELECT c FROM t1 WHERE c=2 AND d=3;
+id	count	task	operator info
+Projection_4	0.10	root	Column#3
+└─IndexReader_6	0.10	root	index:IndexScan_5
+  └─IndexScan_5	0.10	cop[tikv]	table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo
+DROP TABLE IF EXISTS person;
+CREATE TABLE person (
+id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+name VARCHAR(255) NOT NULL,
+address_info JSON,
+city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,
+KEY(city_no));
+INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON));
+EXPLAIN SELECT name FROM person where city_no=1;
+id	count	task	operator info
+Projection_4	10.00	root	Column#2
+└─IndexLookUp_10	10.00	root	
+  ├─IndexScan_8	10.00	cop[tikv]	table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_9	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo

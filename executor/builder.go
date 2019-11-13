@@ -1919,6 +1919,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
 	}
+	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
