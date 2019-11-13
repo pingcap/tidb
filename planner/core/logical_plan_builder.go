@@ -189,18 +189,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		_, isVirtualTable := p.(*LogicalProjection)
 		for _, name := range p.OutputNames() {
 			if name.Hidden {
 				continue
-			}
-			if !isVirtualTable {
-				if name.OrigTblName.L == "" {
-					name.OrigTblName = name.TblName
-				}
-				if name.OrigColName.L == "" {
-					name.OrigColName = name.ColName
-				}
 			}
 			if x.AsName.L != "" {
 				name.TblName = x.AsName
