@@ -191,22 +191,21 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 	count := atomic.LoadInt64(&st.tokenCount)
 	if count < limit {
-		// Adding to tokenCount is not thread safe, preferring this for avoiding check in loop.
+		// Checking limit is not thread safe, preferring this for avoiding load in loop.
 		atomic.AddInt64(&st.tokenCount, 1)
 		return nil
-	} else {
-		metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
-		return ErrTokenLimit.GenWithStackByArgs(st.storeID)
 	}
+	metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+
 }
 
 func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 	count := atomic.LoadInt64(&st.tokenCount)
 	if count > 0 {
 		atomic.AddInt64(&st.tokenCount, -1)
-	} else {
-		logutil.BgLogger().Warn("release store token failed, count equals to 0")
 	}
+	logutil.BgLogger().Warn("release store token failed, count equals to 0")
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
