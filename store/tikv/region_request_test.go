@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/storeutil"
 	"google.golang.org/grpc"
 )
 
@@ -42,7 +43,20 @@ type testRegionRequestSuite struct {
 	mvccStore           mocktikv.MVCCStore
 }
 
+type testStoreLimitSuite struct {
+	cluster             *mocktikv.Cluster
+	storeIDs            []uint64
+	peerIDs             []uint64
+	regionID            uint64
+	leaderPeer          uint64
+	cache               *RegionCache
+	bo                  *Backoffer
+	regionRequestSender *RegionRequestSender
+	mvccStore           mocktikv.MVCCStore
+}
+
 var _ = Suite(&testRegionRequestSuite{})
+var _ = Suite(&testStoreLimitSuite{})
 
 func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
@@ -55,8 +69,39 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
+func (s *testStoreLimitSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster()
+	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	s.cache = NewRegionCache(pdCli)
+	s.bo = NewNoopBackoff(context.Background())
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
+}
+
 func (s *testRegionRequestSuite) TearDownTest(c *C) {
 	s.cache.Close()
+}
+
+func (s *testStoreLimitSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
+func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
+	req := &tikvrpc.Request{Type: tikvrpc.CmdPrewrite, Prewrite: &kvrpcpb.PrewriteRequest{}, Context: kvrpcpb.Context{}}
+	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	oldStoreLimit := storeutil.StoreLimit.Load()
+	storeutil.StoreLimit.Store(500)
+	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount.Store(500)
+	// cause there is only one region in this cluster, regionID maps this leader.
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
+	c.Assert(err, NotNil)
+	c.Assert(resp, IsNil)
+	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
+	storeutil.StoreLimit.Store(oldStoreLimit)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {

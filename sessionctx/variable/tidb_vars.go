@@ -294,6 +294,9 @@ const (
 
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
+	TiDBStoreLimit = "tidb_store_limit"
 )
 
 // Default TiDB system variable values.
@@ -358,6 +361,7 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
+	DefTiDBStoreLimit                  = 0
 )
 
 // Process global variables.

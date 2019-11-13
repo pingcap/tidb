@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
+	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -352,7 +353,7 @@ func loadConfig() string {
 // hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength"}
+	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "TiKVClient.StoreLimit"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -377,6 +378,9 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
+	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
+		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
 	}
 }
 
