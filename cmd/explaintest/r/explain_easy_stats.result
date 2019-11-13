@@ -47,12 +47,12 @@ IndexReader_6	0.00	root	index:IndexScan_5
 └─IndexScan_5	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-HashLeftJoin_22	2481.25	root	left outer join, inner:TableReader_35, equal:[eq(Column#2, Column#4)]
-├─TableReader_32	1998.00	root	data:TableScan_31
-│ └─TableScan_31	1998.00	cop[tikv]	table:t1, range:(1,+inf], keep order:false
-└─TableReader_35	1985.00	root	data:Selection_34
-  └─Selection_34	1985.00	cop[tikv]	not(isnull(Column#4))
-    └─TableScan_33	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+HashLeftJoin_22	2481.25	root	left outer join, inner:TableReader_36, equal:[eq(Column#2, Column#4)]
+├─TableReader_33	1998.00	root	data:TableScan_32
+│ └─TableScan_32	1998.00	cop[tikv]	table:t1, range:(1,+inf], keep order:false
+└─TableReader_36	1985.00	root	data:Selection_35
+  └─Selection_35	1985.00	cop[tikv]	not(isnull(Column#4))
+    └─TableScan_34	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
 Update_2	N/A	root	N/A

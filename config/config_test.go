@@ -177,12 +177,14 @@ token-limit = 0
 enable-table-lock = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
+enable-batch-dml = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
 region-cache-ttl=6000
+store-limit=0
 [stmt-summary]
 max-stmt-count=1000
 max-sql-length=1024
@@ -203,12 +205,14 @@ max-sql-length=1024
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
+	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
+	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

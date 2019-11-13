@@ -811,12 +811,12 @@ Sort_9	7500000.00	root	Column#19:desc, Column#18:desc
 └─Projection_11	7500000.00	root	Column#18, Column#19
   └─HashAgg_14	7500000.00	root	group by:Column#18, funcs:count(1), firstrow(Column#18)
     └─HashAgg_17	7500000.00	root	group by:Column#1, funcs:count(Column#9)
-      └─HashLeftJoin_20	60000000.00	root	left outer join, inner:TableReader_25, equal:[eq(Column#1, Column#10)]
-        ├─TableReader_22	7500000.00	root	data:TableScan_21
-        │ └─TableScan_21	7500000.00	cop[tikv]	table:customer, range:[-inf,+inf], keep order:false
-        └─TableReader_25	60000000.00	root	data:Selection_24
-          └─Selection_24	60000000.00	cop[tikv]	not(like(Column#17, "%pending%deposits%", 92))
-            └─TableScan_23	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
+      └─HashLeftJoin_21	60000000.00	root	left outer join, inner:TableReader_23 (REVERSED), equal:[eq(Column#1, Column#10)]
+        ├─TableReader_23	7500000.00	root	data:TableScan_22
+        │ └─TableScan_22	7500000.00	cop[tikv]	table:customer, range:[-inf,+inf], keep order:false
+        └─TableReader_26	60000000.00	root	data:Selection_25
+          └─Selection_25	60000000.00	cop[tikv]	not(like(Column#17, "%pending%deposits%", 92))
+            └─TableScan_24	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
 /*
 Q14 Promotion Effect Query
 This query monitors the market response to a promotion such as TV advertisements or a special campaign.
@@ -1159,17 +1159,17 @@ Sort_28	20000.00	root	Column#2:asc
       └─Projection_54	64006.34	root	Column#12, Column#13, Column#14, Column#18, mul(0.5, Column#44)
         └─Selection_55	64006.34	root	gt(cast(Column#14), mul(0.5, Column#44))
           └─HashAgg_58	80007.93	root	group by:Column#12, Column#13, funcs:firstrow(Column#12), firstrow(Column#13), firstrow(Column#14), firstrow(Column#18), sum(Column#31)
-            └─HashLeftJoin_61	9711455.06	root	left outer join, inner:TableReader_91, equal:[eq(Column#12, Column#28) eq(Column#13, Column#29)]
-              ├─IndexHashJoin_74	321865.05	root	inner join, inner:IndexLookUp_65, outer key:Column#18, inner key:Column#12
-              │ ├─TableReader_86	80007.93	root	data:Selection_85
-              │ │ └─Selection_85	80007.93	cop[tikv]	like(Column#19, "green%", 92)
-              │ │   └─TableScan_84	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
-              │ └─IndexLookUp_65	4.02	root	
-              │   ├─IndexScan_63	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#12, Column#18)], keep order:false
-              │   └─TableScan_64	4.02	cop[tikv]	table:partsupp, keep order:false
-              └─TableReader_91	44189356.65	root	data:Selection_90
-                └─Selection_90	44189356.65	cop[tikv]	ge(Column#37, 1993-01-01 00:00:00.000000), lt(Column#37, 1994-01-01)
-                  └─TableScan_89	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
+            └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(Column#12, Column#28) eq(Column#13, Column#29)]
+              ├─IndexHashJoin_75	321865.05	root	inner join, inner:IndexLookUp_66, outer key:Column#18, inner key:Column#12
+              │ ├─TableReader_87	80007.93	root	data:Selection_86
+              │ │ └─Selection_86	80007.93	cop[tikv]	like(Column#19, "green%", 92)
+              │ │   └─TableScan_85	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
+              │ └─IndexLookUp_66	4.02	root	
+              │   ├─IndexScan_64	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(Column#12, Column#18)], keep order:false
+              │   └─TableScan_65	4.02	cop[tikv]	table:partsupp, keep order:false
+              └─TableReader_92	44189356.65	root	data:Selection_91
+                └─Selection_91	44189356.65	cop[tikv]	ge(Column#37, 1993-01-01 00:00:00.000000), lt(Column#37, 1994-01-01)
+                  └─TableScan_90	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.

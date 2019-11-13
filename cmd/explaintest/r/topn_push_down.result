@@ -260,8 +260,8 @@ explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a 
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(Column#3)
-  └─HashLeftJoin_24	5.00	root	left outer join, inner:TableReader_30, equal:[eq(Column#1, Column#3)]
-    ├─TableReader_26	4.00	root	data:TableScan_25
-    │ └─TableScan_25	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-    └─TableReader_30	10000.00	root	data:TableScan_29
-      └─TableScan_29	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─HashLeftJoin_25	5.00	root	left outer join, inner:TableReader_27 (REVERSED), equal:[eq(Column#1, Column#3)]
+    ├─TableReader_27	4.00	root	data:TableScan_26
+    │ └─TableScan_26	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_31	10000.00	root	data:TableScan_30
+      └─TableScan_30	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -279,7 +280,7 @@ func (b *builtinConnectionIDSig) Clone() builtinFunc {
 func (b *builtinConnectionIDSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
-		return 0, true, errors.Errorf("Missing session variable when evalue builtin")
+		return 0, true, errors.Errorf("Missing session variable `builtinConnectionIDSig.evalInt`")
 	}
 	return int64(data.ConnectionID), false, nil
 }
@@ -302,8 +303,10 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LastInsertIDWithID)
 	} else {
 		sig = &builtinLastInsertIDSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LastInsertID)
 	}
 	return sig, err
 }
@@ -579,6 +582,7 @@ func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	sig = &builtinRowCountSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_RowCount)
 	return sig, nil
 }
 
