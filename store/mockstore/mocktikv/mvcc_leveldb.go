@@ -1037,7 +1037,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	rollbackReason = kvrpcpb.RollbackReason_NotByMe
+	rollbackReason = kvrpcpb.RollbackReason_NoReason
 
 	startKey := mvccEncode(primaryKey, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
@@ -1117,7 +1117,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 				return 0, c.commitTS, rollbackReason, nil
 			}
 			// If current transaction is already rollback.
-			return 0, 0, kvrpcpb.RollbackReason_NotByMe, nil
+			return 0, 0, kvrpcpb.RollbackReason_NoReason, nil
 		}
 	}
 

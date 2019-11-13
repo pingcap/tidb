@@ -234,7 +234,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
-	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_NotByMe)
+	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_NoReason)
 
 	// Check a committed txn.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
@@ -308,7 +308,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
-	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_NotByMe)
+	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_NoReason)
 
 	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))

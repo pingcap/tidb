@@ -684,7 +684,7 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
-	c.Assert(reason, Equals, kvrpcpb.RollbackReason_NotByMe)
+	c.Assert(reason, Equals, kvrpcpb.RollbackReason_NoReason)
 
 	s.mustPrewriteWithTTLOK(c, putMutations("pk2", "val"), "pk2", startTS, 666)
 	currentTS := uint64(777 << 18)
