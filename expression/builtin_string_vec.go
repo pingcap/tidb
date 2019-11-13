@@ -800,15 +800,13 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(str, strlist)
 	res := result.Int64s()
 	for i := 0; i < n; i++ {
-		if str.IsNull(i) || strlist.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
 		strlistI := strlist.GetString(i)
 		if len(strlistI) == 0 {
 			res[i] = 0
+			continue
 		}
 		for j, strInSet := range strings.Split(strlistI, ",") {
 			if str.GetString(i) == strInSet {
