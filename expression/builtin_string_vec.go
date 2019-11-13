@@ -1149,6 +1149,9 @@ func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		strI := strings.ToLower(str.GetString(i))
 		substrI := strings.ToLower(substr.GetString(i))
 		idx := strings.Index(strI, substrI)
