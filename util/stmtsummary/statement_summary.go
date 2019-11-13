@@ -653,7 +653,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssbd.schemaName,
 		ssbd.digest,
 		ssbd.normalizedSQL,
-		ssbd.plan,
 		ssbd.tableIDs,
 		ssbd.indexNames,
 		ssElement.user,
