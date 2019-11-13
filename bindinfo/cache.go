@@ -84,10 +84,10 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 	return nil
 }
 
-func (br *BindRecord) prepareHintsForUsing(sctx sessionctx.Context, is infoschema.InfoSchema) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
-		if bind.Status != Using || bind.Hint != nil {
+		if bind.Hint != nil || bind.id != "" {
 			continue
 		}
 		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)

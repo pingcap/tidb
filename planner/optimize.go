@@ -84,7 +84,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
 		if err != nil {
 			binding.Status = bindinfo.Invalid
-			handleInvalidBindRecord(sctx, scope, bindinfo.BindRecord{
+			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
 				OriginalSQL: bindRecord.OriginalSQL,
 				Db:          bindRecord.Db,
 				Bindings:    []bindinfo.Binding{binding},
@@ -201,9 +201,14 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	return bindRecord, metrics.ScopeGlobal
 }
 
-func handleInvalidBindRecord(sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
+func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	sessionHandle.DropBindRecord(&bindRecord)
+	// The first two parameters are only used to generate hints, but since we already have the hints,
+	// we do not need to pass real values and the error won't happen too.
+	err := sessionHandle.DropBindRecord(nil, nil, &bindRecord)
+	if err != nil {
+		logutil.Logger(ctx).Info("drop session bindings failed")
+	}
 	if level == metrics.ScopeSession {
 		return
 	}

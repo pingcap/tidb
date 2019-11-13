@@ -467,6 +467,44 @@ func (s *testSuite) TestUseMultiplyBindings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
 }
 
+func (s *testSuite) TestDropSingleBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
+
+	// Test drop session bindings.
+	tk.MustExec("create binding for select * from t using select * from t use index(idx_a)")
+	tk.MustExec("create binding for select * from t using select * from t use index(idx_b)")
+	rows := tk.MustQuery("show bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][1], Equals, "select * from t use index(idx_a)")
+	c.Assert(rows[1][1], Equals, "select * from t use index(idx_b)")
+	tk.MustExec("drop binding for select * from t using select * from t use index(idx_a)")
+	rows = tk.MustQuery("show bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
+	tk.MustExec("drop binding for select * from t using select * from t use index(idx_b)")
+	rows = tk.MustQuery("show bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	// Test drop global bindings.
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_b)")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][1], Equals, "select * from t use index(idx_a)")
+	c.Assert(rows[1][1], Equals, "select * from t use index(idx_b)")
+	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_a)")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
+	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+}
+
 func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
