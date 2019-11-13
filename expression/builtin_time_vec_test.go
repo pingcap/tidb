@@ -219,6 +219,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&formatGener{0.2}, &locationGener{0.2}},
 		},
 	},
+	ast.Sysdate: {
+		// Because there is a chance that a time error will cause the test to fail,
+		// we cannot use the vectorized test framework to test builtinSysDateWithoutFspSig
+		// {retEvalType: types.ETDatetime},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
