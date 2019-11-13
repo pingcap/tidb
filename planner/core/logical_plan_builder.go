@@ -2556,17 +2556,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 
-	// If this table contains any virtual generated columns, we need a
-	// "Projection" to calculate these columns.
-	proj, err := b.projectVirtualColumns(ctx, ds, columns)
-	if err != nil {
-		return nil, err
+	for i, colExpr := range ds.Schema().Columns {
+		var expr expression.Expression
+		if i < len(columns) {
+			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				if err != nil {
+					return nil, err
+				}
+				colExpr.VirtualExpr = expr
+			}
+		}
 	}
 
-	if proj != nil {
-		proj.SetChildren(result)
-		result = proj
-	}
 	return result, nil
 }
 
@@ -2656,66 +2659,6 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
 	return projUponView, nil
-}
-
-// projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
-// we add a projection on the original DataSource, and calculate those columns in the projection
-// so that plans above it can reference generated columns by their name.
-func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource, columns []*table.Column) (*LogicalProjection, error) {
-	hasVirtualGeneratedColumn := false
-	for _, column := range columns {
-		if column.IsGenerated() && !column.GeneratedStored {
-			hasVirtualGeneratedColumn = true
-			break
-		}
-	}
-	if !hasVirtualGeneratedColumn {
-		return nil, nil
-	}
-	proj := LogicalProjection{
-		Exprs:            make([]expression.Expression, 0, len(columns)),
-		calculateGenCols: true,
-	}.Init(b.ctx, b.getSelectOffset())
-
-	for i, colExpr := range ds.Schema().Columns {
-		var exprIsGen = false
-		var expr expression.Expression
-		if i < len(columns) {
-			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
-				var err error
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
-				if err != nil {
-					return nil, err
-				}
-				// Because the expression might return different type from
-				// the generated column, we should wrap a CAST on the result.
-				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
-				exprIsGen = true
-			}
-		}
-		if !exprIsGen {
-			expr = colExpr
-		}
-		proj.Exprs = append(proj.Exprs, expr)
-	}
-
-	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
-	// example, given:
-	//  column a, column b as (a * 2), column c as (b + 1)
-	// we'll get:
-	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
-	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
-	// it's safe to iterate in index-ascending order.
-	for i, expr := range proj.Exprs {
-		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
-	}
-
-	proj.SetSchema(ds.Schema().Clone())
-	proj.names = ds.names
-	for _, cols := range b.handleHelper.tailMap() {
-		cols[0] = proj.schema.RetrieveColumn(cols[0])
-	}
-	return proj, nil
 }
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
