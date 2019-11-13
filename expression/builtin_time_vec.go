@@ -1172,7 +1172,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 				flag = 0
 			}
 			isOriginalIntOrDecimalZero := i64s[i] == 0 && flag
-			isOriginalStringZero := i64s[i].Fsp > 0
+			isOriginalStringZero := ds[i].Fsp > 0
 			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
 				continue
 			} else {
