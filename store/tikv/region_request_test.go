@@ -96,7 +96,7 @@ func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	c.Assert(region, NotNil)
 	oldStoreLimit := storeutil.StoreLimit.Load()
 	storeutil.StoreLimit.Store(500)
-	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount = 500
+	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount.Store(500)
 	// cause there is only one region in this cluster, regionID maps this leader.
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -1167,13 +1168,13 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string       // loaded store address
-	storeID      uint64       // store's id
-	state        uint64       // unsafe store storeState
-	resolveMutex sync.Mutex   // protect pd from concurrent init requests
-	fail         uint32       // store fail count, see RegionStore.storeFails
-	storeType    kv.StoreType // type of the store
-	tokenCount   int64        // used store token count
+	addr         string        // loaded store address
+	storeID      uint64        // store's id
+	state        uint64        // unsafe store storeState
+	resolveMutex sync.Mutex    // protect pd from concurrent init requests
+	fail         uint32        // store fail count, see RegionStore.storeFails
+	storeType    kv.StoreType  // type of the store
+	tokenCount   atomic2.Int64 // used store token count
 }
 
 type resolveState uint64
