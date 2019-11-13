@@ -304,7 +304,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, 0, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
