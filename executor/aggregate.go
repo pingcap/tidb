@@ -830,7 +830,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.groupChecker.curGroupID == e.groupChecker.groupRowsNum {
+	if e.groupChecker.curGroupID >= e.groupChecker.groupRowsNum {
 		if err = e.fetchChildIfNecessary(ctx, chk); err != nil {
 			return err
 		}
