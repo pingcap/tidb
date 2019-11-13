@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/storeutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -142,6 +144,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
+	// judge the store limit switch.
+	if limit := storeutil.StoreLimit.Load(); limit > 0 {
+		if err := s.getStoreToken(ctx.Store, limit); err != nil {
+			return nil, false, err
+		}
+		defer s.releaseStoreToken(ctx.Store)
+	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
@@ -151,6 +160,29 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, true, nil
 	}
 	return
+}
+
+func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
+	// Checking limit is not thread safe, preferring this for avoiding load in loop.
+	count := st.tokenCount.Load()
+	if count < limit {
+		// Adding tokenCount is no thread safe, preferring this for avoiding check in loop.
+		st.tokenCount.Add(1)
+		return nil
+	}
+	metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+
+}
+
+func (s *RegionRequestSender) releaseStoreToken(st *Store) {
+	count := st.tokenCount.Load()
+	// Decreasing tokenCount is no thread safe, preferring this for avoiding check in loop.
+	if count > 0 {
+		st.tokenCount.Sub(1)
+		return
+	}
+	logutil.BgLogger().Warn("release store token failed, count equals to 0")
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
