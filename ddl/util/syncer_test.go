@@ -124,7 +124,7 @@ func TestSyncerSimple(t *testing.T) {
 	wg.Wait()
 
 	// for CheckAllVersions
-	childCtx, cancel := goctx.WithTimeout(ctx, 20*time.Millisecond)
+	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
 	if err == nil {
 		t.Fatalf("check result not match")
@@ -132,18 +132,14 @@ func TestSyncerSimple(t *testing.T) {
 	cancel()
 
 	// for UpdateSelfVersion
-	childCtx, cancel = goctx.WithTimeout(ctx, time.Second)
-	err = d.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
+	err = d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
 	if err != nil {
 		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
 	}
-	cancel()
-	childCtx, cancel = goctx.WithTimeout(ctx, time.Second)
-	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
+	err = d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
 	if err != nil {
 		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
 	}
-	cancel()
 	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
 	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
 	if !isTimeoutError(err) {
@@ -151,13 +147,11 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for CheckAllVersions
-	childCtx, _ = goctx.WithTimeout(ctx, time.Second)
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer-1)
+	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1)
 	if err != nil {
 		t.Fatalf("check all versions failed %v", err)
 	}
-	childCtx, _ = goctx.WithTimeout(ctx, time.Second)
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
+	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer)
 	if err != nil {
 		t.Fatalf("check all versions failed %v", err)
 	}
