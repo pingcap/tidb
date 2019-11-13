@@ -766,7 +766,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
-		_, _, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks, nil)
+		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
