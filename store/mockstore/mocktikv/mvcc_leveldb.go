@@ -1032,9 +1032,12 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 // primaryKey + lockTS together could locate the primary lock.
 // callerStartTS is the start ts of reader transaction.
 // currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
-func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64, rollbackIfNotExist bool) (uint64, uint64, error) {
+func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64,
+	rollbackIfNotExist bool) (ttl uint64, commitTS uint64, rollbackReason kvrpcpb.RollbackReason, err error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
+
+	rollbackReason = kvrpcpb.RollbackReason_NotByMe
 
 	startKey := mvccEncode(primaryKey, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
@@ -1046,9 +1049,11 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 		dec := lockDecoder{
 			expectKey: primaryKey,
 		}
-		ok, err := dec.Decode(iter)
+		var ok bool
+		ok, err = dec.Decode(iter)
 		if err != nil {
-			return 0, 0, errors.Trace(err)
+			err = errors.Trace(err)
+			return
 		}
 		// If current transaction's lock exists.
 		if ok && dec.lock.startTS == lockTS {
@@ -1058,12 +1063,14 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 			// If the lock has already outdated, clean up it.
 			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
 				if err = rollbackLock(batch, primaryKey, lockTS); err != nil {
-					return 0, 0, errors.Trace(err)
+					err = errors.Trace(err)
+					return
 				}
 				if err = mvcc.db.Write(batch, nil); err != nil {
-					return 0, 0, errors.Trace(err)
+					err = errors.Trace(err)
+					return
 				}
-				return 0, 0, nil
+				return 0, 0, kvrpcpb.RollbackReason_TTLExpire, nil
 			}
 
 			// If this is a large transaction and the lock is active, push forward the minCommitTS.
@@ -1081,33 +1088,36 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 					}
 
 					writeKey := mvccEncode(primaryKey, lockVer)
-					writeValue, err := lock.MarshalBinary()
-					if err != nil {
-						return 0, 0, errors.Trace(err)
+					writeValue, err1 := lock.MarshalBinary()
+					if err1 != nil {
+						err = errors.Trace(err1)
+						return
 					}
 					batch.Put(writeKey, writeValue)
-					if err = mvcc.db.Write(batch, nil); err != nil {
-						return 0, 0, errors.Trace(err)
+					if err1 = mvcc.db.Write(batch, nil); err1 != nil {
+						err = errors.Trace(err1)
+						return
 					}
 				}
 			}
 
-			return lock.ttl, 0, nil
+			return lock.ttl, 0, rollbackReason, nil
 		}
 
 		// If current transaction's lock does not exist.
 		// If the commit info of the current transaction exists.
-		c, ok, err := getTxnCommitInfo(iter, primaryKey, lockTS)
-		if err != nil {
-			return 0, 0, errors.Trace(err)
+		c, ok, err1 := getTxnCommitInfo(iter, primaryKey, lockTS)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return
 		}
 		if ok {
 			// If current transaction is already committed.
 			if c.valueType != typeRollback {
-				return 0, c.commitTS, nil
+				return 0, c.commitTS, rollbackReason, nil
 			}
 			// If current transaction is already rollback.
-			return 0, 0, nil
+			return 0, 0, kvrpcpb.RollbackReason_NotByMe, nil
 		}
 	}
 
@@ -1120,16 +1130,18 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 
 	if rollbackIfNotExist {
 		batch := &leveldb.Batch{}
-		if err := rollbackLock(batch, primaryKey, lockTS); err != nil {
-			return 0, 0, errors.Trace(err)
+		if err1 := rollbackLock(batch, primaryKey, lockTS); err1 != nil {
+			err = errors.Trace(err1)
+			return
 		}
-		if err := mvcc.db.Write(batch, nil); err != nil {
-			return 0, 0, errors.Trace(err)
+		if err1 := mvcc.db.Write(batch, nil); err1 != nil {
+			err = errors.Trace(err1)
+			return
 		}
-		return 0, 0, nil
+		return 0, 0, kvrpcpb.RollbackReason_LockNotExist, nil
 	}
 
-	return 0, 0, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
+	return 0, 0, rollbackReason, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
 		StartTs:    lockTS,
 		PrimaryKey: primaryKey,
 	}}

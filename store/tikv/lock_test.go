@@ -201,7 +201,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
-	c.Assert(status.ttl, Greater, uint64(0))
+	c.Assert(status.ttl, Greater, uint64(0), Commentf("rollback reason:%s", status.rollbackReason))
 }
 
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
@@ -234,6 +234,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
+	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_NotByMe)
 
 	// Check a committed txn.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
@@ -307,6 +308,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
+	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_NotByMe)
 
 	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
@@ -374,6 +376,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
+	c.Assert(status.rollbackReason, Equals, kvrpcpb.RollbackReason_LockNotExist)
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
