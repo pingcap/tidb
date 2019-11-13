@@ -143,13 +143,34 @@
   {
     "Name": "TestUnion",
     "Cases": [
-      {},
-      {},
-      {},
-      {},
-      {},
-      {},
-      {}
+      {
+        "Best": "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(Column#25))",
+        "Err": false
+      },
+      {
+        "Best": "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}",
+        "Err": false
+      },
+      {
+        "Best": "UnionAll{UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(Column#37))->Projection->DataScan(t)->Projection}",
+        "Err": false
+      },
+      {
+        "Best": "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(Column#61))",
+        "Err": false
+      },
+      {
+        "Best": "",
+        "Err": true
+      },
+      {
+        "Best": "UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Projection->Sort",
+        "Err": false
+      },
+      {
+        "Best": "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+        "Err": false
+      }
     ]
   },
   {

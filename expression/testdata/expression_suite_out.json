@@ -267,7 +267,7 @@
         "SQL": "explain select * from t1 where t1.b > 1 or t1.b in (select b from t2)",
         "Result": [
           "Projection_7 8000.00 root Column#1, Column#2, Column#3",
-          "└─Selection_8 8000.00 root or(gt(Column#3, 1), Column#8)",
+          "└─Selection_8 8000.00 root or(gt(Column#3, 1), Column#7)",
           "  └─HashLeftJoin_9 10000.00 root CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(Column#3, Column#6)",
           "    ├─TableReader_11 10000.00 root data:TableScan_10",
           "    │ └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",

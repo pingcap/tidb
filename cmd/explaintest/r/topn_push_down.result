@@ -201,11 +201,11 @@ Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(Column#1, Column#
           └─TableScan_23	1.25	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	count	task	operator info
-Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(Column#1, Column#9)]
+Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(Column#1, Column#4)]
 ├─TableReader_20	9990.00	root	data:Selection_19
 │ └─Selection_19	9990.00	cop[tikv]	not(isnull(Column#1))
 │   └─TableScan_18	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Selection_21	0.80	root	not(isnull(Column#9))
+└─Selection_21	0.80	root	not(isnull(Column#4))
   └─Projection_22	1.00	root	Column#4, Column#2
     └─Limit_23	1.00	root	offset:0, count:1
       └─TableReader_29	1.00	root	data:Limit_28

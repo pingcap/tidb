@@ -1494,8 +1494,8 @@ func (s *testPlanSuite) TestUnion(c *C) {
 	}()
 	var input []string
 	var output []struct {
-		best string
-		err  bool
+		Best string
+		Err  bool
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.TODO()
@@ -1507,9 +1507,9 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
 		s.testData.OnRecord(func() {
-			output[i].err = err != nil
+			output[i].Err = err != nil
 		})
-		if output[i].err {
+		if output[i].Err {
 			c.Assert(err, NotNil)
 			continue
 		}
@@ -1517,10 +1517,10 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		s.testData.OnRecord(func() {
-			output[i].best = ToString(p)
+			output[i].Best = ToString(p)
 		})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, output[i].best, comment)
+		c.Assert(ToString(p), Equals, output[i].Best, comment)
 	}
 }
 
