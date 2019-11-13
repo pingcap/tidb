@@ -985,7 +985,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			}
 		}
 	case TiDBStoreLimit:
-		storeutil.StoreLimit.Store(uint64(tidbOptPositiveInt32(val, DefTiDBStoreLimit)))
+		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 	}
 	s.systems[name] = val
 	return nil

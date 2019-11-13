@@ -5,4 +5,4 @@ import (
 )
 
 // StoreLimit will update from config reload and global variable set.
-var StoreLimit atomic.Uint64
+var StoreLimit atomic.Int64

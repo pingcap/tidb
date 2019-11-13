@@ -641,7 +641,7 @@ func (r *Region) incVersion() {
 type Store struct {
 	meta       *metapb.Store
 	cancel     bool // return context.Cancelled error when cancel is true.
-	tokenCount uint64
+	tokenCount int64
 }
 
 func newStore(storeID uint64, addr string) *Store {
