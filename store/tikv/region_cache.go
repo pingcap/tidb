@@ -87,10 +87,7 @@ func (r *RegionStore) clone() *RegionStore {
 		currIdx: r.currIdx,
 	}
 	for engineType := range r.stores {
-		nr.stores[engineType] = make([]*Store, len(r.stores[engineType]))
-		for j, store := range r.stores[engineType] {
-			nr.stores[engineType][j] = store
-		}
+		nr.stores[engineType] = r.stores[engineType]
 	}
 	for engineType := range r.storeFails {
 		nr.storeFails[engineType] = make([]uint32, len(r.storeFails[engineType]))
@@ -102,7 +99,8 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(engine kv.StoreType, seed uint32) int32 {
+func (r *RegionStore) follower(seed uint32) int32 {
+	engine := kv.TiKV
 	l := uint32(len(r.stores[engine]))
 	if l <= 1 {
 		return r.currIdx[engine]
@@ -350,62 +348,6 @@ func (c *RegionCache) GetRPCContext(engine kv.StoreType, bo *Backoffer, id Regio
 		Addr:        addr,
 		ForceLeader: replicaRead != kv.ReplicaReadFollower,
 	}, nil
-}
-
-// GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
-// must be out of date and already dropped from cache or not flash store found.
-func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
-	ts := time.Now().Unix()
-	engine := kv.TiFlash
-
-	cachedRegion := c.getCachedRegionWithRLock(id)
-	if cachedRegion == nil {
-		return nil, nil
-	}
-	if !cachedRegion.checkRegionCacheTTL(ts) {
-		return nil, nil
-	}
-
-	regionStore := cachedRegion.getStore()
-
-	// sIdx is for load balance of TiFlash store.
-	sIdx := int(atomic.AddInt32(&regionStore.currIdx[engine], 1))
-	for i := range regionStore.stores[engine] {
-		storeIdx := (sIdx + i) % len(regionStore.stores[engine])
-		store := regionStore.stores[engine][storeIdx]
-		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
-		if err != nil {
-			return nil, err
-		}
-		if len(addr) == 0 {
-			cachedRegion.invalidate()
-			return nil, nil
-		}
-		if store.getResolveState() == needCheck {
-			store.reResolve(c)
-		}
-		atomic.StoreInt32(&regionStore.currIdx[engine], int32(storeIdx))
-		peer := cachedRegion.meta.Peers[storeIdx]
-		storeFailEpoch := atomic.LoadUint32(&store.fail)
-		if storeFailEpoch != regionStore.storeFails[engine][storeIdx] {
-			cachedRegion.invalidate()
-			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
-				zap.Uint64("region", id.GetID()),
-				zap.String("store", store.addr))
-			return nil, nil
-		}
-		return &RPCContext{
-			Region:  id,
-			Meta:    cachedRegion.meta,
-			Peer:    peer,
-			PeerIdx: storeIdx,
-			Store:   store,
-			Addr:    addr,
-		}, nil
-	}
-
-	cachedRegion.invalidate()
-	return nil, nil
 }
 
 // KeyLocation is the region and range that a key is located.
@@ -1061,7 +1003,7 @@ func (r *Region) SendCurrRetryNextOnFail(engine kv.StoreType, rs *RegionStore, f
 //
 // TiKV follower read will use this.
 func (r *Region) KeepSendLast(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32 {
-	return rs.follower(engine, followerStoreSeed)
+	return rs.follower(followerStoreSeed)
 }
 
 // RouteStrategy defines how choose a store from region's store lists.
