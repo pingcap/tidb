@@ -819,18 +819,6 @@ func (e *StreamAggExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
-	if e.executed || req.IsFull() {
-		return nil
-	}
-	if err = e.fetchChildIfNecessary(ctx, req); err != nil {
-		return err
-	}
-	if !e.executed && !req.IsFull() {
-		_, err := e.groupChecker.splitChunk(e.childResult)
-		if err != nil {
-			return err
-		}
-	}
 	for !e.executed && !req.IsFull() {
 		err = e.consumeOneGroup(ctx, req)
 		if err != nil {
@@ -842,6 +830,19 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
+	if e.groupChecker.curGroupID == e.groupChecker.groupRowsNum {
+		if err = e.fetchChildIfNecessary(ctx, chk); err != nil {
+			return err
+		}
+		if !e.executed && !chk.IsFull() {
+			_, err := e.groupChecker.splitChunk(e.childResult)
+			if err != nil {
+				return err
+			}
+		} else {
+			return nil
+		}
+	}
 	begin, end := e.groupChecker.getOneGroup()
 	e.groupRows = e.groupRows[:0]
 	for i := begin; i < end; i++ {
@@ -1002,6 +1003,7 @@ type vecGroupChecker struct {
 	StmtCtx              *stmtctx.StatementContext
 	GroupByItems         []expression.Expression
 	groupRowsIndex       []int
+	groupRowsNum         int
 	curGroupID           int
 	previousLastGroupKey []byte
 	firstGroupKey        []byte
@@ -1015,6 +1017,7 @@ func newVecGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContex
 		ctx:          ctx,
 		StmtCtx:      stmtCtx,
 		GroupByItems: items,
+		groupRowsNum: 0,
 		curGroupID:   0,
 		sameGroup:    sameGroup,
 	}
@@ -1217,6 +1220,7 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 		}
 	}
 	e.groupRowsIndex = append(e.groupRowsIndex, numRows)
+	e.groupRowsNum = len(e.groupRowsIndex)
 	return flag, nil
 }
 
