@@ -849,19 +849,95 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinCeilDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.MergeNulls(buf)
+
+	res := result.Decimals()
+	bufs := buf.Decimals()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		result := new(types.MyDecimal)
+		if !bufs[i].IsNegative() {
+			err = res[i].Round(result, 0, types.ModeTruncate)
+			if err != nil {
+				return err
+			}
+
+		}
+		err = res[i].Round(result, 0, types.ModeTruncate)
+		if err != nil || result.Compare(&bufs[i]) == 0 {
+			if err != nil {
+				return err
+			}
+		}
+		err = types.DecimalAdd(result, types.NewDecFromInt(1), result)
+		if err != nil {
+			return err
+		}
+		res[i] = *result
+	}
+	return nil
 }
 
 func (b *builtinFloorDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.MergeNulls(buf)
+
+	res := result.Decimals()
+	bufs := buf.Decimals()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		result := new(types.MyDecimal)
+		if !bufs[i].IsNegative() {
+			err = res[i].Round(result, 0, types.ModeTruncate)
+			if err != nil {
+				return err
+			}
+
+		}
+		err = res[i].Round(result, 0, types.ModeTruncate)
+		if err != nil || result.Compare(&bufs[i]) == 0 {
+			if err != nil {
+				return err
+			}
+		}
+		err = types.DecimalSub(result, types.NewDecFromInt(1), result)
+		if err != nil {
+			return err
+		}
+		res[i] = *result
+	}
+	return nil
 }
 
 func (b *builtinTruncateDecimalSig) vectorized() bool {
