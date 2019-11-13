@@ -515,7 +515,6 @@ func (it *copIterator) open(ctx context.Context) {
 				RegionCache:       it.store.regionCache,
 				minCommitTSPushed: &it.minCommitTSPushed,
 				Client:            it.store.client,
-				resolvedLocks:     make([]uint64, 0, 5),
 			},
 
 			memTracker: it.memTracker,
@@ -733,13 +732,18 @@ func (m *minCommitTSPushed) Update(from []uint64) {
 	m.Unlock()
 }
 
-func (m *minCommitTSPushed) Get(to []uint64) []uint64 {
+func (m *minCommitTSPushed) Get() []uint64 {
 	m.RLock()
-	for k := range m.data {
-		to = append(to, k)
+	defer m.RUnlock()
+	if len(m.data) == 0 {
+		return nil
 	}
-	m.RUnlock()
-	return to
+
+	ret := make([]uint64, 0, len(m.data))
+	for k := range m.data {
+		ret = append(ret, k)
+	}
+	return ret
 }
 
 // clientHelper wraps LockResolver and RegionRequestSender.
@@ -754,19 +758,16 @@ type clientHelper struct {
 	*RegionCache
 	*minCommitTSPushed
 	Client
-
-	// Cache used to reduce allocs.
-	resolvedLocks []uint64
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
-func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (msBeforeTxnExpired int64, err error) {
-	msBeforeTxnExpired, ch.resolvedLocks, err = ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
+	msBeforeTxnExpired, resolvedLocks, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
-	if len(ch.resolvedLocks) > 0 {
-		ch.minCommitTSPushed.Update(ch.resolvedLocks)
+	if len(resolvedLocks) > 0 {
+		ch.minCommitTSPushed.Update(resolvedLocks)
 		return 0, nil
 	}
 	return msBeforeTxnExpired, nil
@@ -775,8 +776,7 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
 func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, string, error) {
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
-	ch.resolvedLocks = ch.minCommitTSPushed.Get(ch.resolvedLocks[:0])
-	req.Context.ResolvedLocks = ch.resolvedLocks
+	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
 	return resp, ctx, sender.storeAddr, err
 }
