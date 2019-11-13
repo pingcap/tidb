@@ -872,7 +872,7 @@ func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 			continue
 		}
 		result := new(types.MyDecimal)
-		if !bufs[i].IsNegative() {
+		if bufs[i].IsNegative() {
 			err = res[i].Round(result, 0, types.ModeTruncate)
 			if err != nil {
 				return err
@@ -918,7 +918,7 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 			continue
 		}
 		result := new(types.MyDecimal)
-		if !bufs[i].IsNegative() {
+		if bufs[i].IsNegative() {
 			err = res[i].Round(result, 0, types.ModeTruncate)
 			if err != nil {
 				return err
