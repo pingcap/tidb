@@ -221,7 +221,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
-		err = ErrInvalidColumnState.GenWithStack("invalid column state %v", columnInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -284,7 +284,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		}
 	default:
-		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
