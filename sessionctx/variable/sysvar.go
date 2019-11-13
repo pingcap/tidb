@@ -16,6 +16,7 @@ package variable
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -720,6 +721,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, BoolToIntStr(DefTiDBEvolvePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash"},
+	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
