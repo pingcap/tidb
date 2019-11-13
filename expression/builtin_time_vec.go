@@ -1141,8 +1141,17 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
 	result.ReserveString(n)
 	ds := buf.Times()
+	i64s := buf1.Int64s()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf0.IsNull(i) {
 			result.AppendNull()
@@ -1152,17 +1161,23 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		if err != nil {
 			return err
 		}
-		if buf0.GetString(i) == "" {
-			result.AppendString("")
+		if buf0.GetString(i) == "0" {
+			result.AppendString("0")
 			continue
 		}
 		if ds[i].InvalidZero() {
 			result.AppendString("")
+			flag := 1
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				flag = 0
+			}
+			isOriginalIntOrDecimalZero := i64s[i] == 0 && flag
+			isOriginalStringZero := i64s[i].Fsp > 0
+			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+				continue
+			} else {
 				return err
 			}
-			result.AppendNull()
-			continue
 		}
 		result.AppendString(str)
 	}
