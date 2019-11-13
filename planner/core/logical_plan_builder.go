@@ -692,10 +692,10 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectF
 	} else {
 		origColName = name.OrigColName
 	}
-	if origField.AsName.L != "" {
-		colName = origField.AsName
+	if origField.AsName.L == "" {
+		colName = colNameField.Name.Name
 	} else {
-		colName = origColName
+		colName = origField.AsName
 	}
 	if tblName.L == "" {
 		tblName = name.TblName
