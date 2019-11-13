@@ -819,6 +819,9 @@ func (e *StreamAggExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
+	if e.executed || req.IsFull() {
+		return nil
+	}
 	if err = e.fetchChildIfNecessary(ctx, req); err != nil {
 		return err
 	}
