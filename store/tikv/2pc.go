@@ -26,10 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -808,6 +810,15 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
 		return kvPriorityToCommandPri(pri.(int))
+	}
+	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+		switch priority {
+		case mysql.LowPriority:
+			return pb.CommandPri_Low
+		case mysql.HighPriority:
+			return pb.CommandPri_High
+		default:
+		}
 	}
 	return pb.CommandPri_Normal
 }
