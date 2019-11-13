@@ -189,9 +189,10 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 }
 
 func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
+	// Checking limit is not thread safe, preferring this for avoiding load in loop.
 	count := atomic.LoadInt64(&st.tokenCount)
 	if count < limit {
-		// Checking limit is not thread safe, preferring this for avoiding load in loop.
+		// Adding tokenCount is no thread safe, preferring this for avoiding check in loop.
 		atomic.AddInt64(&st.tokenCount, 1)
 		return nil
 	}
@@ -202,6 +203,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 
 func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 	count := atomic.LoadInt64(&st.tokenCount)
+	// Decreasing tokenCount is no thread safe, preferring this for avoiding check in loop.
 	if count > 0 {
 		atomic.AddInt64(&st.tokenCount, -1)
 	}
