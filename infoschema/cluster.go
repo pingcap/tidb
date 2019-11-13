@@ -22,26 +22,22 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 const (
 	clusterTablePrefix                            = "TIDB_CLUSTER_"
-	tableNameEventsStatementsSummaryByDigestUpper = "EVENTS_STATEMENTS_SUMMARY_BY_DIGEST"
 )
 
 // Cluster table list.
 const (
 	clusterTableSlowLog                             = clusterTablePrefix + tableSlowLog
 	clusterTableProcesslist                         = clusterTablePrefix + tableProcesslist
-	clusterTableNameEventsStatementsSummaryByDigest = clusterTablePrefix + tableNameEventsStatementsSummaryByDigestUpper
 )
 
 // memTableToClusterTableMap means add memory table to cluster table.
 var memTableToClusterTableMap = map[string]struct{}{
 	tableSlowLog:     {},
 	tableProcesslist: {},
-	tableNameEventsStatementsSummaryByDigestUpper: {},
 }
 
 // clusterTableMap is the cluster table map.
@@ -81,8 +77,6 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 		rows, err = dataForSlowLog(ctx)
 	case clusterTableProcesslist:
 		rows = dataForProcesslist(ctx)
-	case clusterTableNameEventsStatementsSummaryByDigest:
-		rows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
 	}
 	if err != nil {
 		return nil, err

@@ -46,7 +46,6 @@ var perfSchemaTables = []string{
 	tableTiDBAllocsProfile,
 	tableTiDBProfileBlock,
 	tableTiDBProfileGoroutines,
-	tableClusterEventsStatementsSummaryByDigest,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -450,19 +449,3 @@ const tableTiDBProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNameTiDB
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
 	"LOCATION VARCHAR(512));"
-
-// tableClusterEventsStatementsSummaryByDigest contains the all TiDB statementSummary table.
-const tableClusterEventsStatementsSummaryByDigest = "CREATE TABLE if not exists tidb_cluster_events_statements_summary_by_digest (" +
-	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
-	"DIGEST VARCHAR(64) DEFAULT NULL," +
-	"DIGEST_TEXT LONGTEXT DEFAULT NULL," +
-	"EXEC_COUNT BIGINT(20) UNSIGNED NOT NULL," +
-	"SUM_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"MIN_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"SUM_ROWS_AFFECTED BIGINT(20) UNSIGNED NOT NULL," +
-	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
-	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
-	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
-	"NODE_ID VARCHAR(120) NOT NULL);"

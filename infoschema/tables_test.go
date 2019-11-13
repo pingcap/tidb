@@ -743,5 +743,4 @@ func (s *testTableSuite) TestSelectClusterMemTable(c *C) {
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from `TIDB_CLUSTER_PROCESSLIST`")
-	tk.MustQuery("select count(*) from performance_schema.TIDB_CLUSTER_events_statements_summary_by_digest")
 }
