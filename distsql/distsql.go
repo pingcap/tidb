@@ -16,7 +16,6 @@ package distsql
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
