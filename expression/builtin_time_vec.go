@@ -1175,9 +1175,8 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			isOriginalStringZero := ds[i].Fsp > 0
 			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
 				continue
-			} else {
-				return err
 			}
+			return err
 		}
 		result.AppendString(str)
 	}
