@@ -110,7 +110,7 @@ func (c *Context) GetClient() kv.Client {
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	return v.Value, nil
 }
@@ -119,7 +119,7 @@ func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, 
 func (c *Context) SetGlobalSysVar(ctx sessionctx.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	v.Value = value
 	return nil

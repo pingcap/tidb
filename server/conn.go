@@ -618,7 +618,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
 				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
-				zap.Reflect("err", r),
+				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.String("stack", string(buf)),
 			)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
