@@ -336,6 +336,9 @@ func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*T
 
 // MergeCMSketch merges two CM Sketch.
 func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
+	if c == nil || rc == nil {
+		return nil
+	}
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
