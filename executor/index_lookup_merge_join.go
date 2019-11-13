@@ -424,16 +424,20 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
 			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
+			var cmp int64
+			var err error
 			for _, keyOff := range imw.keyOff2KeyOffOrderByIdx {
 				joinKey := imw.outerMergeCtx.joinKeys[keyOff]
-				cmp, _, err := imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
+				cmp, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
-				if cmp != 0 || imw.nextColCompareFilters == nil {
-					return cmp < 0
+				if cmp != 0 {
+					break
 				}
-				return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
 			}
-			return false
+			if cmp != 0 || imw.nextColCompareFilters == nil {
+				return cmp < 0
+			}
+			return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
