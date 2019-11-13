@@ -930,7 +930,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		expected *= idx.getIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount)
+		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount, true)
 		expected *= c.getIncreaseFactor(t.Count)
 	}
 	if err != nil {
