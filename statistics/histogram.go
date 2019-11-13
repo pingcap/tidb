@@ -140,6 +140,34 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 }
 
+// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
+// and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	// Note that, if the handle column is encoded as value, instead of key, i.e,
+	// when the handle column is in a unique index, the real column size may be
+	// smaller than 8 because it is encoded using `EncodeVarint`. Since we don't
+	// know the exact value size now, use 8 as approximation.
+	if c.IsHandle {
+		return 8
+	}
+	switch c.Histogram.Tp.Tp {
+	case mysql.TypeFloat:
+		return 4
+	case mysql.TypeTiny, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		return 8
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 20
+	case mysql.TypeNewDecimal:
+		return 40
+	}
+	// Keep two decimal place.
+	// Add 8 bytes for unfixed-len type's offsets.
+	return math.Round(float64(c.TotColSize)/float64(count)*100)/100 + 8
+}
+
 // AppendBucket appends a bucket into `hg`.
 func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
 	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat})

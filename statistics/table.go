@@ -722,3 +722,55 @@ func (coll *HistColl) GetIndexAvgRowSize(cols []*expression.Column, isUnique boo
 	}
 	return
 }
+
+// GetAvgRowSizeChunkFormat computes average row size for given columns in chunk format.
+func (coll *HistColl) GetAvgRowSizeChunkFormat(cols []*expression.Column, isEncodedKey bool) (size float64) {
+	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
+		size = pseudoColSize * float64(len(cols))
+	} else {
+		for _, col := range cols {
+			colHist, ok := coll.Columns[col.UniqueID]
+			// Normally this would not happen, it is for compatibility with old version stats which
+			// does not include TotColSize.
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				size += pseudoColSize
+				continue
+			}
+			// We differentiate if the column is encoded as key or value, because the resulted size
+			// is different.
+			size += colHist.AvgColSizeChunkFormat(coll.Count)
+		}
+		// Add 1/8 byte for each column's nullBitMap.
+		size += float64(len(cols)) / 8
+	}
+	return size
+}
+
+// GetTableAvgRowSizeChunkFormat computes average row size for a table scan, exclude the index key-value pairs in chunk format.
+func (coll *HistColl) GetTableAvgRowSizeChunkFormat(cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+	size = coll.GetAvgRowSizeChunkFormat(cols, false)
+	switch storeType {
+	case kv.TiKV:
+		size += tablecodec.RecordRowKeyLen
+		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
+		size -= 8
+	case kv.TiFlash:
+		if !handleInCols {
+			size += 8 /* row_id length */
+		}
+	}
+	return
+}
+
+// GetIndexAvgRowSizeChunkFormat computes average row size for a index scan in chunk format.
+func (coll *HistColl) GetIndexAvgRowSizeChunkFormat(cols []*expression.Column, isUnique bool) (size float64) {
+	size = coll.GetAvgRowSizeChunkFormat(cols, true)
+	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
+	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
+	size += 19
+	if !isUnique {
+		// add the len("_")
+		size++
+	}
+	return
+}
