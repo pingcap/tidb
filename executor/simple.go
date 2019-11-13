@@ -43,10 +43,9 @@ import (
 	"go.uber.org/zap"
 )
 
-
 var (
 	transactionDurationInternalRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionDurationGeneralRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionDurationGeneralRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
 )
 
 // SimpleExec represents simple statement executor.
