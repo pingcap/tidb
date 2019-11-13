@@ -122,7 +122,7 @@ func (r *RegionStore) follower(engine kv.StoreType, seed uint32) int32 {
 }
 
 // init initializes region after constructed.
-func (r *Region) init(c *RegionCache) {
+func (r *Region) init(bo *Backoffer, c *RegionCache) error {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
 	rs := &RegionStore{}
@@ -133,6 +133,10 @@ func (r *Region) init(c *RegionCache) {
 		if !exists {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
+		_, err := store.initResolve(bo, c)
+		if err != nil {
+			return err
+		}
 		rs.stores[store.storeType] = append(rs.stores[store.storeType], store)
 		rs.storeFails[store.storeType] = append(rs.storeFails[store.storeType], atomic.LoadUint32(&store.fail))
 	}
@@ -140,6 +144,7 @@ func (r *Region) init(c *RegionCache) {
 
 	// mark region has been init accessed.
 	r.lastAccess = time.Now().Unix()
+	return nil
 }
 
 func (r *Region) getStore() (store *RegionStore) {
@@ -762,7 +767,10 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 			continue
 		}
 		region := &Region{meta: meta}
-		region.init(c)
+		err = region.init(bo, c)
+		if err != nil {
+			return nil, err
+		}
 		if leader != nil {
 			c.switchToPeer(region, leader.StoreId)
 		}
@@ -798,7 +806,10 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			return nil, errors.New("receive Region with no peer")
 		}
 		region := &Region{meta: meta}
-		region.init(c)
+		err = region.init(bo, c)
+		if err != nil {
+			return nil, err
+		}
 		if leader != nil {
 			c.switchToPeer(region, leader.GetStoreId())
 		}
@@ -843,7 +854,10 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]
 		regions := make([]*Region, 0, len(metas))
 		for i, meta := range metas {
 			region := &Region{meta: meta}
-			region.init(c)
+			err := region.init(bo, c)
+			if err != nil {
+				return nil, err
+			}
 			leader := leaders[i]
 			// Leader id = 0 indicates no leader.
 			if leader.GetId() != 0 {
@@ -949,7 +963,10 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			}
 		}
 		region := &Region{meta: meta}
-		region.init(c)
+		err := region.init(bo, c)
+		if err != nil {
+			return err
+		}
 		c.switchToPeer(region, ctx.Store.storeID)
 		c.insertRegionToCache(region)
 		if ctx.Region == region.VerID() {
@@ -1106,6 +1123,7 @@ func (c *RegionCache) switchPeerForNextRetry(engine kv.StoreType, forceLeader bo
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	// send follower read request fail no need to change work index.

@@ -252,6 +252,10 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	// tikv-server reports `NotLeader`(store2 is the leader)
 	s.cache.UpdateLeader(loc.Region, s.store2, 0)
 
+	// mock asyncCheckAndResolveLoop
+	s.cache.getStoreByStoreID(s.store2).markNeedCheck(nil)
+	s.cache.checkAndResolve(nil)
+
 	// Store2 does not exist any more, causes a reload from PD.
 	r := s.getRegion(c, []byte("a"))
 	c.Assert(err, IsNil)
@@ -263,7 +267,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	// pd-server should return the new leader.
 	c.Assert(s.getAddr(c, []byte("a"), kv.ReplicaReadLeader, 0), Equals, s.storeAddr(store3))
 	addr = s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, seed)
-	c.Assert(addr == s.storeAddr(s.store1) || len(addr) == 0, IsTrue)
 	addr2 := s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, seed+1)
 	c.Assert(addr2 == s.storeAddr(s.store1) || len(addr2) == 0, IsTrue)
 	c.Assert((len(addr2) == 0 && len(addr) == 0) || addr != addr2, IsTrue)
