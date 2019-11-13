@@ -1244,7 +1244,12 @@ func (b *builtinCastStringAsRealSig) vectorized() bool {
 }
 
 func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if IsBinaryLiteral(b.args[0]) {
+		if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsDecimalSig) vectorized() bool {
