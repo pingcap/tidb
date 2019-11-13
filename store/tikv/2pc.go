@@ -24,7 +24,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
@@ -565,7 +564,8 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks, nil)
+		// Set callerStartTS to 0 so as not to update minCommitTS.
+		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1105,11 +1105,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			c.connID, c.startTS, c.commitTS)
 		return err
 	}
-
-	failpoint.Inject("mockSleepBetween2PC", func() error {
-		time.Sleep(100 * time.Millisecond)
-		return nil
-	})
 
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
