@@ -58,13 +58,14 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
 var _ = Suite(&seqTestSuite{})
-var _ = Suite(&seqTestSuite1{})
+var _ = SerialSuites(&seqTestSuite1{})
 
 type seqTestSuite struct {
 	cluster   *mocktikv.Cluster

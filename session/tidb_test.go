@@ -38,6 +38,7 @@ func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	TestingT(t)
 }
 
