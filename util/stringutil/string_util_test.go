@@ -110,7 +110,6 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
-		{`a%a%a%a%a%a%a%b`, `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, '\\', false},
 		// We may reopen these test when like function go back to case insensitive.
 		/*
 			{"_ab", "AAB", '\\', true},
@@ -151,5 +150,21 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	for _, v := range tbl {
 		_, patTypes := CompilePattern(v.pattern, v.escape)
 		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
+	}
+}
+
+func BenchmarkMatchSpecial(b *testing.B) {
+	var (
+		pattern = `a%a%a%a%a%a%a%a%b`
+		target  = `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+		escape  = byte('\\')
+	)
+
+	patChars, patTypes := CompilePattern(pattern, escape)
+
+	b.StartTimer()
+	match := DoMatch(target, patChars, patTypes)
+	if match {
+		b.Fatal("Unmatch expected.")
 	}
 }
