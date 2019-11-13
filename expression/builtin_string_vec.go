@@ -803,6 +803,9 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.MergeNulls(str, strlist)
 	res := result.Int64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		strlistI := strlist.GetString(i)
 		if len(strlistI) == 0 {
 			res[i] = 0
