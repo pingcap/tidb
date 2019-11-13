@@ -406,6 +406,19 @@ func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
 }
 
+// realStrGener is used to generate real number strings.
+type realStrGener struct {
+	rangeRealGener
+}
+
+func (g *realStrGener) gen() interface{} {
+	val := g.rangeRealGener.gen()
+	if val == nil {
+		return nil
+	}
+	return fmt.Sprintf("%v", val)
+}
+
 // ipv6StrGener is used to generate ipv6 strings.
 type ipv6StrGener struct {
 }

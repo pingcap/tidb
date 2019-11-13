@@ -1244,10 +1244,36 @@ func (b *builtinCastStringAsRealSig) vectorized() bool {
 }
 
 func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	if IsBinaryLiteral(b.args[0]) {
-		if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+	n := input.NumRows()
+	bufStrings, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufStrings)
+	if err := b.args[0].VecEvalString(b.ctx, input, bufStrings); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+	result.MergeNulls(bufStrings)
+	f64s := result.Float64s()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		val := bufStrings.GetString(i)
+		res, err := types.StrToFloat(sc, val)
+		if err != nil {
 			return err
 		}
+		if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res < 0 {
+			res = 0
+		}
+		if res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc); err != nil {
+			return err
+		}
+		f64s[i] = res
 	}
 	return nil
 }
