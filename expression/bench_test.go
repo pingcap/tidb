@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -198,6 +199,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func getRandomTime() types.MysqlTime {
+	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
+		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+
+}
+
 // dataGenerator is used to generate data for test.
 type dataGenerator interface {
 	gen() interface{}
@@ -220,18 +227,23 @@ func (g *defaultGener) gen() interface{} {
 		return rand.Int63()
 	case types.ETReal:
 		if rand.Float64() < 0.5 {
-			return -rand.Float64()
+			return -rand.Float64() * 1000000
 		}
-		return rand.Float64()
+		return rand.Float64() * 1000000
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
-		f := rand.Float64() * 100000
+		var f float64
+		if rand.Float64() < 0.5 {
+			f = rand.Float64() * 100000
+		} else {
+			f = -rand.Float64() * 100000
+		}
 		if err := d.FromFloat64(f); err != nil {
 			panic(err)
 		}
 		return d
 	case types.ETDatetime, types.ETTimestamp:
-		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+		gt := getRandomTime()
 		t := types.Time{Time: gt, Type: convertETType(g.eType)}
 		return t
 	case types.ETDuration:
@@ -252,6 +264,30 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+// selectStringGener select one string randomly from the candidates array
+type selectStringGener struct {
+	candidates []string
+}
+
+func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[rand.Intn(len(g.candidates))]
+}
+
+type constJSONGener struct {
+	jsonStr string
+}
+
+func (g *constJSONGener) gen() interface{} {
+	j := new(json.BinaryJSON)
+	if err := j.UnmarshalJSON([]byte(g.jsonStr)); err != nil {
+		panic(err)
+	}
+	return *j
+}
+
 type jsonStringGener struct{}
 
 func (g *jsonStringGener) gen() interface{} {
@@ -260,6 +296,13 @@ func (g *jsonStringGener) gen() interface{} {
 		panic(err)
 	}
 	return j.String()
+}
+
+type jsonTimeGener struct{}
+
+func (g *jsonTimeGener) gen() interface{} {
+	tm := types.Time{Time: getRandomTime(), Type: mysql.TypeDatetime, Fsp: types.DefaultFsp}
+	return json.CreateBinary(tm.String())
 }
 
 type rangeDurationGener struct {
@@ -368,6 +411,18 @@ type ipv6StrGener struct {
 
 func (g *ipv6StrGener) gen() interface{} {
 	var ip net.IP = make([]byte, net.IPv6len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
+// ipv4StrGener is used to generate ipv4 strings. For example 111.111.111.111
+type ipv4StrGener struct {
+}
+
+func (g *ipv4StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv4len)
 	for i := range ip {
 		ip[i] = uint8(rand.Intn(256))
 	}
@@ -523,6 +578,54 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
+// locationGener is used to generate location for the built-in function GetFormat.
+type locationGener struct {
+	nullRation float64
+}
+
+func (g *locationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 5 {
+	case 0:
+		return usaLocation
+	case 1:
+		return jisLocation
+	case 2:
+		return isoLocation
+	case 3:
+		return eurLocation
+	case 4:
+		return internalLocation
+	default:
+		return nil
+	}
+}
+
+// formatGener is used to generate a format for the built-in function GetFormat.
+type formatGener struct {
+	nullRation float64
+}
+
+func (g *formatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return dateFormat
+	case 1:
+		return datetimeFormat
+	case 2:
+		return timestampFormat
+	case 3:
+		return timeFormat
+	default:
+		return nil
+	}
+}
+
 type vecExprBenchCase struct {
 	// retEvalType is the EvalType of the expression result.
 	// This field is required.
@@ -643,7 +746,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(testCase.retEvalType)}, 1024, 1024)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, 1024, 1024)
 	return expr, fts, input, output
 }
 
@@ -655,15 +758,15 @@ func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 		for _, testCase := range testCases {
 			expr, fts, input, output := genVecExprBenchCase(ctx, funcName, testCase)
 			commentf := func(row int) CommentInterface {
-				return Commentf("case %+v, row: %v, rowData: %v", testCase, row, input.GetRow(row).GetDatumRow(fts))
+				return Commentf("func: %v, case %+v, row: %v, rowData: %v", funcName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			output2 := output.CopyConstruct()
-			c.Assert(evalOneVec(ctx, expr, input, output, 0), IsNil)
+			c.Assert(evalOneVec(ctx, expr, input, output, 0), IsNil, Commentf("func: %v, case: %+v", funcName, testCase))
 			it := chunk.NewIterator4Chunk(input)
-			c.Assert(evalOneColumn(ctx, expr, it, output2, 0), IsNil)
+			c.Assert(evalOneColumn(ctx, expr, it, output2, 0), IsNil, Commentf("func: %v, case: %+v", funcName, testCase))
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch testCase.retEvalType {
+			switch expr.GetType().EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
@@ -839,6 +942,10 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
+			if funcName == ast.AesEncrypt {
+				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+				c.Assert(err, IsNil)
+			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -848,7 +955,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				continue
 			}
 			// do not forget to implement the vectorized method.
-			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
+			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 			commentf := func(row int) CommentInterface {
 				return Commentf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
@@ -858,14 +965,14 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			switch testCase.retEvalType {
 			case types.ETInt:
 				err := baseFunc.vecEvalInt(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				i64s := output.Int64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalInt(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						c.Assert(val, Equals, i64s[i], commentf(i))
@@ -874,14 +981,14 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			case types.ETReal:
 				err := baseFunc.vecEvalReal(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				f64s := output.Float64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalReal(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						c.Assert(val, Equals, f64s[i], commentf(i))
@@ -890,14 +997,14 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			case types.ETDecimal:
 				err := baseFunc.vecEvalDecimal(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				d64s := output.Decimals()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDecimal(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						c.Assert(*val, Equals, d64s[i], commentf(i))
@@ -906,14 +1013,14 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			case types.ETDatetime, types.ETTimestamp:
 				err := baseFunc.vecEvalTime(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				t64s := output.Times()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalTime(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						c.Assert(val, Equals, t64s[i], commentf(i))
@@ -922,14 +1029,14 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			case types.ETDuration:
 				err := baseFunc.vecEvalDuration(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				d64s := output.GoDurations()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						c.Assert(val.Duration, Equals, d64s[i], commentf(i))
@@ -938,13 +1045,13 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			case types.ETJson:
 				err := baseFunc.vecEvalJSON(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalJSON(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						var cmp int
@@ -955,13 +1062,13 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			case types.ETString:
 				err := baseFunc.vecEvalString(input, output)
-				c.Assert(err, IsNil)
+				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
 				// do not forget to call ResizeXXX/ReserveXXX
 				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalString(row)
-					c.Assert(err, IsNil)
+					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
 						c.Assert(val, Equals, output.GetString(i), commentf(i))
@@ -983,6 +1090,40 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	}
 }
 
+// testVectorizedBuiltinFuncForRand is used to verify that the vectorized
+// expression is evaluated correctly
+func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
+	for funcName, testCases := range vecExprCases {
+		c.Assert(strings.EqualFold("rand", funcName), Equals, true)
+
+		for _, testCase := range testCases {
+			c.Assert(len(testCase.childrenTypes), Equals, 0)
+
+			ctx := mock.NewContext()
+			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
+			tmp := strings.Split(baseFuncName, ".")
+			baseFuncName = tmp[len(tmp)-1]
+			// do not forget to implement the vectorized method.
+			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
+			switch testCase.retEvalType {
+			case types.ETReal:
+				err := baseFunc.vecEvalReal(input, output)
+				c.Assert(err, IsNil)
+				// do not forget to call ResizeXXX/ReserveXXX
+				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				// check result
+				res := output.Float64s()
+				for _, v := range res {
+					c.Assert((0 <= v) && (v < 1), Equals, true)
+				}
+			default:
+				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+			}
+		}
+	}
+}
+
 // benchmarkVectorizedBuiltinFunc is used to get the effect of
 // using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
@@ -995,6 +1136,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
+			if funcName == ast.AesEncrypt {
+				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+				if err != nil {
+					panic(err)
+				}
+			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")

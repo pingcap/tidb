@@ -213,7 +213,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
-		result.Reset()
+		result.ResizeInt64(0, false)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			v, null, err := col.EvalInt(ctx, row)
 			if err != nil {

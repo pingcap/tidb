@@ -935,7 +935,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
-			return "", variable.UnknownSystemVar.GenWithStackByArgs(name)
+			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		}
 		return "", err
 	}
@@ -1793,6 +1793,7 @@ var builtinGlobalVariable = []string{
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
+	variable.InnodbLockWaitTimeout,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -1838,6 +1839,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
+	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 }
 

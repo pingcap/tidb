@@ -79,7 +79,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -141,7 +141,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid view state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -177,7 +177,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
-		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -290,7 +290,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid recover table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, nil
 }
@@ -353,7 +353,7 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+		return nil, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
 	return tblInfo, nil

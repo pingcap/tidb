@@ -366,8 +366,8 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
-	// EnableArrow indicates whether the coprocessor request can use arrow API.
-	EnableArrow bool
+	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
+	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -432,6 +432,9 @@ type SessionVars struct {
 	// UsePlanBaselines indicates whether we will use plan baselines to adjust plan.
 	UsePlanBaselines bool
 
+	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
+	EvolvePlanBaselines bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -447,6 +450,10 @@ type SessionVars struct {
 	isolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
+
+	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
+	// negative value means nowait, 0 means default behavior, others means actual wait time
+	LockWaitTimeout int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -523,7 +530,9 @@ func NewSessionVars() *SessionVars {
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -561,13 +570,13 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
-	var enableArrow string
-	if config.GetGlobalConfig().TiKVClient.EnableArrow {
-		enableArrow = "1"
+	var enableChunkRPC string
+	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+		enableChunkRPC = "1"
 	} else {
-		enableArrow = "0"
+		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
+	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 
@@ -812,6 +821,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
+	case InnodbLockWaitTimeout:
+		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
+		s.LockWaitTimeout = int64(lockWaitSec * 1000)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -912,8 +924,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBEnableArrow:
-		s.EnableArrow = TiDBOptOn(val)
+	case TiDBEnableChunkRPC:
+		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -965,6 +977,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
+	case TiDBEvolvePlanBaselines:
+		s.EvolvePlanBaselines = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
 		s.isolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {

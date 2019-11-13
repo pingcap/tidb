@@ -285,6 +285,9 @@ type PhysicalHashJoin struct {
 
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
+
+	// use the outer table to build a hash table when the outer table is smaller.
+	UseOuterToBuild bool
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.

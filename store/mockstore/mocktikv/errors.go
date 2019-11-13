@@ -98,3 +98,12 @@ type ErrCommitTSExpired struct {
 func (e *ErrCommitTSExpired) Error() string {
 	return "commit ts expired"
 }
+
+// ErrTxnNotFound is returned when the primary lock of the txn is not found.
+type ErrTxnNotFound struct {
+	kvrpcpb.TxnNotFound
+}
+
+func (e *ErrTxnNotFound) Error() string {
+	return "txn not found"
+}

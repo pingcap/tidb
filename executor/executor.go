@@ -815,7 +815,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	var lockWaitTime = kv.LockAlwaysWait
+	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
 	}
