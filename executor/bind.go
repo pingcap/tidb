@@ -55,12 +55,19 @@ func (e *SQLBindExec) dropSQLBind() error {
 		OriginalSQL: e.normdOrigSQL,
 		Db:          e.ctx.GetSessionVars().CurrentDB,
 	}
+	if e.bindSQL != "" {
+		bindInfo := bindinfo.Binding{
+			BindSQL:   e.bindSQL,
+			Charset:   e.charset,
+			Collation: e.collation,
+		}
+		record.Bindings = append(record.Bindings, bindInfo)
+	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		handle.DropBindRecord(record)
-		return nil
+		return handle.DropBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(record)
+	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 }
 
 func (e *SQLBindExec) createSQLBind() error {
