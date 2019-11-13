@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +62,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
@@ -90,7 +92,9 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
+	lineNum := 0
 	for {
+		lineNum++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
@@ -102,7 +106,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
+			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], lineNum)
 			if err != nil {
 				return rows, err
 			}
@@ -123,7 +127,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						err = st.setFieldValue(tz, field, fieldValues[i+1])
+						err = st.setFieldValue(tz, field, fieldValues[i+1], lineNum)
 						if err != nil {
 							return rows, err
 						}
@@ -131,7 +135,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
+				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), lineNum)
 				if err != nil {
 					return rows, err
 				}
@@ -205,9 +209,10 @@ type slowQueryTuple struct {
 	sql               string
 	isInternal        bool
 	succ              bool
+	plan              string
 }
 
-func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
+func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int) error {
 	var err error
 	switch field {
 	case variable.SlowLogTimeStr:
@@ -274,11 +279,13 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.memMax, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogSucc:
 		st.succ, err = strconv.ParseBool(value)
+	case variable.SlowLogPlan:
+		st.plan = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
 	if err != nil {
-		return errors.Wrap(err, "parse slow log failed `"+field+"` error")
+		return errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
 	}
 	return nil
 }
@@ -320,9 +327,24 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	} else {
 		record = append(record, types.NewIntDatum(0))
 	}
+	record = append(record, types.NewStringDatum(parsePlan(st.plan)))
 	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
+}
+
+func parsePlan(planString string) string {
+	if len(planString) <= len(variable.SlowLogPlanPrefix)+len(variable.SlowLogPlanSuffix) {
+		return planString
+	}
+	planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
+	decodePlanString, err := plancodec.DecodePlan(planString)
+	if err == nil {
+		planString = decodePlanString
+	} else {
+		logutil.Logger(context.Background()).Error("decode plan in slow log failed", zap.String("plan", planString), zap.Error(err))
+	}
+	return planString
 }
 
 // ParseTime exports for testing.
