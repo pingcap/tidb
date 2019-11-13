@@ -146,7 +146,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 // AddBindRecord adds a BindRecord to the storage and BindRecord to the cache.
 func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) (err error) {
-	err = record.prepareHintsForUsing(sctx, is)
+	err = record.prepareHints(sctx, is)
 	if err != nil {
 		return err
 	}
@@ -179,10 +179,19 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		h.bindInfo.Unlock()
 	}()
 
-	// remove all the unused sql binds.
-	_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db))
-	if err != nil {
-		return err
+	oldBindRecord := h.GetBindRecord(parser.DigestHash(record.OriginalSQL), record.OriginalSQL, record.Db)
+	if oldBindRecord != nil {
+		for _, newBinding := range record.Bindings {
+			binding := oldBindRecord.FindUsingBinding(newBinding.id)
+			if binding == nil {
+				continue
+			}
+			// Remove duplicates before insert.
+			_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, binding.BindSQL))
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	txn, err1 := h.sctx.Context.Txn(true)
@@ -208,7 +217,11 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 }
 
 // DropBindRecord drops a BindRecord to the storage and BindRecord int the cache.
-func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
+func (h *BindHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) (err error) {
+	err = record.prepareHints(sctx, is)
+	if err != nil {
+		return err
+	}
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 
@@ -245,12 +258,21 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 		Type: mysql.TypeDatetime,
 		Fsp:  3,
 	}
+	oldBindRecord := h.GetBindRecord(parser.DigestHash(record.OriginalSQL), record.OriginalSQL, record.Db)
+	bindingSQLs := make([]string, 0, len(record.Bindings))
 	for i := range record.Bindings {
 		record.Bindings[i].Status = deleted
 		record.Bindings[i].UpdateTime = updateTs
+		if oldBindRecord == nil {
+			continue
+		}
+		binding := oldBindRecord.FindUsingBinding(record.Bindings[i].id)
+		if binding != nil {
+			bindingSQLs = append(bindingSQLs, binding.BindSQL)
+		}
 	}
 
-	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(record, updateTs))
+	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, updateTs, bindingSQLs))
 	return err
 }
 
@@ -259,7 +281,7 @@ func (h *BindHandle) DropInvalidBindRecord() {
 	invalidBindRecordMap := copyInvalidBindRecordMap(h.invalidBindRecordMap.Load().(map[string]*invalidBindRecordMap))
 	for key, invalidBindRecord := range invalidBindRecordMap {
 		if invalidBindRecord.droppedTime.IsZero() {
-			err := h.DropBindRecord(invalidBindRecord.bindRecord)
+			err := h.DropBindRecord(nil, nil, invalidBindRecord.bindRecord)
 			if err != nil {
 				logutil.BgLogger().Error("DropInvalidBindRecord failed", zap.Error(err))
 			}
@@ -339,7 +361,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		return "", nil, err
 	}
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err = bindRecord.prepareHintsForUsing(h.sctx.Context, h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema))
+	err = bindRecord.prepareHints(h.sctx.Context, h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema))
 	return hash, bindRecord, err
 }
 
@@ -349,7 +371,7 @@ func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
-	newCache.setBindRecord(hash, meta)
+	newCache.setBindRecord(hash, newRecord)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
@@ -429,11 +451,12 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
-func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
+func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
 	return fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s AND bind_sql = %s`,
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db),
+		expression.Quote(bindSQL),
 	)
 }
 
@@ -450,20 +473,19 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 	)
 }
 
-func (h *BindHandle) logicalDeleteBindInfoSQL(record *BindRecord, updateTs types.Time) string {
+func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQLs []string) string {
 	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTs.String()),
-		expression.Quote(record.OriginalSQL),
-		expression.Quote(record.Db))
-	if len(record.Bindings) == 0 {
+		expression.Quote(originalSQL),
+		expression.Quote(db))
+	if len(bindingSQLs) == 0 {
 		return sql
 	}
-	bindings := make([]string, 0, len(record.Bindings))
-	for _, bind := range record.Bindings {
-		bindings = append(bindings, fmt.Sprintf(`%s`, expression.Quote(bind.BindSQL)))
+	for i, sql := range bindingSQLs {
+		bindingSQLs[i] = fmt.Sprintf(`%s`, expression.Quote(sql))
 	}
-	return sql + fmt.Sprintf(` and bind_sql in (%s)`, strings.Join(bindings, ","))
+	return sql + fmt.Sprintf(` and bind_sql in (%s)`, strings.Join(bindingSQLs, ","))
 }
 
 // GenHintsFromSQL is used to generate hints from SQL.
