@@ -205,6 +205,7 @@ func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 	// Decreasing tokenCount is no thread safe, preferring this for avoiding check in loop.
 	if count > 0 {
 		st.tokenCount.Sub(1)
+		return
 	}
 	logutil.BgLogger().Warn("release store token failed, count equals to 0")
 }
