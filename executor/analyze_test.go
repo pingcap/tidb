@@ -453,3 +453,30 @@ func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {
 	c.Assert(err.Error(), Equals, "mock buildStatsFromResult error")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"), IsNil)
 }
+
+func (s *testSuite1) TestExtractTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, 0)", i+10))
+	}
+	tk.MustExec("analyze table t")
+	is := s.dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
+	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
+	c.Assert(len(colStats.CMSketch.TopN()), Equals, 1)
+	item := colStats.CMSketch.TopN()[0]
+	c.Assert(item.Count, Equals, uint64(11))
+	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
+	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
+	item = idxStats.CMSketch.TopN()[0]
+	c.Assert(item.Count, Equals, uint64(11))
+}

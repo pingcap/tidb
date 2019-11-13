@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -1068,4 +1070,63 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 		return strings.HasPrefix(row.GetString(colIdx), ad.GetString())
 	}
 	return false
+}
+
+func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) {
+	prefixLens = make([]int, 0, numCols)
+	var colData []byte
+	prefixLen := 0
+	for len(data) > 0 {
+		colData, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, err
+		}
+		prefixLen += len(colData)
+		prefixLens = append(prefixLens, prefixLen)
+	}
+	return prefixLens, nil
+}
+
+// ExtractTopN extracts topn from histogram.
+func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) error {
+	if hg.Len() == 0 || cms == nil || numTopN == 0 {
+		return nil
+	}
+	dataSet := make(map[string]struct{}, hg.Bounds.NumRows())
+	dataCnts := make([]dataCnt, 0, hg.Bounds.NumRows())
+	hg.PreCalculateScalar()
+	// Set a limit on the frequency of boundary values to avoid extract values with low frequency.
+	limit := hg.notNullCount() / float64(hg.Len())
+	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
+	for i := 0; i < hg.Bounds.NumRows(); i++ {
+		data := hg.Bounds.GetRow(i).GetBytes(0)
+		prefixLens, err := getIndexPrefixLens(data, numCols)
+		if err != nil {
+			return err
+		}
+		for _, prefixLen := range prefixLens {
+			prefixColData := data[:prefixLen]
+			_, ok := dataSet[string(prefixColData)]
+			if ok {
+				continue
+			}
+			dataSet[string(prefixColData)] = struct{}{}
+			res := hg.BetweenRowCount(types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
+			if res >= limit {
+				dataCnts = append(dataCnts, dataCnt{prefixColData, uint64(res)})
+			}
+		}
+	}
+	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
+	cms.topN = make(map[uint64][]*TopNMeta)
+	if len(dataCnts) > int(numTopN) {
+		dataCnts = dataCnts[:numTopN]
+	}
+	for _, dataCnt := range dataCnts {
+		h1, h2 := murmur3.Sum128(dataCnt.data)
+		realCnt := cms.queryHashValue(h1, h2)
+		cms.subValue(h1, h2, realCnt)
+		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
+	}
+	return nil
 }
