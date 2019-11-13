@@ -170,8 +170,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
-	limit := storeutil.StoreLimit.Load()
-	if limit > 0 {
+	if limit := storeutil.StoreLimit.Load(); limit > 0 {
 		if err := s.getStoreToken(ctx.Store, limit); err != nil {
 			return nil, false, err
 		}
