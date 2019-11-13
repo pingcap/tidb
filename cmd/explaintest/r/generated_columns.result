@@ -71,7 +71,7 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
-IndexHashJoin_35	5.00	root	inner join, inner:IndexLookUp_25, outer key:Column#8, inner key:Column#3
+IndexJoin_26	5.00	root	inner join, inner:IndexLookUp_25, outer key:Column#8, inner key:Column#3
 ├─IndexLookUp_25	5.00	root	
 │ ├─Selection_24	5.00	cop[tikv]	not(isnull(Column#3))
 │ │ └─IndexScan_22	5.00	cop[tikv]	table:sgc1, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
