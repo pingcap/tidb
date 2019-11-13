@@ -77,8 +77,15 @@ const EngineCnt = 2
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
 	currIdx    [EngineCnt]int32
-	stores     [EngineCnt][]*Store // stores in this region
-	storeFails [EngineCnt][]uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
+	stores     [EngineCnt][]PeerStore // stores in this region
+	storeFails [EngineCnt][]uint32    // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
+}
+
+// PeerStore represent a store peer in special engine store list.
+type PeerStore struct {
+	Idx   int          // Index at PeerStore list for special engine.
+	Peer  *metapb.Peer // Store's peer info
+	Store *Store       // Store info
 }
 
 // clone clones region store struct.
@@ -111,7 +118,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		if followerIdx >= r.currIdx[engine] {
 			followerIdx++
 		}
-		if r.storeFails[engine][followerIdx] == atomic.LoadUint32(&r.stores[engine][followerIdx].fail) {
+		if r.storeFails[engine][followerIdx] == atomic.LoadUint32(&r.stores[engine][followerIdx].Store.fail) {
 			return followerIdx
 		}
 		seed++
@@ -123,6 +130,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 func (r *Region) init(bo *Backoffer, c *RegionCache) error {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
+	var idx [EngineCnt]int
 	rs := &RegionStore{}
 	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
@@ -135,7 +143,9 @@ func (r *Region) init(bo *Backoffer, c *RegionCache) error {
 		if err != nil {
 			return err
 		}
-		rs.stores[store.storeType] = append(rs.stores[store.storeType], store)
+		i := idx[store.storeType]
+		idx[store.storeType] = i + 1
+		rs.stores[store.storeType] = append(rs.stores[store.storeType], PeerStore{Store: store, Peer: p, Idx: i})
 		rs.storeFails[store.storeType] = append(rs.storeFails[store.storeType], atomic.LoadUint32(&store.fail))
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
@@ -268,13 +278,13 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	Region      RegionVerID
-	Meta        *metapb.Region
-	Peer        *metapb.Peer
-	PeerIdx     int
-	Store       *Store
-	Addr        string
-	ForceLeader bool
+	Region     RegionVerID
+	Meta       *metapb.Region
+	Peer       *metapb.Peer
+	PeerIdx    int
+	Store      *Store
+	Addr       string
+	NextOnFail bool
 }
 
 // GetStoreID returns StoreID.
@@ -305,16 +315,14 @@ func (c *RegionCache) GetRPCContext(engine kv.StoreType, bo *Backoffer, id Regio
 	}
 
 	regionStore := cachedRegion.getStore()
-	var sg RouteStrategy
-	switch replicaRead {
-	case kv.ReplicaReadFollower:
-		sg = cachedRegion.KeepSendLast
-	default:
-		sg = cachedRegion.SendCurrRetryNextOnFail
-	}
 
-	store, peer, storeIdx := cachedRegion.WorkStorePeer(engine, regionStore, followerStoreSeed, sg)
-	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
+	candidate := optimizeAvailableStores(regionStore, engine)
+
+	strategy, nextOnFail := routeStrategy(engine, replicaRead)
+
+	peerStore := cachedRegion.ChooseStorePeer(engine, regionStore, candidate, followerStoreSeed, strategy)
+
+	addr, err := c.getStoreAddr(bo, cachedRegion, peerStore)
 	if err != nil {
 		return nil, err
 	}
@@ -324,29 +332,29 @@ func (c *RegionCache) GetRPCContext(engine kv.StoreType, bo *Backoffer, id Regio
 			addr = a
 		}
 	})
-	if store == nil || len(addr) == 0 {
+	if peerStore == nil || len(addr) == 0 {
 		// Store not found, region must be out of date.
 		cachedRegion.invalidate()
 		return nil, nil
 	}
 
-	storeFailEpoch := atomic.LoadUint32(&store.fail)
-	if storeFailEpoch != regionStore.storeFails[engine][storeIdx] {
+	storeFailEpoch := atomic.LoadUint32(&peerStore.Store.fail)
+	if storeFailEpoch != regionStore.storeFails[engine][peerStore.Idx] {
 		cachedRegion.invalidate()
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
-			zap.String("store", store.addr))
+			zap.String("store", peerStore.Store.addr))
 		return nil, nil
 	}
 
 	return &RPCContext{
-		Region:      id,
-		Meta:        cachedRegion.meta,
-		Peer:        peer,
-		PeerIdx:     storeIdx,
-		Store:       store,
-		Addr:        addr,
-		ForceLeader: replicaRead != kv.ReplicaReadFollower,
+		Region:     id,
+		Meta:       cachedRegion.meta,
+		Peer:       peerStore.Peer,
+		PeerIdx:    peerStore.Idx,
+		Store:      peerStore.Store,
+		Addr:       addr,
+		NextOnFail: nextOnFail,
 	}, nil
 }
 
@@ -438,7 +446,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
-		c.switchPeerForNextRetry(ctx.Store.storeType, ctx.ForceLeader, r, ctx.PeerIdx, err)
+		c.switchPeerForNextRetry(ctx.Store.storeType, ctx.NextOnFail, r, ctx.PeerIdx, err)
 		if scheduleReload {
 			r.scheduleReload()
 		}
@@ -825,7 +833,8 @@ func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region)
 	return
 }
 
-func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, storeIdx int) (addr string, err error) {
+func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, peerStore *PeerStore) (addr string, err error) {
+	store := peerStore.Store
 	state := store.getResolveState()
 	switch state {
 	case resolved, needCheck:
@@ -835,14 +844,15 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 		addr, err = store.initResolve(bo, c)
 		return
 	case deleted:
-		addr = c.changeToActiveStore(region, store, storeIdx)
+		addr = c.changeToActiveStore(region, peerStore)
 		return
 	default:
 		panic("unsupported resolve state")
 	}
 }
 
-func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr string) {
+func (c *RegionCache) changeToActiveStore(region *Region, peerStore *PeerStore) (addr string) {
+	store := peerStore.Store
 	c.storeMu.RLock()
 	store = c.storeMu.stores[store.storeID]
 	c.storeMu.RUnlock()
@@ -850,10 +860,10 @@ func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx
 		oldRegionStore := region.getStore()
 		newRegionStore := oldRegionStore.clone()
 		for engineType := range oldRegionStore.stores {
-			newRegionStore.stores[engineType] = make([]*Store, 0, len(oldRegionStore.stores[engineType]))
-			for i, s := range oldRegionStore.stores[engineType] {
-				if i == storeIdx {
-					newRegionStore.stores[engineType] = append(newRegionStore.stores[engineType], store)
+			newRegionStore.stores[engineType] = make([]PeerStore, 0, len(oldRegionStore.stores[engineType]))
+			for _, s := range oldRegionStore.stores[engineType] {
+				if s.Idx == peerStore.Idx {
+					newRegionStore.stores[engineType] = append(newRegionStore.stores[engineType], PeerStore{Store: store, Peer: peerStore.Peer})
 				} else {
 					newRegionStore.stores[engineType] = append(newRegionStore.stores[engineType], s)
 				}
@@ -982,36 +992,66 @@ func (r *Region) GetLeaderStoreID() uint64 {
 	return r.meta.Peers[int(r.getStore().currIdx[engine])].StoreId
 }
 
-func (r *Region) getStorePeer(engine kv.StoreType, rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
-	store = rs.stores[engine][pidx]
-	peer = r.meta.Peers[pidx]
-	idx = int(pidx)
-	return
-}
+// RouteStrategy defines how choose a store from region's store lists.
+type RouteStrategy func(rs *RegionStore, currIdx *int32, maxIdx int32, lastSeed uint32) int32
 
-// SendCurrRetryNextOnFail is a RouteStrategy that try route request to currIndex node.
+var (
+	_ RouteStrategy = keepCurrTryNextIfFail
+	_ RouteStrategy = roundRobinSend
+	_ RouteStrategy = keepSendLastBySeed
+)
+
+// keepCurrTryNextIfFail is a RouteStrategy that try route request to currIndex node.
 // if send fail will try next node for current engine in OnSendFail method.
 //
 // TiKV normal request will use this to send request to region leader and try next node on failure.
-// TiFlash request also use this to send curr node and round-robin others on failure.
-func (r *Region) SendCurrRetryNextOnFail(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32 {
-	return rs.currIdx[engine]
+// TiFlash request also uses this to send curr node and round-robin others on failure.
+func keepCurrTryNextIfFail(_ *RegionStore, currIdx *int32, _ int32, _ uint32) int32 {
+	return *currIdx
 }
 
-// KeepSendLast is a RouteStrategy that try route request to last send node via followerStoreSeed.
+// roundRobinSend is a RouteStrategy that try next peer for each request.
+//
+// TiFlash request uses this.
+func roundRobinSend(_ *RegionStore, currIdx *int32, maxIdx int32, _ uint32) int32 {
+	return atomic.AddInt32(currIdx, 1) % maxIdx
+}
+
+// keepSendLastBySeed is a RouteStrategy that try route request to last send node via followerStoreSeed.
 // it will find next available node for current engine in current method.
 //
-// TiKV follower read will use this.
-func (r *Region) KeepSendLast(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32 {
-	return rs.follower(followerStoreSeed)
+// TiKV follower read uses this.
+func keepSendLastBySeed(rs *RegionStore, _ *int32, _ int32, lastSeed uint32) int32 {
+	return rs.follower(lastSeed)
 }
 
-// RouteStrategy defines how choose a store from region's store lists.
-type RouteStrategy func(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32) int32
+// optimizeAvailableStores will sort or limit stores in routeStrategy.
+func optimizeAvailableStores(rs *RegionStore, engine kv.StoreType) []PeerStore {
+	// TODO: sort by locality or filter by labels at here.
+	return rs.stores[engine]
+}
 
-// WorkStorePeer returns current work store with work peer.
-func (r *Region) WorkStorePeer(engine kv.StoreType, rs *RegionStore, followerStoreSeed uint32, strategy RouteStrategy) (store *Store, peer *metapb.Peer, idx int) {
-	return r.getStorePeer(engine, rs, strategy(engine, rs, followerStoreSeed))
+// routeStrategy decides using which RouteStrategy and do we need move next on fail.
+func routeStrategy(engine kv.StoreType, replicaRead kv.ReplicaReadType) (strategy RouteStrategy, nextOnFail bool) {
+	switch engine {
+	case kv.TiFlash:
+		return roundRobinSend, false
+	default:
+	}
+
+	switch replicaRead {
+	case kv.ReplicaReadFollower:
+		return keepSendLastBySeed, false
+	default:
+		return keepCurrTryNextIfFail, true
+	}
+}
+
+// ChooseStorePeer returns current work store with work peer.
+func (r *Region) ChooseStorePeer(engine kv.StoreType, rs *RegionStore, candidate []PeerStore, followerStoreSeed uint32, strategy RouteStrategy) (peerStore *PeerStore) {
+	idx := int(strategy(rs, &rs.currIdx[engine], int32(len(candidate)), followerStoreSeed))
+	peerStore = &candidate[idx]
+	return
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1054,22 +1094,22 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 	return
 }
 
-func (c *RegionCache) switchPeerForNextRetry(engine kv.StoreType, forceLeader bool, r *Region, currentPeerIdx int, err error) {
+func (c *RegionCache) switchPeerForNextRetry(engine kv.StoreType, nextOnFail bool, r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
 
 	// notify other region's request this store has meet failure.
 	if err != nil { // TODO: refine err, only do this for some errors.
 		s := rs.stores[engine][currentPeerIdx]
 		epoch := rs.storeFails[engine][currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
-			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+		if atomic.CompareAndSwapUint32(&s.Store.fail, epoch, epoch+1) {
+			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.Store.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
-		s.markNeedCheck(c.notifyCheckCh)
+		s.Store.markNeedCheck(c.notifyCheckCh)
 	}
 
-	// send follower read request fail no need to change work index.
-	if !forceLeader && int(rs.currIdx[engine]) != currentPeerIdx {
+	// send follower-read or tiflash request fail no need to change work index.
+	if !nextOnFail {
 		return
 	}
 
