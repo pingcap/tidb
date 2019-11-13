@@ -25,6 +25,7 @@ package expression
 
 import (
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -739,7 +740,24 @@ func IsFunctionSupported(name string) bool {
 // GetBuiltinList returns a list of builtin functions
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
+	notImplementedFunctions := []string{ast.RowFunc}
 	for funcName := range funcs {
+		skipFunc := false
+		// Skip not implemented functions
+		for _, notImplFunc := range notImplementedFunctions {
+			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		// Skip literal functions
+		// (their names are not readable: 'tidb`.(dateliteral, for example)
+		// See: https://github.com/pingcap/parser/pull/591
+		if strings.HasPrefix(funcName, "'tidb`.(") {
+			skipFunc = true
+		}
+		if skipFunc {
+			continue
+		}
 		res = append(res, funcName)
 	}
 	sort.Strings(res)
