@@ -348,6 +348,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinStringIsNullSig{base}
 	case tipb.ScalarFuncSig_IntIsNull:
 		f = &builtinIntIsNullSig{base}
+	case tipb.ScalarFuncSig_LeftShift:
+		f = &builtinLeftShiftSig{base}
 
 	case tipb.ScalarFuncSig_CoalesceDecimal:
 		f = &builtinCoalesceDecimalSig{base}
