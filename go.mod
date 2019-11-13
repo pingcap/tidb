@@ -79,4 +79,4 @@ replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-
 
 go 1.13
 
-replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20191111013048-53b1a1863e54
+replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20191113035853-d105d125134d
