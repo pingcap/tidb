@@ -16,6 +16,7 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash"
 	"io"
 	"time"
@@ -91,7 +92,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
-			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
+			b, err = EncodeMySQLTime(sc, vals[i].GetMysqlTime(), mysql.TypeUnspecified, b)
 			if err != nil {
 				return b, err
 			}
@@ -169,8 +170,7 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 }
 
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
-func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
-	t := d.GetMysqlTime()
+func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []byte) (_ []byte, err error) {
 	// Encoding timestamp need to consider timezone. If it's not in UTC, transform to UTC first.
 	// This is compatible with `PBToExpr > convertTime`, and coprocessor assumes the passed timestamp is in UTC as well.
 	if tp == mysql.TypeUnspecified {
@@ -1072,4 +1072,94 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 	} else {
 		chk.AppendFloat64(colIdx, val)
 	}
+}
+
+// HashGroupKey encodes each row of this column and append encoded data into buf.
+// Only use in the aggregate executor.
+func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldType) ([][]byte, error) {
+	var err error
+	switch ft.EvalType() {
+	case types.ETInt:
+		i64s := col.Int64s()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = encodeSignedInt(buf[i], i64s[i], false)
+			}
+		}
+	case types.ETReal:
+		f64s := col.Float64s()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], floatFlag)
+				buf[i] = EncodeFloat(buf[i], f64s[i])
+			}
+		}
+	case types.ETDecimal:
+		ds := col.Decimals()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], decimalFlag)
+				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.Flen, ft.Decimal)
+				if terror.ErrorEqual(err, types.ErrTruncated) {
+					err = sc.HandleTruncate(err)
+				} else if terror.ErrorEqual(err, types.ErrOverflow) {
+					err = sc.HandleOverflow(err, err)
+				}
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		ts := col.Times()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], uintFlag)
+				buf[i], err = EncodeMySQLTime(sc, ts[i], mysql.TypeUnspecified, buf[i])
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	case types.ETDuration:
+		ds := col.GoDurations()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], durationFlag)
+				buf[i] = EncodeInt(buf[i], int64(ds[i]))
+			}
+		}
+	case types.ETJson:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], jsonFlag)
+				j := col.GetJSON(i)
+				buf[i] = append(buf[i], j.TypeCode)
+				buf[i] = append(buf[i], j.Value...)
+			}
+		}
+	case types.ETString:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = encodeBytes(buf[i], col.GetBytes(i), false)
+			}
+		}
+	default:
+		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+	}
+	return buf, nil
 }

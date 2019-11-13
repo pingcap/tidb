@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -159,7 +160,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d, ft.Tp, nil)
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.Tp, nil)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -221,18 +222,21 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	// check whether this function can be pushed.
+	// Check whether this function has ProtoBuf signature.
+	pbCode := expr.Function.PbCode()
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
+		})
+		return nil
+	}
+
+	// Check whether this function can be pushed.
 	if !pc.canFuncBePushed(expr) {
 		return nil
 	}
 
-	// check whether this function has ProtoBuf signature.
-	pbCode := expr.Function.PbCode()
-	if pbCode < 0 {
-		return nil
-	}
-
-	// check whether all of its parameters can be pushed.
+	// Check whether all of its parameters can be pushed.
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
@@ -252,7 +256,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		implicitArgs = encoded
 	}
 
-	// construct expression ProtoBuf.
+	// Construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
 		Val:       implicitArgs,
