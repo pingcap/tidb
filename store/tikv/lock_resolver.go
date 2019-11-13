@@ -277,7 +277,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, pushed []uint64) (int64, []uint64, error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64, error) {
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil, nil
@@ -288,9 +288,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
-	if pushed == nil {
-		pushed = make([]uint64, 0, len(locks))
-	}
+	pushed := make([]uint64, 0, len(locks))
 	for _, l := range locks {
 		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
@@ -320,7 +318,9 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			// Update the txn expire time.
 			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
 			msBeforeTxnExpired.update(msBeforeLockExpired)
-			pushed = append(pushed, l.TxnID)
+			if callerStartTS > 0 {
+				pushed = append(pushed, l.TxnID)
+			}
 		}
 	}
 

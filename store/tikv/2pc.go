@@ -565,7 +565,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		}
 		start := time.Now()
 		// Set callerStartTS to 0 so as not to update minCommitTS.
-		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks, nil)
+		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -766,7 +766,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
-		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks, nil)
+		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
