@@ -61,6 +61,9 @@ type copTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols           []*expression.Column
 	idxMergePartPlans []PhysicalPlan
+	// rootTaskConds stores select conditions containing virtual columns.
+	// These conditions can't push to TiKV, so we have to add a selection for rootTask
+	rootTaskConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -630,8 +633,16 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType: ts.StoreType,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
+		ts.ExpandVirtualColumn()
 		newTask.p = p
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
+	}
+
 	return newTask
 }
 
@@ -877,6 +888,9 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
+		if expression.ContainVirtualColumn(aggFunc.Args) {
+			return nil, p.self
+		}
 		if copToFlash {
 			if !aggregation.CheckAggPushFlash(aggFunc) {
 				return nil, p.self
