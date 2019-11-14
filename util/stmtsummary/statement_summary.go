@@ -14,7 +14,9 @@
 package stmtsummary
 
 import (
+	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -530,7 +532,7 @@ func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
 		int(ssbd.maxPrewriteRegionNum),
 		avgFloat(ssbd.sumTxnRetry, ssbd.commitCount),
 		ssbd.maxTxnRetry,
-		fmt.Sprintf("%v", ssbd.backoffTypes),
+		formatBackoffTypes(ssbd.backoffTypes),
 		avgInt(ssbd.sumMem, ssbd.execCount),
 		ssbd.maxMem,
 		avgFloat(int64(ssbd.sumAffectedRows), ssbd.execCount),
@@ -538,6 +540,38 @@ func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
 		types.Time{Time: types.FromGoTime(ssbd.lastSeen), Type: mysql.TypeTimestamp},
 		ssbd.sampleSQL,
 	)
+}
+
+// Format the backoffType map to a string or nil.
+func formatBackoffTypes(backoffMap map[fmt.Stringer]int) interface{} {
+	type backoffStat struct {
+		backoffType fmt.Stringer
+		count       int
+	}
+
+	size := len(backoffMap)
+	if size == 0 {
+		return nil
+	}
+
+	backoffArray := make([]backoffStat, 0, len(backoffMap))
+	for backoffType, count := range backoffMap {
+		backoffArray = append(backoffArray, backoffStat{backoffType, count})
+	}
+	sort.Slice(backoffArray, func(i, j int) bool {
+		return backoffArray[i].count > backoffArray[j].count
+	})
+
+	var buffer bytes.Buffer
+	for index, stat := range backoffArray {
+		if _, err := fmt.Fprintf(&buffer, "%v:%d", stat.backoffType, stat.count); err != nil {
+			return "FORMAT ERROR"
+		}
+		if index < len(backoffArray)-1 {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.String()
 }
 
 func avgInt(sum int64, count int64) int64 {
@@ -555,8 +589,8 @@ func avgFloat(sum int64, count int64) float64 {
 }
 
 func convertEmptyToNil(str string) interface{} {
-	/*if str == "" {
+	if str == "" {
 		return nil
-	}*/
+	}
 	return str
 }

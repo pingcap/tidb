@@ -623,7 +623,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		fmt.Sprintf("%v", backoffTypes), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.AffectedRows,
+		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.AffectedRows,
 		t, t, stmtExecInfo1.OriginalSQL)
 }
 
@@ -946,4 +946,15 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	// Set back
 	s.ssMap.SetEnabled("1", false)
+}
+
+func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
+	backoffMap := make(map[fmt.Stringer]int)
+	c.Assert(formatBackoffTypes(backoffMap), IsNil)
+
+	backoffMap[tikv.BoPDRPC] = 1
+	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdRPC:1")
+
+	backoffMap[tikv.BoTxnLock] = 2
+	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2, pdRPC:1")
 }
