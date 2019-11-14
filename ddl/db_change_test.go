@@ -84,7 +84,7 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
 	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
-	// Otherwise resetContextOfStmt in same tk will cause data race sometimes.
+	// Using same `tk` in different goroutines may lead to data race.
 	tkInternal := testkit.NewTestKit(c, s.store)
 	tkInternal.MustExec("use test")
 
