@@ -15,12 +15,16 @@ package bindinfo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -29,12 +33,14 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +88,13 @@ type BindHandle struct {
 
 // Lease influences the duration of loading bind info and handling invalid bind.
 var Lease = 3 * time.Second
+
+const (
+	// OwnerKey is the bindinfo owner path that is saved to etcd.
+	OwnerKey = "/tidb/bindinfo/owner"
+	// Prompt is the prompt for bindinfo owner manager.
+	Prompt = "bindinfo"
+)
 
 type bindRecordUpdate struct {
 	bindRecord *BindRecord
@@ -167,7 +180,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 	if br != nil {
 		binding := br.FindBinding(record.Bindings[0].id)
 		if binding != nil {
-			// There is already a binding with status `Using` or `PendingVerify`, we could directly cancel the job.
+			// There is already a binding with status `Using`, `PendingVerify` or `Rejected`, we could directly cancel the job.
 			if record.Bindings[0].Status == PendingVerify {
 				return nil
 			}
@@ -584,6 +597,175 @@ func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding, 
 // SaveEvolveTasksToStore saves the evolve task into store.
 func (h *BindHandle) SaveEvolveTasksToStore() {
 	h.pendingVerifyBindRecordMap.flushToStore()
+}
+
+func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
+	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
+		variable.TiDBEvolvePlanTaskMaxTime, variable.TiDBEvolvePlanTaskStartTime, variable.TiDBEvolvePlanTaskEndTime)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	maxTime, startTimeStr, endTimeStr := int64(variable.DefTiDBEvolvePlanTaskMaxTime), variable.DefTiDBEvolvePlanTaskStartTime, variable.DefAutoAnalyzeEndTime
+	for _, row := range rows {
+		switch row.GetString(0) {
+		case variable.TiDBEvolvePlanTaskMaxTime:
+			maxTime, err = strconv.ParseInt(row.GetString(1), 10, 64)
+			if err != nil {
+				return 0, time.Time{}, time.Time{}, err
+			}
+		case variable.TiDBEvolvePlanTaskStartTime:
+			startTimeStr = row.GetString(1)
+		case variable.TiDBEvolvePlanTaskEndTime:
+			endTimeStr = row.GetString(1)
+		}
+	}
+	startTime, err := time.ParseInLocation(variable.FullDayTimeFormat, startTimeStr, time.UTC)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+
+	}
+	endTime, err := time.ParseInLocation(variable.FullDayTimeFormat, endTimeStr, time.UTC)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	return time.Duration(maxTime) * time.Second, startTime, endTime, nil
+}
+
+const (
+	// acceptFactor is the factor to decide should we accept the pending verified plan.
+	// A pending verified plan will be accepted if it performs at least `acceptFactor` times better than the accepted plans.
+	acceptFactor = 1.5
+	// nextVerifyDuration is the duration that we will retry the rejected plans.
+	nextVerifyDuration = 7 * 24 * time.Hour
+)
+
+func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
+	cache := h.bindInfo.Value.Load().(cache)
+	for _, bindRecords := range cache {
+		for _, bindRecord := range bindRecords {
+			for _, bind := range bindRecord.Bindings {
+				if bind.Status == PendingVerify {
+					return bindRecord.OriginalSQL, bindRecord.Db, bind
+				}
+				if bind.Status != Rejected {
+					continue
+				}
+				updateTime, err := bind.UpdateTime.Time.GoTime(time.UTC)
+				// Should not happen.
+				if err != nil {
+					continue
+				}
+				// Rejected and retry it now.
+				if time.Since(updateTime) > nextVerifyDuration {
+					return bindRecord.OriginalSQL, bindRecord.Db, bind
+				}
+			}
+		}
+	}
+	return "", "", Binding{}
+}
+
+func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
+	ctx := context.TODO()
+	if db != "" {
+		_, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("use `%s`", db))
+		if err != nil {
+			return 0, err
+		}
+	}
+	ctx, cancelFunc := context.WithCancel(ctx)
+	timer := time.NewTimer(maxTime)
+	resultChan := make(chan error)
+	startTime := time.Now()
+	go runSQL(ctx, sctx, sql, resultChan)
+	select {
+	case err := <-resultChan:
+		cancelFunc()
+		if err != nil {
+			return 0, err
+		}
+		return time.Since(startTime), nil
+	case <-timer.C:
+		cancelFunc()
+	}
+	return -1, nil
+}
+
+func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			resultChan <- errors.New(fmt.Sprintf("run sql panicked: %v", string(buf)))
+		}
+	}()
+	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
+	}
+	if err != nil {
+		resultChan <- err
+		return
+	}
+	recordSet := recordSets[0]
+	chk := recordSets[0].NewChunk()
+	for {
+		err = recordSet.Next(ctx, chk)
+		if err != nil {
+			resultChan <- err
+			return
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	resultChan <- nil
+	return
+}
+
+// HandleEvolvePlanTask tries to evolve one plan task.
+// It only handle one tasks once because we want each task could use the latest parameters.
+func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
+	originalSQL, db, binding := h.getOnePendingVerifyJob()
+	if originalSQL == "" {
+		return nil
+	}
+	maxTime, startTime, endTime, err := getEvolveParameters(sctx)
+	if err != nil {
+		return err
+	}
+	if maxTime == 0 || !timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) {
+		return nil
+	}
+	sctx.GetSessionVars().UsePlanBaselines = false
+	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	// If we just return the error to the caller, this job will be retried again and again and cause endless logs,
+	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
+	// we will hope for that we can capture this evolve task again.
+	if err != nil {
+		return h.DropBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	}
+	// Time limit exceeded.
+	if verifyPlanTime < 0 {
+		binding.Status = Rejected
+		return h.AddBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	}
+	sctx.GetSessionVars().UsePlanBaselines = true
+	maxTime = time.Duration(mathutil.MinInt64(int64(maxTime), int64(float64(verifyPlanTime)*acceptFactor)))
+	acceptedPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	if err != nil {
+		return h.DropBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	}
+	// It is hard to decide if we should mark it as `using` if it exceeded max time, because
+	// we don't know the exact execution time. Currently we simply mark it as `using` since the verify plan could run successfully.
+	if acceptedPlanTime < 0 {
+		binding.Status = Using
+	} else {
+		binding.Status = Rejected
+	}
+	return h.AddBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 }
 
 // Clear resets the bind handle. It is used for test.

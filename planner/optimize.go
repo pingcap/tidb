@@ -238,7 +238,10 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	if err != nil {
 		logutil.Logger(ctx).Info("Restore SQL failed", zap.Error(err))
 	}
-	bindsql := strings.Replace(sb.String(), "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	bindSQL := sb.String()
+	selectIdx := strings.Index(bindSQL, "SELECT")
+	bindSQL = bindSQL[selectIdx:]
+	bindsql := strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	binding := bindinfo.Binding{BindSQL: bindsql, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
