@@ -2615,12 +2615,7 @@ func newDateArighmeticalUtil() baseDateArithmitical {
 	}
 }
 
-func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
-	dateStr, isNull, err := args[0].EvalString(ctx, row)
-	if isNull || err != nil {
-		return types.Time{}, true, err
-	}
-
+func getDateFromString(ctx sessionctx.Context, dateStr string, unit string) (types.Time, bool, error) {
 	dateTp := mysql.TypeDate
 	if !types.IsDateFormat(dateStr) || types.IsClockUnit(unit) {
 		dateTp = mysql.TypeDatetime
@@ -2629,6 +2624,14 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
 	return date, err != nil, handleInvalidTimeError(ctx, err)
+}
+
+func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
+	dateStr, isNull, err := args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, err
+	}
+	return getDateFromString(ctx, dateStr, unit)
 }
 
 func (du *baseDateArithmitical) getDateFromInt(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
