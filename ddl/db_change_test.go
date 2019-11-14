@@ -132,6 +132,9 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			}
 			req := result.NewChunk()
 			err = result.Next(context.Background(), req)
+			if err != nil {
+				return
+			}
 			got := req.GetRow(0).GetString(1)
 			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
