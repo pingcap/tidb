@@ -54,7 +54,12 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statisti
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
-	width := impl.tblColHists.GetAvgRowSize(reader.Schema().Columns, false)
+	var width float64
+	if impl.plan.SCtx().GetSessionVars().EnableChunkRPC {
+		width = impl.tblColHists.GetAvgRowSizeChunkFormat(reader.Schema().Columns)
+	} else {
+		width = impl.tblColHists.GetAvgRowSize(reader.Schema().Columns, false)
+	}
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.NetworkFactor * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
@@ -87,7 +92,12 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
-	width := impl.tblColHists.GetAvgRowSize(impl.tblCols, false)
+	var width float64
+	if impl.plan.SCtx().GetSessionVars().EnableChunkRPC {
+		width = impl.tblColHists.GetAvgRowSizeChunkFormat(impl.tblCols)
+	} else {
+		width = impl.tblColHists.GetAvgRowSize(impl.tblCols, false)
+	}
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.ScanFactor * width
 	if ts.Desc {
