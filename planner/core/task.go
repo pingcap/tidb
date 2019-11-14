@@ -885,7 +885,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 
 // CheckAggCanPushCop checks whether the aggFuncs with groupByItems can
 // be pushed down to coprocessor.
-func CheckAggCanPushCop(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, sctx sessionctx.Context, copToFlash bool) bool {
+func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
 	for _, aggFunc := range aggFuncs {
@@ -912,12 +912,13 @@ func CheckAggCanPushCop(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expr
 	return true
 }
 
-// SplitAggToPartial1 splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg.
-func SplitAggToPartial1(
+// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
+// returns the body of finalAgg and the schema of partialAgg.
+func BuildFinalModeAggregation(
+	sctx sessionctx.Context,
 	aggFuncs []*aggregation.AggFuncDesc,
 	groupByItems []expression.Expression,
-	finalSchema *expression.Schema,
-	sctx sessionctx.Context) (finalAggFuncs []*aggregation.AggFuncDesc, finalGbyItems []expression.Expression, partialSchema *expression.Schema) {
+	finalSchema *expression.Schema) (finalAggFuncs []*aggregation.AggFuncDesc, finalGbyItems []expression.Expression, partialSchema *expression.Schema) {
 	// TODO: Refactor the way of constructing aggregation functions.
 	partialSchema = expression.NewSchema()
 	partialCursor := 0
@@ -964,12 +965,12 @@ func SplitAggToPartial1(
 
 func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
-	if !CheckAggCanPushCop(p.AggFuncs, p.GroupByItems, p.ctx, copToFlash) {
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copToFlash) {
 		return nil, p.self
 	}
-	finalAggFuncs, finalGbyItems, partialSchema := SplitAggToPartial1(p.AggFuncs, p.GroupByItems, p.schema, p.ctx)
+	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)
 	// Remove unnecessary FirstRow.
-	p.AggFuncs = RemoveUnnecessaryFirstRow(finalAggFuncs, finalGbyItems, p.AggFuncs, p.GroupByItems, partialSchema, p.ctx)
+	p.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx, finalAggFuncs, finalGbyItems, p.AggFuncs, p.GroupByItems, partialSchema)
 	finalSchema := p.schema
 	p.schema = partialSchema
 	partialAgg := p.self
@@ -999,12 +1000,12 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 // The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
 // Can optimize the schema to [count(b), a] , and change the index to get value.
 func RemoveUnnecessaryFirstRow(
+	sctx sessionctx.Context,
 	finalAggFuncs []*aggregation.AggFuncDesc,
 	finalGbyItems []expression.Expression,
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialGbyItems []expression.Expression,
-	partialSchema *expression.Schema,
-	sctx sessionctx.Context) []*aggregation.AggFuncDesc {
+	partialSchema *expression.Schema) []*aggregation.AggFuncDesc {
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
 	for i, aggFunc := range partialAggFuncs {

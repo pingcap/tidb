@@ -267,7 +267,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		}
 	}
 	childEngine := expr.Children[0].GetExpr().Children[0].EngineType
-	return plannercore.CheckAggCanPushCop(agg.AggFuncs, agg.GroupByItems, agg.SCtx(), childEngine == memo.EngineTiFlash)
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, childEngine == memo.EngineTiFlash)
 }
 
 // OnTransform implements Transformation interface.
@@ -302,10 +302,10 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	partialAgg.CopyAggHints(agg)
 
 	finalAggFuncs, finalGbyItems, partialSchema :=
-		plannercore.SplitAggToPartial1(partialAgg.AggFuncs, partialAgg.GroupByItems, aggSchema, partialAgg.SCtx())
+		plannercore.BuildFinalModeAggregation(partialAgg.SCtx(), partialAgg.AggFuncs, partialAgg.GroupByItems, aggSchema)
 	// Remove unnecessary FirstRow.
 	partialAgg.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(finalAggFuncs, finalGbyItems, partialAgg.AggFuncs, partialAgg.GroupByItems, partialSchema, partialAgg.SCtx())
+		plannercore.RemoveUnnecessaryFirstRow(partialAgg.SCtx(), finalAggFuncs, finalGbyItems, partialAgg.AggFuncs, partialAgg.GroupByItems, partialSchema)
 	finalAgg := plannercore.LogicalAggregation{
 		AggFuncs:     finalAggFuncs,
 		GroupByItems: finalGbyItems,
@@ -321,7 +321,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	finalAggExpr := memo.NewGroupExpr(finalAgg)
 	finalAggExpr.SetChildren(gatherGroup)
 	// We don't erase the old complete mode Aggregation because
-	// It may be able to apply other transformationRule.
+	// this transformation would not always be better.
 	return []*memo.GroupExpr{finalAggExpr}, false, false, nil
 }
 
