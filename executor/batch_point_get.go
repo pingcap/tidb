@@ -99,7 +99,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			keys = append(keys, idxKey)
 		}
 
-		// Fetch all handles
+		// Fetch all handles.
 		handleVals, err1 := e.batchGet(ctx, keys)
 		if err1 != nil {
 			return err1
@@ -172,8 +172,6 @@ func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (res ma
 	}
 
 	res = make(map[string][]byte, len(keys))
-	// We cannot use txn.BatchGet directly here because the snapshot in txn and the
-	// snapshot of e.snapshot may be different for pessimistic transaction.
 	mb := txn.GetMemBuffer()
 	cacheMiss := make([]kv.Key, 0, len(keys))
 	for _, key := range keys {
