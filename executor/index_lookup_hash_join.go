@@ -433,6 +433,14 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			joinResult.err = err
 			break
 		}
+		if task.keepOuterOrder {
+			// We need to
+			joinResult, ok = iw.getNewJoinResult(ctx)
+			if !ok {
+				cancelFunc()
+				return
+			}
+		}
 	}
 	if joinResult.err != nil {
 		cancelFunc()
