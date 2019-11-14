@@ -162,26 +162,26 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
+func recordAbortTxnDuration(sessVars *variable.SessionVars) {
+	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+	if sessVars.InRestrictedSQL {
+		transactionDurationInternalAbort.Observe(duration)
+	} else {
+		transactionDurationGeneralAbort.Observe(duration)
+	}
+}
+
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
 	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
-		var aborted bool
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
-			aborted = true
+			recordAbortTxnDuration(sessVars)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
-			aborted = true
-		}
-		if aborted {
-			duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-			if sessVars.InRestrictedSQL {
-				transactionDurationInternalAbort.Observe(duration)
-			} else {
-				transactionDurationGeneralAbort.Observe(duration)
-			}
+			recordAbortTxnDuration(sessVars)
 		}
 		return meetsErr
 	}
