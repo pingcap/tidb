@@ -44,7 +44,7 @@ type stmtSummaryByDigestKey struct {
 // Hash implements SimpleLRUCache.Key
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+8)
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(strings.ToLower(key.schemaName))...)
 	}
@@ -57,8 +57,8 @@ type stmtSummaryByDigestMap struct {
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
 
-	// sysVars encapsulates variables needed to judge whether statement summary is enabled.
-	sysVars struct {
+	// enabledWrapper encapsulates variables needed to judge whether statement summary is enabled.
+	enabledWrapper struct {
 		sync.RWMutex
 		// enabled indicates whether statement summary is enabled in current server.
 		sessionEnabled string
@@ -168,9 +168,9 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	ssMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
-	// sysVars.defaultEnabled will be initialized in package variable.
-	ssMap.sysVars.sessionEnabled = ""
-	ssMap.sysVars.globalEnabled = ""
+	// enabledWrapper.defaultEnabled will be initialized in package variable.
+	ssMap.enabledWrapper.sessionEnabled = ""
+	ssMap.enabledWrapper.globalEnabled = ""
 	return ssMap
 }
 
@@ -213,7 +213,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.summaryMap.DeleteAll()
 }
 
-// Convert statement summary to Datum
+// ToDatum converts statement summary to datum.
 func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
@@ -252,15 +252,15 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 	value = ssMap.normalizeEnableValue(value)
 
-	ssMap.sysVars.Lock()
+	ssMap.enabledWrapper.Lock()
 	if inSession {
-		ssMap.sysVars.sessionEnabled = value
+		ssMap.enabledWrapper.sessionEnabled = value
 	} else {
-		ssMap.sysVars.globalEnabled = value
+		ssMap.enabledWrapper.globalEnabled = value
 	}
-	sessionEnabled := ssMap.sysVars.sessionEnabled
-	globalEnabled := ssMap.sysVars.globalEnabled
-	ssMap.sysVars.Unlock()
+	sessionEnabled := ssMap.enabledWrapper.sessionEnabled
+	globalEnabled := ssMap.enabledWrapper.globalEnabled
+	ssMap.enabledWrapper.Unlock()
 
 	// Clear all summaries once statement summary is disabled.
 	var needClear bool
@@ -276,14 +276,14 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	ssMap.sysVars.RLock()
-	defer ssMap.sysVars.RUnlock()
+	ssMap.enabledWrapper.RLock()
+	defer ssMap.enabledWrapper.RUnlock()
 
 	var enabled bool
-	if ssMap.isSet(ssMap.sysVars.sessionEnabled) {
-		enabled = ssMap.isEnabled(ssMap.sysVars.sessionEnabled)
+	if ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
+		enabled = ssMap.isEnabled(ssMap.enabledWrapper.sessionEnabled)
 	} else {
-		enabled = ssMap.isEnabled(ssMap.sysVars.globalEnabled)
+		enabled = ssMap.isEnabled(ssMap.enabledWrapper.globalEnabled)
 	}
 	return enabled
 }
