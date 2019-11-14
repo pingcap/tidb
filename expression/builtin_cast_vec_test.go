@@ -79,6 +79,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&jsonTimeGener{},
 			}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 	},
 }
 
