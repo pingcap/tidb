@@ -366,11 +366,62 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinAesEncryptSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals AES_ENCRYPT(str, key_str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+		return err
+	}
+
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(keyBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+		return err
+	}
+
+	if b.modeName != "ecb" {
+		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
+	}
+
+	isWarning := !b.ivRequired && len(b.args) == 3
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		// According to doc: If either function argument is NULL, the function returns NULL.
+		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if isWarning {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		}
+		key := encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+
+		// NOTE: we can't use GetBytes, because in AESEncryptWithECB padding is automatically
+		//       added to str and this will damange the data layout in chunk.Column
+		str := []byte(strBuf.GetString(i))
+		cipherText, err := encrypt.AESEncryptWithECB(str, key)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendBytes(cipherText)
+	}
+
+	return nil
 }
 
 func (b *builtinPasswordSig) vectorized() bool {

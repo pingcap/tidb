@@ -332,7 +332,7 @@ LOOP:
 		case err := <-done:
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
@@ -414,7 +414,7 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
@@ -495,7 +495,7 @@ func (s *testDBSuite5) TestCancelDropIndex(c *C) {
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			c.Assert(indexInfo, NotNil)
 			c.Assert(indexInfo.State, Equals, model.StatePublic)
 		} else {
@@ -553,7 +553,7 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	_, err := s.tk.Exec("truncate table t")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -606,7 +606,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -696,7 +696,7 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			s.mustExec(c, "insert into t values (?, ?)", i, i)
 		} else {
 			c.Assert(err, IsNil)
@@ -1205,7 +1205,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col1, NotNil)
 			c.Assert(col1.Name.L, Equals, "c3")
-			c.Assert(err1.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
 			c.Assert(err1, IsNil)
@@ -1459,11 +1459,11 @@ LOOP:
 	// test add unsupported constraint
 	s.mustExec(c, "create table t_add_unsupported_constraint (a int);")
 	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int AUTO_INCREMENT;")
-	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint AUTO_INCREMENT when altering 'test_db.t_add_unsupported_constraint'")
+	c.Assert(err.Error(), Equals, "[ddl:8200]unsupported add column 'id' constraint AUTO_INCREMENT when altering 'test_db.t_add_unsupported_constraint'")
 	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int KEY;")
-	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint PRIMARY KEY when altering 'test_db.t_add_unsupported_constraint'")
+	c.Assert(err.Error(), Equals, "[ddl:8200]unsupported add column 'id' constraint PRIMARY KEY when altering 'test_db.t_add_unsupported_constraint'")
 	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int UNIQUE;")
-	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint UNIQUE KEY when altering 'test_db.t_add_unsupported_constraint'")
+	c.Assert(err.Error(), Equals, "[ddl:8200]unsupported add column 'id' constraint UNIQUE KEY when altering 'test_db.t_add_unsupported_constraint'")
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -1635,7 +1635,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	sql = "alter table t4 change c2 a bigint not null;"
 	s.tk.MustGetErrCode(sql, tmysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	s.tk.MustGetErrCode(sql, tmysql.ErrUnknown)
+	s.tk.MustGetErrCode(sql, tmysql.ErrUnsupportedDDLOperation)
 	// Rename to an existing column.
 	s.mustExec(c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
@@ -2191,6 +2191,10 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 		s.tk.MustGetErrCode(fmt.Sprintf(sql, "test1.t1", "test1.T1"), tmysql.ErrTableExists)
 	}
 
+	// Test rename table name too long.
+	s.tk.MustGetErrCode("rename table test1.t1 to test1.txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", tmysql.ErrTooLongIdent)
+	s.tk.MustGetErrCode("alter  table test1.t1 rename to test1.txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", tmysql.ErrTooLongIdent)
+
 	s.tk.MustExec("drop database test1")
 }
 
@@ -2399,7 +2403,7 @@ func (s *testDBSuite4) TestRebaseAutoID(c *C) {
 	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
 
 	s.tk.MustExec("create table tidb.test2 (a int);")
-	s.tk.MustGetErrCode("alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
+	s.tk.MustGetErrCode("alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnsupportedDDLOperation)
 }
 
 func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
@@ -2651,7 +2655,7 @@ LOOP:
 		select {
 		case err := <-done:
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			s.mustExec(c, "insert into t1(c2) values (null);")
@@ -3008,15 +3012,17 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("insert into t values()")
 	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
 	}
-	s.mustExec(c, "delete from t where y = 2155")
-	s.mustExec(c, "alter table t add index idx_y(y1)")
-	s.mustExec(c, "alter table t drop index idx_y")
+	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
+	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
+	//s.mustExec(c, "delete from t where y = 2155")
+	//s.mustExec(c, "alter table t add index idx_y(y1)")
+	//s.mustExec(c, "alter table t drop index idx_y")
 
 	// Fix issue 9311.
 	s.tk.MustExec("create table gcai_table (id int primary key);")

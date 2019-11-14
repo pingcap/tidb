@@ -237,6 +237,7 @@ func aesDecrypt(cryptStr []byte, mode cipher.BlockMode) ([]byte, error) {
 }
 
 // aesEncrypt encrypts data using AES.
+// NOTE: if len(str)<cap(str), the memory in str will be modified
 func aesEncrypt(str []byte, mode cipher.BlockMode) ([]byte, error) {
 	blockSize := mode.BlockSize()
 	// The str arguments can be any length, and padding is automatically added to
