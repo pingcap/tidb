@@ -312,7 +312,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(Column#3, 1)]))->HashAgg",
+			best: "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(Column#3, 1)])->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
