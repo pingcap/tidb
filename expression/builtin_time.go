@@ -2615,12 +2615,7 @@ func newDateArighmeticalUtil() baseDateArithmitical {
 	}
 }
 
-func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
-	dateStr, isNull, err := args[0].EvalString(ctx, row)
-	if isNull || err != nil {
-		return types.Time{}, true, err
-	}
-
+func getDateFromString(ctx sessionctx.Context, dateStr string, unit string) (types.Time, bool, error) {
 	dateTp := mysql.TypeDate
 	if !types.IsDateFormat(dateStr) || types.IsClockUnit(unit) {
 		dateTp = mysql.TypeDatetime
@@ -2629,6 +2624,14 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
 	return date, err != nil, handleInvalidTimeError(ctx, err)
+}
+
+func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
+	dateStr, isNull, err := args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, err
+	}
+	return getDateFromString(ctx, dateStr, unit)
 }
 
 func (du *baseDateArithmitical) getDateFromInt(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
@@ -2665,11 +2668,7 @@ func (du *baseDateArithmitical) getDateFromDatetime(ctx sessionctx.Context, args
 	return date, false, nil
 }
 
-func (du *baseDateArithmitical) getIntervalFromString(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (string, bool, error) {
-	interval, isNull, err := args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", true, err
-	}
+func getIntervalFromString(intervalRegexp *regexp.Regexp, interval string, unit string) (string, bool, error) {
 	// unit "DAY" and "HOUR" has to be specially handled.
 	if toLower := strings.ToLower(unit); toLower == "day" || toLower == "hour" {
 		if strings.ToLower(interval) == "true" {
@@ -2677,10 +2676,18 @@ func (du *baseDateArithmitical) getIntervalFromString(ctx sessionctx.Context, ar
 		} else if strings.ToLower(interval) == "false" {
 			interval = "0"
 		} else {
-			interval = du.intervalRegexp.FindString(interval)
+			interval = intervalRegexp.FindString(interval)
 		}
 	}
 	return interval, false, nil
+}
+
+func (du *baseDateArithmitical) getIntervalFromString(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (string, bool, error) {
+	interval, isNull, err := args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	return getIntervalFromString(du.intervalRegexp, interval, unit)
 }
 
 func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (string, bool, error) {

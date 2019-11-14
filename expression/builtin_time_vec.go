@@ -1657,11 +1657,88 @@ func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinAddDateStringStringSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalTime evals ADDDATE(date, INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	// 0 - dates
+	bufDate, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufDate)
+	if err = b.args[0].VecEvalString(b.ctx, input, bufDate); err != nil {
+		return err
+	}
+
+	// 1 - interval
+	bufInterval, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufInterval)
+	if err = b.args[1].VecEvalString(b.ctx, input, bufInterval); err != nil {
+		return err
+	}
+
+	// 2 - units
+	bufUnit, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufUnit)
+	if err = b.args[2].VecEvalString(b.ctx, input, bufUnit); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(bufDate, bufInterval, bufUnit)
+	dtUtil := newDateArighmeticalUtil()
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		unit := bufUnit.GetString(i)
+
+		// getDateFromString
+		date, isNull, err := getDateFromString(b.ctx, bufDate.GetString(i), unit)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+
+		// getIntervalFromString
+		interval, isNull, err := getIntervalFromString(
+			dtUtil.intervalRegexp, bufInterval.GetString(i), unit)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+
+		// add
+		tm, isNull, err := b.add(b.ctx, date, interval, unit)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		times[i] = tm
+	}
+	return nil
+
 }
 
 func (b *builtinAddDateIntStringSig) vectorized() bool {
