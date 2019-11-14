@@ -914,8 +914,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	defer b.bufAllocator.put(buf2)
 
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf1)
-	result.MergeNulls(buf2)
+	result.MergeNulls(buf1, buf2)
 	i64s := result.Int64s()
 	ds := buf1.Times()
 	ms := buf2.Int64s()
@@ -935,7 +934,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		if buf2.IsNull(i) {
 			mode = 0
 		}
-		week := date.Time.Week(int(mode))
+		week := date.Time.Week(mode)
 		i64s[i] = int64(week)
 	}
 	return nil
