@@ -460,6 +460,7 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 // mergeFullyContainedFeedback merges the max fraction of non-overlapped feedbacks that are fully contained in the bucket.
 func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, bool) {
 	var feedbacks []Feedback
+	feedbacks = make([]Feedback, 0, len(b.feedback))
 	// Get all the fully contained feedbacks.
 	for _, fb := range b.feedback {
 		res, err := outOfRange(sc, bkt.Lower, bkt.Upper, fb.Lower)

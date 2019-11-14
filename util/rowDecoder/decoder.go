@@ -185,6 +185,7 @@ func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 		colOffset int
 	}
 	var orderedCols []Pair
+	orderedCols = make([]Pair, 0, len(decodeColMap))
 	for colID, col := range decodeColMap {
 		orderedCols = append(orderedCols, Pair{colID, col.Col.Offset})
 	}
