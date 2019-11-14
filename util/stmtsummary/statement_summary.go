@@ -111,6 +111,7 @@ type stmtSummaryByDigest struct {
 	sumProcessedKeys int64
 	maxProcessedKeys int64
 	// txn
+	commitCount          int64
 	sumGetCommitTsTime   time.Duration
 	maxGetCommitTsTime   time.Duration
 	sumPrewriteTime      time.Duration
@@ -133,8 +134,9 @@ type stmtSummaryByDigest struct {
 	maxTxnRetry          int
 	backoffTypes         map[fmt.Stringer]int
 	// other
-	sumMem int64
-	maxMem int64
+	sumMem          int64
+	maxMem          int64
+	sumAffectedRows uint64
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
@@ -156,6 +158,7 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
+	AffectedRows   uint64
 	StartTime      time.Time
 }
 
@@ -402,6 +405,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	// txn
 	commitDetails := sei.ExecDetail.CommitDetail
 	if commitDetails != nil {
+		ssbd.commitCount++
 		ssbd.sumPrewriteTime += commitDetails.PrewriteTime
 		if commitDetails.PrewriteTime > ssbd.maxPrewriteTime {
 			ssbd.maxPrewriteTime = commitDetails.PrewriteTime
@@ -456,6 +460,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	}
 
 	// other
+	ssbd.sumAffectedRows += sei.AffectedRows
 	ssbd.sumMem += sei.MemMax
 	if sei.MemMax > ssbd.maxMem {
 		ssbd.maxMem = sei.MemMax
@@ -505,29 +510,30 @@ func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
 		ssbd.maxTotalKeys,
 		avgInt(ssbd.sumProcessedKeys, ssbd.execCount),
 		ssbd.maxProcessedKeys,
-		avgInt(int64(ssbd.sumPrewriteTime), ssbd.execCount),
+		avgInt(int64(ssbd.sumPrewriteTime), ssbd.commitCount),
 		int64(ssbd.maxPrewriteTime),
-		avgInt(int64(ssbd.sumCommitTime), ssbd.execCount),
+		avgInt(int64(ssbd.sumCommitTime), ssbd.commitCount),
 		int64(ssbd.maxCommitTime),
-		avgInt(int64(ssbd.sumGetCommitTsTime), ssbd.execCount),
+		avgInt(int64(ssbd.sumGetCommitTsTime), ssbd.commitCount),
 		int64(ssbd.maxGetCommitTsTime),
-		avgInt(ssbd.sumCommitBackoffTime, ssbd.execCount),
+		avgInt(ssbd.sumCommitBackoffTime, ssbd.commitCount),
 		ssbd.maxCommitBackoffTime,
-		avgInt(ssbd.sumResolveLockTime, ssbd.execCount),
+		avgInt(ssbd.sumResolveLockTime, ssbd.commitCount),
 		ssbd.maxResolveLockTime,
-		avgInt(int64(ssbd.sumLocalLatchTime), ssbd.execCount),
+		avgInt(int64(ssbd.sumLocalLatchTime), ssbd.commitCount),
 		int64(ssbd.maxLocalLatchTime),
-		avgFloat(ssbd.sumWriteKeys, ssbd.execCount),
+		avgFloat(ssbd.sumWriteKeys, ssbd.commitCount),
 		ssbd.maxWriteKeys,
-		avgFloat(ssbd.sumWriteSize, ssbd.execCount),
+		avgFloat(ssbd.sumWriteSize, ssbd.commitCount),
 		ssbd.maxWriteSize,
-		avgFloat(ssbd.sumPrewriteRegionNum, ssbd.execCount),
-		ssbd.maxPrewriteRegionNum,
-		avgFloat(ssbd.sumTxnRetry, ssbd.execCount),
+		avgFloat(ssbd.sumPrewriteRegionNum, ssbd.commitCount),
+		int(ssbd.maxPrewriteRegionNum),
+		avgFloat(ssbd.sumTxnRetry, ssbd.commitCount),
 		ssbd.maxTxnRetry,
 		fmt.Sprintf("%v", ssbd.backoffTypes),
 		avgInt(ssbd.sumMem, ssbd.execCount),
 		ssbd.maxMem,
+		avgFloat(int64(ssbd.sumAffectedRows), ssbd.execCount),
 		types.Time{Time: types.FromGoTime(ssbd.firstSeen), Type: mysql.TypeTimestamp},
 		types.Time{Time: types.FromGoTime(ssbd.lastSeen), Type: mysql.TypeTimestamp},
 		ssbd.sampleSQL,
@@ -549,8 +555,8 @@ func avgFloat(sum int64, count int64) float64 {
 }
 
 func convertEmptyToNil(str string) interface{} {
-	if str == "" {
+	/*if str == "" {
 		return nil
-	}
+	}*/
 	return str
 }

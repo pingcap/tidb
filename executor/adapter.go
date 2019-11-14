@@ -907,6 +907,7 @@ func (a *ExecStmt) SummaryStmt() {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
+		AffectedRows:   stmtCtx.AffectedRows(),
 		StartTime:      sessVars.StartTime,
 	})
 }

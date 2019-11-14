@@ -15,7 +15,6 @@ package stmtsummary
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/store/tikv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 )
@@ -100,8 +100,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          2,
 			},
 		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
@@ -163,6 +164,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		backoffTypes:         make(map[fmt.Stringer]int),
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
+		sumAffectedRows:      stmtExecInfo1.AffectedRows,
 		firstSeen:            stmtExecInfo1.StartTime,
 		lastSeen:             stmtExecInfo1.StartTime,
 	}
@@ -218,8 +220,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          10,
 			},
 		},
-		MemMax:    20000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
+		MemMax:       20000,
+		AffectedRows: 200,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 	}
 	expectedSummary.execCount++
 	expectedSummary.sumLatency += stmtExecInfo2.TotalLatency
@@ -268,6 +271,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummary.backoffTypes[tikv.BoTxnLock] = 1
 	expectedSummary.sumMem += stmtExecInfo2.MemMax
 	expectedSummary.maxMem = stmtExecInfo2.MemMax
+	expectedSummary.sumAffectedRows += stmtExecInfo2.AffectedRows
 	expectedSummary.lastSeen = stmtExecInfo2.StartTime
 
 	s.ssMap.AddStatement(stmtExecInfo2)
@@ -321,8 +325,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          1,
 			},
 		},
-		MemMax:    200,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
+		MemMax:       200,
+		AffectedRows: 20,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
 	expectedSummary.execCount++
 	expectedSummary.sumLatency += stmtExecInfo3.TotalLatency
@@ -349,6 +354,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummary.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummary.backoffTypes[tikv.BoTxnLock] = 2
 	expectedSummary.sumMem += stmtExecInfo3.MemMax
+	expectedSummary.sumAffectedRows += stmtExecInfo3.AffectedRows
 	expectedSummary.firstSeen = stmtExecInfo3.StartTime
 
 	s.ssMap.AddStatement(stmtExecInfo3)
@@ -388,8 +394,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			TotalKeys:     600,
 			ProcessedKeys: 150,
 		},
-		MemMax:    200,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
+		MemMax:       200,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
 	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo4.SchemaName,
@@ -432,8 +439,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			TotalKeys:     600,
 			ProcessedKeys: 150,
 		},
-		MemMax:    200,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
+		MemMax:       200,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
 	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo5.SchemaName,
@@ -500,6 +508,7 @@ func matchStmtSummaryByDigest(first *stmtSummaryByDigest, second *stmtSummaryByD
 		first.maxTxnRetry != second.maxTxnRetry ||
 		first.sumMem != second.sumMem ||
 		first.maxMem != second.maxMem ||
+		first.sumAffectedRows != second.sumAffectedRows ||
 		first.firstSeen != second.firstSeen ||
 		first.lastSeen != second.lastSeen {
 		return false
@@ -583,8 +592,9 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 				TxnRetry:          2,
 			},
 		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums := s.ssMap.ToDatum()
@@ -613,7 +623,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		fmt.Sprintf("%v", backoffTypes), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax,
+		fmt.Sprintf("%v", backoffTypes), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.AffectedRows,
 		t, t, stmtExecInfo1.OriginalSQL)
 }
 
@@ -679,8 +689,9 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 					TxnRetry:          2,
 				},
 			},
-			MemMax:    10000,
-			StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+			MemMax:       10000,
+			AffectedRows: 100,
+			StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 		}
 
 		// Add 32 times with different digest
@@ -738,8 +749,9 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 			TotalKeys:     1000,
 			ProcessedKeys: 500,
 		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
@@ -806,8 +818,9 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 			TotalKeys:     1000,
 			ProcessedKeys: 500,
 		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 	s.ssMap.AddStatement(stmtExecInfo1)
 
@@ -861,8 +874,9 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 			TotalKeys:     1000,
 			ProcessedKeys: 500,
 		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 
 	s.ssMap.AddStatement(stmtExecInfo1)
@@ -910,8 +924,9 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 			TotalKeys:     1000,
 			ProcessedKeys: 500,
 		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
 	s.ssMap.AddStatement(stmtExecInfo2)
 	datums = s.ssMap.ToDatum()

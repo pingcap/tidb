@@ -26,14 +26,13 @@ import (
 )
 
 const (
-	tableNameEventsStatementsSummaryByDigest        = "events_statements_summary_by_digest"
-	tableNameEventsStatementsSummaryByDigestHistory = "events_statements_summary_by_digest_history"
-	tableNameTiDBProfileCPU                         = "tidb_profile_cpu"
-	tableNameTiDBProfileMemory                      = "tidb_profile_memory"
-	tableNameTiDBProfileMutex                       = "tidb_profile_mutex"
-	tableNameTiDBProfileAllocs                      = "tidb_profile_allocs"
-	tableNameTiDBProfileBlock                       = "tidb_profile_block"
-	tableNameTiDBProfileGoroutines                  = "tidb_profile_goroutines"
+	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
+	tableNameTiDBProfileCPU                  = "tidb_profile_cpu"
+	tableNameTiDBProfileMemory               = "tidb_profile_memory"
+	tableNameTiDBProfileMutex                = "tidb_profile_mutex"
+	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
+	tableNameTiDBProfileBlock                = "tidb_profile_block"
+	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
