@@ -128,7 +128,7 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
 
 func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
@@ -380,7 +380,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	tk.MustExec("drop table if exists t")
 	_, err := tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {

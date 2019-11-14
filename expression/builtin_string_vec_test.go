@@ -70,6 +70,13 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
 			geners:        []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{-25, 25}, &rangeInt64Gener{-25, 25}},
 		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong}, {Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{-25, 25}, &rangeInt64Gener{-25, 25}},
+		},
 	},
 	ast.SubstringIndex: {
 		{
@@ -140,6 +147,18 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
 		},
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{168435456, 368435456}, &randLenStrGener{0, 10}},
+		},
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+		},
 	},
 	ast.CharLength: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
@@ -148,7 +167,6 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.FindInSet: {},
-	ast.Field:     {},
 	ast.MakeSet: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString}},
 	},
@@ -171,7 +189,23 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.FromBase64: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 100}}},
 	},
-	ast.ExportSet: {},
+	ast.ExportSet: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners:        []dataGenerator{&rangeInt64Gener{10, 100}, &constStrGener{"Y"}, &constStrGener{"N"}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString},
+			geners:        []dataGenerator{&rangeInt64Gener{10, 100}, &constStrGener{"Y"}, &constStrGener{"N"}, &constStrGener{","}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&rangeInt64Gener{10, 100}, &constStrGener{"Y"}, &constStrGener{"N"}, &constStrGener{","}, &rangeInt64Gener{-10, 70}},
+		},
+	},
 	ast.Repeat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
