@@ -669,8 +669,6 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			} else {
 				joinResult.src <- joinResult.chk
 			}
-			// Set joinResult.chk to be nil here to avoid it be reused by mistake.
-			joinResult.chk = nil
 		}
 		close(resultCh)
 	}()
