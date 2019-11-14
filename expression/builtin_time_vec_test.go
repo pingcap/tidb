@@ -178,6 +178,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.FromDays: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
 	},
+	ast.Extract: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&unitStrGener{}, nil}},	
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
