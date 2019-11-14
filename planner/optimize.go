@@ -240,6 +240,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	}
 	bindSQL := sb.String()
 	selectIdx := strings.Index(bindSQL, "SELECT")
+	// Remove possible `explain` prefix.
 	bindSQL = bindSQL[selectIdx:]
 	bindsql := strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	globalHandle := domain.GetDomain(sctx).BindHandle()
