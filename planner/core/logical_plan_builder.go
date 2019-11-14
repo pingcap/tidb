@@ -57,6 +57,10 @@ const (
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.
 	HintINLJ = "inl_join"
+	// HintINLHJ is hint enforce index nested loop hash join.
+	HintINLHJ = "inl_hash_join"
+	// HintINLMJ is hint enforce index nested loop merge join.
+	HintINLMJ = "inl_merge_join"
 	// TiDBHashJoin is hint enforce hash join.
 	TiDBHashJoin = "tidb_hj"
 	// HintHJ is hint enforce hash join.
@@ -381,10 +385,22 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.preferJoinType |= preferHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsIndexInner
+		p.preferJoinType |= preferLeftAsINLJInner
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsIndexInner
+		p.preferJoinType |= preferRightAsINLJInner
+	}
+	if hintInfo.ifPreferINLHJ(lhsAlias) {
+		p.preferJoinType |= preferLeftAsINLHJInner
+	}
+	if hintInfo.ifPreferINLHJ(rhsAlias) {
+		p.preferJoinType |= preferRightAsINLHJInner
+	}
+	if hintInfo.ifPreferINLMJ(lhsAlias) {
+		p.preferJoinType |= preferLeftAsINLMJInner
+	}
+	if hintInfo.ifPreferINLMJ(rhsAlias) {
+		p.preferJoinType |= preferRightAsINLMJInner
 	}
 
 	// set hintInfo for further usage if this hint info can be used.
@@ -392,9 +408,7 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.hintInfo = hintInfo
 	}
 
-	// If there're multiple join types and one of them is not index join hint,
-	// then there is a conflict of join types.
-	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
+	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2085,10 +2099,10 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
-		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
-		indexHintList                               []indexHintInfo
-		tiflashTables                               []hintTableInfo
-		aggHints                                    aggHintInfo
+		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
+		indexHintList                                                         []indexHintInfo
+		tiflashTables                                                         []hintTableInfo
+		aggHints                                                              aggHintInfo
 	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -2096,6 +2110,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+		case HintINLHJ:
+			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+		case HintINLMJ:
+			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintHashAgg:
@@ -2146,7 +2164,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,
-		indexNestedLoopJoinTables: INLJTables,
+		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
 		flashTables:               tiflashTables,
@@ -2156,7 +2174,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
-	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables.inljTables)
+	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
+	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
@@ -2167,8 +2187,12 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 	if len(unMatchedTables) == 0 {
 		return
 	}
-	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s or %s. Maybe you can use the table alias name",
-		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinTypeAlias, hintTables))
+	if len(joinTypeAlias) != 0 {
+		joinTypeAlias = fmt.Sprintf(" or %s", restore2JoinHint(joinTypeAlias, hintTables))
+	}
+
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s%s. Maybe you can use the table alias name",
+		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), joinTypeAlias)
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
@@ -2556,17 +2580,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 
-	// If this table contains any virtual generated columns, we need a
-	// "Projection" to calculate these columns.
-	proj, err := b.projectVirtualColumns(ctx, ds, columns)
-	if err != nil {
-		return nil, err
+	for i, colExpr := range ds.Schema().Columns {
+		var expr expression.Expression
+		if i < len(columns) {
+			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				if err != nil {
+					return nil, err
+				}
+				colExpr.VirtualExpr = expr
+			}
+		}
 	}
 
-	if proj != nil {
-		proj.SetChildren(result)
-		result = proj
-	}
 	return result, nil
 }
 
@@ -2658,66 +2685,6 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 	return projUponView, nil
 }
 
-// projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
-// we add a projection on the original DataSource, and calculate those columns in the projection
-// so that plans above it can reference generated columns by their name.
-func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource, columns []*table.Column) (*LogicalProjection, error) {
-	hasVirtualGeneratedColumn := false
-	for _, column := range columns {
-		if column.IsGenerated() && !column.GeneratedStored {
-			hasVirtualGeneratedColumn = true
-			break
-		}
-	}
-	if !hasVirtualGeneratedColumn {
-		return nil, nil
-	}
-	proj := LogicalProjection{
-		Exprs:            make([]expression.Expression, 0, len(columns)),
-		calculateGenCols: true,
-	}.Init(b.ctx, b.getSelectOffset())
-
-	for i, colExpr := range ds.Schema().Columns {
-		var exprIsGen = false
-		var expr expression.Expression
-		if i < len(columns) {
-			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
-				var err error
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
-				if err != nil {
-					return nil, err
-				}
-				// Because the expression might return different type from
-				// the generated column, we should wrap a CAST on the result.
-				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
-				exprIsGen = true
-			}
-		}
-		if !exprIsGen {
-			expr = colExpr
-		}
-		proj.Exprs = append(proj.Exprs, expr)
-	}
-
-	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
-	// example, given:
-	//  column a, column b as (a * 2), column c as (b + 1)
-	// we'll get:
-	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
-	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
-	// it's safe to iterate in index-ascending order.
-	for i, expr := range proj.Exprs {
-		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
-	}
-
-	proj.SetSchema(ds.Schema().Clone())
-	proj.names = ds.names
-	for _, cols := range b.handleHelper.tailMap() {
-		cols[0] = proj.schema.RetrieveColumn(cols[0])
-	}
-	return proj, nil
-}
-
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
@@ -2800,7 +2767,13 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.preferJoinType |= preferHashJoin
 		}
 		if b.TableHints().ifPreferINLJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsIndexInner
+			joinPlan.preferJoinType = preferRightAsINLJInner
+		}
+		if b.TableHints().ifPreferINLHJ(innerAlias) {
+			joinPlan.preferJoinType = preferRightAsINLHJInner
+		}
+		if b.TableHints().ifPreferINLMJ(innerAlias) {
+			joinPlan.preferJoinType = preferRightAsINLMJInner
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
@@ -3984,4 +3957,30 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
 	return expr
+}
+
+// containDifferentJoinTypes checks whether `preferJoinType` contains different
+// join types.
+func containDifferentJoinTypes(preferJoinType uint) bool {
+	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
+	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
+	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
+
+	mask := inlMask ^ inlhjMask ^ inlmjMask
+	onesCount := bits.OnesCount(preferJoinType & ^mask)
+	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
+		return true
+	}
+
+	cnt := 0
+	if preferJoinType&inlMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlhjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlmjMask > 0 {
+		cnt++
+	}
+	return cnt > 1
 }
