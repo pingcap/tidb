@@ -225,14 +225,6 @@ func (b *builtinAddDateDatetimeDecimalSig) vecEvalTime(input *chunk.Chunk, resul
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinStringStringTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinDayNameSig) vectorized() bool {
 	return true
 }
@@ -554,14 +546,6 @@ func (b *builtinPeriodDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	return nil
 }
 
-func (b *builtinTimeTimeTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinNowWithArgSig) vectorized() bool {
 	return true
 }
@@ -628,14 +612,6 @@ func (b *builtinSubDateDurationDecimalSig) vectorized() bool {
 }
 
 func (b *builtinSubDateDurationDecimalSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -820,14 +796,6 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinTimeStringTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinFromDaysSig) vectorized() bool {
 	return true
 }
@@ -869,14 +837,6 @@ func (b *builtinSubDatetimeAndStringSig) vectorized() bool {
 }
 
 func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinDurationDurationTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -1087,14 +1047,6 @@ func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		times[i] = nowTs
 	}
 	return nil
-}
-
-func (b *builtinStringDurationTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
 }
 
 func (b *builtinTimestampLiteralSig) vectorized() bool {
@@ -1712,14 +1664,6 @@ func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinDurationStringTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinAddDateIntStringSig) vectorized() bool {
 	return false
 }
@@ -1978,14 +1922,6 @@ func (b *builtinDateLiteralSig) vectorized() bool {
 }
 
 func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinStringTimeTimeDiffSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
