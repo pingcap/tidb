@@ -64,8 +64,8 @@ func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, ta
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
-	rewriter := &simpleRewriter{ctx: ctx, schema: NewSchema(columns...)}
+	columns, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
+	rewriter := &simpleRewriter{ctx: ctx, schema: NewSchema(columns...), names: names}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, rewriter.err
@@ -96,6 +96,29 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
+// ParseSimpleExprsWithNames parses simple expression string to Expression.
+// The expression string must only reference the column in the given NameSlice.
+func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *Schema, names types.NameSlice) ([]Expression, error) {
+	exprStr = "select " + exprStr
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	if err != nil {
+		return nil, util.SyntaxWarn(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	exprs := make([]Expression, 0, len(fields))
+	for _, field := range fields {
+		expr, err := RewriteSimpleExprWithNames(ctx, field.Expr, schema, names)
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, nil
+}
+
 // RewriteSimpleExprWithNames rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*types.FieldName) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema, names: names}
@@ -116,8 +139,8 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 	return rewriter.pop(), nil
 }
 
-// FindColName finds the column name from []*namingForMySQLProtocol.
-func FindColName(names []*types.FieldName, astCol *ast.ColumnName) (int, error) {
+// FindFieldName finds the column name from NameSlice.
+func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, name := range names {
@@ -134,17 +157,20 @@ func FindColName(names []*types.FieldName, astCol *ast.ColumnName) (int, error) 
 	return idx, nil
 }
 
-func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
-	if sr.names != nil {
-		idx, err := FindColName(sr.names, nodeColName.Name)
-		if idx >= 0 && err == nil {
-			return sr.schema.Columns[idx], nil
+// FindFieldNameIdxByColName finds the index of corresponding name in the given slice. -1 for not found.
+func FindFieldNameIdxByColName(names []*types.FieldName, colName string) int {
+	for i, name := range names {
+		if name.ColName.L == colName {
+			return i
 		}
-		return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
 	}
-	col, err := sr.schema.FindColumn(nodeColName.Name)
-	if col != nil && err == nil {
-		return col, nil
+	return -1
+}
+
+func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
+	idx, err := FindFieldName(sr.names, nodeColName.Name)
+	if idx >= 0 && err == nil {
+		return sr.schema.Columns[idx], nil
 	}
 	return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
 }

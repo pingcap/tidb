@@ -14,12 +14,10 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -63,6 +61,9 @@ type copTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols           []*expression.Column
 	idxMergePartPlans []PhysicalPlan
+	// rootTaskConds stores select conditions containing virtual columns.
+	// These conditions can't push to TiKV, so we have to add a selection for rootTask
+	rootTaskConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -132,7 +133,10 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -389,7 +393,8 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 // GetCost computes cost of hash join operator itself.
 func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	innerCnt, outerCnt := lCnt, rCnt
-	if p.InnerChildIdx == 1 {
+	// Taking the right as the inner for right join or using the outer to build a hash table.
+	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
 		innerCnt, outerCnt = rCnt, lCnt
 	}
 	sessVars := p.ctx.GetSessionVars()
@@ -435,6 +440,10 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.ConcurrencyFactor
+	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
+	if p.UseOuterToBuild {
+		cpuCost += innerCnt * sessVars.CPUFactor / float64(p.Concurrency)
+	}
 	return cpuCost + memoryCost
 }
 
@@ -624,8 +633,16 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType: ts.StoreType,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
+		ts.ExpandVirtualColumn()
 		newTask.p = p
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
+	}
+
 	return newTask
 }
 
@@ -871,6 +888,9 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
+		if expression.ContainVirtualColumn(aggFunc.Args) {
+			return nil, p.self
+		}
 		if copToFlash {
 			if !aggregation.CheckAggPushFlash(aggFunc) {
 				return nil, p.self
@@ -906,7 +926,6 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
 				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  ft,
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -915,7 +934,6 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
 				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -929,10 +947,9 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 
 	// add group by columns
 	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
-	for i, gbyExpr := range p.GroupByItems {
+	for _, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
 			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)

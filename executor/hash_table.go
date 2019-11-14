@@ -35,17 +35,17 @@ const (
 	// estCountMaxFactor defines the factor of estCountMax with maxChunkSize.
 	// estCountMax is maxChunkSize * estCountMaxFactor, the maximum threshold of estCount.
 	// if estCount is larger than estCountMax, set estCount to estCountMax.
-	// Set this threshold to prevent innerEstCount being too large and causing a performance and memory regression.
+	// Set this threshold to prevent buildSideEstCount being too large and causing a performance and memory regression.
 	estCountMaxFactor = 10 * 1024
 
 	// estCountMinFactor defines the factor of estCountMin with maxChunkSize.
 	// estCountMin is maxChunkSize * estCountMinFactor, the minimum threshold of estCount.
 	// If estCount is smaller than estCountMin, set estCount to 0.
-	// Set this threshold to prevent innerEstCount being too small and causing a performance regression.
+	// Set this threshold to prevent buildSideEstCount being too small and causing a performance regression.
 	estCountMinFactor = 8
 
-	// estCountDivisor defines the divisor of innerEstCount.
-	// Set this divisor to prevent innerEstCount being too large and causing a performance regression.
+	// estCountDivisor defines the divisor of buildSideEstCount.
+	// Set this divisor to prevent buildSideEstCount being too large and causing a performance regression.
 	estCountDivisor = 8
 )
 
@@ -130,20 +130,17 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	return c
 }
 
-// GetMatchedRows get matched rows from probeRow. It can be called
+// GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
-	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
-	if err != nil || hasNull {
-		return
-	}
-	innerPtrs := c.hashTable.Get(key)
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		if c.alreadySpilled() {
 			matchedRow, err = c.recordsInDisk.GetRow(ptr)
@@ -162,6 +159,7 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 			continue
 		}
 		matched = append(matched, matchedRow)
+		matchedPtrs = append(matchedPtrs, ptr)
 	}
 	return
 }
@@ -196,6 +194,13 @@ func (c *hashRowContainer) alreadySpilledSafe() bool { return atomic.LoadUint32(
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
+	return c.PutChunkSelected(chk, nil)
+}
+
+// PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
 	var chkIdx uint32
 	if c.alreadySpilled() {
 		// append chk to disk.
@@ -222,13 +227,13 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 
 	hCtx := c.hCtx
 	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
 			continue
 		}
 		key := c.hCtx.hashVals[i].Sum64()

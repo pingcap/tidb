@@ -202,7 +202,7 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		Args:       []interface{}{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err.Error(), Equals, "[ddl:3]invalid ddl job type: none")
+	c.Assert(err.Error(), Equals, "[ddl:8204]invalid ddl job type: none")
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {
@@ -608,7 +608,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
-	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
+	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, "", mysql.DefaultCharset, "")
 	c.Assert(err, IsNil)
 
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}

@@ -1248,9 +1248,7 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
-	for i := 0; i < count; i++ {
-		tk.MustExec("insert into t1 values (?, ?, ?)", i, i, i)
-	}
+	batchInsert(s.tk, "t1", 0, count)
 
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
@@ -1690,9 +1688,9 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	`)
 
 	_, err := tk.Exec("alter table test_1465 truncate partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*can't run multi schema change")
+	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
 	_, err = tk.Exec("alter table test_1465 drop partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*can't run multi schema change")
+	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
 
 	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")

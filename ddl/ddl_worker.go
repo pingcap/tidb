@@ -264,7 +264,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 	if job.Version <= currentVersion {
 		err = w.delRangeManager.addDelRangeJob(job)
 	} else {
-		err = errInvalidJobVersion.GenWithStackByArgs(job.Version, currentVersion)
+		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
 }
@@ -557,6 +557,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onLockTables(t, job)
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(t, job)
+	case model.ActionSetTiFlashReplica:
+		ver, err = onSetTableFlashReplica(t, job)
+	case model.ActionUpdateTiFlashReplicaStatus:
+		ver, err = onUpdateFlashReplicaStatus(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
