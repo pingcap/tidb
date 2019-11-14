@@ -76,6 +76,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var err error
+	// Select for update is not optimized to BatchPointGetExec, so we can use e.startTS here.
 	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
 	if err != nil {
 		return err
@@ -98,8 +99,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			keys = append(keys, idxKey)
 		}
 
-		// Fetch all handles from snapshot
-		handleVals, err1 := e.snapshot.BatchGet(ctx, keys)
+		// Fetch all handles
+		handleVals, err1 := e.batchGet(ctx, keys)
 		if err1 != nil {
 			return err1
 		}
@@ -138,8 +139,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys[i] = key
 	}
 
-	// Fetch all values from snapshot
-	values, err1 := e.snapshot.BatchGet(ctx, keys)
+	// Fetch all values.
+	values, err1 := e.batchGet(ctx, keys)
 	if err1 != nil {
 		return err1
 	}
@@ -159,4 +160,45 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
+}
+
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (res map[string][]byte, err error) {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	if !txn.Valid() || txn.IsReadOnly() {
+		return e.snapshot.BatchGet(ctx, keys)
+	}
+
+	res = make(map[string][]byte, len(keys))
+	// We cannot use txn.BatchGet directly here because the snapshot in txn and the
+	// snapshot of e.snapshot may be different for pessimistic transaction.
+	mb := txn.GetMemBuffer()
+	cacheMiss := make([]kv.Key, 0, len(keys))
+	for _, key := range keys {
+		val, err := mb.Get(ctx, key)
+		if err == nil {
+			if len(val) > 0 {
+				res[string(key)] = val
+			}
+			continue
+		}
+
+		if !kv.IsErrNotFound(err) {
+			return nil, err
+		}
+		cacheMiss = append(cacheMiss, key)
+	}
+
+	tmp, err := e.snapshot.BatchGet(ctx, cacheMiss)
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine the result.
+	for k, v := range tmp {
+		res[k] = v
+	}
+	return res, nil
 }
