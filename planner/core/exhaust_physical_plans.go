@@ -263,18 +263,22 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 1))
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		joins = append(joins, p.getHashJoin(prop, 1, false))
+	case LeftOuterJoin:
+		joins = append(joins, p.getHashJoin(prop, 1, false))
+		joins = append(joins, p.getHashJoin(prop, 1, true))
 	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 0))
+		joins = append(joins, p.getHashJoin(prop, 0, false))
+		joins = append(joins, p.getHashJoin(prop, 0, true))
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1))
-		joins = append(joins, p.getHashJoin(prop, 0))
+		joins = append(joins, p.getHashJoin(prop, 1, false))
+		joins = append(joins, p.getHashJoin(prop, 0, false))
 	}
 	return joins
 }
 
-func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int) *PhysicalHashJoin {
+func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
@@ -296,6 +300,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		basePhysicalJoin: baseJoin,
 		EqualConditions:  p.EqualConditions,
 		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
+		UseOuterToBuild:  useOuterToBuild,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
@@ -669,7 +674,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		KeepOrder:       keepOrder,
 		Desc:            desc,
 	}.Init(ds.ctx, ds.blockOffset)
-	ts.SetSchema(ds.schema)
+	ts.SetSchema(ds.schema.Clone())
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
 		RowCount:     math.Min(1.0, rowCount),
@@ -1152,18 +1157,45 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
-	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
-	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
-	hasIndexJoinHint := leftOuter || rightOuter
+	inljRightOuter := (p.preferJoinType & preferLeftAsINLJInner) > 0
+	inljLeftOuter := (p.preferJoinType & preferRightAsINLJInner) > 0
+	hasINLJHint := inljLeftOuter || inljRightOuter
+
+	inlhjRightOuter := (p.preferJoinType & preferLeftAsINLHJInner) > 0
+	inlhjLeftOuter := (p.preferJoinType & preferRightAsINLHJInner) > 0
+	hasINLHJHint := inlhjLeftOuter || inlhjRightOuter
+
+	inlmjRightOuter := (p.preferJoinType & preferLeftAsINLMJInner) > 0
+	inlmjLeftOuter := (p.preferJoinType & preferRightAsINLMJInner) > 0
+	hasINLMJHint := inlmjLeftOuter || inlmjRightOuter
+
+	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
+	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
 
 	defer func() {
-		if !forced && hasIndexJoinHint {
+		// refine error message
+		if !forced && (hasINLJHint || hasINLHJHint || hasINLMJHint) {
 			// Construct warning message prefix.
-			errMsg := "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
+			var errMsg string
+			switch {
+			case hasINLJHint:
+				errMsg = "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
+			case hasINLHJHint:
+				errMsg = "Optimizer Hint INL_HASH_JOIN is inapplicable"
+			case hasINLMJHint:
+				errMsg = "Optimizer Hint INL_MERGE_JOIN is inapplicable"
+			}
 			if p.hintInfo != nil {
-				errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
-					restore2JoinHint(HintINLJ, p.hintInfo.indexNestedLoopJoinTables),
-					restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
+				t := p.hintInfo.indexNestedLoopJoinTables
+				switch {
+				case len(t.inljTables) != 0:
+					errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+						restore2JoinHint(HintINLJ, t.inljTables), restore2JoinHint(TiDBIndexNestedLoopJoin, t.inljTables))
+				case len(t.inlhjTables) != 0:
+					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.inlhjTables))
+				case len(t.inlmjTables) != 0:
+					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, t.inlmjTables))
+				}
 			}
 
 			// Append inapplicable reason.
@@ -1177,36 +1209,93 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 	}()
 
+	// supportLeftOuter and supportRightOuter indicates whether this type of join
+	// supports the left side or right side to be the outer side.
+	var supportLeftOuter, supportRightOuter bool
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		join := p.getIndexJoinByOuterIdx(prop, 0)
-		return join, join != nil && leftOuter
+		supportLeftOuter = true
 	case RightOuterJoin:
-		join := p.getIndexJoinByOuterIdx(prop, 1)
-		return join, join != nil && rightOuter
+		supportRightOuter = true
 	case InnerJoin:
-		lhsCardinality := p.Children()[0].statsInfo().Count()
-		rhsCardinality := p.Children()[1].statsInfo().Count()
-
-		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
-		if leftJoins != nil && (leftOuter && !rightOuter || lhsCardinality < rhsCardinality) {
-			return leftJoins, leftOuter
-		}
-
-		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
-		if rightJoins != nil && (rightOuter && !leftOuter || rhsCardinality < lhsCardinality) {
-			return rightJoins, rightOuter
-		}
-
-		canForceLeft := leftJoins != nil && leftOuter
-		canForceRight := rightJoins != nil && rightOuter
-		forced = canForceLeft || canForceRight
-
-		joins := append(leftJoins, rightJoins...)
-		return joins, forced
+		supportLeftOuter, supportRightOuter = true, true
 	}
 
-	return nil, false
+	var allLeftOuterJoins, allRightOuterJoins, forcedLeftOuterJoins, forcedRightOuterJoins []PhysicalPlan
+	if supportLeftOuter {
+		allLeftOuterJoins = p.getIndexJoinByOuterIdx(prop, 0)
+		forcedLeftOuterJoins = make([]PhysicalPlan, 0, len(allLeftOuterJoins))
+		for _, j := range allLeftOuterJoins {
+			switch j.(type) {
+			case *PhysicalIndexJoin:
+				if hasINLJHint {
+					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
+				}
+			case *PhysicalIndexHashJoin:
+				if hasINLHJHint {
+					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
+				}
+			case *PhysicalIndexMergeJoin:
+				if hasINLMJHint {
+					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
+				}
+			}
+		}
+		switch {
+		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() < p.Children()[1].statsInfo().Count():
+			if len(forcedLeftOuterJoins) != 0 {
+				return forcedLeftOuterJoins, forceLeftOuter
+			}
+			if len(allLeftOuterJoins) != 0 {
+				return allLeftOuterJoins, forceLeftOuter
+			}
+		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
+			return allLeftOuterJoins, false
+		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || forceLeftOuter && !forceRightOuter):
+			return forcedLeftOuterJoins, forceLeftOuter
+		}
+	}
+	if supportRightOuter {
+		allRightOuterJoins = p.getIndexJoinByOuterIdx(prop, 1)
+		forcedRightOuterJoins = make([]PhysicalPlan, 0, len(allRightOuterJoins))
+		for _, j := range allRightOuterJoins {
+			switch j.(type) {
+			case *PhysicalIndexJoin:
+				if hasINLJHint {
+					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
+				}
+			case *PhysicalIndexHashJoin:
+				if hasINLHJHint {
+					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
+				}
+			case *PhysicalIndexMergeJoin:
+				if hasINLMJHint {
+					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
+				}
+			}
+		}
+		switch {
+		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() > p.Children()[1].statsInfo().Count():
+			if len(forcedRightOuterJoins) != 0 {
+				return forcedRightOuterJoins, forceRightOuter
+			}
+			if len(allRightOuterJoins) != 0 {
+				return allRightOuterJoins, forceRightOuter
+			}
+		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
+			return allRightOuterJoins, false
+		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || forceRightOuter && !forceLeftOuter):
+			return forcedRightOuterJoins, forceRightOuter
+		}
+	}
+
+	canForceLeft := len(forcedLeftOuterJoins) != 0 && forceLeftOuter
+	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
+	forced = canForceLeft || canForceRight
+	if forced {
+		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), forced
+	}
+	return append(allLeftOuterJoins, allRightOuterJoins...), forced
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
@@ -1324,7 +1413,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	join := la.getHashJoin(prop, 1)
+	join := la.getHashJoin(prop, 1, false)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.corCols,

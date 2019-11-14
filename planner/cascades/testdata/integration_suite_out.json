@@ -275,5 +275,61 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestSimplePlans",
+    "Cases": [
+      {
+        "SQL": "select a from t limit 2",
+        "Plan": [
+          "Limit_6 2.00 root offset:0, count:2",
+          "└─Projection_7 2.00 root Column#1",
+          "  └─TableReader_8 2.00 root data:TableScan_9",
+          "    └─TableScan_9 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select a from t limit 1 offset 2",
+        "Plan": [
+          "Limit_6 1.00 root offset:2, count:1",
+          "└─Projection_7 3.00 root Column#1",
+          "  └─TableReader_8 3.00 root data:TableScan_9",
+          "    └─TableScan_9 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select b from t order by b limit 3",
+        "Plan": [
+          "TopN_8 3.00 root Column#3:asc, offset:0, count:3",
+          "└─Projection_10 10000.00 root Column#2",
+          "  └─TableReader_11 10000.00 root data:TableScan_12",
+          "    └─TableScan_12 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "11",
+          "22",
+          "33"
+        ]
+      },
+      {
+        "SQL": "select a from t order by a limit 1 offset 2",
+        "Plan": [
+          "Limit_9 1.00 root offset:2, count:1",
+          "└─Projection_13 3.00 root Column#1",
+          "  └─TableReader_14 3.00 root data:TableScan_15",
+          "    └─TableScan_15 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      }
+    ]
   }
 ]

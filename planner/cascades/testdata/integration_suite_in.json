@@ -45,5 +45,14 @@
       "explain select sum(a) from t group by a, a+b order by a",
       "select sum(a) from t group by a, a+b order by a"
     ]
+  },
+  {
+    "name": "TestSimplePlans",
+    "cases": [
+      "select a from t limit 2",
+      "select a from t limit 1 offset 2",
+      "select b from t order by b limit 3",
+      "select a from t order by a limit 1 offset 2"
+    ]
   }
 ]
