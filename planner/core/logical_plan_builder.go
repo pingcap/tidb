@@ -260,13 +260,22 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 	return leftCond, rightCond
 }
 
-// extractOnCondition divide conditions in CNF of join node into 4 groups.
-// These conditions can be where conditions, join conditions, or collection of both.
-// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
-	left, right := p.children[0], p.children[1]
+	return p.ExtractOnCondition(conditions, p.children[0].Schema(), p.children[1].Schema(), deriveLeft, deriveRight)
+}
+
+// ExtractOnCondition divide conditions in CNF of join node into 4 groups.
+// These conditions can be where conditions, join conditions, or collection of both.
+// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
+func (p *LogicalJoin) ExtractOnCondition(
+	conditions []expression.Expression,
+	leftSchema *expression.Schema,
+	rightSchema *expression.Schema,
+	deriveLeft bool,
+	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
@@ -274,22 +283,22 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				leftCol := left.Schema().RetrieveColumn(arg0)
-				rightCol := right.Schema().RetrieveColumn(arg1)
+				leftCol := leftSchema.RetrieveColumn(arg0)
+				rightCol := rightSchema.RetrieveColumn(arg1)
 				if leftCol == nil || rightCol == nil {
-					leftCol = left.Schema().RetrieveColumn(arg1)
-					rightCol = right.Schema().RetrieveColumn(arg0)
+					leftCol = leftSchema.RetrieveColumn(arg1)
+					rightCol = rightSchema.RetrieveColumn(arg0)
 					arg0, arg1 = arg1, arg0
 				}
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
-						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
+						if isNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if isNullRejected(ctx, right.Schema(), expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
+						if isNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
@@ -316,10 +325,10 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 		}
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
-			if !left.Schema().Contains(col) {
+			if !leftSchema.Contains(col) {
 				allFromLeft = false
 			}
-			if !right.Schema().Contains(col) {
+			if !rightSchema.Contains(col) {
 				allFromRight = false
 			}
 		}
@@ -332,13 +341,13 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
 			// children as much as possible.
 			if deriveLeft {
-				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
+				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftSchema)
 				if leftRelaxedCond != nil {
 					leftCond = append(leftCond, leftRelaxedCond)
 				}
 			}
 			if deriveRight {
-				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
+				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightSchema)
 				if rightRelaxedCond != nil {
 					rightCond = append(rightCond, rightRelaxedCond)
 				}

@@ -163,6 +163,15 @@ func (g *Group) Delete(e *GroupExpr) {
 	e.Group = nil
 }
 
+// DeleteAllBeforeInsert deletes all the GroupExprs and inserts a new GroupExpr into the Group.
+func (g *Group) DeleteAllBeforeInsert(e *GroupExpr) {
+	g.Equivalents = list.New()
+	g.Fingerprints = make(map[string]*list.Element)
+	g.FirstExpr = make(map[Operand]*list.Element)
+	g.SelfFingerprint = ""
+	g.Insert(e)
+}
+
 // Exists checks whether a Group expression existed in a Group.
 func (g *Group) Exists(e *GroupExpr) bool {
 	_, ok := g.Fingerprints[e.FingerPrint()]

@@ -331,5 +331,41 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestJoin",
+    "Cases": [
+      {
+        "SQL": "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
+        "Plan": [
+          "Projection_16 4166.67 root Column#1, Column#2",
+          "└─HashRightJoin_17 4166.67 root inner join, inner:TableReader_19, equal:[eq(Column#1, Column#3)]",
+          "  ├─TableReader_19 3333.33 root data:TableScan_20",
+          "  │ └─TableScan_20 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_21 3333.33 root data:TableScan_22",
+          "    └─TableScan_22 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 33"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200",
+        "Plan": [
+          "Projection_12 80000000.00 root Column#1, Column#2",
+          "└─HashLeftJoin_14 80000000.00 root CARTESIAN inner join, inner:TableReader_17, other cond:gt(Column#1, Column#3)",
+          "  ├─TableReader_15 10000.00 root data:TableScan_16",
+          "  │ └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_17 8000.00 root data:Selection_18",
+          "    └─Selection_18 8000.00 cop[tikv] gt(Column#4, 200)",
+          "      └─TableScan_19 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 33",
+          "4 44",
+          "4 44"
+        ]
+      }
+    ]
   }
 ]
