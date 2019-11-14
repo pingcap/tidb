@@ -3089,7 +3089,8 @@ func (b *PlanBuilder) buildUpdateLists(
 
 // extractDefaultExpr extract a `DefaultExpr` without any parameter from a `ExprNode`,
 // return it and if successful extract it.
-// Note: the SQL function `DEFAULT(a)` is not same with keyword `DEFAULT`,
+// return the `DefaultExpr` and whether it's extracted successfully.
+// Note: the SQL function `DEFAULT(a)` is not the same with keyword `DEFAULT`,
 // SQL function `DEFAULT(a)` will return `false`.
 func extractDefaultExpr(node ast.ExprNode) (*ast.DefaultExpr, bool) {
 	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
