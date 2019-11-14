@@ -862,6 +862,7 @@ func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
+	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
 
 	res := result.Decimals()
@@ -908,6 +909,7 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
+	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
 
 	res := result.Decimals()
