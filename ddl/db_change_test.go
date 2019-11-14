@@ -117,8 +117,9 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 		if job.SchemaState != model.StatePublic {
 			var result sqlexec.RecordSet
 			var err error
-			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+			tbl2 := testGetTableByName(c, tkInternal.Se, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
+				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
 				result, err = tkInternal.Exec("show create table t2")
 				if err != nil {
 					return
