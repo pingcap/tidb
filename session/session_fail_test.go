@@ -113,20 +113,3 @@ func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
 }
-
-func (s *testSessionSuite) TestRetryPreparedSleep(c *C) {
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime"), IsNil)
-	}()
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table t (c1 int)")
-	tk.MustExec("insert t values (11)")
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`), IsNil)
-	tk.MustExec("begin")
-	tk.MustExec("update t set c1=? where c1=11;", 21)
-	tk.MustExec("insert into t select sleep(3)")
-	tk.MustExec("commit")
-
-	tk.MustQuery("select c1 from t").Check(testkit.Rows("21", "0"))
-}
