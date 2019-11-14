@@ -25,22 +25,30 @@ type hintProcessor struct {
 	*HintsSet
 	// bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
 	bindHint2Ast bool
-	tableCounter int64
-	indexCounter int64
+	tableCounter int
+	indexCounter int
 }
 
 func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch v := in.(type) {
 	case *ast.SelectStmt:
 		if hp.bindHint2Ast {
-			v.TableHints = hp.tableHints[hp.tableCounter]
+			if hp.tableCounter < len(hp.tableHints) {
+				v.TableHints = hp.tableHints[hp.tableCounter]
+			} else {
+				v.TableHints = nil
+			}
 			hp.tableCounter++
 		} else {
 			hp.tableHints = append(hp.tableHints, v.TableHints)
 		}
 	case *ast.TableName:
 		if hp.bindHint2Ast {
-			v.IndexHints = hp.indexHints[hp.indexCounter]
+			if hp.indexCounter < len(hp.indexHints) {
+				v.IndexHints = hp.indexHints[hp.indexCounter]
+			} else {
+				v.IndexHints = nil
+			}
 			hp.indexCounter++
 		} else {
 			hp.indexHints = append(hp.indexHints, v.IndexHints)
