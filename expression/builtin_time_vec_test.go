@@ -232,6 +232,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.FromDays: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
 	},
+<<<<<<< HEAD
 	ast.FromUnixTime: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
 			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
@@ -258,6 +259,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		// {retEvalType: types.ETDatetime},
 		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
 		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
+=======
+	ast.Extract: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&unitStrGener{}, nil}},	
+>>>>>>> exp for extractdatetime
 	},
 }
 
