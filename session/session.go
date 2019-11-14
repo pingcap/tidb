@@ -441,12 +441,16 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
-	var txnSize int
-	var isPessimistic bool
-	if s.txn.Valid() {
-		txnSize = s.txn.Size()
-		isPessimistic = s.txn.IsPessimistic()
+	defer func() {
+		s.txn.changeToInvalid()
+		s.cleanRetryInfo()
+	}()
+	if !s.txn.Valid() {
+		// If the transaction is invalid, maybe it has already been rolled back by the client.
+		return nil
 	}
+	txnSize := s.txn.Size()
+	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
