@@ -92,11 +92,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.MicroSecond: {
-<<<<<<< HEAD
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
-=======
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
->>>>>>> expression: implement vectorized evaluation for builtinExtractDatetimeSig
 	},
 	ast.Now: {
 		{retEvalType: types.ETDatetime},
