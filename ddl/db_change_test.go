@@ -80,6 +80,9 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
+	// Otherwise resetContextOfStmt in same tk will cause data race sometimes.
+	tkInternal := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
@@ -114,9 +117,9 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			var result *testkit.Result
 			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
-				result = tk.MustQuery("show create table t2")
+				result = tkInternal.MustQuery("show create table t2")
 			} else {
-				result = tk.MustQuery("show create table t")
+				result = tkInternal.MustQuery("show create table t")
 			}
 			got := result.Rows()[0][1]
 			expected := testCases[currTestCaseOffset].expectedRet
