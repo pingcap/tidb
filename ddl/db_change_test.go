@@ -115,14 +115,23 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			currTestCaseOffset++
 		}
 		if job.SchemaState != model.StatePublic {
-			var result *testkit.Result
+			var result sqlexec.RecordSet
+			var err error
 			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
-				result = tkInternal.MustQuery("show create table t2")
+				result, err = tkInternal.Exec("show create table t2")
+				if err != nil {
+					return
+				}
 			} else {
-				result = tkInternal.MustQuery("show create table t")
+				result, err = tkInternal.Exec("show create table t")
+				if err != nil {
+					return
+				}
 			}
-			got := result.Rows()[0][1]
+			req := result.NewChunk()
+			err = result.Next(context.Background(), req)
+			got := req.GetRow(0).GetString(1)
 			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
