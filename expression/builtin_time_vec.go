@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -741,11 +742,77 @@ func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinAddDateStringIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAddDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	// 0 - dates
+	bufDate, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufDate)
+	if err = b.args[0].VecEvalString(b.ctx, input, bufDate); err != nil {
+		return err
+	}
+
+	// 1 - interval
+	bufInterval, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufInterval)
+	if err = b.args[1].VecEvalInt(b.ctx, input, bufInterval); err != nil {
+		return err
+	}
+
+	// 2 - units
+	bufUnit, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufUnit)
+	if err = b.args[2].VecEvalString(b.ctx, input, bufUnit); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(bufDate, bufInterval, bufUnit)
+	times := result.Times()
+	i64s := bufInterval.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		unit := bufUnit.GetString(i)
+
+		// getDateFromString
+		date, isNull, err := getDateFromString(b.ctx, bufDate.GetString(i), unit)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+
+		// getIntervalFromInt
+		interval := strconv.FormatInt(i64s[i], 10)
+
+		// add
+		tm, isNull, err := b.add(b.ctx, date, interval, unit)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		times[i] = tm
+	}
+	return nil
 }
 
 func (b *builtinSysDateWithFspSig) vectorized() bool {
