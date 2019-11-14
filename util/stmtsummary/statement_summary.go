@@ -14,17 +14,13 @@
 package stmtsummary
 
 import (
-	"container/list"
-	"hash/fnv"
-	"math"
-	"strconv"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -41,8 +37,6 @@ type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
-	// Hash value of the plan before truncating.
-	planHash uint64
 	// `hash` is the hash value of this object
 	hash []byte
 }
@@ -52,7 +46,6 @@ func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+8)
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(string(key.planHash))...)
 		key.hash = append(key.hash, hack.Slice(strings.ToLower(key.schemaName))...)
 	}
 	return key.hash
@@ -63,10 +56,6 @@ type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
-	// These fields are used in updating summary history.
-	beginTimeForCurInterval int64
-	lastCheckExpireTime     int64
-	oldestBeginTime         int64
 
 	// sysVars encapsulates variables needed to judge whether statement summary is enabled.
 	sysVars struct {
@@ -75,45 +64,26 @@ type stmtSummaryByDigestMap struct {
 		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
 		globalEnabled string
-		// historyHours indicates the max hours the history of summaries can be kept.
-		// It must be > 0.
-		sessionHistoryHours string
-		globalHistoryHours  string
-		historyHours        int32
-		// intervalMinutes indicates the refresh interval of summaries.
-		// It must be > 0.
-		sessionIntervalMinutes string
-		globalIntervalMinutes  string
-		intervalMinutes        int32
 	}
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
 var StmtSummaryByDigestMap = newStmtSummaryByDigestMap()
 
+// stmtSummaryByDigest is the summary for each type of statements.
 type stmtSummaryByDigest struct {
-	// Mutex is only used to lock `history`.
+	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
-	// Each element in history is a summary in one interval.
-	history *list.List
-	// Following fields are common for each interval and won't change once assigned.
+	// basic
 	schemaName    string
 	digest        string
-	plan          string
 	normalizedSQL string
 	sampleSQL     string
 	tableIDs      string
 	indexNames    string
-}
-
-// stmtSummaryByDigest is the summary for each type of statements.
-type stmtSummaryByDigestElement struct {
-	sync.Mutex
-	// Each summary is summarized between [beginTime, beginTime + interval]
-	beginTime int64
-	user      string
-	execCount int64
-	// Latency
+	user          string
+	execCount     int64
+	// latency
 	sumLatency        time.Duration
 	maxLatency        time.Duration
 	minLatency        time.Duration
@@ -121,7 +91,7 @@ type stmtSummaryByDigestElement struct {
 	maxParseLatency   time.Duration
 	sumCompileLatency time.Duration
 	maxCompileLatency time.Duration
-	// CopTasks
+	// coprocessor
 	numCopTasks          int64
 	sumCopProcessTime    int64
 	maxCopProcessTime    time.Duration
@@ -129,23 +99,42 @@ type stmtSummaryByDigestElement struct {
 	sumCopWaitTime       int64
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
-	// ExecDetails
+	// TiKV
 	sumProcessTime   time.Duration
 	maxProcessTime   time.Duration
 	sumWaitTime      time.Duration
 	maxWaitTime      time.Duration
 	sumBackoffTime   time.Duration
 	maxBackoffTime   time.Duration
-	sumRequestCount  int64
-	maxRequestCount  int64
 	sumTotalKeys     int64
 	maxTotalKeys     int64
 	sumProcessedKeys int64
 	maxProcessedKeys int64
-	// Other
-	sumMem          int64
-	maxMem          int64
-	sumAffectedRows uint64
+	// txn
+	sumGetCommitTsTime   time.Duration
+	maxGetCommitTsTime   time.Duration
+	sumPrewriteTime      time.Duration
+	maxPrewriteTime      time.Duration
+	sumCommitTime        time.Duration
+	maxCommitTime        time.Duration
+	sumLocalLatchTime    time.Duration
+	maxLocalLatchTime    time.Duration
+	sumCommitBackoffTime int64
+	maxCommitBackoffTime int64
+	sumResolveLockTime   int64
+	maxResolveLockTime   int64
+	sumWriteKeys         int64
+	maxWriteKeys         int
+	sumWriteSize         int64
+	maxWriteSize         int
+	sumPrewriteRegionNum int64
+	maxPrewriteRegionNum int32
+	sumTxnRetry          int64
+	maxTxnRetry          int
+	backoffTypes         map[fmt.Stringer]int
+	// other
+	sumMem int64
+	maxMem int64
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
@@ -167,8 +156,6 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
-	Plan           string
-	AffectedRows   uint64
 	StartTime      time.Time
 }
 
@@ -176,10 +163,7 @@ type StmtExecInfo struct {
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
 	ssMap := &stmtSummaryByDigestMap{
-		summaryMap:              kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		beginTimeForCurInterval: 0,
-		lastCheckExpireTime:     0,
-		oldestBeginTime:         0,
+		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
 	// sysVars.defaultEnabled will be initialized in package variable.
 	ssMap.sysVars.sessionEnabled = ""
@@ -189,19 +173,10 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
-	hash := fnv.New64()
-	if _, err := hash.Write(hack.Slice(sei.Plan)); err != nil {
-		terror.Log(err)
-		return
-	}
 	key := &stmtSummaryByDigestKey{
 		schemaName: sei.SchemaName,
 		digest:     sei.Digest,
-		planHash:   hash.Sum64(),
 	}
-
-	// All times are count in seconds.
-	now := time.Now().Unix()
 
 	// Enclose the block in a function to ensure the lock will always be released.
 	value, ok := func() (kvcache.Value, bool) {
@@ -213,22 +188,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			return nil, false
 		}
 
-		// Check expiration of history every minute.
-		if now >= ssMap.lastCheckExpireTime+60 {
-			intervalSeconds := int64(atomic.LoadInt32(&ssMap.sysVars.intervalMinutes) * 60)
-			if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
-				// `beginTimeForCurInterval` is a multiple of intervalSeconds.
-				ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-			}
-			historySeconds := int64(atomic.LoadInt32(&ssMap.sysVars.historyHours)) * 60 * 60
-			ssMap.oldestBeginTime = ssMap.beginTimeForCurInterval - historySeconds
-			// `lastCheckExpireTime` is a multiple of 60.
-			ssMap.lastCheckExpireTime = now / 60 * 60
-		}
-
 		value, ok := ssMap.summaryMap.Get(key)
 		if !ok {
-			newSummary := newStmtSummaryByDigest(sei, ssMap.beginTimeForCurInterval, ssMap.oldestBeginTime)
+			newSummary := newStmtSummaryByDigest(sei)
 			ssMap.summaryMap.Put(key, newSummary)
 		}
 		return value, ok
@@ -236,7 +198,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 	// Lock a single entry, not the whole cache.
 	if ok {
-		value.(*stmtSummaryByDigest).add(sei, ssMap.beginTimeForCurInterval, ssMap.oldestBeginTime)
+		value.(*stmtSummaryByDigest).add(sei)
 	}
 }
 
@@ -246,40 +208,20 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	defer ssMap.Unlock()
 
 	ssMap.summaryMap.DeleteAll()
-	ssMap.beginTimeForCurInterval = 0
-	ssMap.lastCheckExpireTime = 0
-	ssMap.oldestBeginTime = 0
 }
 
-// ToCurrentDatum converts statement summary in current interval to Datum.
-func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum() [][]types.Datum {
+// Convert statement summary to Datum
+func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		summary := value.(*stmtSummaryByDigest)
-		record := summary.toCurrentDatum(ssMap.beginTimeForCurInterval)
-		rows = append(rows, record...)
+		ssbd := value.(*stmtSummaryByDigest)
+		record := ssbd.toDatum()
+		rows = append(rows, record)
 	}
-
-	return rows
-}
-
-// ToHistoryDatum converts statement summary in the history to Datum.
-func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum() [][]types.Datum {
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	ssMap.Unlock()
-
-	rows := make([][]types.Datum, 0, len(values))
-	for _, value := range values {
-		summary := value.(*stmtSummaryByDigest)
-		records := summary.toHistoryDatum(ssMap.oldestBeginTime)
-		rows = append(rows, records...)
-	}
-
 	return rows
 }
 
@@ -292,23 +234,12 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 	schemas := make([]string, 0, len(values))
 	sqls := make([]string, 0, len(values))
 	for _, value := range values {
-		summary := value.(*stmtSummaryByDigest)
-		var ssElement *stmtSummaryByDigestElement
-		if strings.HasPrefix(summary.normalizedSQL, "select") {
-			summary.Lock()
-			if summary.history.Len() > 0 {
-				ssElement = summary.history.Back().Value.(*stmtSummaryByDigestElement)
-			}
-			summary.Unlock()
-		}
-
-		if ssElement != nil {
-			ssElement.Lock()
-			if ssElement.execCount > 1 {
-				schemas = append(schemas, summary.schemaName)
-				sqls = append(sqls, summary.sampleSQL)
-			}
-			ssElement.Unlock()
+		ssbd := value.(*stmtSummaryByDigest)
+		// `normalizedSQL` & `schemaName` & `sampleSQL` won't change once created,
+		// so locking is not needed.
+		if strings.HasPrefix(ssbd.normalizedSQL, "select") {
+			schemas = append(schemas, ssbd.schemaName)
+			sqls = append(sqls, ssbd.sampleSQL)
 		}
 	}
 	return schemas, sqls
@@ -377,79 +308,9 @@ func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
 	return value != ""
 }
 
-// SetHistoryMaxHours sets history hours in ssMap.sysVars.
-func (ssMap *stmtSummaryByDigestMap) SetHistoryMaxHours(value string, inSession bool) {
-	ssMap.sysVars.Lock()
-	if inSession {
-		ssMap.sysVars.sessionHistoryHours = value
-	} else {
-		ssMap.sysVars.globalHistoryHours = value
-	}
-	sessionHistoryHours := ssMap.sysVars.sessionHistoryHours
-	globalHistoryHours := ssMap.sysVars.globalHistoryHours
-	ssMap.sysVars.Unlock()
-
-	var hours int
-	var err error
-	if ssMap.isSet(sessionHistoryHours) {
-		hours, err = strconv.Atoi(sessionHistoryHours)
-		if err != nil {
-			hours = 0
-		}
-	}
-	if hours <= 0 {
-		hours, err = strconv.Atoi(globalHistoryHours)
-		if err != nil {
-			hours = 0
-		}
-	}
-	if hours > 0 {
-		// In case of overflow in calculation.
-		if hours > math.MaxInt16 {
-			hours = math.MaxInt16
-		}
-		atomic.StoreInt32(&ssMap.sysVars.historyHours, int32(hours))
-	}
-}
-
-// SetIntervalMinutes sets interval minutes in ssMap.sysVars.
-func (ssMap *stmtSummaryByDigestMap) SetIntervalMinutes(value string, inSession bool) {
-	ssMap.sysVars.Lock()
-	if inSession {
-		ssMap.sysVars.sessionIntervalMinutes = value
-	} else {
-		ssMap.sysVars.globalIntervalMinutes = value
-	}
-	sessionIntervalMinutes := ssMap.sysVars.sessionIntervalMinutes
-	globalIntervalMinutes := ssMap.sysVars.globalIntervalMinutes
-	ssMap.sysVars.Unlock()
-
-	var minutes int
-	var err error
-	if ssMap.isSet(sessionIntervalMinutes) {
-		minutes, err = strconv.Atoi(sessionIntervalMinutes)
-		if err != nil {
-			minutes = 0
-		}
-	}
-	if minutes <= 0 {
-		minutes, err = strconv.Atoi(globalIntervalMinutes)
-		if err != nil {
-			minutes = 0
-		}
-	}
-	if minutes > 0 {
-		// In case of overflow in calculation.
-		if minutes > math.MaxInt16 {
-			minutes = math.MaxInt16
-		}
-		atomic.StoreInt32(&ssMap.sysVars.intervalMinutes, int32(minutes))
-	}
-}
-
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo
-func newStmtSummaryByDigest(sei *StmtExecInfo, latestBeginTime int64, oldestBeginTime int64) *stmtSummaryByDigest {
-	// Trim SQL to size MaxSQLLength
+func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
+	// Trim SQL to size MaxSQLLength.
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
 	normalizedSQL := sei.NormalizedSQL
 	if len(normalizedSQL) > int(maxSQLLength) {
@@ -459,243 +320,237 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, latestBeginTime int64, oldestBegi
 	if len(sampleSQL) > int(maxSQLLength) {
 		sampleSQL = sampleSQL[:maxSQLLength]
 	}
-	plan := sei.Plan
-	if len(plan) > int(maxSQLLength) {
-		plan = plan[:maxSQLLength]
-	}
 
 	ssbd := &stmtSummaryByDigest{
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
-		plan:          plan,
 		normalizedSQL: normalizedSQL,
 		sampleSQL:     sampleSQL,
 		tableIDs:      sei.TableIDs,
 		indexNames:    sei.IndexNames,
-		history:       list.New(),
+		minLatency:    sei.TotalLatency,
+		backoffTypes:  make(map[fmt.Stringer]int),
+		firstSeen:     sei.StartTime,
+		lastSeen:      sei.StartTime,
 	}
-	ssbd.add(sei, latestBeginTime, oldestBeginTime)
+	ssbd.add(sei)
 	return ssbd
 }
 
-// Add a StmtExecInfo to stmtSummary
-func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, latestBeginTime int64, oldestBeginTime int64) {
+func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
-	var ssElement *stmtSummaryByDigestElement
-	if ssbd.history.Len() > 0 {
-		latestElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-		if latestElement.beginTime < latestBeginTime {
-			// Remove expired elements when a new element is to be added.
-			for {
-				oldestElement := ssbd.history.Front()
-				if oldestElement != nil && oldestElement.Value.(*stmtSummaryByDigestElement).beginTime < oldestBeginTime {
-					ssbd.history.Remove(oldestElement)
-				} else {
-					break
-				}
-			}
-		} else {
-			ssElement = latestElement
-		}
+	if ssbd.user == "" {
+		ssbd.user = sei.User
 	}
-	// Create a summary for current interval.
-	if ssElement == nil {
-		ssElement = newStmtSummaryByDigestElement(sei, latestBeginTime)
-		ssbd.history.PushBack(ssElement)
+	ssbd.execCount++
+
+	// latency
+	ssbd.sumLatency += sei.TotalLatency
+	if sei.TotalLatency > ssbd.maxLatency {
+		ssbd.maxLatency = sei.TotalLatency
 	}
-
-	// `sei` must be added to ssElement before it can be read, so it's still in the lock of `ssbd`.
-	ssElement.add(sei)
-}
-
-func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64) [][]types.Datum {
-	var ssElement *stmtSummaryByDigestElement
-
-	ssbd.Lock()
-	if ssbd.history.Len() > 0 {
-		ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+	if sei.TotalLatency < ssbd.minLatency {
+		ssbd.minLatency = sei.TotalLatency
 	}
-	ssbd.Unlock()
-
-	rows := make([][]types.Datum, 0, 1)
-	// `ssElement` is lazy removed, so expired elements could also be read.
-	// `beginTime` won't change, so lock is not needed here.
-	if ssElement != nil && ssElement.beginTime >= beginTimeForCurInterval {
-		rows = append(rows, ssElement.toDatum(ssbd))
+	ssbd.sumParseLatency += sei.ParseLatency
+	if sei.ParseLatency > ssbd.maxParseLatency {
+		ssbd.maxParseLatency = sei.ParseLatency
 	}
-	return rows
-}
-
-func (ssbd *stmtSummaryByDigest) toHistoryDatum(oldestBeginTime int64) [][]types.Datum {
-	// Collect all history summaries to an array.
-	ssElements := ssbd.collectHistorySummaries(oldestBeginTime)
-
-	rows := make([][]types.Datum, 0, len(ssElements))
-	for _, ssElement := range ssElements {
-		rows = append(rows, ssElement.toDatum(ssbd))
-	}
-	return rows
-}
-
-func (ssbd *stmtSummaryByDigest) collectHistorySummaries(oldestBeginTime int64) []*stmtSummaryByDigestElement {
-	ssbd.Lock()
-	defer ssbd.Unlock()
-
-	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
-	for listElement := ssbd.history.Front(); listElement != nil; listElement = listElement.Next() {
-		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
-		// `ssElements` are lazy removed, so expired elements may be read.
-		if ssElement.beginTime > oldestBeginTime {
-			ssElements = append(ssElements, ssElement)
-		}
-	}
-	return ssElements
-}
-
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64) *stmtSummaryByDigestElement {
-	return &stmtSummaryByDigestElement{
-		beginTime:  beginTime,
-		user:       sei.User,
-		minLatency: sei.TotalLatency,
-		firstSeen:  sei.StartTime,
-		lastSeen:   sei.StartTime,
-	}
-}
-
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo) {
-	ssElement.Lock()
-	defer ssElement.Unlock()
-
-	if ssElement.user == "" {
-		ssElement.user = sei.User
-	}
-	ssElement.execCount++
-
-	// Latency
-	ssElement.sumLatency += sei.TotalLatency
-	if sei.TotalLatency > ssElement.maxLatency {
-		ssElement.maxLatency = sei.TotalLatency
-	}
-	if sei.TotalLatency < ssElement.minLatency {
-		ssElement.minLatency = sei.TotalLatency
-	}
-	ssElement.sumParseLatency += sei.ParseLatency
-	if sei.ParseLatency > ssElement.maxParseLatency {
-		ssElement.maxParseLatency = sei.ParseLatency
-	}
-	ssElement.sumCompileLatency += sei.CompileLatency
-	if sei.CompileLatency > ssElement.maxCompileLatency {
-		ssElement.maxCompileLatency = sei.CompileLatency
+	ssbd.sumCompileLatency += sei.CompileLatency
+	if sei.CompileLatency > ssbd.maxCompileLatency {
+		ssbd.maxCompileLatency = sei.CompileLatency
 	}
 
-	// Coprocessor tasks
+	// coprocessor
 	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.numCopTasks += numCopTasks
-	ssElement.sumCopProcessTime += sei.CopTasks.AvgProcessTime.Nanoseconds() * numCopTasks
-	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
-		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
-		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
+	ssbd.numCopTasks += numCopTasks
+	ssbd.sumCopProcessTime += sei.CopTasks.AvgProcessTime.Nanoseconds() * numCopTasks
+	if sei.CopTasks.MaxProcessTime > ssbd.maxCopProcessTime {
+		ssbd.maxCopProcessTime = sei.CopTasks.MaxProcessTime
+		ssbd.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
 	}
-	ssElement.sumCopWaitTime += sei.CopTasks.AvgWaitTime.Nanoseconds() * numCopTasks
-	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
-		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
-		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
-	}
-
-	// Execute details
-	ssElement.sumProcessTime += sei.ExecDetail.ProcessTime
-	if sei.ExecDetail.ProcessTime > ssElement.maxProcessTime {
-		ssElement.maxProcessTime = sei.ExecDetail.ProcessTime
-	}
-	ssElement.sumWaitTime += sei.ExecDetail.WaitTime
-	if sei.ExecDetail.WaitTime > ssElement.maxWaitTime {
-		ssElement.maxWaitTime = sei.ExecDetail.WaitTime
-	}
-	ssElement.sumBackoffTime += sei.ExecDetail.BackoffTime
-	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
-		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
-	}
-	ssElement.sumRequestCount += int64(sei.ExecDetail.RequestCount)
-	if int64(sei.ExecDetail.RequestCount) > ssElement.maxRequestCount {
-		ssElement.maxRequestCount = int64(sei.ExecDetail.RequestCount)
-	}
-	ssElement.sumTotalKeys += sei.ExecDetail.TotalKeys
-	if sei.ExecDetail.TotalKeys > ssElement.maxTotalKeys {
-		ssElement.maxTotalKeys = sei.ExecDetail.TotalKeys
-	}
-	ssElement.sumProcessedKeys += sei.ExecDetail.ProcessedKeys
-	if sei.ExecDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-		ssElement.maxProcessedKeys = sei.ExecDetail.ProcessedKeys
+	ssbd.sumCopWaitTime += sei.CopTasks.AvgWaitTime.Nanoseconds() * numCopTasks
+	if sei.CopTasks.MaxWaitTime > ssbd.maxCopWaitTime {
+		ssbd.maxCopWaitTime = sei.CopTasks.MaxWaitTime
+		ssbd.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
 	}
 
-	// Other
-	ssElement.sumMem += sei.MemMax
-	if sei.MemMax > ssElement.maxMem {
-		ssElement.maxMem = sei.MemMax
+	// TiKV
+	ssbd.sumProcessTime += sei.ExecDetail.ProcessTime
+	if sei.ExecDetail.ProcessTime > ssbd.maxProcessTime {
+		ssbd.maxProcessTime = sei.ExecDetail.ProcessTime
 	}
-	ssElement.sumAffectedRows += sei.AffectedRows
-	if sei.StartTime.Before(ssElement.firstSeen) {
-		ssElement.firstSeen = sei.StartTime
+	ssbd.sumWaitTime += sei.ExecDetail.WaitTime
+	if sei.ExecDetail.WaitTime > ssbd.maxWaitTime {
+		ssbd.maxWaitTime = sei.ExecDetail.WaitTime
 	}
-	if ssElement.lastSeen.Before(sei.StartTime) {
-		ssElement.lastSeen = sei.StartTime
+	ssbd.sumBackoffTime += sei.ExecDetail.BackoffTime
+	if sei.ExecDetail.BackoffTime > ssbd.maxBackoffTime {
+		ssbd.maxBackoffTime = sei.ExecDetail.BackoffTime
+	}
+	ssbd.sumTotalKeys += sei.ExecDetail.TotalKeys
+	if sei.ExecDetail.TotalKeys > ssbd.maxTotalKeys {
+		ssbd.maxTotalKeys = sei.ExecDetail.TotalKeys
+	}
+	ssbd.sumProcessedKeys += sei.ExecDetail.ProcessedKeys
+	if sei.ExecDetail.ProcessedKeys > ssbd.maxProcessedKeys {
+		ssbd.maxProcessedKeys = sei.ExecDetail.ProcessedKeys
+	}
+
+	// txn
+	commitDetails := sei.ExecDetail.CommitDetail
+	if commitDetails != nil {
+		ssbd.sumPrewriteTime += commitDetails.PrewriteTime
+		if commitDetails.PrewriteTime > ssbd.maxPrewriteTime {
+			ssbd.maxPrewriteTime = commitDetails.PrewriteTime
+		}
+		ssbd.sumCommitTime += commitDetails.CommitTime
+		if commitDetails.CommitTime > ssbd.maxCommitTime {
+			ssbd.maxCommitTime = commitDetails.CommitTime
+		}
+		ssbd.sumGetCommitTsTime += commitDetails.GetCommitTsTime
+		if commitDetails.GetCommitTsTime > ssbd.maxGetCommitTsTime {
+			ssbd.maxGetCommitTsTime = commitDetails.GetCommitTsTime
+		}
+		ssbd.sumCommitBackoffTime += commitDetails.CommitBackoffTime
+		if commitDetails.CommitBackoffTime > ssbd.maxCommitBackoffTime {
+			ssbd.maxCommitBackoffTime = commitDetails.CommitBackoffTime
+		}
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		ssbd.sumResolveLockTime += resolveLockTime
+		if resolveLockTime > ssbd.maxResolveLockTime {
+			ssbd.maxResolveLockTime = resolveLockTime
+		}
+		ssbd.sumLocalLatchTime += commitDetails.LocalLatchTime
+		if commitDetails.LocalLatchTime > ssbd.maxLocalLatchTime {
+			ssbd.maxLocalLatchTime = commitDetails.LocalLatchTime
+		}
+		ssbd.sumWriteKeys += int64(commitDetails.WriteKeys)
+		if commitDetails.WriteKeys > ssbd.maxWriteKeys {
+			ssbd.maxWriteKeys = commitDetails.WriteKeys
+		}
+		ssbd.sumWriteSize += int64(commitDetails.WriteSize)
+		if commitDetails.WriteSize > ssbd.maxWriteSize {
+			ssbd.maxWriteSize = commitDetails.WriteSize
+		}
+		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
+		ssbd.sumPrewriteRegionNum += int64(prewriteRegionNum)
+		if prewriteRegionNum > ssbd.maxPrewriteRegionNum {
+			ssbd.maxPrewriteRegionNum = prewriteRegionNum
+		}
+		ssbd.sumTxnRetry += int64(commitDetails.TxnRetry)
+		if commitDetails.TxnRetry > ssbd.maxTxnRetry {
+			ssbd.maxTxnRetry = commitDetails.TxnRetry
+		}
+		commitDetails.Mu.Lock()
+		for _, backoffType := range commitDetails.Mu.BackoffTypes {
+			if _, ok := ssbd.backoffTypes[backoffType]; ok {
+				ssbd.backoffTypes[backoffType] += 1
+			} else {
+				ssbd.backoffTypes[backoffType] = 1
+			}
+		}
+		commitDetails.Mu.Unlock()
+	}
+
+	// other
+	ssbd.sumMem += sei.MemMax
+	if sei.MemMax > ssbd.maxMem {
+		ssbd.maxMem = sei.MemMax
+	}
+	if sei.StartTime.Before(ssbd.firstSeen) {
+		ssbd.firstSeen = sei.StartTime
+	}
+	if ssbd.lastSeen.Before(sei.StartTime) {
+		ssbd.lastSeen = sei.StartTime
 	}
 }
 
-func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	ssElement.Lock()
-	defer ssElement.Unlock()
+func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
+	ssbd.Lock()
+	defer ssbd.Unlock()
 
 	return types.MakeDatums(
-		types.Time{Time: types.FromGoTime(time.Unix(ssElement.beginTime, 0)), Type: mysql.TypeTimestamp},
 		ssbd.schemaName,
 		ssbd.digest,
 		ssbd.normalizedSQL,
-		ssbd.tableIDs,
-		ssbd.indexNames,
-		ssElement.user,
-		ssElement.execCount,
-		int64(ssElement.sumLatency),
-		int64(ssElement.maxLatency),
-		int64(ssElement.minLatency),
-		avg(int64(ssElement.sumLatency), ssElement.execCount),
-		avg(int64(ssElement.sumParseLatency), ssElement.execCount),
-		int64(ssElement.maxParseLatency),
-		avg(int64(ssElement.sumCompileLatency), ssElement.execCount),
-		int64(ssElement.maxCompileLatency),
-		ssElement.numCopTasks,
-		avg(ssElement.sumCopProcessTime, ssElement.numCopTasks),
-		int64(ssElement.maxCopProcessTime),
-		ssElement.maxCopProcessAddress,
-		avg(ssElement.sumCopWaitTime, ssElement.numCopTasks),
-		int64(ssElement.maxCopWaitTime),
-		ssElement.maxCopWaitAddress,
-		avg(int64(ssElement.sumProcessTime), ssElement.execCount),
-		int64(ssElement.maxProcessTime),
-		avg(int64(ssElement.sumWaitTime), ssElement.execCount),
-		int64(ssElement.maxWaitTime),
-		avg(int64(ssElement.sumBackoffTime), ssElement.execCount),
-		int64(ssElement.maxBackoffTime),
-		avg(ssElement.sumRequestCount, ssElement.execCount),
-		ssElement.maxRequestCount,
-		avg(ssElement.sumTotalKeys, ssElement.execCount),
-		ssElement.maxTotalKeys,
-		avg(ssElement.sumProcessedKeys, ssElement.execCount),
-		ssElement.maxProcessedKeys,
-		avg(ssElement.sumMem, ssElement.execCount),
-		ssElement.maxMem,
-		ssElement.sumAffectedRows,
-		types.Time{Time: types.FromGoTime(ssElement.firstSeen), Type: mysql.TypeTimestamp},
-		types.Time{Time: types.FromGoTime(ssElement.lastSeen), Type: mysql.TypeTimestamp},
+		convertEmptyToNil(ssbd.tableIDs),
+		convertEmptyToNil(ssbd.indexNames),
+		convertEmptyToNil(ssbd.user),
+		ssbd.execCount,
+		int64(ssbd.sumLatency),
+		int64(ssbd.maxLatency),
+		int64(ssbd.minLatency),
+		avgInt(int64(ssbd.sumLatency), ssbd.execCount),
+		avgInt(int64(ssbd.sumParseLatency), ssbd.execCount),
+		int64(ssbd.maxParseLatency),
+		avgInt(int64(ssbd.sumCompileLatency), ssbd.execCount),
+		int64(ssbd.maxCompileLatency),
+		ssbd.numCopTasks,
+		avgInt(ssbd.sumCopProcessTime, ssbd.numCopTasks),
+		int64(ssbd.maxCopProcessTime),
+		convertEmptyToNil(ssbd.maxCopProcessAddress),
+		avgInt(ssbd.sumCopWaitTime, ssbd.numCopTasks),
+		int64(ssbd.maxCopWaitTime),
+		convertEmptyToNil(ssbd.maxCopWaitAddress),
+		avgInt(int64(ssbd.sumProcessTime), ssbd.execCount),
+		int64(ssbd.maxProcessTime),
+		avgInt(int64(ssbd.sumWaitTime), ssbd.execCount),
+		int64(ssbd.maxWaitTime),
+		avgInt(int64(ssbd.sumBackoffTime), ssbd.execCount),
+		int64(ssbd.maxBackoffTime),
+		avgInt(ssbd.sumTotalKeys, ssbd.execCount),
+		ssbd.maxTotalKeys,
+		avgInt(ssbd.sumProcessedKeys, ssbd.execCount),
+		ssbd.maxProcessedKeys,
+		avgInt(int64(ssbd.sumPrewriteTime), ssbd.execCount),
+		int64(ssbd.maxPrewriteTime),
+		avgInt(int64(ssbd.sumCommitTime), ssbd.execCount),
+		int64(ssbd.maxCommitTime),
+		avgInt(int64(ssbd.sumGetCommitTsTime), ssbd.execCount),
+		int64(ssbd.maxGetCommitTsTime),
+		avgInt(ssbd.sumCommitBackoffTime, ssbd.execCount),
+		ssbd.maxCommitBackoffTime,
+		avgInt(ssbd.sumResolveLockTime, ssbd.execCount),
+		ssbd.maxResolveLockTime,
+		avgInt(int64(ssbd.sumLocalLatchTime), ssbd.execCount),
+		int64(ssbd.maxLocalLatchTime),
+		avgFloat(ssbd.sumWriteKeys, ssbd.execCount),
+		ssbd.maxWriteKeys,
+		avgFloat(ssbd.sumWriteSize, ssbd.execCount),
+		ssbd.maxWriteSize,
+		avgFloat(ssbd.sumPrewriteRegionNum, ssbd.execCount),
+		ssbd.maxPrewriteRegionNum,
+		avgFloat(ssbd.sumTxnRetry, ssbd.execCount),
+		ssbd.maxTxnRetry,
+		fmt.Sprintf("%v", ssbd.backoffTypes),
+		avgInt(ssbd.sumMem, ssbd.execCount),
+		ssbd.maxMem,
+		types.Time{Time: types.FromGoTime(ssbd.firstSeen), Type: mysql.TypeTimestamp},
+		types.Time{Time: types.FromGoTime(ssbd.lastSeen), Type: mysql.TypeTimestamp},
 		ssbd.sampleSQL,
 	)
 }
 
-func avg(sum int64, count int64) int64 {
+func avgInt(sum int64, count int64) int64 {
 	if count > 0 {
 		return sum / count
 	}
 	return 0
+}
+
+func avgFloat(sum int64, count int64) float64 {
+	if count > 0 {
+		return float64(sum) / float64(count)
+	}
+	return 0
+}
+
+func convertEmptyToNil(str string) interface{} {
+	if str == "" {
+		return nil
+	}
+	return str
 }

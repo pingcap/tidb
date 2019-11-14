@@ -77,18 +77,6 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 				sVal = row.GetString(1)
 			}
 			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
-		case variable.TiDBStmtSummaryHistoryHours:
-			sVal := ""
-			if !row.IsNull(1) {
-				sVal = row.GetString(1)
-			}
-			stmtsummary.StmtSummaryByDigestMap.SetHistoryMaxHours(sVal, false)
-		case variable.TiDBStmtSummaryIntervalMinutes:
-			sVal := ""
-			if !row.IsNull(1) {
-				sVal = row.GetString(1)
-			}
-			stmtsummary.StmtSummaryByDigestMap.SetIntervalMinutes(sVal, false)
 		case variable.TiDBCapturePlanBaseline:
 			sVal := ""
 			if !row.IsNull(1) {

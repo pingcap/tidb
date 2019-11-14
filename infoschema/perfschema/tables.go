@@ -97,9 +97,7 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
-	case tableNameEventsStatementsSummaryByDigestHistory:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:

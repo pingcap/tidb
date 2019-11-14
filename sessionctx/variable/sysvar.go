@@ -716,8 +716,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistoryHours, strconv.Itoa(DefTiDBStmtSummaryHistoryHours)},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryIntervalMinutes, strconv.Itoa(DefTiDBStmtSummaryIntervalMinutes)},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash"},

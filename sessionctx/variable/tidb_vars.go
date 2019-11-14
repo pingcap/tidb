@@ -328,12 +328,6 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
-	// TiDBStmtSummaryHistoryHours indicates max hours statement summary can keep.
-	TiDBStmtSummaryHistoryHours = "tidb_stmt_summary_history_hours"
-
-	// TiDBStmtSummaryIntervalMinutes indicates the interval for each statement summary in history.
-	TiDBStmtSummaryIntervalMinutes = "tidb_stmt_summary_interval_minutes"
-
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -418,8 +412,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBStmtSummaryHistoryHours     = 12
-	DefTiDBStmtSummaryIntervalMinutes  = 30
 	DefTiDBUsePlanBaselines            = true
 	DefInnodbLockWaitTimeout           = 50 // 50s
 )

@@ -200,10 +200,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	switch name {
 	case variable.TiDBEnableStmtSummary:
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryHistoryHours:
-		stmtsummary.StmtSummaryByDigestMap.SetHistoryMaxHours(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryIntervalMinutes:
-		stmtsummary.StmtSummaryByDigestMap.SetIntervalMinutes(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
