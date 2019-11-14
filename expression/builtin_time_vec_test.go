@@ -51,6 +51,26 @@ func (g *unitStrGener) gen() interface{} {
 	return units[n]
 }
 
+type dataTimeUnitStrGener struct{}
+
+func (g *dataTimeUnitStrGener) gen() interface{} {
+	dataTimes := []string{
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+		"DAY_MICROSECOND",
+		"DAY_SECOND",
+		"DAY_MINUTE",
+		"DAY_HOUR",
+		"YEAR_MONTH",
+	}
+
+	n := rand.Int() % len(dataTimes)
+	return dataTimes[n]
+}
+
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
@@ -260,7 +280,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 	ast.Extract: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&unitStrGener{}, nil}},	
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dataTimeUnitStrGener{}, nil}},	
 	},
 }
 
