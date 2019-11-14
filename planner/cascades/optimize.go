@@ -329,7 +329,7 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	// Handle enforcer rules for required physical property.
 	for _, rule := range GetEnforcerRules(g, reqPhysProp) {
 		newReqPhysProp := rule.NewProperty(reqPhysProp)
-		enforceCost := rule.GetEnforceCost(g, outCount)
+		enforceCost := rule.GetEnforceCost(g)
 		childImpl, err := opt.implGroup(g, newReqPhysProp, costLimit-enforceCost)
 		if err != nil {
 			return nil, err
