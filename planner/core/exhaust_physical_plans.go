@@ -401,6 +401,8 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			continue
 		}
 
+		// keyOff2KeyOffOrderByIdx is map the join keys offsets to [0, len(joinKeys)) ordered by the
+		// join key position in inner index.
 		keyOff2KeyOffOrderByIdx := make([]int, len(join.OuterJoinKeys))
 		keyOffMapList := make([]int, len(join.KeyOff2IdxOff))
 		copy(keyOffMapList, join.KeyOff2IdxOff)
