@@ -239,23 +239,6 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
 		},
 	},
-	ast.Replace: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{0, 10}, &randLenStrGener{0, 10}}},
-	},
-	ast.InsertFunc: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 20}, &rangeInt64Gener{0, 100}, &randLenStrGener{0, 10}}},
-	},
-	ast.Elt: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&rangeInt64Gener{-1, 5}}},
-	},
-	ast.FromUnixTime: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETString},
-			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}},
-				&constStrGener{"%y-%m-%d"},
-			},
-		},
-	},
 	ast.Instr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
@@ -276,6 +259,23 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
 			},
 			geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{""}},
+		},
+	},
+	ast.Replace: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{0, 10}, &randLenStrGener{0, 10}}},
+	},
+	ast.InsertFunc: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 20}, &rangeInt64Gener{0, 100}, &randLenStrGener{0, 10}}},
+	},
+	ast.Elt: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&rangeInt64Gener{-1, 5}}},
+	},
+	ast.FromUnixTime: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}},
+				&constStrGener{"%y-%m-%d"},
+			},
 		},
 	},
 }
