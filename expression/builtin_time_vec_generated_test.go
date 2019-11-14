@@ -44,13 +44,11 @@ func (g gener) gen() interface{} {
 }
 
 var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
-
 	ast.AddTime: {
 		// builtinAddDatetimeAndDurationSig
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -60,7 +58,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -70,7 +67,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -80,7 +76,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -90,7 +85,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -100,7 +94,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -108,11 +101,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddDateAndDurationSig
 		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
-
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDuration, types.ETDuration},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -120,11 +111,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddDateAndStringSig
 		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
-
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDuration, types.ETString},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -134,7 +123,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
@@ -142,11 +130,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddTimeStringNullSig
 		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
@@ -156,12 +142,46 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 			},
 		},
+	},
+
+	ast.TimeDiff: {
+		// builtinNullTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETTimestamp}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDuration}},
+		// builtinDurationDurationTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
+		// builtinDurationStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &timeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 4}}},
+		// builtinTimeTimeTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		// builtinTimeStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &timeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &timeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		// builtinStringDurationTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, nil}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, nil}},
+		// builtinStringTimeTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		// builtinStringStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&timeStrGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &timeStrGener{Year: 2019, Month: 10}}},
 	},
 }
 
