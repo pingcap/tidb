@@ -480,7 +480,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
-	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
 		switch isoLevelOneShot.State {
