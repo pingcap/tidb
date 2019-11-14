@@ -978,7 +978,7 @@ func (d Duration) ToNumber() *MyDecimal {
 		signStr = "-"
 	}
 
-	if d.Fsp == 0 {
+	if d.Fsp == 0 || d.Fsp == UnspecifiedFsp {
 		s = fmt.Sprintf("%s%02d%02d%02d", signStr, hours, minutes, seconds)
 	} else {
 		s = fmt.Sprintf("%s%02d%02d%02d.%s", signStr, hours, minutes, seconds, d.formatFrac(fraction))
