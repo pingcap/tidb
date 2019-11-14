@@ -31,6 +31,8 @@ const (
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
 	Invalid = "invalid"
+	// PendingVerify means the bind info needs to be verified.
+	PendingVerify = "pending verify"
 )
 
 // Binding stores the basic bind hint info.
@@ -47,6 +49,7 @@ type Binding struct {
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *HintsSet
 	// id is the string form of all hints. It is used to uniquely identify different hints.
+	// It would be non-empty only when the status is `Using` or `PendingVerify`.
 	id string
 }
 
@@ -61,21 +64,30 @@ type BindRecord struct {
 	Bindings []Binding
 }
 
-// FirstUsingBinding returns the first binding that has status 'using'.
-// TODO: Remove it when we support using all bindings to adjust the plan.
-func (br *BindRecord) FirstUsingBinding() *Binding {
+// HasUsingBinding checks if there are any using bindings in bind record.
+func (br *BindRecord) HasUsingBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.Status == Using {
+			return true
+		}
+	}
+	return false
+}
+
+// FindBinding find bindings in BindRecord.
+func (br *BindRecord) FindBinding(hint string) *Binding {
+	for _, binding := range br.Bindings {
+		if binding.id == hint {
 			return &binding
 		}
 	}
 	return nil
 }
 
-func (br *BindRecord) prepareHintsForUsing(sctx sessionctx.Context, is infoschema.InfoSchema) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
-		if bind.Status != Using || bind.Hint != nil {
+		if bind.Hint != nil || bind.id != "" {
 			continue
 		}
 		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)

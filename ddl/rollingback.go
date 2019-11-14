@@ -133,7 +133,7 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.State = model.JobStateRollbackDone
 		indexInfo.State = model.StatePublic
 	default:
-		return ver, ErrInvalidIndexState.GenWithStack("invalid index state %v", indexInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 
 	job.SchemaState = indexInfo.State

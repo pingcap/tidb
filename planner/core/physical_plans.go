@@ -219,6 +219,23 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
+// ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
+func (ts *PhysicalTableScan) ExpandVirtualColumn() {
+	for _, col := range ts.schema.Columns {
+		if col.VirtualExpr == nil {
+			continue
+		}
+
+		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
+		for _, baseCol := range baseCols {
+			if !ts.schema.Contains(baseCol) {
+				ts.schema.Columns = append(ts.schema.Columns, baseCol)
+				ts.Columns = append(ts.Columns, FindColumnInfoByID(ts.Table.Columns, baseCol.ID))
+			}
+		}
+	}
+}
+
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
 	physicalSchemaProducer
@@ -268,6 +285,9 @@ type PhysicalHashJoin struct {
 
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
+
+	// use the outer table to build a hash table when the outer table is smaller.
+	UseOuterToBuild bool
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.
@@ -341,31 +361,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
-}
-
-// AggregationType stands for the mode of aggregation plan.
-type AggregationType int
-
-const (
-	// StreamedAgg supposes its input is sorted by group by key.
-	StreamedAgg AggregationType = iota
-	// FinalAgg supposes its input is partial results.
-	FinalAgg
-	// CompleteAgg supposes its input is original results.
-	CompleteAgg
-)
-
-// String implements fmt.Stringer interface.
-func (at AggregationType) String() string {
-	switch at {
-	case StreamedAgg:
-		return "stream"
-	case FinalAgg:
-		return "final"
-	case CompleteAgg:
-		return "complete"
-	}
-	return "unsupported aggregation type"
 }
 
 type basePhysicalAgg struct {

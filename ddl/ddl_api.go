@@ -254,7 +254,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 }
 
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint, tblCharset, dbCharset string) ([]*table.Column, []*ast.Constraint, error) {
+	constraints []*ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) ([]*table.Column, []*ast.Constraint, error) {
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
@@ -266,7 +266,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, dbCharset)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate, dbCharset, dbCollate)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -282,23 +282,32 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	return cols, constraints, nil
 }
 
-// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset.
-func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, error) {
+// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset,
+// and it will also resolve the collate by the order: table collate > database collate > server default collate.
+func ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate string) (string, string, error) {
 	if len(tblCharset) != 0 {
-		defCollate, err := charset.GetDefaultCollation(tblCharset)
-		if err != nil {
-			// return terror is better.
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+		// tblCollate is not specified by user.
+		if len(tblCollate) == 0 {
+			defCollate, err := charset.GetDefaultCollation(tblCharset)
+			if err != nil {
+				// return terror is better.
+				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+			}
+			return tblCharset, defCollate, nil
 		}
-		return tblCharset, defCollate, nil
+		return tblCharset, tblCollate, nil
 	}
 
 	if len(dbCharset) != 0 {
-		defCollate, err := charset.GetDefaultCollation(dbCharset)
-		if err != nil {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+		// dbCollate is not specified by user.
+		if len(dbCollate) == 0 {
+			defCollate, err := charset.GetDefaultCollation(dbCharset)
+			if err != nil {
+				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+			}
+			return dbCharset, defCollate, nil
 		}
-		return dbCharset, defCollate, errors.Trace(err)
+		return dbCharset, dbCollate, nil
 	}
 
 	charset, collate := charset.GetDefaultCharsetAndCollate()
@@ -315,7 +324,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset string, dbCharset string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset, tblCollate, dbCharset, dbCollate string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
@@ -323,7 +332,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 			if len(specifiedCollates) == 0 {
 				// Both the charset and collate are not specified.
 				var err error
-				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -394,11 +403,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) (*table.Column, []*ast.Constraint, error) {
 	// specifiedCollates refers to collates in colDef.Options, should handle them together.
 	specifiedCollates := extractCollateFromOption(colDef)
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, dbCharset); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, tblCollate, dbCharset, dbCollate); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -1279,10 +1288,10 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 // The SQL string should be a create table statement.
 // Don't use this function to build a partitioned table.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), nil, s, mysql.DefaultCharset)
+	return buildTableInfoWithCheck(mock.NewContext(), nil, s, mysql.DefaultCharset, "")
 }
 
-func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset string) (*model.TableInfo, error) {
+func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	colDefs := s.Cols
 	colObjects := make([]interface{}, 0, len(colDefs))
@@ -1309,9 +1318,9 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	tableCharset := findTableOptionCharset(s.Options)
+	tableCharset, tableCollate := findTableOptionCharsetAndCollate(s.Options)
 	// The column charset haven't been resolved here.
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, dbCharset, dbCollate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1353,7 +1362,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset); err != nil {
+	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset, dbCollate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1384,7 +1393,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return err
 	}
 
-	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset)
+	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1744,8 +1753,8 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset string) (err error) {
-	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, dbCharset)
+func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, dbCollate string) (err error) {
+	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, tbInfo.Collate, dbCharset, dbCollate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1759,18 +1768,30 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset s
 	return
 }
 
-func findTableOptionCharset(options []*ast.TableOption) string {
-	var tableCharset string
+func findTableOptionCharsetAndCollate(options []*ast.TableOption) (tableCharset, tableCollate string) {
+	var findCnt int
 	for i := len(options) - 1; i >= 0; i-- {
 		op := options[i]
-		if op.Tp == ast.TableOptionCharset {
+		if len(tableCharset) == 0 && op.Tp == ast.TableOptionCharset {
 			// find the last one.
 			tableCharset = op.StrValue
-			break
+			findCnt++
+			if findCnt == 2 {
+				break
+			}
+			continue
+		}
+		if len(tableCollate) == 0 && op.Tp == ast.TableOptionCollate {
+			// find the last one.
+			tableCollate = op.StrValue
+			findCnt++
+			if findCnt == 2 {
+				break
+			}
+			continue
 		}
 	}
-
-	return tableCharset
+	return tableCharset, tableCollate
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -2170,7 +2191,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, schema.Charset)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2444,7 +2465,7 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 	if toCollate != origCollate {
-		msg := fmt.Sprintf("collate from %s to %s", origCollate, toCollate)
+		msg := fmt.Sprintf("change collate from %s to %s", origCollate, toCollate)
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 	return nil
@@ -2457,7 +2478,7 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
 	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
-		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+		return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
 	}
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
@@ -2474,7 +2495,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
-		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
+		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	switch origin.Tp {
@@ -2499,20 +2520,20 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+					msg := fmt.Sprintf("can't change enum value %s to %s", originElem, toElem)
 					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 			return nil
 		}
-		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+		msg := fmt.Sprintf("can't change enum type to %s", to.String())
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	default:
 		if origin.Tp == to.Tp {
 			return nil
 		}
 	}
-	msg := fmt.Sprintf("type %v not match origin %v", to.Tp, origin.Tp)
+	msg := fmt.Sprintf(":type not match, before: %v, after: %v", origin.Tp, to.Tp)
 	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 }
 
@@ -2574,7 +2595,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedModifyColumn.GenWithStack("unsupported modify column constraint - %v", opt.Tp)
+			return errUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
@@ -2602,9 +2623,9 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionCollate:
 			col.Collate = opt.StrValue
 		case ast.ColumnOptionReference:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with references"))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with references"))
 		case ast.ColumnOptionFulltext:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with full text"))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
 		default:
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
@@ -2692,7 +2713,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// should take the collate in colDef.Option into consideration rather than handling it separately
 	specifiedCollates := extractCollateFromOption(specNewColumn)
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, schema.Charset)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2715,11 +2736,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
 	}
 	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
 	if !ctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("to remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
 	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.
@@ -3084,7 +3105,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	if len(origCharset) == 0 {
 		// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 		// This DDL will update the table charset to default charset.
-		origCharset, origCollate, err = ResolveCharsetCollation("", dbInfo.Charset)
+		origCharset, origCollate, err = ResolveCharsetCollation("", "", dbInfo.Charset, dbInfo.Collate)
 		if err != nil {
 			return doNothing, err
 		}
@@ -3272,10 +3293,17 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
-		return errErrorOnRename.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)
+		return ErrErrorOnRename.GenWithStackByArgs(
+			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
+			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
+			168,
+			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{

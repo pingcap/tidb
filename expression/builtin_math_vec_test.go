@@ -55,7 +55,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.Exp: {
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{&rangeRealGener{-1, 1, 0.2}}},
 	},
 	ast.Degrees: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
@@ -109,6 +109,19 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}}, geners: []dataGenerator{nil, &rangeInt64Gener{-10, 10}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}},
+	},
+	ast.Rand: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&defaultGener{0, types.ETInt}}},
+	},
+	ast.CRC32: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+	},
+}
+
+var vecBuiltinMathCases1 = map[string][]vecExprBenchCase{
+	ast.Rand: {
+		{retEvalType: types.ETReal},
 	},
 }
 
@@ -118,6 +131,10 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFuncForRand(c *C) {
+	testVectorizedBuiltinFuncForRand(c, vecBuiltinMathCases1)
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {

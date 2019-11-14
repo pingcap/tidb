@@ -44,6 +44,9 @@ oom-action = "log"
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
@@ -283,12 +286,17 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data.
-enable-arrow = true
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-rpc = true
 
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
 region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
@@ -319,10 +327,6 @@ enable = true
 
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
-
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "3s" and "30s".
-ttl = "10s"
 
 [stmt-summary]
 # max number of statements kept in memory.
