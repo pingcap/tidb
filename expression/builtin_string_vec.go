@@ -815,11 +815,46 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinFindInSetSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	strlist, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strlist)
+	if err := b.args[1].VecEvalString(b.ctx, input, strlist); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str, strlist)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		strlistI := strlist.GetString(i)
+		if len(strlistI) == 0 {
+			res[i] = 0
+			continue
+		}
+		for j, strInSet := range strings.Split(strlistI, ",") {
+			if str.GetString(i) == strInSet {
+				res[i] = int64(j + 1)
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinLeftBinarySig) vectorized() bool {
@@ -912,11 +947,38 @@ func (b *builtinRTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinStrcmpSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	leftBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(leftBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, leftBuf); err != nil {
+		return err
+	}
+	rightBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(rightBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, rightBuf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(leftBuf, rightBuf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		// if left or right is null, then set to null and return 0(which is the default value)
+		if result.IsNull(i) {
+			continue
+		}
+		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i)))
+	}
+	return nil
 }
 
 func (b *builtinLocateBinary2ArgsSig) vectorized() bool {
