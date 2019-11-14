@@ -333,7 +333,6 @@ func (c *leftShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	sig := &builtinLeftShiftSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LeftShift)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	sig.setPbCode(tipb.ScalarFuncSig_LeftShift)
 	return sig, nil
 }
 
