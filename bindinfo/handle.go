@@ -473,7 +473,9 @@ func (c cache) setBindRecord(hash string, meta *BindRecord) {
 func (c cache) copy() cache {
 	newCache := make(cache, len(c))
 	for k, v := range c {
-		newCache[k] = v
+		bindRecords := make([]*BindRecord, len(v))
+		copy(bindRecords, v)
+		newCache[k] = bindRecords
 	}
 	return newCache
 }
@@ -678,7 +680,9 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 	timer := time.NewTimer(maxTime)
 	resultChan := make(chan error)
 	startTime := time.Now()
-	go runSQL(ctx, sctx, sql, resultChan)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go runSQL(ctx, sctx, sql, resultChan, &wg)
 	select {
 	case err := <-resultChan:
 		cancelFunc()
@@ -688,11 +692,13 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 		return time.Since(startTime), nil
 	case <-timer.C:
 		cancelFunc()
+		wg.Wait()
 	}
 	return -1, nil
 }
 
-func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error) {
+func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
