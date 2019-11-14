@@ -3606,7 +3606,7 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 		tk.Se.Close()
 		wg.Done()
 	}()
-	time.Sleep(50)
+	time.Sleep(50 * time.Nanosecond)
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	wg.Wait()
 	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)

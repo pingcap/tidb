@@ -140,11 +140,11 @@ LOOP:
 				break LOOP
 			default:
 				if strings.HasPrefix(s, "--error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "--error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
 				} else if strings.HasPrefix(s, "-- error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "-- error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
 				} else if strings.HasPrefix(s, "--echo") {
-					echo := strings.TrimSpace(strings.TrimLeft(s, "--echo"))
+					echo := strings.TrimSpace(strings.TrimPrefix(s, "--echo"))
 					t.buf.WriteString(echo)
 					t.buf.WriteString("\n")
 				}
