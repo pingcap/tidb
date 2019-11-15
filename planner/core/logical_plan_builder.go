@@ -267,9 +267,14 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	left, right := p.children[0], p.children[1]
+
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
+			if binop.FuncName.L == ast.EQ && expression.IsEQCondFromIn(expr) {
+				otherCond = append(otherCond, expr)
+				continue
+			}
 			ctx := binop.GetCtx()
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
@@ -299,18 +304,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 					// false even if t.a is null or s.a is null. To make this join "empty aware",
 					// we should differentiate `t.a = s.a` from other column equal conditions, so
 					// we put it into OtherConditions instead of EqualConditions of join.
-					if binop.FuncName.L == ast.EQ && !arg0.InOperand && !arg1.InOperand {
+					if binop.FuncName.L == ast.EQ {
 						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
 					}
 				}
-			}
-
-			if binop.FuncName.L == ast.EQ && expression.IsEQCondFromIn(expr) {
-				// should I check null flag?
-				otherCond = append(otherCond, expr)
-				continue
 			}
 		}
 		columns := expression.ExtractColumns(expr)
