@@ -1357,7 +1357,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
-	snap.SetPriority(priority)
+	snap.SetOption(kv.Priority, priority)
 	if err != nil {
 		return errors.Trace(err)
 	}

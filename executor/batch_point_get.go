@@ -82,6 +82,19 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		return err
 	}
 
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	var reader kv.Snapshot
+	if !txn.Valid() {
+		// In restricted SQL, !txn.Valid() may happen, we doesn't call PrepareTxnCtx but
+		// call Next() and the code runs here.
+		reader = e.snapshot
+	} else {
+		reader = txn
+	}
+
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{}, 0)
@@ -100,7 +113,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err1 := e.batchGet(ctx, keys)
+		handleVals, err1 := reader.BatchGet(ctx, keys)
 		if err1 != nil {
 			return err1
 		}
@@ -140,7 +153,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 
 	// Fetch all values.
-	values, err1 := e.batchGet(ctx, keys)
+	values, err1 := reader.BatchGet(ctx, keys)
 	if err1 != nil {
 		return err1
 	}
@@ -160,43 +173,4 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
-}
-
-func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (res map[string][]byte, err error) {
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	if !txn.Valid() || txn.IsReadOnly() {
-		return e.snapshot.BatchGet(ctx, keys)
-	}
-
-	res = make(map[string][]byte, len(keys))
-	mb := txn.GetMemBuffer()
-	cacheMiss := make([]kv.Key, 0, len(keys))
-	for _, key := range keys {
-		val, err := mb.Get(ctx, key)
-		if err == nil {
-			if len(val) > 0 {
-				res[string(key)] = val
-			}
-			continue
-		}
-
-		if !kv.IsErrNotFound(err) {
-			return nil, err
-		}
-		cacheMiss = append(cacheMiss, key)
-	}
-
-	tmp, err := e.snapshot.BatchGet(ctx, cacheMiss)
-	if err != nil {
-		return nil, err
-	}
-
-	// Combine the result.
-	for k, v := range tmp {
-		res[k] = v
-	}
-	return res, nil
 }
