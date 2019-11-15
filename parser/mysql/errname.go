@@ -888,6 +888,7 @@ var MySQLErrName = map[uint16]string{
 	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrGeneratedColumnRefAutoInc:                             "Generated column '%s' cannot refer to auto-increment column.",
 	ErrInvalidFieldSize:                                      "Invalid size for column '%s'.",
+	ErrIncorrectType:                                         "Incorrect type for argument %s in function %s.",
 	ErrInvalidJSONData:                                       "Invalid JSON data provided to function %s: %s",
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
