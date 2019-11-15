@@ -790,7 +790,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 				rCol.InOperand = false
 			}
 			lClc, ok := larg.(*expression.CorrelatedColumn)
-			if ok && !lClc.Data.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			if ok && mysql.HasNotNullFlag(lClc.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
 		}

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -118,10 +118,6 @@ func exprsContainInOperand(exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Column:
-			if v.InOperand {
-				return true
-			}
-		case *Constant:
 			if v.InOperand {
 				return true
 			}

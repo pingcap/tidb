@@ -60,9 +60,6 @@ type Constant struct {
 	// It's only used to reference a user variable provided in the `EXECUTE` statement or `COM_EXECUTE` binary protocol.
 	ParamMarker *ParamMarker
 	hashcode    []byte
-	// InOperand indicates whether this column is the inner operand of column equal condition converted
-	// from `[not] in (subq)`.
-	InOperand bool
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
