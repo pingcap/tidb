@@ -711,7 +711,7 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 	}
 
 	col := chk.Column(colIdx)
-	col.Reset()
+	col.Reset(eType)
 	for i := 0; i < batchSize; i++ {
 		v := gen.gen()
 		if v == nil {
@@ -1255,7 +1255,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				switch testCase.retEvalType {
 				case types.ETInt:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalInt(row)
 							if err != nil {
@@ -1270,7 +1270,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETReal:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalReal(row)
 							if err != nil {
@@ -1285,7 +1285,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETDecimal:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalDecimal(row)
 							if err != nil {
@@ -1300,7 +1300,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETDatetime, types.ETTimestamp:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalTime(row)
 							if err != nil {
@@ -1315,7 +1315,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETDuration:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalDuration(row)
 							if err != nil {
@@ -1330,7 +1330,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETJson:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalJSON(row)
 							if err != nil {
@@ -1345,7 +1345,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETString:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalString(row)
 							if err != nil {
