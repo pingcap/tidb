@@ -26,16 +26,9 @@ type HashJoinImpl struct {
 // CalcCost implements Implementation CalcCost interface.
 func (impl *HashJoinImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	hashJoin := impl.plan.(*plannercore.PhysicalHashJoin)
-	helper := &plannercore.FullJoinRowCountHelper{
-		Cartesian:     false,
-		LeftProfile:   children[0].GetPlan().Stats(),
-		RightProfile:  children[1].GetPlan().Stats(),
-		LeftJoinKeys:  hashJoin.LeftJoinKeys,
-		RightJoinKeys: hashJoin.RightJoinKeys,
-		LeftSchema:    children[0].GetPlan().Schema(),
-		RightSchema:   children[1].GetPlan().Schema(),
-	}
-	selfCost := hashJoin.GetCost(helper, children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount())
+	// The children here are only used to calculate the cost.
+	hashJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
+	selfCost := hashJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount())
 	impl.cost = selfCost + children[0].GetCost() + children[1].GetCost()
 	return impl.cost
 }

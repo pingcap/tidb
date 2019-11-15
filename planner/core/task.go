@@ -391,7 +391,7 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 }
 
 // GetCost computes cost of hash join operator itself.
-func (p *PhysicalHashJoin) GetCost(helper *FullJoinRowCountHelper, lCnt float64, rCnt float64) float64 {
+func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	innerCnt, outerCnt := lCnt, rCnt
 	// Taking the right as the inner for right join or using the outer to build a hash table.
 	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
@@ -402,6 +402,15 @@ func (p *PhysicalHashJoin) GetCost(helper *FullJoinRowCountHelper, lCnt float64,
 	cpuCost := innerCnt * sessVars.CPUFactor
 	memoryCost := innerCnt * sessVars.MemoryFactor
 	// Number of matched row pairs regarding the equal join conditions.
+	helper := &fullJoinRowCountHelper{
+		cartesian:     false,
+		leftProfile:   p.children[0].statsInfo(),
+		rightProfile:  p.children[1].statsInfo(),
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
+	}
 	numPairs := helper.estimate()
 	// For semi-join class, if `OtherConditions` is empty, we already know
 	// the join results after querying hash table, otherwise, we have to
@@ -443,18 +452,9 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-	helper := &FullJoinRowCountHelper{
-		Cartesian:     false,
-		LeftProfile:   p.children[0].statsInfo(),
-		RightProfile:  p.children[1].statsInfo(),
-		LeftJoinKeys:  p.LeftJoinKeys,
-		RightJoinKeys: p.RightJoinKeys,
-		LeftSchema:    p.children[0].Schema(),
-		RightSchema:   p.children[1].Schema(),
-	}
 	return &rootTask{
 		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(helper, lTask.count(), rTask.count()),
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
 	}
 }
 
@@ -470,14 +470,14 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 		innerSchema = p.children[0].Schema()
 		innerStats = p.children[0].statsInfo()
 	}
-	helper := &FullJoinRowCountHelper{
-		Cartesian:     false,
-		LeftProfile:   p.children[0].statsInfo(),
-		RightProfile:  p.children[1].statsInfo(),
-		LeftJoinKeys:  p.LeftJoinKeys,
-		RightJoinKeys: p.RightJoinKeys,
-		LeftSchema:    p.children[0].Schema(),
-		RightSchema:   p.children[1].Schema(),
+	helper := &fullJoinRowCountHelper{
+		cartesian:     false,
+		leftProfile:   p.children[0].statsInfo(),
+		rightProfile:  p.children[1].statsInfo(),
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
 	}
 	numPairs := helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||

@@ -483,24 +483,23 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	return p.stats, nil
 }
 
-// FullJoinRowCountHelper is used to estimate the output row count of join.
-type FullJoinRowCountHelper struct {
-	Cartesian     bool
-	LeftProfile   *property.StatsInfo
-	RightProfile  *property.StatsInfo
-	LeftJoinKeys  []*expression.Column
-	RightJoinKeys []*expression.Column
-	LeftSchema    *expression.Schema
-	RightSchema   *expression.Schema
+type fullJoinRowCountHelper struct {
+	cartesian     bool
+	leftProfile   *property.StatsInfo
+	rightProfile  *property.StatsInfo
+	leftJoinKeys  []*expression.Column
+	rightJoinKeys []*expression.Column
+	leftSchema    *expression.Schema
+	rightSchema   *expression.Schema
 }
 
-func (h *FullJoinRowCountHelper) estimate() float64 {
-	if h.Cartesian {
-		return h.LeftProfile.RowCount * h.RightProfile.RowCount
+func (h *fullJoinRowCountHelper) estimate() float64 {
+	if h.cartesian {
+		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
-	leftKeyCardinality := getCardinality(h.LeftJoinKeys, h.LeftSchema, h.LeftProfile)
-	rightKeyCardinality := getCardinality(h.RightJoinKeys, h.RightSchema, h.RightProfile)
-	count := h.LeftProfile.RowCount * h.RightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
+	leftKeyCardinality := getCardinality(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+	rightKeyCardinality := getCardinality(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
 	return count
 }
 
