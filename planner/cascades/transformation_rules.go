@@ -267,7 +267,11 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		}
 	}
 	childEngine := expr.Children[0].GetExpr().Children[0].EngineType
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, childEngine == memo.EngineTiFlash)
+	if childEngine != memo.EngineTiKV {
+		// TODO: Remove this check when we have implemented TiFlashAggregation.
+		return false
+	}
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, false)
 }
 
 // OnTransform implements Transformation interface.
