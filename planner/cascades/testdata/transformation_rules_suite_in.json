@@ -10,5 +10,12 @@
       "select a, max(b) from t group by a having a > 1",
       "select a, avg(b) from t group by a having a > 1 and max(b) > 10"
     ]
+  },
+  {
+    "name": "TestTopNRules",
+    "cases": [
+      "select b from t order by a limit 2",
+      "select a+b from t order by a limit 1 offset 2"
+    ]
   }
 ]

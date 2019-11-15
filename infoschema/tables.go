@@ -20,11 +20,14 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -41,6 +44,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -89,6 +94,8 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
+	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
+	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
 type columnInfo struct {
@@ -171,6 +178,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 	{"TIDB_TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TIDB_ROW_ID_SHARDING_INFO", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -665,6 +673,15 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
+var tableTiDBClusterConfigCols = []columnInfo{
+	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1029,6 +1046,15 @@ var tableTiDBClusterInfoCols = []columnInfo{
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
+var tableTableTiFlashReplicaCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+}
+
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(schemas))
@@ -1279,6 +1305,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
+
+				shardingInfo := GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					catalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
@@ -1302,6 +1330,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					createOptions, // CREATE_OPTIONS
 					table.Comment, // TABLE_COMMENT
 					table.ID,      // TIDB_TABLE_ID
+					shardingInfo,  // TIDB_ROW_ID_SHARDING_INFO
 				)
 				rows = append(rows, record)
 			} else {
@@ -1328,12 +1357,35 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // CREATE_OPTIONS
 					"VIEW",        // TABLE_COMMENT
 					table.ID,      // TIDB_TABLE_ID
+					nil,           // TIDB_ROW_ID_SHARDING_INFO
 				)
 				rows = append(rows, record)
 			}
 		}
 	}
 	return rows, nil
+}
+
+// GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
+// The returned description string may be:
+//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables that is primary key is row id.
+//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+// The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
+// This function is exported for unit test.
+func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
+	if dbInfo == nil || tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.Name.L) {
+		return nil
+	}
+	shardingInfo := "NOT_SHARDED"
+	if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	} else {
+		if tableInfo.ShardRowIDBits > 0 {
+			shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+		}
+	}
+	return shardingInfo
 }
 
 func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1961,6 +2013,167 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
+func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
+	sql := "SELECT type, name, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
+		// The cluster topology is injected by `failpoint` expression and
+		// there is no extra checks for it. (let the test fail if the expression invalid)
+		if s := val.(string); len(s) > 0 {
+			var fields []*types.FieldType
+			for i := 0; i < 4; i++ {
+				fields = append(fields, &types.FieldType{
+					Charset: mysql.UTF8Charset,
+					Collate: mysql.UTF8DefaultCollation,
+					Tp:      mysql.TypeVarchar,
+					Flen:    64,
+					Flag:    64,
+				})
+			}
+			data := chunk.New(fields, 0, 3)
+			for _, row := range strings.Split(s, ";") {
+				for i, col := range strings.Split(row, ",") {
+					data.AppendString(i, col)
+				}
+			}
+			iter := chunk.NewIterator4Chunk(data)
+			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+				rows = append(rows, r)
+			}
+			// erase the error message
+			err = nil
+		}
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	type result struct {
+		idx  int
+		rows [][]types.Datum
+		err  error
+	}
+
+	var finalRows [][]types.Datum
+	wg := sync.WaitGroup{}
+	ch := make(chan result, len(rows))
+	for i, row := range rows {
+		typ := row.GetString(0)
+		name := row.GetString(1)
+		address := row.GetString(2)
+		statusAddr := row.GetString(3)
+		if len(statusAddr) == 0 {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s(%s) does not contain status address", typ, name, address))
+			continue
+		}
+
+		wg.Add(1)
+		go func(index int) {
+			util.WithRecovery(func() {
+				defer wg.Done()
+				var url string
+				switch typ {
+				case "pd":
+					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
+				case "tikv", "tidb":
+					url = fmt.Sprintf("http://%s/config", statusAddr)
+				default:
+					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
+					return
+				}
+				req, err := http.NewRequest(http.MethodGet, url, nil)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				req.Header.Add("PD-Allow-follower-handle", "true")
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				var nested map[string]interface{}
+				if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				terror.Log(resp.Body.Close())
+
+				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				// Sorts by keys and make the result stable
+				type item struct {
+					key string
+					val string
+				}
+				var items []item
+				for key, val := range data {
+					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
+				}
+				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+				var rows [][]types.Datum
+				for _, item := range items {
+					rows = append(rows, types.MakeDatums(
+						0,
+						typ,
+						name,
+						address,
+						item.key,
+						item.val,
+					))
+				}
+				ch <- result{idx: index, rows: rows}
+			}, nil)
+		}(i)
+	}
+
+	wg.Wait()
+	close(ch)
+
+	// Keep the original order to make the result more stable
+	var results []result
+	for result := range ch {
+		if result.err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
+		results = append(results, result)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	for _, result := range results {
+		for _, row := range result.rows {
+			row[0] = types.NewDatum(len(finalRows) + 1)
+			finalRows = append(finalRows, row)
+		}
+	}
+	return finalRows, nil
+}
+
+// dataForTableTiFlashReplica constructs data for table tiflash replica info.
+func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if tbl.TiFlashReplica == nil {
+				continue
+			}
+			record := types.MakeDatums(
+				schema.Name.O,                   // TABLE_SCHEMA
+				tbl.Name.O,                      // TABLE_NAME
+				tbl.ID,                          // TABLE_ID
+				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
+				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
+				tbl.TiFlashReplica.Available,                         // AVAILABLE
+			)
+			rows = append(rows, record)
+		}
+	}
+	return rows
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -2003,6 +2216,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
+	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
+	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -2110,6 +2325,10 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
+	case tableTiDBClusterConfig:
+		fullRows, err = dataForClusterConfig(ctx)
+	case tableTiFlashReplica:
+		fullRows = dataForTableTiFlashReplica(dbs)
 	}
 	if err != nil {
 		return nil, err

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -366,8 +367,8 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
-	// EnableArrow indicates whether the coprocessor request can use arrow API.
-	EnableArrow bool
+	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
+	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -431,6 +432,9 @@ type SessionVars struct {
 
 	// UsePlanBaselines indicates whether we will use plan baselines to adjust plan.
 	UsePlanBaselines bool
+
+	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
+	EvolvePlanBaselines bool
 
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
@@ -527,6 +531,7 @@ func NewSessionVars() *SessionVars {
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
@@ -566,13 +571,13 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
-	var enableArrow string
-	if config.GetGlobalConfig().TiKVClient.EnableArrow {
-		enableArrow = "1"
+	var enableChunkRPC string
+	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+		enableChunkRPC = "1"
 	} else {
-		enableArrow = "0"
+		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
+	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 
@@ -920,8 +925,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBEnableArrow:
-		s.EnableArrow = TiDBOptOn(val)
+	case TiDBEnableChunkRPC:
+		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -973,6 +978,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
+	case TiDBEvolvePlanBaselines:
+		s.EvolvePlanBaselines = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
 		s.isolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
@@ -983,6 +990,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiFlash] = struct{}{}
 			}
 		}
+	case TiDBStoreLimit:
+		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 	}
 	s.systems[name] = val
 	return nil
