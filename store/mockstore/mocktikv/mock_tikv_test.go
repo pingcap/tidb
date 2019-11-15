@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
@@ -166,6 +167,7 @@ func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mut
 		PrimaryLock:  []byte(primary),
 		StartVersion: startTS,
 		LockTtl:      ttl,
+		MinCommitTs:  startTS + 1,
 	}
 	errs := s.store.Prewrite(req)
 	for _, err := range errs {
@@ -556,7 +558,7 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 	s.mustPutOK(c, "test", "test2", 5, 8)
 
 	// simulate `getTxnStatus` for txn 2.
-	err := s.store.Cleanup([]byte("test"), 2)
+	err := s.store.Cleanup([]byte("test"), 2, math.MaxUint64)
 	c.Assert(err, IsNil)
 	req = &kvrpcpb.PrewriteRequest{
 		Mutations:    putMutations("test", "test3"),
@@ -661,14 +663,14 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
 
-	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(666))
 	c.Assert(commitTS, Equals, uint64(0))
 
 	s.mustCommitOK(c, [][]byte{[]byte("pk")}, 5, 30)
 
-	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(30))
@@ -676,10 +678,44 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", 5, 666)
 	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, 5)
 
-	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0, 666)
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
+
+	// Cover the TxnNotFound case.
+	_, _, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, false)
+	c.Assert(err, NotNil)
+	notFound, ok := errors.Cause(err).(*ErrTxnNotFound)
+	c.Assert(ok, IsTrue)
+	c.Assert(notFound.StartTs, Equals, uint64(5))
+	c.Assert(string(notFound.PrimaryKey), Equals, "txnNotFound")
+
+	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, true)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(0))
+
+	// Check the rollback tombstone blocks this prewrite which comes with a smaller startTS.
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    putMutations("txnNotFound", "val"),
+		PrimaryLock:  []byte("txnNotFound"),
+		StartVersion: 4,
+		MinCommitTs:  6,
+	}
+	errs := s.store.Prewrite(req)
+	c.Assert(errs, NotNil)
+}
+
+func (s *testMVCCLevelDB) TestRejectCommitTS(c *C) {
+	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
+	// Push the minCommitTS
+	_, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100, false)
+	c.Assert(err, IsNil)
+	err = s.store.Commit([][]byte{[]byte("x")}, 5, 10)
+	e, ok := errors.Cause(err).(*ErrCommitTSExpired)
+	c.Assert(ok, IsTrue)
+	c.Assert(e.MinCommitTs, Equals, uint64(101))
 }
 
 func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {
@@ -712,7 +748,7 @@ func (s *testMVCCLevelDB) TestTxnHeartBeat(c *C) {
 	c.Assert(ttl, Greater, uint64(300))
 
 	// The lock has already been clean up
-	c.Assert(s.store.Cleanup([]byte("pk"), 5), IsNil)
+	c.Assert(s.store.Cleanup([]byte("pk"), 5, math.MaxUint64), IsNil)
 	_, err = s.store.TxnHeartBeat([]byte("pk"), 5, 1000)
 	c.Assert(err, NotNil)
 }

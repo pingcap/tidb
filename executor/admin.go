@@ -146,6 +146,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	distsql.SetEncodeType(e.ctx, dagReq)
 	return dagReq, nil
 }
 
@@ -249,7 +250,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-
+	distsql.SetEncodeType(e.ctx, dagReq)
 	return dagReq, nil
 }
 
@@ -431,7 +432,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		}
 
 		recordKey := e.table.RecordKey(row.handle)
-		err := txn.LockKeys(ctx, 0, recordKey)
+		err := txn.LockKeys(ctx, nil, 0, kv.LockAlwaysWait, recordKey)
 		if err != nil {
 			return result, err
 		}
@@ -684,7 +685,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-
+	distsql.SetEncodeType(e.ctx, dagReq)
 	return dagReq, nil
 }
 

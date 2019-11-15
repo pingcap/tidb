@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -124,11 +125,11 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(Column#1, Column#3)]",
 		"├─TableReader_12 5.99 root data:Selection_11",
-		"│ └─Selection_11 5.99 cop not(isnull(Column#1))",
-		"│   └─TableScan_10 6.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ └─Selection_11 5.99 cop[tikv] not(isnull(Column#1))",
+		"│   └─TableScan_10 6.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_15 5.99 root data:Selection_14",
-		"  └─Selection_14 5.99 cop not(isnull(Column#3))",
-		"    └─TableScan_13 6.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─Selection_14 5.99 cop[tikv] not(isnull(Column#3))",
+		"    └─TableScan_13 6.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -153,13 +154,13 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
 		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
 		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
-		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │ │ └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
-		"│ │   └─TableScan_18 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │   └─TableScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ └─TableReader_21 10000.00 root data:TableScan_20",
-		"│   └─TableScan_20 10000.00 cop table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│   └─TableScan_20 10000.00 cop[tikv] table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_23 10000.00 root data:TableScan_22",
-		"  └─TableScan_22 10000.00 cop table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableScan_22 10000.00 cop[tikv] table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
@@ -167,13 +168,13 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 		"├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
 		"│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
 		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
-		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │ │ └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
-		"│ │   └─TableScan_18 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │   └─TableScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ └─TableReader_21 10000.00 root data:TableScan_20",
-		"│   └─TableScan_20 10000.00 cop table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│   └─TableScan_20 10000.00 cop[tikv] table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_23 10000.00 root data:TableScan_22",
-		"  └─TableScan_22 10000.00 cop table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableScan_22 10000.00 cop[tikv] table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
@@ -181,15 +182,15 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 		"├─HashLeftJoin_13 999000000000.00 root CARTESIAN inner join, inner:TableReader_23",
 		"│ ├─HashRightJoin_16 99900000.00 root CARTESIAN inner join, inner:TableReader_19",
 		"│ │ ├─TableReader_19 9990.00 root data:Selection_18",
-		"│ │ │ └─Selection_18 9990.00 cop not(isnull(Column#1))",
-		"│ │ │   └─TableScan_17 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │ │ └─Selection_18 9990.00 cop[tikv] not(isnull(Column#1))",
+		"│ │ │   └─TableScan_17 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ │ └─TableReader_21 10000.00 root data:TableScan_20",
-		"│ │   └─TableScan_20 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │   └─TableScan_20 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"│ └─TableReader_23 10000.00 root data:TableScan_22",
-		"│   └─TableScan_22 10000.00 cop table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│   └─TableScan_22 10000.00 cop[tikv] table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_26 9990.00 root data:Selection_25",
-		"  └─Selection_25 9990.00 cop not(isnull(Column#7))",
-		"    └─TableScan_24 10000.00 cop table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─Selection_25 9990.00 cop[tikv] not(isnull(Column#7))",
+		"    └─TableScan_24 10000.00 cop[tikv] table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -249,8 +250,8 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"HashAgg_9 2.00 root group by:Column#6, funcs:count(Column#5)",
 		"└─TableReader_10 2.00 root data:HashAgg_5",
-		"  └─HashAgg_5 2.00 cop group by:Column#1, funcs:count(1)",
-		"    └─TableScan_8 8.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"  └─HashAgg_5 2.00 cop[tikv] group by:Column#1, funcs:count(1)",
+		"    └─TableScan_8 8.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 }
 
@@ -393,7 +394,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -443,7 +444,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -559,7 +560,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -591,14 +592,14 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 35.91 root data:Selection_6",
-		"└─Selection_6 35.91 cop le(Column#1, 5), le(Column#2, 5)",
-		"  └─TableScan_5 80.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 35.91 cop[tikv] le(Column#1, 5), le(Column#2, 5)",
+		"  └─TableScan_5 80.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 8.84 root data:Selection_6",
-		"└─Selection_6 8.84 cop le(Column#1, 5), le(Column#2, 5)",
-		"  └─TableScan_5 80.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Selection_6 8.84 cop[tikv] le(Column#1, 5), le(Column#2, 5)",
+		"  └─TableScan_5 80.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -635,7 +636,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -660,26 +661,26 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a is null").Check(testkit.Rows(
 		"TableReader_7 2.00 root data:Selection_6",
-		"└─Selection_6 2.00 cop isnull(Column#1)",
-		"  └─TableScan_5 2.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 2.00 cop[tikv] isnull(Column#1)",
+		"  └─TableScan_5 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery("explain select * from t use index(idx) where a is null").Check(testkit.Rows(
 		"IndexLookUp_7 2.00 root ",
-		"├─IndexScan_5 2.00 cop table:t, index:a, range:[NULL,NULL], keep order:false",
-		"└─TableScan_6 2.00 cop table:t, keep order:false",
+		"├─IndexScan_5 2.00 cop[tikv] table:t, index:a, range:[NULL,NULL], keep order:false",
+		"└─TableScan_6 2.00 cop[tikv] table:t, keep order:false",
 	))
 	h := dom.StatsHandle()
 	h.Clear()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t where b = 1").Check(testkit.Rows(
 		"TableReader_7 0.00 root data:Selection_6",
-		"└─Selection_6 0.00 cop eq(Column#2, 1)",
-		"  └─TableScan_5 2.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 0.00 cop[tikv] eq(Column#2, 1)",
+		"  └─TableScan_5 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery("explain select * from t where b < 1").Check(testkit.Rows(
 		"TableReader_7 0.00 root data:Selection_6",
-		"└─Selection_6 0.00 cop lt(Column#2, 1)",
-		"  └─TableScan_5 2.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 0.00 cop[tikv] lt(Column#2, 1)",
+		"  └─TableScan_5 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 }
 
@@ -702,27 +703,27 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"Projection_11 10.00 root Column#15",
 			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
-			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
+			"  │ └─TableScan_14 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_22 1.00 root funcs:count(1)",
 			"    └─HashLeftJoin_23 1.00 root inner join, inner:TableReader_33, equal:[eq(Column#5, Column#9)]",
 			"      ├─TableReader_27 1.00 root data:Selection_26",
-			"      │ └─Selection_26 1.00 cop eq(Column#5, Column#1), not(isnull(Column#5))",
-			"      │   └─TableScan_25 10.00 cop table:s, range:[-inf,+inf], keep order:false",
+			"      │ └─Selection_26 1.00 cop[tikv] eq(Column#5, Column#1), not(isnull(Column#5))",
+			"      │   └─TableScan_25 10.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false",
 			"      └─TableReader_33 1.00 root data:Selection_32",
-			"        └─Selection_32 1.00 cop eq(Column#9, Column#1), not(isnull(Column#9))",
-			"          └─TableScan_31 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
+			"        └─Selection_32 1.00 cop[tikv] eq(Column#9, Column#1), not(isnull(Column#9))",
+			"          └─TableScan_31 10.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
 		))
 	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
 		Check(testkit.Rows(
 			"Projection_8 10.00 root Column#9",
 			"└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_15",
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
-			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
+			"  │ └─TableScan_11 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_15 1.00 root ",
 			"    └─Projection_16 0.10 root concat(cast(Column#5), \",\", cast(Column#6))",
 			"      └─IndexReader_19 0.10 root index:Selection_18",
-			"        └─Selection_18 0.10 cop eq(Column#5, Column#1)",
-			"          └─IndexScan_17 1.00 cop table:t1, index:c, b, a, range: decided by [eq(Column#7, Column#3)], keep order:false",
+			"        └─Selection_18 0.10 cop[tikv] eq(Column#5, Column#1)",
+			"          └─IndexScan_17 1.00 cop[tikv] table:t1, index:c, b, a, range: decided by [eq(Column#7, Column#3)], keep order:false",
 		))
 }
 
@@ -751,9 +752,9 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
 			"IndexLookUp_8 10.00 root ",
-			"├─IndexScan_5 12.50 cop table:t, index:a, b, range:[5,5], keep order:false",
-			"└─Selection_7 10.00 cop eq(Column#3, 5)",
-			"  └─TableScan_6 12.50 cop table:t, keep order:false",
+			"├─IndexScan_5 12.50 cop[tikv] table:t, index:a, b, range:[5,5], keep order:false",
+			"└─Selection_7 10.00 cop[tikv] eq(Column#3, 5)",
+			"  └─TableScan_6 12.50 cop[tikv] table:t, keep order:false",
 		))
 }
 
@@ -890,7 +891,7 @@ func BenchmarkOptimize(b *testing.B) {
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()
@@ -909,30 +910,28 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t1(a bigint, b bigint, c bigint)")
-	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
-
-	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
-		"IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
-		"├─TableReader_17 9980.01 root data:Selection_16",
-		"│ └─Selection_16 9980.01 cop not(isnull(Column#1)), not(isnull(Column#3))",
-		"│   └─TableScan_15 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_12 1.25 root index:Selection_11",
-		"  └─Selection_11 1.25 cop not(isnull(Column#5)), not(isnull(Column#7))",
-		"    └─IndexScan_10 1.25 cop table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo",
-	))
-
-	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
-	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
-		"Projection_7 0.00 root Column#1, Column#2, Column#4, Column#5",
-		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_15, equal:[eq(Column#5, Column#2)]",
-		"  ├─IndexReader_15 0.00 root index:Selection_14",
-		"  │ └─Selection_14 0.00 cop isnull(Column#5), not(isnull(Column#5))",
-		"  │   └─IndexScan_13 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-		"  └─IndexReader_21 9990.00 root index:Selection_20",
-		"    └─Selection_20 9990.00 cop not(isnull(Column#2))",
-		"      └─IndexScan_19 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
-	))
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+	}
 }
 
 func (s *testAnalyzeSuite) TestIssue9805(c *C) {
@@ -1019,4 +1018,38 @@ func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
+}
+
+func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("desc select * from t").Check(testkit.Rows(
+		"TableReader_7 10000.00 root data:TableScan_6",
+		"└─TableScan_6 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
+		"TableReader_6 2.00 root data:TableScan_5",
+		"└─TableScan_5 2.00 cop[tikv] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo",
+	))
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
+		"TableReader_7 2.00 root data:Selection_6",
+		"└─Selection_6 2.00 cop[tiflash] or(eq(Column#1, 1), eq(Column#1, 2))",
+		"  └─TableScan_5 2.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
 }

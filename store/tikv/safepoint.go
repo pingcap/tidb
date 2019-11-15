@@ -17,12 +17,14 @@ import (
 	"context"
 	"crypto/tls"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/mvcc/mvccpb"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +45,7 @@ const (
 type SafePointKV interface {
 	Put(k string, v string) error
 	Get(k string) (string, error)
+	GetWithPrefix(k string) ([]*mvccpb.KeyValue, error)
 }
 
 // MockSafePointKV implements SafePointKV at mock test
@@ -72,6 +75,19 @@ func (w *MockSafePointKV) Get(k string) (string, error) {
 	defer w.mockLock.RUnlock()
 	elem := w.store[k]
 	return elem, nil
+}
+
+// GetWithPrefix implements the Get method for SafePointKV
+func (w *MockSafePointKV) GetWithPrefix(prefix string) ([]*mvccpb.KeyValue, error) {
+	w.mockLock.RLock()
+	defer w.mockLock.RUnlock()
+	kvs := make([]*mvccpb.KeyValue, 0, len(w.store))
+	for k, v := range w.store {
+		if strings.HasPrefix(k, prefix) {
+			kvs = append(kvs, &mvccpb.KeyValue{Key: []byte(k), Value: []byte(v)})
+		}
+	}
+	return kvs, nil
 }
 
 // EtcdSafePointKV implements SafePointKV at runtime
@@ -111,6 +127,17 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 		return string(resp.Kvs[0].Value), nil
 	}
 	return "", nil
+}
+
+// GetWithPrefix implements the GetWithPrefix for SafePointKV
+func (w *EtcdSafePointKV) GetWithPrefix(k string) ([]*mvccpb.KeyValue, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+	resp, err := w.cli.Get(ctx, k, clientv3.WithPrefix())
+	cancel()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resp.Kvs, nil
 }
 
 func saveSafePoint(kv SafePointKV, t uint64) error {

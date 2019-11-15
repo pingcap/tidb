@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -218,7 +219,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -313,7 +314,7 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
@@ -366,7 +367,7 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
@@ -433,7 +434,7 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
@@ -456,7 +457,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -466,7 +467,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
@@ -571,7 +572,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
@@ -599,7 +600,7 @@ func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
 
 	stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).TableInfo = mockedTableInfo
 
-	p, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+	p, _, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
 	return p, err
 }
 
@@ -657,7 +658,7 @@ func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	comment := Commentf("for %s", sql)
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil, comment)
-	p, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
+	p, _, err := BuildLogicalPlan(context.Background(), s.ctx, stmt, s.is)
 	c.Assert(err, IsNil, comment)
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown, p.(LogicalPlan))
 	c.Assert(err, IsNil, comment)
@@ -766,7 +767,7 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, ca.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, ca.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -872,7 +873,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		Preprocess(s.ctx, stmt, s.is)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
 			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp)
@@ -969,6 +970,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(Column#1,Column#14)->IndexReader(Index(t.c_d_e)[[42,42]])}(Column#2,Column#27)->Sel([or(Column#26, Column#40)])->Projection->Delete",
 		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(Column#2,Column#25)->Projection->Update",
+		},
 	}
 
 	ctx := context.Background()
@@ -979,7 +984,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 
 		s.ctx.GetSessionVars().HashJoinConcurrency = 1
 		Preprocess(s.ctx, stmt, s.is)
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
 			p, err = logicalOptimize(context.TODO(), flagPrunColumns, lp)
@@ -1027,7 +1032,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1130,7 +1135,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPushDownAgg, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1290,7 +1295,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1316,7 +1321,7 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1512,7 +1517,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		_, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if tt.err == nil {
 			c.Assert(err, IsNil, comment)
 		} else {
@@ -1610,7 +1615,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		lp, err := logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1656,7 +1661,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
@@ -1799,9 +1804,20 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
-			sql: `revoke all privileges on *.* from 'test'@'%'`,
+			sql: `revoke all privileges on test.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", "", nil},
+				{mysql.SelectPriv, "test", "", "", nil},
+				{mysql.InsertPriv, "test", "", "", nil},
+				{mysql.UpdatePriv, "test", "", "", nil},
+				{mysql.DeletePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.GrantPriv, "test", "", "", nil},
+				{mysql.AlterPriv, "test", "", "", nil},
+				{mysql.ExecutePriv, "test", "", "", nil},
+				{mysql.IndexPriv, "test", "", "", nil},
+				{mysql.CreateViewPriv, "test", "", "", nil},
+				{mysql.ShowViewPriv, "test", "", "", nil},
 			},
 		},
 		{
@@ -2144,7 +2160,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		c.Assert(err, IsNil, comment)
 		s.ctx.GetSessionVars().HashJoinConcurrency = 1
 
-		_, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if t.err == "" {
 			c.Check(err, IsNil)
 		} else {
@@ -2520,6 +2536,23 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN CURRENT ROW AND 1 PRECEDING )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		// Test issue 11943
+		{
+			sql:    "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
+			result: "TableReader(Table(t))->Sort->Window(row_number() over(partition by Column#2))->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
@@ -2529,24 +2562,46 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	ctx := context.TODO()
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
-		p, err := builder.Build(ctx, stmt)
+		p, stmt, err := s.optimize(ctx, tt.sql)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
 			continue
 		}
+		c.Assert(ToString(p), Equals, tt.result, comment)
+
+		var sb strings.Builder
+		// After restore, the result should be the same.
+		err = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		lp, ok := p.(LogicalPlan)
-		c.Assert(ok, IsTrue)
-		p, err = physicalOptimize(lp)
-		c.Assert(err, IsNil)
+		p, _, err = s.optimize(ctx, sb.String())
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
 		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
+}
+
+func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan, ast.Node, error) {
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	err = Preprocess(s.ctx, stmt, s.is)
+	if err != nil {
+		return nil, nil, err
+	}
+	builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	if err != nil {
+		return nil, nil, err
+	}
+	p, _, err = physicalOptimize(p.(LogicalPlan))
+	return p.(PhysicalPlan), stmt, err
 }
 
 func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {

@@ -198,11 +198,12 @@ func newEntry(key MvccKey) *mvccEntry {
 // Note that parameter key is raw key, while key in ErrLocked is mvcc key.
 func (l *mvccLock) lockErr(key []byte) error {
 	return &ErrLocked{
-		Key:     mvccEncode(key, lockVer),
-		Primary: l.primary,
-		StartTS: l.startTS,
-		TTL:     l.ttl,
-		TxnSize: l.txnSize,
+		Key:      mvccEncode(key, lockVer),
+		Primary:  l.primary,
+		StartTS:  l.startTS,
+		TTL:      l.ttl,
+		TxnSize:  l.txnSize,
+		LockType: l.op,
 	}
 }
 
@@ -254,19 +255,20 @@ type MVCCStore interface {
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
-	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error
+	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
+		forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error
 	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
 	Prewrite(req *kvrpcpb.PrewriteRequest) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error
-	Cleanup(key []byte, startTS uint64) error
+	Cleanup(key []byte, startTS, currentTS uint64) error
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	TxnHeartBeat(primaryKey []byte, startTS uint64, adviseTTL uint64) (uint64, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
 	GC(startKey, endKey []byte, safePoint uint64) error
 	DeleteRange(startKey, endKey []byte) error
-	CheckTxnStatus(primaryKey []byte, lockTS uint64, startTS, currentTS uint64) (ttl, commitTS uint64, err error)
+	CheckTxnStatus(primaryKey []byte, lockTS uint64, startTS, currentTS uint64, rollbackIfNotFound bool) (ttl, commitTS uint64, err error)
 	Close() error
 }
 

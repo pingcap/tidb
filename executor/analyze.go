@@ -624,7 +624,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
 		// we always use the first follower when follower read is enabled
-		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region, e.ctx.GetSessionVars().GetReplicaRead(), 0)
+		rpcCtx, *err = e.cache.GetTiKVRPCContext(bo, loc.Region, e.ctx.GetSessionVars().GetReplicaRead(), 0)
 		if *err != nil {
 			return
 		}
@@ -1102,7 +1102,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
 		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 		// Scale the total column size.
-		collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		if len(collector.Samples) > 0 {
+			collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		}
 		if i < hasPKInfo {
 			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -340,6 +341,10 @@ type schemaHandler struct {
 }
 
 type dbTableHandler struct {
+	*tikvHandlerTool
+}
+
+type flashReplicaHandler struct {
 	*tikvHandlerTool
 }
 
@@ -665,6 +670,83 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	binloginfo.DisableSkipBinlogFlag()
+}
+
+type tableFlashReplicaInfo struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
+	ID             int64    `json:"id"`
+	ReplicaCount   uint64   `json:"replica_count"`
+	LocationLabels []string `json:"location_labels"`
+	Available      bool     `json:"available"`
+}
+
+func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodPost {
+		h.handleStatusReport(w, req)
+		return
+	}
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	allDBs := schema.AllSchemas()
+	for _, db := range allDBs {
+		tables := schema.SchemaTables(db.Name)
+		for _, tbl := range tables {
+			tblInfo := tbl.Meta()
+			if tblInfo.TiFlashReplica == nil {
+				continue
+			}
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             tblInfo.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.Available,
+			})
+		}
+	}
+	writeData(w, replicaInfos)
+}
+
+type tableFlashReplicaStatus struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
+	ID               int64  `json:"id"`
+	RegionCount      uint64 `json:"region_count"`
+	FlashRegionCount uint64 `json:"flash_region_count"`
+}
+
+// checkTableFlashReplicaAvailable uses to check the available status of table flash replica.
+func (tf *tableFlashReplicaStatus) checkTableFlashReplicaAvailable() bool {
+	return tf.FlashRegionCount == tf.RegionCount
+}
+
+func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
+	var status tableFlashReplicaStatus
+	err := json.NewDecoder(req.Body).Decode(&status)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	do, err := session.GetDomain(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.checkTableFlashReplicaAvailable())
+	if err != nil {
+		writeError(w, err)
+	}
+	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
+		status.RegionCount),
+		zap.Uint64("flash region count", status.FlashRegionCount),
+		zap.Error(err))
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -994,13 +1076,23 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*TableRegions, error) {
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
-	recordRegionIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	ctx := context.Background()
+	pdCli := h.RegionCache.PDClient()
+	regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 	if err != nil {
 		return nil, err
 	}
-	recordRegions, err := h.getRegionsMeta(recordRegionIDs)
-	if err != nil {
-		return nil, err
+
+	recordRegions := make([]RegionMeta, 0, len(peers))
+	for idx, leader := range peers {
+		region := regions[idx]
+		meta := RegionMeta{
+			ID:          region.Id,
+			Leader:      leader,
+			Peers:       region.Peers,
+			RegionEpoch: region.RegionEpoch,
+		}
+		recordRegions = append(recordRegions, meta)
 	}
 
 	// for indices
@@ -1010,14 +1102,22 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		rIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err
 		}
-		indices[i].Regions, err = h.getRegionsMeta(rIDs)
-		if err != nil {
-			return nil, err
+		indexRegions := make([]RegionMeta, 0, len(peers))
+		for idx, leader := range peers {
+			region := regions[idx]
+			meta := RegionMeta{
+				ID:          region.Id,
+				Leader:      leader,
+				Peers:       region.Peers,
+				RegionEpoch: region.RegionEpoch,
+			}
+			indexRegions = append(indexRegions, meta)
 		}
+		indices[i].Regions = indexRegions
 	}
 
 	return &TableRegions{
@@ -1429,7 +1529,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
 	IsOwner bool `json:"is_owner"`
-	*domain.ServerInfo
+	*infosync.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1441,18 +1541,18 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo = do.InfoSyncer().GetServerInfo()
+	info.ServerInfo = infosync.GetServerInfo()
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum                   int                           `json:"servers_num,omitempty"`
-	OwnerID                      string                        `json:"owner_id"`
-	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                             `json:"servers_num,omitempty"`
+	OwnerID                      string                          `json:"owner_id"`
+	IsAllServerVersionConsistent bool                            `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []infosync.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1464,7 +1564,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ctx := context.Background()
-	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
+	allServersInfo, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		log.Error(err)
@@ -1478,8 +1578,8 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		log.Error(err)
 		return
 	}
-	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
+	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

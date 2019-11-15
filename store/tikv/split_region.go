@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -109,7 +109,9 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool) singleBatchResp {
 	failpoint.Inject("MockSplitRegionTimeout", func(val failpoint.Value) {
 		if val.(bool) {
-			time.Sleep(time.Second*1 + time.Millisecond*10)
+			if _, ok := bo.ctx.Deadline(); ok {
+				<-bo.ctx.Done()
+			}
 		}
 	})
 
@@ -154,7 +156,12 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	logutil.BgLogger().Info("batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
 		zap.Stringer("first at", kv.Key(batch.keys[0])),
-		zap.Stringer("first new region left", logutil.Hex(spResp.Regions[0])),
+		zap.Stringer("first new region left", stringutil.MemoizeStr(func() string {
+			if len(spResp.Regions) == 0 {
+				return ""
+			}
+			return logutil.Hex(spResp.Regions[0]).String()
+		})),
 		zap.Int("new region count", len(spResp.Regions)))
 
 	if !scatter {

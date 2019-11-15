@@ -212,3 +212,26 @@ func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 		tk.MustQuery(tt.query).Check(tt.result)
 	}
 }
+
+func (s *testUpdateSuite) TestUpdateSchemaChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
+	tk.MustExec(`begin;`)
+	tk.MustExec(`insert into t(a) values(1);`)
+	err := tk.ExecToErr(`update t set b=6 where b=2;`)
+	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.")
+	tk.MustExec(`commit;`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
+		`1 2`))
+}
+
+func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table t(a int, b int generated always  as (a+1) virtual)")
+	tk.MustExec("create table test2.t(a int, b int generated always  as (a+1) virtual)")
+	tk.MustExec("update t, test2.t set test.t.a=1")
+}

@@ -106,6 +106,7 @@ const (
 	LblOK          = "ok"
 	LblError       = "error"
 	LblRollback    = "rollback"
+	LblComRol      = "com_rol"
 	LblType        = "type"
 	LblDb          = "db"
 	LblResult      = "result"

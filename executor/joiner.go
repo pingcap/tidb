@@ -53,8 +53,8 @@ type joiner interface {
 	// rows are appended to `chk`. The size of `chk` is limited to MaxChunkSize.
 	// Note that when the outer row is considered unmatched, we need to differentiate
 	// whether the join conditions return null or false, because that matters for
-	// AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, and the result is reflected
-	// by the second return value; for other join types, we always return false.
+	// AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, by setting the return
+	// value isNull; for other join types, isNull is always false.
 	//
 	// NOTE: Callers need to call this function multiple times to consume all
 	// the inner rows for an outer row, and decide whether the outer row can be
@@ -92,6 +92,9 @@ type joiner interface {
 	// it decides if this outer row should be outputted, hence we have a `hasNull`
 	// parameter passed to `onMissMatch`.
 	onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk)
+
+	// Clone deep copies a joiner.
+	Clone() joiner
 }
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
@@ -228,6 +231,29 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, in
 	return outerRowStatus, err
 }
 
+func (j *baseJoiner) Clone() baseJoiner {
+	base := baseJoiner{
+		ctx:          j.ctx,
+		conditions:   make([]expression.Expression, 0, len(j.conditions)),
+		outerIsRight: j.outerIsRight,
+		maxChunkSize: j.maxChunkSize,
+		selected:     make([]bool, 0, len(j.selected)),
+		isNull:       make([]bool, 0, len(j.isNull)),
+	}
+	for _, con := range j.conditions {
+		base.conditions = append(base.conditions, con.Clone())
+	}
+	if j.chk != nil {
+		base.chk = j.chk.CopyConstruct()
+	} else {
+		base.shallowRow = chunk.MutRow(j.shallowRow.ToRow())
+	}
+	if !j.defaultInner.IsEmpty() {
+		base.defaultInner = j.defaultInner.CopyConstruct()
+	}
+	return base
+}
+
 type semiJoiner struct {
 	baseJoiner
 }
@@ -288,6 +314,11 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 }
 
 func (j *semiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+}
+
+// Clone implements joiner interface.
+func (j *semiJoiner) Clone() joiner {
+	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
 type antiSemiJoiner struct {
@@ -351,6 +382,10 @@ func (j *antiSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.C
 	if !hasNull {
 		chk.AppendRow(outer)
 	}
+}
+
+func (j *antiSemiJoiner) Clone() joiner {
+	return &antiSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
 type leftOuterSemiJoiner struct {
@@ -429,6 +464,10 @@ func (j *leftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *ch
 	}
 }
 
+func (j *leftOuterSemiJoiner) Clone() joiner {
+	return &leftOuterSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
+}
+
 type antiLeftOuterSemiJoiner struct {
 	baseJoiner
 }
@@ -505,6 +544,10 @@ func (j *antiLeftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk
 	}
 }
 
+func (j *antiLeftOuterSemiJoiner) Clone() joiner {
+	return &antiLeftOuterSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
+}
+
 type leftOuterJoiner struct {
 	baseJoiner
 }
@@ -564,6 +607,10 @@ func (j *leftOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk)
 	chk.AppendPartialRow(outer.Len(), j.defaultInner)
 }
 
+func (j *leftOuterJoiner) Clone() joiner {
+	return &leftOuterJoiner{baseJoiner: j.baseJoiner.Clone()}
+}
+
 type rightOuterJoiner struct {
 	baseJoiner
 }
@@ -621,6 +668,10 @@ func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.R
 func (j *rightOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, j.defaultInner)
 	chk.AppendPartialRow(j.defaultInner.Len(), outer)
+}
+
+func (j *rightOuterJoiner) Clone() joiner {
+	return &rightOuterJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
 type innerJoiner struct {
@@ -683,4 +734,8 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 }
 
 func (j *innerJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+}
+
+func (j *innerJoiner) Clone() joiner {
+	return &innerJoiner{baseJoiner: j.baseJoiner.Clone()}
 }

@@ -66,13 +66,15 @@ type selectResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
-	selectResp     *tipb.SelectResponse
-	selectRespSize int // record the selectResp.Size() when it is initialized.
-	respChkIdx     int
+	selectResp       *tipb.SelectResponse
+	selectRespSize   int // record the selectResp.Size() when it is initialized.
+	respChkIdx       int
+	respChunkDecoder *chunk.Decoder
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -145,8 +147,26 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	// Check the returned data is default/chunk format.
+	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return err
+		}
+	}
+	// TODO(Shenghui Wu): add metrics
+	switch r.selectResp.GetEncodeType() {
+	case tipb.EncodeType_TypeDefault:
+		return r.readFromDefault(ctx, chk)
+	case tipb.EncodeType_TypeChunk:
+		return r.readFromChunk(ctx, chk)
+	}
+	return errors.Errorf("unsupported encode type:%v", r.encodeType)
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
-		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return err
@@ -157,6 +177,43 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return err
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
+			r.respChkIdx++
+		}
+	}
+	return nil
+}
+
+func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) error {
+	if r.respChunkDecoder == nil {
+		r.respChunkDecoder = chunk.NewDecoder(
+			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
+			r.fieldTypes,
+		)
+	}
+
+	for !chk.IsFull() {
+		if r.respChkIdx == len(r.selectResp.Chunks) {
+			err := r.getSelectResp()
+			if err != nil || r.selectResp == nil {
+				return err
+			}
+		}
+
+		if r.respChunkDecoder.IsFinished() {
+			r.respChunkDecoder.Reset(r.selectResp.Chunks[r.respChkIdx].RowsData)
+		}
+		// If the next chunk size is greater than required rows * 0.8, reuse the memory of the next chunk and return
+		// immediately. Otherwise, splice the data to one chunk and wait the next chunk.
+		if r.respChunkDecoder.RemainedRows() > int(float64(chk.RequiredRows())*0.8) {
+			if chk.NumRows() > 0 {
+				return nil
+			}
+			r.respChunkDecoder.ReuseIntermChk(chk)
+			r.respChkIdx++
+			return nil
+		}
+		r.respChunkDecoder.Decode(chk)
+		if r.respChunkDecoder.IsFinished() {
 			r.respChkIdx++
 		}
 	}

@@ -127,6 +127,12 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	return builder
 }
 
+// SetStoreType sets "StoreType" for "kv.Request".
+func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuilder {
+	builder.Request.StoreType = storeType
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:

@@ -140,7 +140,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
 	partStr := rangePartitionString(pi)
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -152,7 +152,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			fmt.Fprintf(&buf, "((%s) < (%s))", partStr, pi.Definitions[i].LessThan[0])
 		}
 
-		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
@@ -167,7 +167,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			fmt.Fprintf(&buf, " or ((%s) is null)", partStr)
 
 			// Extracts the column of the partition expression, it will be used by partition prunning.
-			if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, partStr, schema); err1 == nil {
+			if tmps, err1 := expression.ParseSimpleExprsWithNames(ctx, partStr, schema, names); err1 == nil {
 				if col, ok := tmps[0].(*expression.Column); ok {
 					column = col
 				}
@@ -177,12 +177,14 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			}
 		}
 
-		exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+		exprs, err = expression.ParseSimpleExprsWithNames(ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+		// Get a hash code in advance to prevent data race afterwards.
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
@@ -201,20 +203,22 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
 	for i := 0; i < int(pi.Num); i++ {
 		fmt.Fprintf(&buf, "MOD(ABS(%s),(%d))=%d", pi.Expr, pi.Num, i)
-		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+		// Get a hash code in advance to prevent data race afterwards.
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
-	exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
+	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))

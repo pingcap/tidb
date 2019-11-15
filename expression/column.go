@@ -182,12 +182,7 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 
 // Column represents a column.
 type Column struct {
-	OrigColName model.CIStr
-	ColName     model.CIStr
-	DBName      model.CIStr
-	OrigTblName model.CIStr
-	TblName     model.CIStr
-	RetType     *types.FieldType
+	RetType *types.FieldType
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -199,13 +194,11 @@ type Column struct {
 
 	hashcode []byte
 
-	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
-	// or an argument column of function IfNull.
-	// If so, this column's name will be the plain sql text.
-	IsReferenced bool
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
 	InOperand bool
+	// VirtualExpr is used to save expression for virtual column
+	VirtualExpr Expression
 }
 
 // Equal implements Expression interface.
@@ -220,7 +213,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
-		result.Reset()
+		result.ResizeInt64(0, false)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			v, null, err := col.EvalInt(ctx, row)
 			if err != nil {
@@ -246,6 +239,17 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
+		sel := input.Sel()
+		if sel != nil {
+			for i, j := range sel {
+				if src.IsNull(j) {
+					result.SetNull(i, true)
+				} else {
+					f64s[i] = float64(f32s[j])
+				}
+			}
+			return nil
+		}
 		for i := range f32s {
 			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
 			if src.IsNull(i) {
@@ -262,7 +266,7 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 
 // VecEvalString evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	if col.RetType.Hybrid() {
+	if col.RetType.Hybrid() || ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		it := chunk.NewIterator4Chunk(input)
 		result.ReserveString(input.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -465,6 +469,15 @@ func (col *Column) Vectorized() bool {
 	return true
 }
 
+// ToInfo converts the expression.Column to model.ColumnInfo for casting values,
+// beware it doesn't fill all the fields of the model.ColumnInfo.
+func (col *Column) ToInfo() *model.ColumnInfo {
+	return &model.ColumnInfo{
+		ID:        col.ID,
+		FieldType: *col.RetType,
+	}
+}
+
 // Column2Exprs will transfer column slice to expression slice.
 func Column2Exprs(cols []*Column) []Expression {
 	result := make([]Expression, 0, len(cols))
@@ -477,7 +490,7 @@ func Column2Exprs(cols []*Column) []Expression {
 // ColInfo2Col finds the corresponding column of the ColumnInfo in a column slice.
 func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	for _, c := range cols {
-		if c.ColName.L == col.Name.L {
+		if c.ID == col.ID {
 			return c
 		}
 	}
@@ -485,10 +498,10 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 }
 
 // indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
-	for _, c := range cols {
-		if c.ColName.L == col.Name.L {
-			return c
+func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
+	for i, info := range colInfos {
+		if info.Name.L == col.Name.L {
+			return cols[i]
 		}
 	}
 	return nil
@@ -499,11 +512,11 @@ func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be only the 1st corresponding *Column and its length.
 // TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(cols, c)
+		col := indexCol2Col(colInfos, cols, c)
 		if col == nil {
 			return retCols, lengths
 		}
@@ -521,11 +534,11 @@ func IndexInfo2PrefixCols(cols []*Column, index *model.IndexInfo) ([]*Column, []
 // together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
 // the return value will be [col1, nil, col2].
-func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(cols, c)
+		col := indexCol2Col(colInfos, cols, c)
 		if col == nil {
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
@@ -557,4 +570,9 @@ idLoop:
 		return retCols
 	}
 	return retCols
+}
+
+// EvalVirtualColumn evals the virtual column
+func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
+	return col.VirtualExpr.Eval(row)
 }

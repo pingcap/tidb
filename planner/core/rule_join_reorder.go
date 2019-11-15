@@ -70,9 +70,8 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			}
 		}
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:         ctx,
-			otherConds:  otherConds,
-			blockOffset: p.SelectBlockOffset(),
+			ctx:        ctx,
+			otherConds: otherConds,
 		}
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
@@ -108,7 +107,6 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
-	blockOffset  int
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -146,10 +144,14 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+	offset := lChild.SelectBlockOffset()
+	if offset != rChild.SelectBlockOffset() {
+		offset = -1
+	}
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.Init(s.ctx, s.blockOffset)
+	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

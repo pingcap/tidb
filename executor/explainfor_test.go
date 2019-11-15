@@ -67,7 +67,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
 		"TableReader_5 10000.00 root data:TableScan_4",
-		"└─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableScan_4 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
@@ -83,6 +83,8 @@ func (s *testSuite) TestExplainFor(c *C) {
 func (s *testSuite) TestIssue11124(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists kankan1")
+	tk.MustExec("drop table if exists kankan2")
 	tk.MustExec("create table kankan1(id int, name text);")
 	tk.MustExec("create table kankan2(id int, h1 text);")
 	tk.MustExec("insert into kankan1 values(1, 'a'), (2, 'a');")

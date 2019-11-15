@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -62,10 +63,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		return resp
 	}
 
-	var (
-		chunks []tipb.Chunk
-		rowCnt int
-	)
+	var rows [][][]byte
 	ctx := context.TODO()
 	for {
 		var row [][]byte
@@ -76,20 +74,22 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		if row == nil {
 			break
 		}
-		data := dummySlice
-		for _, offset := range dagReq.OutputOffsets {
-			data = append(data, row[offset]...)
-		}
-		chunks = appendRow(chunks, data, rowCnt)
-		rowCnt++
+		rows = append(rows, row)
 	}
-	warnings := dagCtx.evalCtx.sc.GetWarnings()
 
 	var execDetails []*execDetail
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
 		execDetails = e.ExecDetails()
 	}
-	return buildResp(chunks, e.Counts(), execDetails, err, warnings)
+
+	selResp := h.initSelectResponse(err, dagCtx.evalCtx.sc.GetWarnings(), e.Counts())
+	if err == nil {
+		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
+	}
+	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
+	//  Such err should only be marshal in the data but not in OtherError.
+	//  However, we can not distinguish such err now.
+	return buildResp(selResp, execDetails, err)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
@@ -418,6 +418,12 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
+	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
+	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
+	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
+	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	// TODO set FlagInUpdateOrDeleteStmt, FlagInUnionStmt,
 	return sc
 }
 
@@ -550,13 +556,107 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, execDetails []*execDetail, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
-	resp := &coprocessor.Response{}
+func (h *rpcHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
-		Chunks:       chunks,
 		OutputCounts: counts,
 	}
+	for i := range warnings {
+		selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
+	}
+	return selResp
+}
+
+func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
+	switch dagReq.EncodeType {
+	case tipb.EncodeType_TypeDefault:
+		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
+	case tipb.EncodeType_TypeChunk:
+		colTypes := h.constructRespSchema(dagCtx)
+		loc := dagCtx.evalCtx.sc.TimeZone
+		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
+	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
+	agg := root.Aggregation
+	if root.StreamAgg != nil {
+		agg = root.StreamAgg
+	}
+	if agg == nil {
+		return dagCtx.evalCtx.fieldTps
+	}
+
+	schema := make([]*types.FieldType, 0, len(agg.AggFunc)+len(agg.GroupBy))
+	for i := range agg.AggFunc {
+		if agg.AggFunc[i].Tp == tipb.ExprType_Avg {
+			// Avg function requests two columns : Count , Sum
+			// This line addend the Count(TypeLonglong) to the schema.
+			schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+		}
+		schema = append(schema, expression.PbTypeToFieldType(agg.AggFunc[i].FieldType))
+	}
+	for i := range agg.GroupBy {
+		schema = append(schema, expression.PbTypeToFieldType(agg.GroupBy[i].FieldType))
+	}
+	return schema
+}
+
+func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte, colOrdinal []uint32) {
+	var chunks []tipb.Chunk
+	for i := range rows {
+		requestedRow := dummySlice
+		for _, ordinal := range colOrdinal {
+			requestedRow = append(requestedRow, rows[i][ordinal]...)
+		}
+		chunks = appendRow(chunks, requestedRow, i)
+	}
+	selResp.Chunks = chunks
+	selResp.EncodeType = tipb.EncodeType_TypeDefault
+}
+
+func (h *rpcHandler) encodeChunk(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+	var chunks []tipb.Chunk
+	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
+	for _, ordinal := range colOrdinal {
+		respColTypes = append(respColTypes, colTypes[ordinal])
+	}
+	chk := chunk.NewChunkWithCapacity(respColTypes, rowsPerChunk)
+	encoder := chunk.NewCodec(respColTypes)
+	decoder := codec.NewDecoder(chk, loc)
+	for i := range rows {
+		for j, ordinal := range colOrdinal {
+			_, err := decoder.DecodeOne(rows[i][ordinal], j, colTypes[ordinal])
+			if err != nil {
+				return err
+			}
+		}
+		if i%rowsPerChunk == rowsPerChunk-1 {
+			chunks = append(chunks, tipb.Chunk{})
+			cur := &chunks[len(chunks)-1]
+			cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
+			chk.Reset()
+		}
+	}
+	if chk.NumRows() > 0 {
+		chunks = append(chunks, tipb.Chunk{})
+		cur := &chunks[len(chunks)-1]
+		cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
+		chk.Reset()
+	}
+	selResp.Chunks = chunks
+	selResp.EncodeType = tipb.EncodeType_TypeChunk
+	return nil
+}
+
+func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err error) *coprocessor.Response {
+	resp := &coprocessor.Response{}
+
 	if len(execDetails) > 0 {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, 0, len(execDetails))
 		for _, d := range execDetails {
@@ -571,12 +671,7 @@ func buildResp(chunks []tipb.Chunk, counts []int64, execDetails []*execDetail, e
 		}
 		selResp.ExecutionSummaries = execSummary
 	}
-	if len(warnings) > 0 {
-		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
-		for i := range warnings {
-			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
-		}
-	}
+
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
@@ -609,8 +704,16 @@ func toPBError(err error) *tipb.Error {
 		perr.Code = int32(sqlErr.Code)
 		perr.Msg = sqlErr.Message
 	default:
-		perr.Code = int32(1)
-		perr.Msg = err.Error()
+		e := errors.Cause(err)
+		switch y := e.(type) {
+		case *terror.Error:
+			tmp := y.ToSQLError()
+			perr.Code = int32(tmp.Code)
+			perr.Msg = tmp.Message
+		default:
+			perr.Code = int32(1)
+			perr.Msg = err.Error()
+		}
 	}
 	return perr
 }

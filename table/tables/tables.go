@@ -388,6 +388,10 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			untouched = false
 			break
 		}
+		// If txn is auto commit and index is untouched, no need to write index value.
+		if untouched && !ctx.GetSessionVars().InTxn() {
+			continue
+		}
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
@@ -413,10 +417,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
 func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
-	if ctx.GetSessionVars().LightningMode {
-		return ctx.Txn(true)
-	}
-
 	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
 	if bs == nil {
 		txn, err := ctx.Txn(true)
@@ -528,12 +528,10 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	txn.SetAssertion(key, kv.None)
 
-	if !sessVars.LightningMode {
-		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
-			return 0, err
-		}
-		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
+	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+		return 0, err
 	}
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -594,7 +592,7 @@ func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	} else {
 		ctx = context.Background()
 	}
-	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
 			return recordID, err
@@ -845,7 +843,7 @@ func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 				return err
 			}
 
-			return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, idx.Meta().Name)
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
 		}
 		return err
 	}
@@ -949,7 +947,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
+	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
 	if err != nil {
 		return 0, err
 	}

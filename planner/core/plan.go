@@ -18,8 +18,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
@@ -34,10 +32,19 @@ import (
 type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
+
 	// Get the ID.
 	ID() int
+
+	// TP get the plan type.
+	TP() string
+
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -47,7 +54,11 @@ type Plan interface {
 	statsInfo() *property.StatsInfo
 
 	// OutputNames returns the outputting names of each column.
-	OutputNames() []*types.FieldName
+	OutputNames() types.NameSlice
+
+	// SetOutputNames sets the outputting name by the given slice.
+	SetOutputNames(names types.NameSlice)
+
 	SelectBlockOffset() int
 }
 
@@ -83,8 +94,8 @@ type LogicalPlan interface {
 	// with the lowest cost.
 	findBestTask(prop *property.PhysicalProperty) (task, error)
 
-	// buildKeyInfo will collect the information of unique keys into schema.
-	buildKeyInfo()
+	// BuildKeyInfo will collect the information of unique keys into schema.
+	BuildKeyInfo()
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
@@ -93,7 +104,9 @@ type LogicalPlan interface {
 	recursiveDeriveStats() (*property.StatsInfo, error)
 
 	// DeriveStats derives statistic info for current plan node given child stats.
-	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
+	// We need selfSchema, childSchema here because it makes this method can be used in
+	// cascades planner, where LogicalPlan might not record its children or schema.
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -108,10 +121,6 @@ type LogicalPlan interface {
 
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
-
-	// findColumn finds the column in basePlan's schema.
-	// If the column is not in the schema, returns an error.
-	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 
 	// Get all the children.
 	Children() []LogicalPlan
@@ -134,9 +143,6 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
-	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
-
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
@@ -154,6 +160,9 @@ type PhysicalPlan interface {
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices() error
+
+	// Stats returns the StatsInfo of the plan.
+	Stats() *property.StatsInfo
 }
 
 type baseLogicalPlan struct {
@@ -169,6 +178,11 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 	return p.maxOneRow
 }
 
+// ExplainInfo implements Plan interface.
+func (p *baseLogicalPlan) ExplainInfo() string {
+	return ""
+}
+
 type basePhysicalPlan struct {
 	basePlan
 
@@ -177,13 +191,13 @@ type basePhysicalPlan struct {
 	children         []PhysicalPlan
 }
 
-func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
-	return p.childrenReqProps[idx]
-}
-
-// ExplainInfo implements PhysicalPlan interface.
+// ExplainInfo implements Plan interface.
 func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
+}
+
+func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
+	return p.childrenReqProps[idx]
 }
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
@@ -196,9 +210,10 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	p.taskMap[string(key)] = task
 }
 
-func (p *baseLogicalPlan) buildKeyInfo() {
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *baseLogicalPlan) BuildKeyInfo() {
 	for _, child := range p.children {
-		child.buildKeyInfo()
+		child.BuildKeyInfo()
 	}
 	switch p.self.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
@@ -261,8 +276,11 @@ type basePlan struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *basePlan) OutputNames() []*types.FieldName {
+func (p *basePlan) OutputNames() types.NameSlice {
 	return nil
+}
+
+func (p *basePlan) SetOutputNames(names types.NameSlice) {
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -278,19 +296,42 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 	return p.stats
 }
 
+// ExplainInfo implements Plan interface.
+func (p *basePlan) ExplainInfo() string {
+	return "N/A"
+}
+
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }
 
+// TP implements Plan interface.
+func (p *basePlan) TP() string {
+	return p.tp
+}
+
 func (p *basePlan) SelectBlockOffset() int {
 	return p.blockOffset
+}
+
+// Stats implements Plan Stats interface.
+func (p *basePlan) Stats() *property.StatsInfo {
+	return p.stats
 }
 
 // Schema implements Plan Schema interface.
 func (p *baseLogicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
+}
+
+func (p *baseLogicalPlan) OutputNames() types.NameSlice {
+	return p.children[0].OutputNames()
+}
+
+func (p *baseLogicalPlan) SetOutputNames(names types.NameSlice) {
+	p.children[0].SetOutputNames(names)
 }
 
 // Schema implements Plan Schema interface.
@@ -331,12 +372,4 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
-}
-
-func (p *baseLogicalPlan) findColumn(column *ast.ColumnName) (*expression.Column, int, error) {
-	col, idx, err := p.self.Schema().FindColumnAndIndex(column)
-	if err == nil && col == nil {
-		err = errors.Errorf("column %s not found", column.Name.O)
-	}
-	return col, idx, err
 }

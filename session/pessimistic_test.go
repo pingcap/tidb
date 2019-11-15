@@ -15,10 +15,13 @@ package session_test
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
@@ -33,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testPessimisticSuite{})
+var _ = SerialSuites(&testPessimisticSuite{})
 
 type testPessimisticSuite struct {
 	cluster   *mocktikv.Cluster
@@ -60,9 +63,11 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	s.dom.GetGlobalVarsCache().Disable()
 	c.Assert(err, IsNil)
+	tikv.PrewriteMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
+	tikv.PrewriteMaxBackoff = 20000
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
@@ -365,14 +370,12 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	syncCh <- struct{}{}
 	tk.MustQuery("select c from conflict where id = 1").Check(testkit.Rows("3"))
 
-	// Check outdated pessimistic lock is resolved.
+	// Check pessimistic lock is not resolved.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update conflict set c = 4 where id = 1")
-	time.Sleep(300 * time.Millisecond)
 	tk2.MustExec("begin optimistic")
 	tk2.MustExec("update conflict set c = 5 where id = 1")
-	tk2.MustExec("commit")
-	_, err := tk.Exec("commit")
+	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
@@ -391,4 +394,286 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk.MustExec("insert into conflict values (1, 999) on duplicate key update c = c + 2")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from conflict").Check(testkit.Rows("1 3"))
+}
+
+func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+
+	tk.MustExec("set @@autocommit = 0")
+	tk2.MustExec("set @@autocommit = 0")
+	tk3.MustExec("set @@autocommit = 0")
+
+	// point get with no autocommit
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from tk where c1 = 2 for update") // lock succ
+
+	tk2.MustExec("begin pessimistic")
+	_, err := tk2.Exec("select * from tk where c1 = 2 for update nowait")
+	c.Check(err, NotNil)
+	tk.MustExec("commit")
+	tk2.MustExec("select * from tk where c1 = 2 for update nowait") // lock succ
+
+	tk3.MustExec("begin pessimistic")
+	_, err = tk3.Exec("select * from tk where c1 = 2 for update nowait")
+	c.Check(err, NotNil)
+
+	tk2.MustExec("commit")
+	tk3.MustExec("select * from tk where c1 = 2 for update")
+	tk3.MustExec("commit")
+	tk.MustExec("commit")
+
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 3")
+	tk2.MustExec("begin pessimistic")
+	_, err = tk2.Exec("select * from tk where c1 = 3 for update nowait")
+	c.Check(err, NotNil)
+	tk3.MustExec("commit")
+	tk2.MustExec("select * from tk where c1 = 3 for update nowait")
+	tk2.MustExec("commit")
+
+	tk.MustExec("commit")
+	tk2.MustExec("commit")
+	tk3.MustExec("commit")
+
+	// scan with no autocommit
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from tk where c1 >= 2 for update")
+	tk2.MustExec("begin pessimistic")
+	_, err = tk2.Exec("select * from tk where c1 = 2 for update nowait")
+	c.Check(err, NotNil)
+	_, err = tk2.Exec("select * from tk where c1 > 3 for update nowait")
+	c.Check(err, NotNil)
+	tk2.MustExec("select * from tk where c1 = 1 for update nowait")
+	tk2.MustExec("commit")
+	tk.MustQuery("select * from tk where c1 >= 2 for update").Check(testkit.Rows("2 2", "3 4", "4 4", "5 5"))
+	tk.MustExec("commit")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update tk set c2 = c2 + 10 where c1 > 3")
+	tk3.MustExec("begin pessimistic")
+	_, err = tk3.Exec("select * from tk where c1 = 5 for update nowait")
+	c.Check(err, NotNil)
+	tk3.MustExec("select * from tk where c1 = 1 for update nowait")
+	tk.MustExec("commit")
+	tk3.MustQuery("select * from tk where c1 > 3 for update nowait").Check(testkit.Rows("4 14", "5 15"))
+	tk3.MustExec("commit")
+
+	//delete
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("delete from tk where c1 <= 2")
+	tk.MustExec("begin pessimistic")
+	_, err = tk.Exec("select * from tk where c1 = 1 for update nowait")
+	c.Check(err, NotNil)
+	tk3.MustExec("commit")
+	tk.MustQuery("select * from tk where c1 > 1 for update nowait").Check(testkit.Rows("3 4", "4 14", "5 15"))
+	tk.MustExec("update tk set c2 = c2 + 1 where c1 = 5")
+	tk2.MustExec("begin pessimistic")
+	_, err = tk2.Exec("select * from tk where c1 = 5 for update nowait")
+	c.Check(err, NotNil)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 16"))
+	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 5")
+	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
+	tk2.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,17)")
+
+	tk.MustExec("set @@autocommit = 0")
+	tk2.MustExec("set @@autocommit = 0")
+	tk3.MustExec("set @@autocommit = 0")
+
+	// test get ts failed for handlePessimisticLockError when using nowait
+	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
+	// the txn correctness should be ensured
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return"), IsNil)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from tk where c1 > 0 for update nowait")
+	tk2.MustExec("begin pessimistic")
+	// The lock rollback of this statement is delayed by failpoint AsyncRollBackSleep.
+	_, err := tk2.Exec("select * from tk where c1 > 0 for update nowait")
+	c.Check(err, NotNil)
+	tk.MustExec("commit")
+	// This statement success for now, but its lock will be rollbacked later by the
+	// lingering rollback request, as forUpdateTS doesn't change.
+	tk2.MustQuery("select * from tk where c1 > 0 for update nowait")
+	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
+	tk3.MustExec("begin pessimistic")
+	// tk3 succ because tk2 rollback itself.
+	tk3.MustExec("update tk set c2 = 1 where c1 = 5")
+	// This will not take effect because the lock of tk2 was gone.
+	tk2.MustExec("update tk set c2 = c2 + 100 where c1 > 0")
+	_, err = tk2.Exec("commit")
+	c.Check(err, NotNil) // txn abort because pessimistic lock not found
+	tk3.MustExec("commit")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 1"))
+	tk3.MustQuery("select * from tk where c1 = 4 for update nowait").Check(testkit.Rows("4 4"))
+	tk3.MustQuery("select * from tk where c1 = 3 for update nowait").Check(testkit.Rows("3 3"))
+	tk3.MustExec("commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
+}
+
+func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
+	// Test kill command works on waiting pessimistic lock.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		sessVars := tk2.Se.GetSessionVars()
+		succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+		c.Assert(succ, IsTrue)
+		wg.Wait()
+	}()
+	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
+	wg.Done()
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, tikv.ErrQueryInterrupted), IsTrue)
+	tk.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
+	// Test killing an idle pessimistic session stop its ttlManager.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+	sessVars := tk.Se.GetSessionVars()
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	c.Assert(succ, IsTrue)
+
+	// This query should success rather than returning a ResolveLock error.
+	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
+}
+
+func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	// tk set global
+	tk.MustExec("set global innodb_lock_wait_timeout = 3")
+	tk.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 50"))
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
+	tk2.MustExec("set innodb_lock_wait_timeout = 2")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 2"))
+
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
+	tk3.MustExec("set innodb_lock_wait_timeout = 1")
+	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+
+	tk2.MustExec("set @@autocommit = 0")
+	tk3.MustExec("set @@autocommit = 0")
+
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk4.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
+	tk4.MustExec("set @@autocommit = 0")
+
+	// tk2 lock c1 = 1
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("select * from tk where c1 = 1 for update") // lock succ c1 = 1
+
+	// Parallel the blocking tests to accelerate CI.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// tk3 try lock c1 = 1 timeout 1sec
+		tk3.MustExec("begin pessimistic")
+		start := time.Now()
+		_, err := tk3.Exec("select * from tk where c1 = 1 for update")
+		c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+		c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		tk3.MustExec("commit")
+	}()
+
+	go func() {
+		defer wg.Done()
+		// tk5 try lock c1 = 1 timeout 2sec
+		tk5 := testkit.NewTestKitWithInit(c, s.store)
+		tk5.MustExec("set innodb_lock_wait_timeout = 2")
+		tk5.MustExec("begin pessimistic")
+		start := time.Now()
+		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
+		c.Check(time.Since(start), GreaterEqual, time.Duration(2000*time.Millisecond))
+		c.Check(time.Since(start), LessEqual, time.Duration(2100*time.Millisecond)) // unit test diff should not be too big
+		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		tk5.MustExec("rollback")
+	}()
+
+	// tk4 lock c1 = 2
+	tk4.MustExec("begin pessimistic")
+	tk4.MustExec("update tk set c2 = c2 + 1 where c1 = 2") // lock succ c1 = 2 by update
+
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+
+	start := time.Now()
+	_, err := tk2.Exec("delete from tk where c1 = 2")
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+
+	tk4.MustExec("commit")
+
+	tk.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 50"))
+	tk.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 3")) // tk4 update commit work, tk2 delete should be rollbacked
+
+	// test stmtRollBack caused by timeout but not the whole transaction
+	tk2.MustExec("update tk set c2 = c2 + 2 where c1 = 2")                    // tk2 lock succ c1 = 2 by update
+	tk2.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 5")) // tk2 update c2 succ
+
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("select * from tk where c1 = 3 for update") // tk3  lock c1 = 3 succ
+
+	start = time.Now()
+	_, err = tk2.Exec("delete from tk where c1 = 3") // tk2 tries to lock c1 = 3 fail, this delete should be rollback, but previous update should be keeped
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+
+	tk2.MustExec("commit")
+	tk3.MustExec("commit")
+
+	tk.MustQuery(`select * from tk where c1 = 1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from tk where c1 = 2`).Check(testkit.Rows("2 5")) // tk2 update succ
+	tk.MustQuery(`select * from tk where c1 = 3`).Check(testkit.Rows("3 3")) // tk2 delete should fail
+	tk.MustQuery(`select * from tk where c1 = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from tk where c1 = 5`).Check(testkit.Rows("5 5"))
+
+	// clean
+	tk.MustExec("drop table if exists tk")
+	tk4.MustExec("commit")
+
+	wg.Wait()
 }

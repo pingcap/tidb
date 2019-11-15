@@ -93,7 +93,8 @@ const (
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
-	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
@@ -108,6 +109,9 @@ const (
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
 
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
@@ -119,6 +123,9 @@ const (
 
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
+
+	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
@@ -170,6 +177,23 @@ const (
 
 	// tidb_opt_correlation_exp_factor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
 	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
+
+	// tidb_opt_cpu_factor is the CPU cost of processing one expression for one row.
+	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
+	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
+	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
+	TiDBOptNetworkFactor = "tidb_opt_network_factor"
+	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
+	TiDBOptScanFactor = "tidb_opt_scan_factor"
+	// tidb_opt_desc_factor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	TiDBOptDescScanFactor = "tidb_opt_desc_factor"
+	// tidb_opt_seek_factor is the IO cost of seeking the start value in a range on TiKV or TiFlash.
+	TiDBOptSeekFactor = "tidb_opt_seek_factor"
+	// tidb_opt_memory_factor is the memory cost of storing one tuple.
+	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
+	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -251,6 +275,10 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
+	// deltaSchemaInfos is a queue that maintains the history of schema changes.
+	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
+
 	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
 
@@ -299,6 +327,22 @@ const (
 
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
+	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
+
+	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
+	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
+
+	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
+	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
+
+	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
+	// Now, only support TiKV and TiFlash.
+	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
+
+	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
+	TiDBStoreLimit = "tidb_store_limit"
 )
 
 // Default TiDB system variable values.
@@ -320,6 +364,14 @@ const (
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
+	DefOptCPUFactor                    = 3.0
+	DefOptCopCPUFactor                 = 3.0
+	DefOptNetworkFactor                = 1.0
+	DefOptScanFactor                   = 1.5
+	DefOptDescScanFactor               = 3.0
+	DefOptSeekFactor                   = 20.0
+	DefOptMemoryFactor                 = 0.001
+	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
@@ -349,6 +401,7 @@ const (
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
@@ -365,6 +418,10 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
+	DefTiDBUsePlanBaselines            = true
+	DefTiDBEvolvePlanBaselines         = false
+	DefInnodbLockWaitTimeout           = 50 // 50s
+	DefTiDBStoreLimit                  = 0
 )
 
 // Process global variables.
@@ -374,6 +431,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
@@ -384,4 +442,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
 )

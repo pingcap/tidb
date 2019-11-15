@@ -143,7 +143,9 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
-		newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]})
+		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}); err != nil {
+			return nil, false
+		}
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true

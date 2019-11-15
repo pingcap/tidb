@@ -163,6 +163,7 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 }
 
 // CastValue casts a value based on column type.
+// TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
@@ -362,6 +363,12 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
 func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+	// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted, because
+	// after JSON marshaling and unmarshaling against the field with type `interface{}`, the content with actual type `[]byte` is changed.
+	// We need `DefaultValueBit` to restore OriginDefaultValue before reading it.
+	if col.Tp == mysql.TypeBit && col.DefaultValueBit != nil && col.OriginDefaultValue != nil {
+		col.OriginDefaultValue = col.DefaultValueBit
+	}
 	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
 }
 

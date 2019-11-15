@@ -32,6 +32,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 )
 
 type batchConn struct {
@@ -200,6 +201,9 @@ type batchCommandsClient struct {
 	batched sync.Map
 	idAlloc uint64
 
+	tikvClientCfg config.TiKVClient
+	tikvLoad      *uint64
+
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
 	// tryLock protects client when re-create the streaming.
@@ -214,9 +218,20 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
 	}
+
+	if err := c.initBatchClient(); err != nil {
+		logutil.BgLogger().Warn(
+			"init create streaming fail",
+			zap.String("target", c.target),
+			zap.Error(err),
+		)
+		c.failPendingRequests(err)
+		return
+	}
+
 	if err := c.client.Send(request); err != nil {
-		logutil.BgLogger().Error(
-			"batch commands send error",
+		logutil.BgLogger().Info(
+			"sending batch commands meets error",
 			zap.String("target", c.target),
 			zap.Error(err),
 		)
@@ -245,22 +260,42 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
-	c.failPendingRequests(err) // fail all pending requests.
-
-	// Re-establish a application layer stream. TCP layer is handled by gRPC.
-	tikvClient := tikvpb.NewTikvClient(c.conn)
-	streamClient, err := tikvClient.BatchCommands(context.TODO())
-	if err == nil {
-		logutil.BgLogger().Info(
-			"batchRecvLoop re-create streaming success",
-			zap.String("target", c.target),
-		)
-		c.client = streamClient
-
-		return nil
+func (c *batchCommandsClient) waitConnReady() (err error) {
+	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	for {
+		s := c.conn.GetState()
+		if s == connectivity.Ready {
+			cancel()
+			break
+		}
+		if !c.conn.WaitForStateChange(dialCtx, s) {
+			cancel()
+			err = dialCtx.Err()
+			return
+		}
 	}
-	logutil.BgLogger().Error(
+	return
+}
+
+func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
+	c.failPendingRequests(perr) // fail all pending requests.
+
+	err := c.waitConnReady()
+	// Re-establish a application layer stream. TCP layer is handled by gRPC.
+	if err == nil {
+		tikvClient := tikvpb.NewTikvClient(c.conn)
+		var streamClient tikvpb.Tikv_BatchCommandsClient
+		streamClient, err = tikvClient.BatchCommands(context.TODO())
+		if err == nil {
+			logutil.BgLogger().Info(
+				"batchRecvLoop re-create streaming success",
+				zap.String("target", c.target),
+			)
+			c.client = streamClient
+			return nil
+		}
+	}
+	logutil.BgLogger().Info(
 		"batchRecvLoop re-create streaming fail",
 		zap.String("target", c.target),
 		zap.Error(err),
@@ -283,8 +318,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	for {
 		resp, err := c.recv()
 		if err != nil {
-			logutil.BgLogger().Error(
-				"batchRecvLoop error when receive",
+			if c.isStopped() {
+				return
+			}
+			logutil.BgLogger().Info(
+				"batchRecvLoop fails when receiving, needs to reconnect",
 				zap.String("target", c.target),
 				zap.Error(err),
 			)
@@ -418,8 +456,10 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*tikvpb.BatchCommandsRequest_Request, requestIDs []uint64) {
 	// Choose a connection by round-robbin.
-	var cli *batchCommandsClient = nil
-	var target string = ""
+	var (
+		cli    *batchCommandsClient
+		target string
+	)
 	for i := 0; i < len(a.batchCommandsClients); i++ {
 		a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
 		target = a.batchCommandsClients[a.index].target
@@ -452,6 +492,26 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 
 	cli.send(req, entries)
 	return
+}
+
+func (c *batchCommandsClient) initBatchClient() error {
+	if c.client != nil {
+		return nil
+	}
+
+	if err := c.waitConnReady(); err != nil {
+		return err
+	}
+
+	// Initialize batch streaming clients.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.client = streamClient
+	go c.batchRecvLoop(c.tikvClientCfg, c.tikvLoad)
+	return nil
 }
 
 func (a *batchConn) Close() {

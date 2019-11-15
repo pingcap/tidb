@@ -44,6 +44,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -197,6 +198,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if err != nil {
 			return err
 		}
+		if cl, ok := rs.(fetchNotifier); ok {
+			cl.OnFetchReturned()
+		}
 		// explicitly flush columnInfo to client.
 		return cc.flush()
 	}
@@ -213,6 +217,7 @@ const (
 )
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
+	cc.ctx.GetSessionVars().StartTime = time.Now()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -596,6 +601,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()
+	stmt.StoreResultSet(nil)
 	return cc.writeOK()
 }
 
@@ -624,8 +630,17 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
-	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
-		return prepared.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+	if sv == nil {
+		return ""
 	}
-	return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	preparedPointer, ok := sv.PreparedStmts[stmtID]
+	if !ok {
+		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	preparedAst := preparedObj.PreparedAst
+	return preparedAst.Stmt.Text() + sv.PreparedParams.String()
 }

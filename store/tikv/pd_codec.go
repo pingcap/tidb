@@ -47,9 +47,13 @@ func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*me
 	return processRegionResult(region, peer, err)
 }
 
-func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
-	encodedKey := codec.EncodeBytes([]byte(nil), startKey)
-	regions, peers, err := c.Client.ScanRegions(ctx, encodedKey, limit)
+func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	startKey = codec.EncodeBytes([]byte(nil), startKey)
+	if len(endKey) > 0 {
+		endKey = codec.EncodeBytes([]byte(nil), endKey)
+	}
+
+	regions, peers, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

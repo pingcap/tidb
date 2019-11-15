@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -133,4 +134,12 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCache
 		Plan:        plan,
 		OutPutNames: names,
 	}
+}
+
+// CachedPrepareStmt store prepared ast from PrepareExec and other related fields
+type CachedPrepareStmt struct {
+	PreparedAst *ast.Prepared
+	VisitInfos  []visitInfo
+	ColumnInfos interface{}
+	Executor    interface{}
 }

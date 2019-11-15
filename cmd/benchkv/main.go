@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )
 
@@ -79,7 +80,7 @@ func Init() {
 	prometheus.MustRegister(txnCounter)
 	prometheus.MustRegister(txnRolledbackCounter)
 	prometheus.MustRegister(txnDurations)
-	http.Handle("/metrics", prometheus.Handler())
+	http.Handle("/metrics", promhttp.Handler())
 
 	go func() {
 		err1 := http.ListenAndServe(":9191", nil)

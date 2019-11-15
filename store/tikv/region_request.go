@@ -15,11 +15,13 @@ package tikv
 
 import (
 	"context"
+	"strconv"
+	"sync/atomic"
+	"time"
+
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/storeutil"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -69,12 +72,22 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout)
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, kv.TiKV)
 	return resp, err
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
-func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
+func (s *RegionRequestSender) SendReqCtx(
+	bo *Backoffer,
+	req *tikvrpc.Request,
+	regionID RegionVerID,
+	timeout time.Duration,
+	sType kv.StoreType,
+) (
+	resp *tikvrpc.Response,
+	rpcCtx *RPCContext,
+	err error,
+) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
@@ -101,24 +114,32 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		replicaRead = kv.ReplicaReadLeader
 	}
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+		switch sType {
+		case kv.TiKV:
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+		case kv.TiFlash:
+			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
+		default:
+			err = errors.Errorf("unsupported storage type: %v", sType)
 		}
-		if ctx == nil {
+		if err != nil {
+			return nil, nil, err
+		}
+		if rpcCtx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
-			resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 			return resp, nil, err
 		}
 
-		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, ctx.Addr)
-		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
+		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, rpcCtx.Addr)
+		s.storeAddr = rpcCtx.Addr
+		var retry bool
+		resp, retry, err = s.sendReqToRegion(bo, rpcCtx, req, timeout)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -126,12 +147,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			continue
 		}
 
-		regionErr, err := resp.GetRegionError()
+		var regionErr *errorpb.Error
+		regionErr, err = resp.GetRegionError()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err := s.onRegionError(bo, ctx, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -139,13 +161,20 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 				continue
 			}
 		}
-		return resp, ctx, nil
+		return resp, rpcCtx, nil
 	}
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
+	}
+	// judge the store limit switch.
+	if limit := storeutil.StoreLimit.Load(); limit > 0 {
+		if err := s.getStoreToken(ctx.Store, limit); err != nil {
+			return nil, false, err
+		}
+		defer s.releaseStoreToken(ctx.Store)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
@@ -156,6 +185,29 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, true, nil
 	}
 	return
+}
+
+func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
+	// Checking limit is not thread safe, preferring this for avoiding load in loop.
+	count := st.tokenCount.Load()
+	if count < limit {
+		// Adding tokenCount is no thread safe, preferring this for avoiding check in loop.
+		st.tokenCount.Add(1)
+		return nil
+	}
+	metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+
+}
+
+func (s *RegionRequestSender) releaseStoreToken(st *Store) {
+	count := st.tokenCount.Load()
+	// Decreasing tokenCount is no thread safe, preferring this for avoiding check in loop.
+	if count > 0 {
+		st.tokenCount.Sub(1)
+		return
+	}
+	logutil.BgLogger().Warn("release store token failed, count equals to 0")
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {

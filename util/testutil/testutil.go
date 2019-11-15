@@ -178,7 +178,11 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	if err != nil {
 		return res, err
 	}
-	defer jsonFile.Close()
+	defer func() {
+		if err1 := jsonFile.Close(); err == nil && err1 != nil {
+			err = err1
+		}
+	}()
 	byteValue, err := ioutil.ReadAll(jsonFile)
 	if err != nil {
 		return res, err
@@ -187,6 +191,26 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	re := regexp.MustCompile("(?s)//.*?\n")
 	err = json.Unmarshal(re.ReplaceAll(byteValue, nil), &res)
 	return res, err
+}
+
+// GetTestCasesByName gets the test cases for a test function by its name.
+func (t *TestData) GetTestCasesByName(caseName string, c *check.C, in interface{}, out interface{}) {
+	casesIdx, ok := t.funcMap[caseName]
+	c.Assert(ok, check.IsTrue, check.Commentf("Must get test %s", caseName))
+	err := json.Unmarshal(*t.input[casesIdx].Cases, in)
+	c.Assert(err, check.IsNil)
+	if !record {
+		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
+		c.Assert(err, check.IsNil)
+	} else {
+		// Init for generate output file.
+		inputLen := reflect.ValueOf(in).Elem().Len()
+		v := reflect.ValueOf(out).Elem()
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+		}
+	}
+	t.output[casesIdx].decodedOut = out
 }
 
 // GetTestCases gets the test cases for a test function.
@@ -263,7 +287,11 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err1 := file.Close(); err == nil && err1 != nil {
+			err = err1
+		}
+	}()
 	_, err = file.Write(buf.Bytes())
 	return err
 }
