@@ -76,6 +76,7 @@ type HashAggFinalWorker struct {
 	baseHashAggWorker
 
 	rowBuffer           []types.Datum
+	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
 	groupSet            set.StringSet
 	inputCh             chan *HashAggIntermData
