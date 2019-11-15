@@ -224,6 +224,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(3, 1, 2), 2, false},
 		{types.MakeDatums(0, "b", "1", "2"), 1, false},
 		{types.MakeDatums("a", "b", "1", "2"), 1, false},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4, false},
 		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2, false},
 		{types.MakeDatums(9007199254740992, 9007199254740993), 0, false},
 		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0, false},
