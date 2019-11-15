@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -145,6 +146,8 @@ type tikvStore struct {
 	spTime    time.Time
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
+
+	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -180,16 +183,17 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		return nil, errors.Trace(err)
 	}
 	store := &tikvStore{
-		clusterID:   pdClient.GetClusterID(context.TODO()),
-		uuid:        uuid,
-		oracle:      o,
-		client:      client,
-		pdClient:    pdClient,
-		regionCache: NewRegionCache(pdClient),
-		kv:          spkv,
-		safePoint:   0,
-		spTime:      time.Now(),
-		closed:      make(chan struct{}),
+		clusterID:       pdClient.GetClusterID(context.TODO()),
+		uuid:            uuid,
+		oracle:          o,
+		client:          client,
+		pdClient:        pdClient,
+		regionCache:     NewRegionCache(pdClient),
+		kv:              spkv,
+		safePoint:       0,
+		spTime:          time.Now(),
+		closed:          make(chan struct{}),
+		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -263,7 +267,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 
 // BeginWithStartTS begins a transaction with startTS.
 func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
-	txn, err := newTikvTxnWithStartTS(s, startTS)
+	txn, err := newTikvTxnWithStartTS(s, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -272,7 +276,7 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
-	snapshot := newTiKVSnapshot(s, ver)
+	snapshot := newTiKVSnapshotWithReplicaReadSeed(s, ver, s.nextReplicaReadSeed())
 	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
@@ -336,9 +340,14 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 }
 
+func (s *tikvStore) nextReplicaReadSeed() uint32 {
+	return atomic.AddUint32(&s.replicaReadSeed, 1)
+}
+
 func (s *tikvStore) GetClient() kv.Client {
 	return &CopClient{
-		store: s,
+		store:           s,
+		replicaReadSeed: s.nextReplicaReadSeed(),
 	}
 }
 

@@ -394,6 +394,9 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
+	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
+	ReplicaRead kv.ReplicaReadType
+
 	// StartTime is the start time of the last query.
 	StartTime time.Time
 
@@ -474,6 +477,7 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
+		ReplicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
@@ -847,6 +851,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	// It's a global variable, but it also wants to be cached in server.
 	case TiDBMaxDeltaSchemaCount:
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
+	case TiDBReplicaRead:
+		if strings.EqualFold(val, "follower") {
+			s.ReplicaRead = kv.ReplicaReadFollower
+		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
+			s.ReplicaRead = kv.ReplicaReadLeader
+		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 	}

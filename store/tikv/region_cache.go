@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	atomic2 "go.uber.org/atomic"
@@ -86,6 +87,26 @@ func (r *RegionStore) clone() *RegionStore {
 		stores:       r.stores,
 		storeFails:   storeFails,
 	}
+}
+
+// return next follower store's index
+func (r *RegionStore) follower(seed uint32) int32 {
+	l := uint32(len(r.stores))
+	if l <= 1 {
+		return r.workStoreIdx
+	}
+
+	for retry := l - 1; retry > 0; retry-- {
+		followerIdx := int32(seed % (l - 1))
+		if followerIdx >= r.workStoreIdx {
+			followerIdx++
+		}
+		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
+			return followerIdx
+		}
+		seed++
+	}
+	return r.workStoreIdx
 }
 
 // init initializes region after constructed.
@@ -259,7 +280,7 @@ func (c *RPCContext) String() string {
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -272,7 +293,15 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	}
 
 	regionStore := cachedRegion.getStore()
-	store, peer, storeIdx := cachedRegion.WorkStorePeer(regionStore)
+	var store *Store
+	var peer *metapb.Peer
+	var storeIdx int
+	switch replicaRead {
+	case kv.ReplicaReadFollower:
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+	default:
+		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
+	}
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 	if err != nil {
 		return nil, err
@@ -290,7 +319,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	}
 
 	storeFailEpoch := atomic.LoadUint32(&store.fail)
-	if storeFailEpoch != regionStore.storeFails[regionStore.workStoreIdx] {
+	if storeFailEpoch != regionStore.storeFails[storeIdx] {
 		cachedRegion.invalidate()
 		logutil.Logger(context.Background()).Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
@@ -842,12 +871,21 @@ func (r *Region) GetLeaderStoreID() uint64 {
 	return r.meta.Peers[int(r.getStore().workStoreIdx)].StoreId
 }
 
+func (r *Region) getStorePeer(rs *RegionStore, pidx int32) (store *Store, peer *metapb.Peer, idx int) {
+	store = rs.stores[pidx]
+	peer = r.meta.Peers[pidx]
+	idx = int(pidx)
+	return
+}
+
 // WorkStorePeer returns current work store with work peer.
 func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, idx int) {
-	idx = int(rs.workStoreIdx)
-	store = rs.stores[rs.workStoreIdx]
-	peer = r.meta.Peers[rs.workStoreIdx]
-	return
+	return r.getStorePeer(rs, rs.workStoreIdx)
+}
+
+// FollowerStorePeer returns a follower store with follower peer.
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, idx int) {
+	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -891,18 +929,19 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 
 func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
-	if int(rs.workStoreIdx) != currentPeerIdx {
-		return
-	}
 
 	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[rs.workStoreIdx]
-		epoch := rs.storeFails[rs.workStoreIdx]
+		s := rs.stores[currentPeerIdx]
+		epoch := rs.storeFails[currentPeerIdx]
 		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
 			logutil.Logger(context.Background()).Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
 		s.markNeedCheck(c.notifyCheckCh)
+	}
+
+	if int(rs.workStoreIdx) != currentPeerIdx {
+		return
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)

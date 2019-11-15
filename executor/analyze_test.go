@@ -106,6 +106,16 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
+func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().ReplicaRead = kv.ReplicaReadFollower
+	tk.MustExec("analyze table t")
+}
+
 func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

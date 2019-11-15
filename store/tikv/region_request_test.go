@@ -189,6 +189,11 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 	c.Assert(ctx, NotNil)
+	req.ReplicaRead = true
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(resp.RawPut, NotNil)
+	c.Assert(ctx, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
@@ -298,6 +303,9 @@ func (s *mockTikvGrpcServer) KvPessimisticLock(context.Context, *kvrpcpb.Pessimi
 func (s *mockTikvGrpcServer) KVPessimisticRollback(context.Context, *kvrpcpb.PessimisticRollbackRequest) (*kvrpcpb.PessimisticRollbackResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) KvTxnHeartBeat(ctx context.Context, in *kvrpcpb.TxnHeartBeatRequest) (*kvrpcpb.TxnHeartBeatResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) KvGC(context.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	return nil, errors.New("unreachable")
 }
@@ -362,9 +370,6 @@ func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) erro
 	return errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
-	return nil, errors.New("unreachable")
-}
-func (s *mockTikvGrpcServer) KvTxnHeartBeat(ctx context.Context, in *kvrpcpb.TxnHeartBeatRequest) (*kvrpcpb.TxnHeartBeatResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
