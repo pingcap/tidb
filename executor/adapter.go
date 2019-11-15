@@ -858,14 +858,38 @@ func (a *ExecStmt) SummaryStmt() {
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
+
+	var tableIDs, indexNames string
+	if len(stmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",", -1)
+	}
+	if len(stmtCtx.IndexNames) > 0 {
+		indexNames = strings.Replace(fmt.Sprintf("%v", stmtCtx.IndexNames), " ", ",", -1)
+	}
+
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.String()
+	}
+
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:    sessVars.CurrentDB,
-		OriginalSQL:   a.Text,
-		NormalizedSQL: normalizedSQL,
-		Digest:        digest,
-		TotalLatency:  uint64(costTime.Nanoseconds()),
-		AffectedRows:  stmtCtx.AffectedRows(),
-		SentRows:      0,
-		StartTime:     sessVars.StartTime,
+		SchemaName:     sessVars.CurrentDB,
+		OriginalSQL:    a.Text,
+		NormalizedSQL:  normalizedSQL,
+		Digest:         digest,
+		User:           userString,
+		TotalLatency:   costTime,
+		ParseLatency:   sessVars.DurationParse,
+		CompileLatency: sessVars.DurationCompile,
+		TableIDs:       tableIDs,
+		IndexNames:     indexNames,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     &execDetail,
+		MemMax:         memMax,
+		AffectedRows:   stmtCtx.AffectedRows(),
+		StartTime:      sessVars.StartTime,
 	})
 }
