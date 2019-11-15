@@ -18,11 +18,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -262,9 +264,13 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr() *tables.PartitionExpr
+		PartitionExpr(columns []*expression.Column) (*tables.PartitionExpr, error)
 	}
-	pe := tbl.(partitionExpr).PartitionExpr()
+	ctx := mock.NewContext()
+	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
+	pe, err := tbl.(partitionExpr).PartitionExpr(columns)
+	c.Assert(err, IsNil)
+	c.Assert(pe.Column.ID, Equals, int64(1))
 	c.Assert(pe.Column.TblName.L, Equals, "t1")
 	c.Assert(pe.Column.ColName.L, Equals, "id")
 
