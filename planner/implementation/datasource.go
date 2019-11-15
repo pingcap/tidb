@@ -14,6 +14,8 @@
 package implementation
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -69,6 +71,9 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 
 // ScaleCostLimit implement Implementation interface.
 func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+	if costLimit == math.MaxFloat64 {
+		return costLimit
+	}
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
