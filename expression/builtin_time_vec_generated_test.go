@@ -112,7 +112,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		// builtinAddDateAndStringSig
 		{
 			retEvalType:        types.ETString,
-			childrenTypes:      []types.EvalType{types.ETDuration, types.ETString},
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETString},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
