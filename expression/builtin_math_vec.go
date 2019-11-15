@@ -876,12 +876,12 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		}
 		rst := new(types.MyDecimal)
 		if bufs[i].IsNegative() {
-			err = res[i].Round(rst, 0, types.ModeTruncate)
+			err := res[i].Round(rst, 0, types.ModeTruncate)
 			if err != nil {
 				return err
 			}
 		}
-		err = res[i].Round(rst, 0, types.ModeTruncate)
+		err := res[i].Round(rst, 0, types.ModeTruncate)
 		if err != nil || rst.Compare(&bufs[i]) == 0 {
 			if err != nil {
 				return err
