@@ -443,6 +443,8 @@ var defaultConf = Config{
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
+	RepairMode:                   false,
+	RepairTableList:              []string{},
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
@@ -528,8 +530,6 @@ var defaultConf = Config{
 		MaxStmtCount: 100,
 		MaxSQLLength: 4096,
 	},
-	RepairMode:      false,
-	RepairTableList: []string{},
 }
 
 var (

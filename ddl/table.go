@@ -918,24 +918,15 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 	tblInfo.State = model.StateNone
 
-	// Check the new table doesn't exist.
-	err := checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
-	if err != nil {
-		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
-			job.State = model.JobStateCancelled
-		}
-		return ver, errors.Trace(err)
-	}
-
 	// Check the old db and old table exist.
-	_, err = getTableInfo(t, job.TableID, schemaID)
+	_, err := getTableInfo(t, job.TableID, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	// When in repair mode, the repaired table of a server in repair mode is not access to user,
-	// the table after repairing will be removed from repair list. Other server left behind alive
-	// may need to restart to get the latest schema version.
+	// When in repair mode, the repaired table in a server is not access to user,
+	// the table after repairing will be removed from repair list. Other server left
+	// behind alive may need to restart to get the latest schema version.
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -954,6 +945,6 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/domainutil"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -3933,17 +3933,17 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 
 func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
 	// tableInfo and oldDBInfo's existence have been checked in preprocessor.
-	oldTableInfo, ok := (ctx.Value(admin.RepairedTable)).(*model.TableInfo)
+	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
 	if !ok || oldTableInfo == nil {
-		return ErrRepairTableFail.GenWithStackByArgs("get the repaired table failed")
+		return ErrRepairTableFail.GenWithStackByArgs("Get the repaired table failed")
 	}
-	oldDBInfo, ok := (ctx.Value(admin.RepairedDatabase)).(*model.DBInfo)
+	oldDBInfo, ok := (ctx.Value(domainutil.RepairedDatabase)).(*model.DBInfo)
 	if !ok || oldDBInfo == nil {
-		return ErrRepairTableFail.GenWithStackByArgs("get the repaired DB failed")
+		return ErrRepairTableFail.GenWithStackByArgs("Get the repaired DB failed")
 	}
 	// By now only support same db repair.
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
-		return ErrRepairTableFail.GenWithStackByArgs("repaired table should in same database with the old one")
+		return ErrRepairTableFail.GenWithStackByArgs("Repaired table should in same database with the old one")
 	}
 	// Cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
 	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
@@ -3951,7 +3951,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		return errors.Trace(err)
 	}
 
-	// Override newTableInfo with oldTableInfo's necessary element.
+	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
 	newTableInfo.ID = oldTableInfo.ID
 	// If any old partitionInfo has lost, that means the partition id lost too, so did the data, repair failed.
@@ -3965,7 +3965,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 			}
 		}
 		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("some old partition id has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Some old partition id has lost")
 		}
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
@@ -3973,14 +3973,14 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	for i, new := range newTableInfo.Indices {
 		found := false
 		for _, old := range oldTableInfo.Indices {
-			if new.Name.L == old.Name.L {
+			if new.Name.L == old.Name.L && columnSliceEqual(new.Columns, old.Columns) {
 				newTableInfo.Indices[i].ID = old.ID
 				found = true
 				break
 			}
 		}
 		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("some old index id has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Some old index id has lost")
 		}
 	}
 	// If any old columnInfo has lost, that means the old column id lost too, repair failed.
@@ -3994,7 +3994,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 			}
 		}
 		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("some old column id has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Some old column id has lost")
 		}
 	}
 
@@ -4017,11 +4017,8 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	if err == nil {
-		// remove the table from repair list
-		callback, ok := (ctx.Value(admin.RepairedCallBack)).(func(a, b string))
-		if ok {
-			callback(oldDBInfo.Name.L, oldTableInfo.Name.L)
-		}
+		// Remove the table from repair list
+		domainutil.RepairInfo.RemoveFromRepairList(oldDBInfo.Name.L, oldTableInfo.Name.L)
 	}
 	return errors.Trace(err)
 }
@@ -4036,6 +4033,22 @@ func stringSliceEqual(a, b []string) bool {
 	b = b[:len(a)]
 	for i, v := range a {
 		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func columnSliceEqual(a, b []*model.IndexColumn) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	b = b[:len(a)]
+	for i, v := range a {
+		if v.Name != b[i].Name {
 			return false
 		}
 	}

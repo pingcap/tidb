@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
@@ -558,8 +559,8 @@ func setGlobalVars() {
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
-	domain.RepairMode = cfg.RepairMode
-	domain.RepairTableList = cfg.RepairTableList
+	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
+	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 }
 
 func setupLog() {

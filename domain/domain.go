@@ -16,7 +16,6 @@ package domain
 import (
 	"context"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -77,14 +77,6 @@ type Domain struct {
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
 }
-
-// Repair variable will ignore repaired table meta.
-// Since only admin can do repair job, this variable is not thread safe for concurrency.
-var (
-	RepairMode      bool
-	RepairTableList []string
-	RepairDBInfoMap map[int64]*model.DBInfo
-)
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
@@ -217,7 +209,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check the whether the table is in repair mode.
-			if fetchRepairedTableList(di, tbl) {
+			if domainutil.RepairInfo.FetchRepairedTableList(di, tbl) {
 				continue
 			}
 			di.Tables = append(di.Tables, tbl)
@@ -1150,78 +1142,4 @@ func init() {
 		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
-
-	RepairMode = false
-	RepairTableList = []string{}
-	RepairDBInfoMap = make(map[int64]*model.DBInfo, 0)
-}
-
-// InRepairMode judge whether tidb now is in repairMode.
-func (do *Domain) InRepairMode() bool {
-	return RepairMode
-}
-
-// GetTablesInRepair get the repaired table in repair.
-func (do *Domain) GetTablesInRepair() map[int64]*model.DBInfo {
-	return RepairDBInfoMap
-}
-
-// GetRepairCleanFunc return a func for call back when repair action done.
-func (do *Domain) GetRepairCleanFunc() func(a, b string) {
-	return removeFromRepairList
-}
-
-// Fetch the repaired table list when fetch tableInfo from meta.
-func fetchRepairedTableList(di *model.DBInfo, tbl *model.TableInfo) bool {
-	if RepairMode {
-		isRepair := false
-		for _, tn := range RepairTableList {
-			// Use dbName and tableName to specified a table.
-			if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
-				isRepair = true
-				break
-			}
-		}
-		if isRepair {
-			// Record the repaired table in Map.
-			if repairedDB, ok := RepairDBInfoMap[di.ID]; ok {
-				repairedDB.Tables = append(repairedDB.Tables, tbl)
-			} else {
-				// Shallow copy the DB.
-				repairedDB := di.Copy()
-				// Clean the tables and set repaired table.
-				repairedDB.Tables = []*model.TableInfo{}
-				repairedDB.Tables = append(repairedDB.Tables, tbl)
-				RepairDBInfoMap[di.ID] = repairedDB
-			}
-			return true
-		}
-	}
-	return false
-}
-
-// Remove the table from repair list when a repair action done.
-func removeFromRepairList(schemaLowerName, tableLowerName string) {
-	repairedLowerName := schemaLowerName + "." + tableLowerName
-	// remove from the repair list
-	for i, rt := range RepairTableList {
-		if strings.ToLower(rt) == repairedLowerName {
-			RepairTableList = append(RepairTableList[:i], RepairTableList[i+1:]...)
-			break
-		}
-	}
-	for _, db := range RepairDBInfoMap {
-		if db.Name.L == schemaLowerName {
-			for j, t := range db.Tables {
-				if t.Name.L == tableLowerName {
-					db.Tables = append(db.Tables[:j], db.Tables[j+1:]...)
-					break
-				}
-			}
-			if len(db.Tables) == 0 {
-				delete(RepairDBInfoMap, db.ID)
-			}
-			break
-		}
-	}
 }

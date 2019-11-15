@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/domainutil"
 	"math"
 	"strings"
 
@@ -24,14 +25,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/admin"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -524,11 +523,11 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 	// Check create table stmt whether it's is in REPAIR MODE.
-	if !domain.GetDomain(p.ctx).InRepairMode() {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("tidb is not in repair mode")
+	if domainutil.RepairInfo.GetRepairMode() {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
 		return
 	}
-	if len(domain.GetDomain(p.ctx).GetTablesInRepair()) == 0 {
+	if len(domainutil.RepairInfo.GetRepairTableList()) == 0 {
 		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
 		return
 	}
@@ -746,7 +745,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
-		// Skip resolving the table to avoid error.
+		if p.flag&inRepairTable > 0 {
+			// Create stmt is in repair stmt, skip resolving the table to avoid error.
+			return
+		}
+		// Create stmt is not in repair stmt, check the table not in repair list.
 		p.checkNotInRepair(tn)
 		return
 	}
@@ -768,7 +771,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
-	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
+	dbMap := domainutil.RepairInfo.GetTablesInRepair()
 	var dbInfo *model.DBInfo
 	for _, v := range dbMap {
 		if v.Name.L == tn.Schema.L {
@@ -792,8 +795,8 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 }
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
-	dbMap := domain.GetDomain(p.ctx).GetTablesInRepair()
-	// tableName only has the Schema rather than DBInfo here.
+	dbMap := domainutil.RepairInfo.GetTablesInRepair()
+	// tableName here only has the schema rather than DBInfo.
 	var dbInfo *model.DBInfo
 	for _, v := range dbMap {
 		if v.Name.L == tn.Schema.L {
@@ -816,9 +819,8 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
 		return
 	}
-	p.ctx.SetValue(admin.RepairedTable, repairTable)
-	p.ctx.SetValue(admin.RepairedDatabase, dbInfo)
-	p.ctx.SetValue(admin.RepairedCallBack, domain.GetDomain(p.ctx).GetRepairCleanFunc())
+	p.ctx.SetValue(domainutil.RepairedTable, repairTable)
+	p.ctx.SetValue(domainutil.RepairedDatabase, dbInfo)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
