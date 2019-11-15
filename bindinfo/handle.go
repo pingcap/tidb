@@ -70,10 +70,10 @@ type BindHandle struct {
 
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
 	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
-	invalidBindRecordMap struct {
-		sync.Mutex
-		atomic.Value
-	}
+	invalidBindRecordMap tmpBindRecordMap
+
+	// pendingVerifyBindRecordMap indicates the pending verify bind records that found during query.
+	pendingVerifyBindRecordMap tmpBindRecordMap
 
 	lastUpdateTime types.Time
 
@@ -83,9 +83,9 @@ type BindHandle struct {
 // Lease influences the duration of loading bind info and handling invalid bind.
 var Lease = 3 * time.Second
 
-type invalidBindRecordMap struct {
-	bindRecord  *BindRecord
-	droppedTime time.Time
+type bindRecordUpdate struct {
+	bindRecord *BindRecord
+	updateTime time.Time
 }
 
 // NewBindHandle creates a new BindHandle.
@@ -95,7 +95,18 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle.bindInfo.Value.Store(make(cache, 32))
 	handle.bindInfo.parser = parser.New()
 	handle.parser4Baseline = parser.New()
-	handle.invalidBindRecordMap.Value.Store(make(map[string]*invalidBindRecordMap))
+	handle.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
+	handle.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
+		// We do not need the first two parameters because they are only use to generate hint,
+		// and we already have the hint.
+		return handle.DropBindRecord(nil, nil, record)
+	}
+	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
+	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
+		// We do not need the first two parameters because they are only use to generate hint,
+		// and we already have the hint.
+		return handle.AddBindRecord(nil, nil, record)
+	}
 	return handle
 }
 
@@ -134,7 +145,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta)
-		if meta.FirstUsingBinding() != nil {
+		if meta.HasUsingBinding() {
 			newCache.setBindRecord(hash, newRecord)
 		} else {
 			newCache.removeDeletedBindRecord(hash, oldRecord)
@@ -146,10 +157,25 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 // AddBindRecord adds a BindRecord to the storage and BindRecord to the cache.
 func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) (err error) {
-	err = record.prepareHintsForUsing(sctx, is)
+	err = record.prepareHints(sctx, is)
 	if err != nil {
 		return err
 	}
+
+	br := h.GetBindRecord(parser.DigestHash(record.OriginalSQL), record.OriginalSQL, record.Db)
+	var duplicateBinding string
+	if br != nil {
+		binding := br.FindBinding(record.Bindings[0].id)
+		if binding != nil {
+			// There is already a binding with status `Using` or `PendingVerify`, we could directly cancel the job.
+			if record.Bindings[0].Status == PendingVerify {
+				return nil
+			}
+			// Otherwise, we need to remove it before insert.
+			duplicateBinding = binding.BindSQL
+		}
+	}
+
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 	_, err = exec.Execute(context.TODO(), "BEGIN")
@@ -179,10 +205,11 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		h.bindInfo.Unlock()
 	}()
 
-	// remove all the unused sql binds.
-	_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db))
-	if err != nil {
-		return err
+	if duplicateBinding != "" {
+		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding))
+		if err != nil {
+			return err
+		}
 	}
 
 	txn, err1 := h.sctx.Context.Txn(true)
@@ -196,7 +223,6 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 			Fsp:  3,
 		}
 		record.Bindings[i].UpdateTime = record.Bindings[0].CreateTime
-		record.Bindings[i].Status = Using
 
 		// insert the BindRecord to the storage.
 		_, err = exec.Execute(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
@@ -208,7 +234,11 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 }
 
 // DropBindRecord drops a BindRecord to the storage and BindRecord int the cache.
-func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
+func (h *BindHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) (err error) {
+	err = record.prepareHints(sctx, is)
+	if err != nil {
+		return err
+	}
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 
@@ -245,53 +275,78 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 		Type: mysql.TypeDatetime,
 		Fsp:  3,
 	}
+	oldBindRecord := h.GetBindRecord(parser.DigestHash(record.OriginalSQL), record.OriginalSQL, record.Db)
+	bindingSQLs := make([]string, 0, len(record.Bindings))
 	for i := range record.Bindings {
 		record.Bindings[i].Status = deleted
 		record.Bindings[i].UpdateTime = updateTs
+		if oldBindRecord == nil {
+			continue
+		}
+		binding := oldBindRecord.FindBinding(record.Bindings[i].id)
+		if binding != nil {
+			bindingSQLs = append(bindingSQLs, binding.BindSQL)
+		}
 	}
 
-	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(record, updateTs))
+	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, updateTs, bindingSQLs))
 	return err
+}
+
+// tmpBindRecordMap is used to temporarily save bind record changes.
+// Those changes will be flushed into store periodically.
+type tmpBindRecordMap struct {
+	sync.Mutex
+	atomic.Value
+	flushFunc func(record *BindRecord) error
+}
+
+func (tmpMap *tmpBindRecordMap) flushToStore() {
+	newMap := copyBindRecordUpdateMap(tmpMap.Load().(map[string]*bindRecordUpdate))
+	for key, bindRecord := range newMap {
+		if bindRecord.updateTime.IsZero() {
+			err := tmpMap.flushFunc(bindRecord.bindRecord)
+			if err != nil {
+				logutil.BgLogger().Error("flush bind record failed", zap.Error(err))
+			}
+			bindRecord.updateTime = time.Now()
+			continue
+		}
+
+		if time.Since(bindRecord.updateTime) > 6*time.Second {
+			delete(newMap, key)
+			updateMetrics(metrics.ScopeGlobal, bindRecord.bindRecord, nil, false)
+		}
+	}
+	tmpMap.Store(newMap)
+}
+
+func (tmpMap *tmpBindRecordMap) saveToCache(bindRecord *BindRecord) {
+	key := bindRecord.OriginalSQL + ":" + bindRecord.Db + ":" + bindRecord.Bindings[0].id
+	if _, ok := tmpMap.Load().(map[string]*bindRecordUpdate)[key]; ok {
+		return
+	}
+	tmpMap.Lock()
+	defer tmpMap.Unlock()
+	if _, ok := tmpMap.Load().(map[string]*bindRecordUpdate)[key]; ok {
+		return
+	}
+	newMap := copyBindRecordUpdateMap(tmpMap.Load().(map[string]*bindRecordUpdate))
+	newMap[key] = &bindRecordUpdate{
+		bindRecord: bindRecord,
+	}
+	tmpMap.Store(newMap)
+	updateMetrics(metrics.ScopeGlobal, nil, bindRecord, false)
 }
 
 // DropInvalidBindRecord execute the drop bindRecord task.
 func (h *BindHandle) DropInvalidBindRecord() {
-	invalidBindRecordMap := copyInvalidBindRecordMap(h.invalidBindRecordMap.Load().(map[string]*invalidBindRecordMap))
-	for key, invalidBindRecord := range invalidBindRecordMap {
-		if invalidBindRecord.droppedTime.IsZero() {
-			err := h.DropBindRecord(invalidBindRecord.bindRecord)
-			if err != nil {
-				logutil.BgLogger().Error("DropInvalidBindRecord failed", zap.Error(err))
-			}
-			invalidBindRecord.droppedTime = time.Now()
-			continue
-		}
-
-		if time.Since(invalidBindRecord.droppedTime) > 6*time.Second {
-			delete(invalidBindRecordMap, key)
-			updateMetrics(metrics.ScopeGlobal, invalidBindRecord.bindRecord, nil, false)
-		}
-	}
-	h.invalidBindRecordMap.Store(invalidBindRecordMap)
+	h.invalidBindRecordMap.flushToStore()
 }
 
 // AddDropInvalidBindTask add bindRecord to invalidBindRecordMap when the bindRecord need to be deleted.
 func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
-	key := invalidBindRecord.OriginalSQL + ":" + invalidBindRecord.Db
-	if _, ok := h.invalidBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
-		return
-	}
-	h.invalidBindRecordMap.Lock()
-	defer h.invalidBindRecordMap.Unlock()
-	if _, ok := h.invalidBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
-		return
-	}
-	newMap := copyInvalidBindRecordMap(h.invalidBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap))
-	newMap[key] = &invalidBindRecordMap{
-		bindRecord: invalidBindRecord,
-	}
-	h.invalidBindRecordMap.Store(newMap)
-	updateMetrics(metrics.ScopeGlobal, nil, invalidBindRecord, false)
+	h.invalidBindRecordMap.saveToCache(invalidBindRecord)
 }
 
 // Size return the size of bind info cache.
@@ -338,8 +393,9 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	h.sctx.GetSessionVars().StmtCtx.TimeZone = h.sctx.GetSessionVars().TimeZone
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err = bindRecord.prepareHintsForUsing(h.sctx.Context, h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema))
+	err = bindRecord.prepareHints(h.sctx.Context, h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema))
 	return hash, bindRecord, err
 }
 
@@ -349,7 +405,7 @@ func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
-	newCache.setBindRecord(hash, meta)
+	newCache.setBindRecord(hash, newRecord)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
@@ -409,8 +465,8 @@ func (c cache) copy() cache {
 	return newCache
 }
 
-func copyInvalidBindRecordMap(oldMap map[string]*invalidBindRecordMap) map[string]*invalidBindRecordMap {
-	newMap := make(map[string]*invalidBindRecordMap, len(oldMap))
+func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
+	newMap := make(map[string]*bindRecordUpdate, len(oldMap))
 	for k, v := range oldMap {
 		newMap[k] = v
 	}
@@ -429,11 +485,12 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
-func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
+func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
 	return fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s AND bind_sql=%s`,
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db),
+		expression.Quote(bindSQL),
 	)
 }
 
@@ -450,20 +507,19 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 	)
 }
 
-func (h *BindHandle) logicalDeleteBindInfoSQL(record *BindRecord, updateTs types.Time) string {
+func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQLs []string) string {
 	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTs.String()),
-		expression.Quote(record.OriginalSQL),
-		expression.Quote(record.Db))
-	if len(record.Bindings) == 0 {
+		expression.Quote(originalSQL),
+		expression.Quote(db))
+	if len(bindingSQLs) == 0 {
 		return sql
 	}
-	bindings := make([]string, 0, len(record.Bindings))
-	for _, bind := range record.Bindings {
-		bindings = append(bindings, fmt.Sprintf(`%s`, expression.Quote(bind.BindSQL)))
+	for i, sql := range bindingSQLs {
+		bindingSQLs[i] = fmt.Sprintf(`%s`, expression.Quote(sql))
 	}
-	return sql + fmt.Sprintf(` and bind_sql in (%s)`, strings.Join(bindings, ","))
+	return sql + fmt.Sprintf(` and bind_sql in (%s)`, strings.Join(bindingSQLs, ","))
 }
 
 // GenHintsFromSQL is used to generate hints from SQL.
@@ -480,7 +536,7 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		normalizedSQL, digiest := parser.NormalizeDigest(sqls[i])
-		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.FirstUsingBinding() != nil {
+		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		h.sctx.Lock()
@@ -514,9 +570,25 @@ func (h *BindHandle) CaptureBaselines() {
 	}
 }
 
+// AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
+func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding, planHint string) {
+	binding.id = planHint
+	br := &BindRecord{
+		OriginalSQL: originalSQL,
+		Db:          DB,
+		Bindings:    []Binding{binding},
+	}
+	h.pendingVerifyBindRecordMap.saveToCache(br)
+}
+
+// SaveEvolveTasksToStore saves the evolve task into store.
+func (h *BindHandle) SaveEvolveTasksToStore() {
+	h.pendingVerifyBindRecordMap.flushToStore()
+}
+
 // Clear resets the bind handle. It is used for test.
 func (h *BindHandle) Clear() {
 	h.bindInfo.Store(make(cache))
-	h.invalidBindRecordMap.Store(make(map[string]*invalidBindRecordMap))
+	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
 	h.lastUpdateTime = types.ZeroTimestamp
 }

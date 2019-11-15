@@ -262,7 +262,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
-					fp.LockWaitTime = kv.LockAlwaysWait
+					fp.LockWaitTime = sessVars.LockWaitTimeout
 					if x.LockTp == ast.SelectLockForUpdateNoWait {
 						fp.LockWaitTime = kv.LockNoWait
 					}
@@ -621,7 +621,7 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 		schema:       schema,
 		TblInfo:      tbl,
 		outputNames:  names,
-		LockWaitTime: kv.LockAlwaysWait,
+		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
@@ -783,6 +783,10 @@ func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.Ex
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
 	if !tblInfo.PKIsHandle {
+		rowIDIdx := findInPairs("_tidb_rowid", pairs)
+		if rowIDIdx != -1 {
+			return pairs[rowIDIdx], types.NewFieldType(mysql.TypeLonglong)
+		}
 		return handlePair, nil
 	}
 	for _, col := range tblInfo.Columns {

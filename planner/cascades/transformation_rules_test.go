@@ -50,6 +50,51 @@ func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
+func testGroupToString(input []string, output []struct {
+	SQL    string
+	Result []string
+}, s *testTransformationRuleSuite, c *C) {
+	for i, sql := range input {
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		logic, ok := p.(plannercore.LogicalPlan)
+		c.Assert(ok, IsTrue)
+		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
+		c.Assert(err, IsNil)
+		group := convert2Group(logic)
+		err = s.optimizer.onPhaseExploration(s.sctx, group)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Result = ToString(group)
+		})
+		c.Assert(ToString(group), DeepEquals, output[i].Result)
+	}
+}
+
+func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+		memo.OperandAggregation: {
+			rulePushAggDownGather,
+		},
+		memo.OperandDataSource: {
+			ruleEnumeratePaths,
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
 		memo.OperandSelection: {
@@ -72,22 +117,23 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
-	for i, sql := range input {
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil)
-		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
-		c.Assert(err, IsNil)
-		logic, ok := p.(plannercore.LogicalPlan)
-		c.Assert(ok, IsTrue)
-		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
-		c.Assert(err, IsNil)
-		group := convert2Group(logic)
-		err = s.optimizer.onPhaseExploration(s.sctx, group)
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Result = ToString(group)
-		})
-		c.Assert(ToString(group), DeepEquals, output[i].Result)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+		memo.OperandLimit: {
+			ruleTransformLimitToTopN,
+		},
+		memo.OperandDataSource: {
+			ruleEnumeratePaths,
+		},
+	})
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
 	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
 }

@@ -249,6 +249,23 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
+// ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
+func (ts *PhysicalTableScan) ExpandVirtualColumn() {
+	for _, col := range ts.schema.Columns {
+		if col.VirtualExpr == nil {
+			continue
+		}
+
+		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
+		for _, baseCol := range baseCols {
+			if !ts.schema.Contains(baseCol) {
+				ts.schema.Columns = append(ts.schema.Columns, baseCol)
+				ts.Columns = append(ts.Columns, FindColumnInfoByID(ts.Table.Columns, baseCol.ID))
+			}
+		}
+	}
+}
+
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
 	physicalSchemaProducer
@@ -298,6 +315,9 @@ type PhysicalHashJoin struct {
 
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
+
+	// use the outer table to build a hash table when the outer table is smaller.
+	UseOuterToBuild bool
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.

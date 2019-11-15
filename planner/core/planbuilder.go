@@ -56,13 +56,19 @@ type visitInfo struct {
 	err       error
 }
 
+type indexNestedLoopJoinTables struct {
+	inljTables  []hintTableInfo
+	inlhjTables []hintTableInfo
+	inlmjTables []hintTableInfo
+}
+
 type tableHintInfo struct {
-	indexNestedLoopJoinTables []hintTableInfo
-	sortMergeJoinTables       []hintTableInfo
-	hashJoinTables            []hintTableInfo
-	indexHintList             []indexHintInfo
-	flashTables               []hintTableInfo
-	aggHints                  aggHintInfo
+	indexNestedLoopJoinTables
+	sortMergeJoinTables []hintTableInfo
+	hashJoinTables      []hintTableInfo
+	indexHintList       []indexHintInfo
+	flashTables         []hintTableInfo
+	aggHints            aggHintInfo
 }
 
 type hintTableInfo struct {
@@ -108,7 +114,15 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
@@ -501,6 +515,9 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		IsGlobal:     v.GlobalScope,
 	}
+	if v.HintedSel != nil {
+		p.BindSQL = v.HintedSel.Text()
+	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
@@ -891,6 +908,16 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 	return genExprsMap, nil
 }
 
+// FindColumnInfoByID finds ColumnInfo in cols by ID.
+func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
+	for _, info := range colInfos {
+		if info.ID == id {
+			return info
+		}
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
 	// Get generated columns.
 	var genCols []*expression.Column
@@ -929,7 +956,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	tblSchema := schema.Clone()
 	for _, col := range genCols {
 		if !colsMap.Exist(col.ID) {
-			info := findColumnInfoByID(tblInfo.Columns, col.ID)
+			info := FindColumnInfoByID(tblInfo.Columns, col.ID)
 			if info != nil {
 				tblReaderCols = append(tblReaderCols, info)
 				tblSchema.Append(col)
@@ -973,7 +1000,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(tblSchema)
+	ts.SetSchema(tblSchema.Clone())
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
 		is.physicalTableID = pid
@@ -1573,7 +1600,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.GrantPriv, "", "", "", err)
 	case *ast.RevokeStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 	case *ast.RevokeRoleStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
@@ -1596,6 +1623,39 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	}
 	return p, nil
+}
+
+func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
+	// To use REVOKE, you must have the GRANT OPTION privilege,
+	// and you must have the privileges that you are granting.
+	dbName := stmt.Level.DBName
+	tableName := stmt.Level.TableName
+	if dbName == "" {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
+	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+
+	var allPrivs []mysql.PrivilegeType
+	for _, item := range stmt.Privs {
+		if item.Priv == mysql.AllPriv {
+			switch stmt.Level.Level {
+			case ast.GrantLevelGlobal:
+				allPrivs = mysql.AllGlobalPrivs
+			case ast.GrantLevelDB:
+				allPrivs = mysql.AllDBPrivs
+			case ast.GrantLevelTable:
+				allPrivs = mysql.AllTablePrivs
+			}
+			break
+		}
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+	}
+
+	for _, priv := range allPrivs {
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
+	}
+
+	return vi
 }
 
 func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
@@ -2003,7 +2063,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	names := selectPlan.OutputNames()
-	insertPlan.SelectPlan, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
+	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
 		return err
 	}

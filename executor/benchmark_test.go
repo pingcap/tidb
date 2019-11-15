@@ -529,36 +529,47 @@ func BenchmarkWindowFunctions(b *testing.B) {
 }
 
 type hashJoinTestCase struct {
-	rows        int
-	concurrency int
-	ctx         sessionctx.Context
-	keyIdx      []int
-	disk        bool
+	rows            int
+	cols            []*types.FieldType
+	concurrency     int
+	ctx             sessionctx.Context
+	keyIdx          []int
+	disk            bool
+	joinType        core.JoinType
+	useOuterToBuild bool
 }
 
 func (tc hashJoinTestCase) columns() []*expression.Column {
-	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeVarString)},
+	ret := make([]*expression.Column, 0)
+	for i, t := range tc.cols {
+		column := &expression.Column{Index: i, RetType: t}
+		ret = append(ret, column)
 	}
+	return ret
 }
 
 func (tc hashJoinTestCase) String() string {
-	return fmt.Sprintf("(rows:%v, concurency:%v, joinKeyIdx: %v, disk:%v)",
-		tc.rows, tc.concurrency, tc.keyIdx, tc.disk)
+	return fmt.Sprintf("(rows:%v, cols:%v, concurency:%v, joinKeyIdx: %v, disk:%v)",
+		tc.rows, tc.cols, tc.concurrency, tc.keyIdx, tc.disk)
 }
 
-func defaultHashJoinTestCase() *hashJoinTestCase {
+func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, useOuterToBuild bool) *hashJoinTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
 	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}}
+	tc.cols = cols
+	tc.useOuterToBuild = useOuterToBuild
+	tc.joinType = joinType
 	return tc
 }
 
 func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
+	if testCase.useOuterToBuild {
+		innerExec, outerExec = outerExec, innerExec
+	}
 	cols0 := testCase.columns()
 	cols1 := testCase.columns()
 	joinSchema := expression.NewSchema(cols0...)
@@ -570,13 +581,14 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e := &HashJoinExec{
 		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
 		concurrency:       uint(testCase.concurrency),
-		joinType:          0, // InnerJoin
+		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
 		buildKeys:         joinKeys,
 		probeKeys:         joinKeys,
 		buildSideExec:     innerExec,
 		probeSideExec:     outerExec,
 		buildSideEstCount: float64(testCase.rows),
+		useOuterToBuild:   testCase.useOuterToBuild,
 	}
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
@@ -606,6 +618,8 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 				return int64(row)
 			case mysql.TypeVarString:
 				return rawData
+			case mysql.TypeDouble:
+				return float64(row)
 			default:
 				panic("not implement")
 			}
@@ -651,8 +665,13 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(lvl)
 
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
 	b.ReportAllocs()
-	cas := defaultHashJoinTestCase()
+	cas := defaultHashJoinTestCase(cols, 0, false)
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
@@ -671,6 +690,71 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	cas.keyIdx = []int{0}
 	cas.disk = true
 	cas.rows = 1000
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	// Replace the wide string column with double column
+	cols = []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDouble),
+	}
+	cas = defaultHashJoinTestCase(cols, 0, false)
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+}
+
+func BenchmarkOuterHashJoinExec(b *testing.B) {
+	lvl := log.GetLevel()
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(lvl)
+
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
+	b.ReportAllocs()
+	cas := defaultHashJoinTestCase(cols, 2, true)
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	cas.disk = true
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
+	cas.disk = true
+	cas.rows = 1000
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	// Replace the wide string column with double column
+	cols = []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDouble),
+	}
+	cas = defaultHashJoinTestCase(cols, 2, true)
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	cas.keyIdx = []int{0}
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
@@ -732,8 +816,13 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(lvl)
 
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
 	b.ReportAllocs()
-	cas := defaultHashJoinTestCase()
+	cas := defaultHashJoinTestCase(cols, 0, false)
 	rows := []int{10, 100000}
 	keyIdxs := [][]int{{0, 1}, {0}}
 	disks := []bool{false, true}

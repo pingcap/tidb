@@ -579,7 +579,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
-	ts.SetSchema(ds.schema)
+	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
@@ -675,6 +675,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
+		ts.ExpandVirtualColumn()
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -753,6 +754,9 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
+
+	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
+
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
@@ -766,13 +770,25 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
-	if tableConds != nil {
+	if len(tableConds) > 0 {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+}
+
+// splitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
+func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	var filterConds []expression.Expression
+	for i := len(conds) - 1; i >= 0; i-- {
+		if expression.ContainVirtualColumn(conds[i : i+1]) {
+			filterConds = append(filterConds, conds[i])
+			conds = append(conds[:i], conds[i+1:]...)
+		}
+	}
+	return conds, filterConds
 }
 
 func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.Item) bool {
@@ -964,7 +980,7 @@ func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.S
 		AccessCondition: s.AccessConds,
 	}.Init(s.ctx, s.blockOffset)
 	ts.stats = stats
-	ts.SetSchema(schema)
+	ts.SetSchema(schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
@@ -1028,6 +1044,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
@@ -1058,11 +1076,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		ts.StoreType = kv.TiKV
 	}
 	if ts.StoreType == kv.TiFlash {
+		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
+		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-		ts.Ranges = ranger.FullIntRange(false)
 	}
-	ts.SetSchema(ds.schema)
+	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {

@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // ExplainInfo implements Plan interface.
@@ -110,11 +112,17 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
-		fmt.Fprint(buffer, ", range:")
-		for i, idxRange := range p.Ranges {
-			fmt.Fprint(buffer, idxRange.String())
-			if i+1 < len(p.Ranges) {
-				fmt.Fprint(buffer, ", ")
+		if p.StoreType == kv.TiFlash {
+			// TiFlash table always use full range scan for each region,
+			// the ranges in p.Ranges is used to prune cop task
+			fmt.Fprintf(buffer, ", range:"+ranger.FullIntRange(false)[0].String())
+		} else {
+			fmt.Fprint(buffer, ", range:")
+			for i, idxRange := range p.Ranges {
+				fmt.Fprint(buffer, idxRange.String())
+				if i+1 < len(p.Ranges) {
+					fmt.Fprint(buffer, ", ")
+				}
 			}
 		}
 	}
@@ -238,7 +246,15 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	var InnerChildIdx = p.InnerChildIdx
+	// TODO: update the explain info in issue #12985
+	if p.UseOuterToBuild && ((p.JoinType == LeftOuterJoin && InnerChildIdx == 1) || (p.JoinType == RightOuterJoin && InnerChildIdx == 0)) {
+		InnerChildIdx = 1 - InnerChildIdx
+	}
+	fmt.Fprintf(buffer, ", inner:%s", p.Children()[InnerChildIdx].ExplainID())
+	if p.UseOuterToBuild {
+		buffer.WriteString(" (REVERSED)")
+	}
 	if len(p.EqualConditions) > 0 {
 		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
 	}
