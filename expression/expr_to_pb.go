@@ -346,6 +346,10 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Log2,  // Test: https://github.com/tikv/copr-test/commit/749ad41025ce888fb46d6936fb568ebc528bbc27
 		ast.Log10, // Test: https://github.com/tikv/copr-test/commit/749ad41025ce888fb46d6936fb568ebc528bbc27
 		ast.Exp,   // Test: https://github.com/tikv/copr-test/commit/7f483a7a0d58bbd16418d2ba57928227fd3584ef
+		ast.Sin,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
+		ast.Cos,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
+		ast.Tan,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
+		ast.Cot,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
 
 		// control flow functions.
 		ast.Case,
