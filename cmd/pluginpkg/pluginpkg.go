@@ -155,10 +155,8 @@ func main() {
 	}
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
-	pluginPath := `-pluginpath=` + pluginName + "-" + version
 	ctx := context.Background()
 	buildCmd := exec.CommandContext(ctx, "go", "build",
-		"-ldflags", pluginPath,
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
 	buildCmd.Dir = pkgDir

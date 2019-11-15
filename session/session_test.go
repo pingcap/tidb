@@ -51,7 +51,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testSessionSuite{})
+var _ = SerialSuites(&testSessionSuite{})
 
 type testSessionSuite struct {
 	cluster   *mocktikv.Cluster
