@@ -541,12 +541,13 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 	n := input.NumRows()
 	decs := result.Decimals()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		dec := &types.MyDecimal{}
-		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && decs[i].IsNegative()) {
+		if !(conditionUnionAndUnsigned && decs[i].IsNegative()) {
 			*dec = decs[i]
 		}
 		dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
