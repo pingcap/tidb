@@ -403,6 +403,10 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 		if lCon, ok := l.(*expression.Constant); ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 			rCol.InOperand = false
 		}
+		lClc, ok := l.(*expression.CorrelatedColumn)
+		if ok && !lClc.Data.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rCol.InOperand = false
+		}
 	}
 	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
 	if er.err != nil {
@@ -785,8 +789,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			if ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
-			if isSf {
-				lSf.GetArgs()[i] = lexpr2
+			lClc, ok := lexpr2.(*expression.CorrelatedColumn)
+			if ok && !lClc.Data.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+				rCol.InOperand = false
 			}
 		}
 	}
