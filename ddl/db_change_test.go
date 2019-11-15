@@ -83,6 +83,10 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
+	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
+	// Using same `tk` in different goroutines may lead to data race.
+	tkInternal := testkit.NewTestKit(c, s.store)
+	tkInternal.MustExec("use test")
 
 	var checkErr error
 	testCases := []struct {
@@ -111,14 +115,26 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			currTestCaseOffset++
 		}
 		if job.SchemaState != model.StatePublic {
-			var result *testkit.Result
-			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+			var result sqlexec.RecordSet
+			tbl2 := testGetTableByName(c, tkInternal.Se, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
-				result = tk.MustQuery("show create table t2")
+				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
+				result, checkErr = tkInternal.Exec("show create table t2")
+				if checkErr != nil {
+					return
+				}
 			} else {
-				result = tk.MustQuery("show create table t")
+				result, checkErr = tkInternal.Exec("show create table t")
+				if checkErr != nil {
+					return
+				}
 			}
-			got := result.Rows()[0][1]
+			req := result.NewChunk()
+			checkErr = result.Next(context.Background(), req)
+			if checkErr != nil {
+				return
+			}
+			got := req.GetRow(0).GetString(1)
 			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
