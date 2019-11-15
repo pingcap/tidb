@@ -310,9 +310,9 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.LogicAnd,
 		ast.LogicOr,
 		ast.UnaryNot,
-		ast.And,    // Test: https://github.com/tikv/copr-test/commit/99c7c531e56897c5affd2430a5e84099a15fcd66
-		ast.Or,     // Test: https://github.com/tikv/copr-test/commit/acb5feb5927e80c2f24f6650407897c36c8215fb
-		ast.BitNeg, // Test: https://github.com/tikv/copr-test/commit/7bf7a2f4356e06719dea05c896a8b1fde5d7d657
+		ast.And,
+		ast.Or,
+		ast.BitNeg,
 
 		// compare functions.
 		ast.LT,
@@ -339,17 +339,17 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Ceil,
 		ast.Ceiling,
 		ast.Floor,
-		ast.Sqrt,  // Test: https://github.com/tikv/copr-test/commit/e7b74715aff75c31100e028194e187dac50442dc
-		ast.Sign,  // Test: https://github.com/tikv/copr-test/commit/e7b74715aff75c31100e028194e187dac50442dc
-		ast.Ln,    // Test: https://github.com/tikv/copr-test/commit/749ad41025ce888fb46d6936fb568ebc528bbc27
-		ast.Log,   // Test: https://github.com/tikv/copr-test/commit/749ad41025ce888fb46d6936fb568ebc528bbc27
-		ast.Log2,  // Test: https://github.com/tikv/copr-test/commit/749ad41025ce888fb46d6936fb568ebc528bbc27
-		ast.Log10, // Test: https://github.com/tikv/copr-test/commit/749ad41025ce888fb46d6936fb568ebc528bbc27
-		ast.Exp,   // Test: https://github.com/tikv/copr-test/commit/7f483a7a0d58bbd16418d2ba57928227fd3584ef
-		ast.Sin,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
-		ast.Cos,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
-		ast.Tan,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
-		ast.Cot,   // Test: https://github.com/tikv/copr-test/commit/f7d53432bef1ca8dfe783b44a31cdf6e8fe3becd
+		ast.Sqrt,
+		ast.Sign,
+		ast.Ln,
+		ast.Log,
+		ast.Log2,
+		ast.Log10,
+		ast.Exp,
+		ast.Sin,
+		ast.Cos,
+		ast.Tan,
+		ast.Cot,
 
 		// control flow functions.
 		ast.Case,
@@ -358,7 +358,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Coalesce,
 
 		// string functions.
-		ast.Length, // Test: https://github.com/tikv/copr-test/commit/f818ca757346e20a2258c386f7b0882a061939b7
+		ast.Length,
 
 		// json functions.
 		ast.JSONType,
