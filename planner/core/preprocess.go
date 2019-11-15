@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/domainutil"
 	"math"
 	"strings"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/domainutil"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
