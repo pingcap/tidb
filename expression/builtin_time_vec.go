@@ -601,7 +601,6 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	return nil
 }
 
-
 func (b *builtinSubDatetimeAndStringSig) vectorized() bool {
 	return false
 }
