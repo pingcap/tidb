@@ -1045,7 +1045,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	sysVar := variable.SysVars[name]
 	if sysVar == nil {
-		er.err = variable.UnknownSystemVar.GenWithStackByArgs(name)
+		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		return
 	}
 	// Variable is @@gobal.variable_name or variable is only global scope variable.
