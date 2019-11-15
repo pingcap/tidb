@@ -862,19 +862,19 @@ func (b *builtinFloorDecToDecSig) vectorized() bool {
 
 func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	result.ResizeDecimal(n, false)
+	result, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+	defer b.bufAllocator.put(result)
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
 	}
-	result.ResizeDecimal(n, false)
-	result.MergeNulls(buf)
+	result.MergeNulls(result)
 
 	res := result.Decimals()
-	bufs := buf.Decimals()
+	bufs := result.Decimals()
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
