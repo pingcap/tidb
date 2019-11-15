@@ -992,6 +992,7 @@ const (
 	ErrInvalidSplitRegionRanges = 8212
 	ErrInvalidDDLJobVersion     = 8213
 	ErrCancelledDDLJob          = 8214
+	ErrRepairTable              = 8215
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
