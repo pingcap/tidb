@@ -83,7 +83,7 @@ type stmtSummaryByDigest struct {
 	sampleSQL     string
 	tableIDs      string
 	indexNames    string
-	user          string
+	sampleUser    string
 	execCount     int64
 	// latency
 	sumLatency        time.Duration
@@ -240,11 +240,14 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 	sqls := make([]string, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		// `normalizedSQL` & `schemaName` & `sampleSQL` won't change once created,
-		// so locking is not needed.
+		// `normalizedSQL` won't change once created, so locking is not needed.
 		if strings.HasPrefix(ssbd.normalizedSQL, "select") {
-			schemas = append(schemas, ssbd.schemaName)
-			sqls = append(sqls, ssbd.sampleSQL)
+			ssbd.Lock()
+			if ssbd.execCount > 1 {
+				schemas = append(schemas, ssbd.schemaName)
+				sqls = append(sqls, ssbd.sampleSQL)
+			}
+			ssbd.Unlock()
 		}
 	}
 	return schemas, sqls
@@ -346,8 +349,8 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
-	if ssbd.user == "" {
-		ssbd.user = sei.User
+	if ssbd.sampleUser == "" {
+		ssbd.sampleUser = sei.User
 	}
 	ssbd.execCount++
 
@@ -485,7 +488,7 @@ func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
 		ssbd.normalizedSQL,
 		convertEmptyToNil(ssbd.tableIDs),
 		convertEmptyToNil(ssbd.indexNames),
-		convertEmptyToNil(ssbd.user),
+		convertEmptyToNil(ssbd.sampleUser),
 		ssbd.execCount,
 		int64(ssbd.sumLatency),
 		int64(ssbd.maxLatency),

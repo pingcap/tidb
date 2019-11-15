@@ -115,7 +115,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
 		tableIDs:             stmtExecInfo1.TableIDs,
 		indexNames:           stmtExecInfo1.IndexNames,
-		user:                 stmtExecInfo1.User,
+		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
 		maxLatency:           stmtExecInfo1.TotalLatency,
@@ -460,7 +460,7 @@ func matchStmtSummaryByDigest(first *stmtSummaryByDigest, second *stmtSummaryByD
 		first.sampleSQL != second.sampleSQL ||
 		first.tableIDs != second.tableIDs ||
 		first.indexNames != second.indexNames ||
-		first.user != second.user ||
+		first.sampleUser != second.sampleUser ||
 		first.execCount != second.execCount ||
 		first.sumLatency != second.sumLatency ||
 		first.maxLatency != second.maxLatency ||
@@ -946,6 +946,63 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	// Set back
 	s.ssMap.SetEnabled("1", false)
+}
+
+// Test GetMoreThanOnceSelect.
+func (s *testStmtSummarySuite) TestGetMoreThenOnceSelect(c *C) {
+	s.ssMap.Clear()
+
+	stmtExecInfo1 := &StmtExecInfo{
+		SchemaName:     "schema_name",
+		OriginalSQL:    "insert 1",
+		NormalizedSQL:  "insert ?",
+		Digest:         "digest",
+		User:           "user",
+		TotalLatency:   10000,
+		ParseLatency:   100,
+		CompileLatency: 1000,
+		TableIDs:       "1,2",
+		IndexNames:     "1,2",
+		CopTasks: &stmtctx.CopTasksDetails{
+			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
+			MaxProcessAddress: "127",
+			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
+			MaxWaitAddress:    "128",
+			MaxWaitTime:       1500,
+		},
+		ExecDetail: &execdetails.ExecDetails{
+			CalleeAddress: "129",
+			ProcessTime:   500,
+			WaitTime:      50,
+			BackoffTime:   80,
+			RequestCount:  10,
+			TotalKeys:     1000,
+			ProcessedKeys: 500,
+		},
+		MemMax:       10000,
+		AffectedRows: 100,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+	}
+	s.ssMap.AddStatement(stmtExecInfo1)
+	schemas, sqls := s.ssMap.GetMoreThanOnceSelect()
+	c.Assert(len(schemas), Equals, 0)
+	c.Assert(len(sqls), Equals, 0)
+
+	stmtExecInfo1.NormalizedSQL = "select ?"
+	stmtExecInfo1.Digest = "digest1"
+	s.ssMap.AddStatement(stmtExecInfo1)
+	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
+	c.Assert(len(schemas), Equals, 0)
+	c.Assert(len(sqls), Equals, 0)
+
+	s.ssMap.AddStatement(stmtExecInfo1)
+	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
+	c.Assert(len(schemas), Equals, 1)
+	c.Assert(len(sqls), Equals, 1)
 }
 
 func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
