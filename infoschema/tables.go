@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -177,6 +178,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 	{"TIDB_TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TIDB_ROW_ID_SHARDING_INFO", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -1303,6 +1305,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
+
+				shardingInfo := GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					catalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
@@ -1326,6 +1330,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					createOptions, // CREATE_OPTIONS
 					table.Comment, // TABLE_COMMENT
 					table.ID,      // TIDB_TABLE_ID
+					shardingInfo,  // TIDB_ROW_ID_SHARDING_INFO
 				)
 				rows = append(rows, record)
 			} else {
@@ -1352,12 +1357,35 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // CREATE_OPTIONS
 					"VIEW",        // TABLE_COMMENT
 					table.ID,      // TIDB_TABLE_ID
+					nil,           // TIDB_ROW_ID_SHARDING_INFO
 				)
 				rows = append(rows, record)
 			}
 		}
 	}
 	return rows, nil
+}
+
+// GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
+// The returned description string may be:
+//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables that is primary key is row id.
+//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+// The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
+// This function is exported for unit test.
+func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
+	if dbInfo == nil || tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.Name.L) {
+		return nil
+	}
+	shardingInfo := "NOT_SHARDED"
+	if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	} else {
+		if tableInfo.ShardRowIDBits > 0 {
+			shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+		}
+	}
+	return shardingInfo
 }
 
 func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {

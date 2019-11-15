@@ -192,6 +192,8 @@ func generatePartitionExpr(pi *model.PartitionInfo,
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+		// Get a hash code in advance to prevent data race afterwards.
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
@@ -218,6 +220,8 @@ func generateHashPartitionExpr(pi *model.PartitionInfo,
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+		// Get a hash code in advance to prevent data race afterwards.
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
