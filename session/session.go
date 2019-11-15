@@ -475,6 +475,9 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
+		} else {
+			err = errors.Annotate(err, fmt.Sprintf("isTxnRetryableError:%v isBatchInsert:%v isPessimistic:%v commitRetryLimit: %v",
+				s.isTxnRetryableError(err), s.sessionVars.BatchInsert, isPessimistic, commitRetryLimit))
 		}
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
