@@ -935,11 +935,45 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinExtractDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	unit, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(unit)
+	if err := b.args[0].VecEvalString(b.ctx, input, unit); err != nil {
+		return err
+	}
+	dur, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dur)
+	if err = b.args[1].VecEvalDuration(b.ctx, input, dur); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(unit, dur)
+	i64s := result.Int64s()
+	durIs := dur.GoDurations()
+	var duration types.Duration
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		unitI := unit.GetString(i)
+		duration.Duration = durIs[i]
+		duration.Fsp = int8(types.UnspecifiedFsp)
+		i64s[i], err = types.ExtractDurationNum(&duration, unitI)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinStrToDateDurationSig) vectorized() bool {
