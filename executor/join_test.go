@@ -846,7 +846,7 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
 	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
-	// this waill cause panic but I cant fix it now.
+	// this will cause panic but I cant fix it now.
 	// tk.MustQuery("select 1 not in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
 	// tk.MustQuery("select 1 in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
 
