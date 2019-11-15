@@ -680,9 +680,7 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 	timer := time.NewTimer(maxTime)
 	resultChan := make(chan error)
 	startTime := time.Now()
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go runSQL(ctx, sctx, sql, resultChan, &wg)
+	go runSQL(ctx, sctx, sql, resultChan)
 	select {
 	case err := <-resultChan:
 		cancelFunc()
@@ -692,13 +690,12 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 		return time.Since(startTime), nil
 	case <-timer.C:
 		cancelFunc()
-		wg.Wait()
 	}
+	<-resultChan
 	return -1, nil
 }
 
-func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error, wg *sync.WaitGroup) {
-	defer wg.Done()
+func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -708,10 +705,8 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 		}
 	}()
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-	if len(recordSets) > 0 {
-		defer terror.Call(recordSets[0].Close)
-	}
 	if err != nil {
+		terror.Call(recordSets[0].Close)
 		resultChan <- err
 		return
 	}
@@ -719,15 +714,12 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 	chk := recordSets[0].NewChunk()
 	for {
 		err = recordSet.Next(ctx, chk)
-		if err != nil {
-			resultChan <- err
-			return
-		}
-		if chk.NumRows() == 0 {
+		if err != nil || chk.NumRows() == 0 {
 			break
 		}
 	}
-	resultChan <- nil
+	terror.Call(recordSets[0].Close)
+	resultChan <- err
 	return
 }
 
