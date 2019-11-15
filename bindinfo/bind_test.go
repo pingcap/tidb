@@ -521,6 +521,6 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	domain.GetDomain(tk.Se).BindHandle().SaveEvolveTasksToStore()
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 }
