@@ -205,9 +205,9 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t values(1, 3), (2, 2), (3, 1)")
 	tk.MustExec("insert into t1 values(0, 0), (1, 2), (1, 3), (3, 4)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("3 1 3 4", "1 3 1 2", "1 3 1 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t join t1 on t.a=t1.a order by t.b").Sort().Check(testkit.Rows("1 3 1 2", "1 3 1 3", "3 1 3 4"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("<nil> <nil> 0 0", "3 1 3 4", "1 3 1 2", "1 3 1 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Sort().Check(testkit.Rows("1 3 1 2", "1 3 1 3", "3 1 3 4", "<nil> <nil> 0 0"))
 
 	// join reorder will disorganize the resulting schema
 	tk.MustExec("drop table if exists t, t1")
@@ -1020,16 +1020,16 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustExec("insert into t1 values(1, 0), (2, null)")
 	tk.MustExec("create table t2(a int primary key)")
 	tk.MustExec("insert into t2 values(0)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t2)*/ * from t1 left join t2 on t1.b = t2.a;").Check(testkit.Rows(
-		`2 <nil> <nil>`,
+	tk.MustQuery("select /*+ TIDB_INLJ(t2)*/ * from t1 left join t2 on t1.b = t2.a;").Sort().Check(testkit.Rows(
 		`1 0 0`,
+		`2 <nil> <nil>`,
 	))
 
 	tk.MustExec("create table t3(a int, key(a))")
 	tk.MustExec("insert into t3 values(0)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t3)*/ * from t1 left join t3 on t1.b = t3.a;").Check(testkit.Rows(
-		`2 <nil> <nil>`,
 		`1 0 0`,
+		`2 <nil> <nil>`,
 	))
 }
 
@@ -1054,14 +1054,14 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustExec("analyze table s")
 	// Test IndexNestedLoopHashJoin keepOrder.
-	tk.MustQuery("explain select /*+ TIDB_INLJ(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
+	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
 		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:Column#2, inner key:Column#3",
 		"├─TableReader_30 100.00 root data:TableScan_29",
 		"│ └─TableScan_29 100.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true",
 		"└─TableReader_22 1.00 root data:TableScan_21",
 		"  └─TableScan_21 1.00 cop[tikv] table:s, range: decided by [Column#2], keep order:false",
 	))
-	rs := tk.MustQuery("select /*+ TIDB_INLJ(s) */ * from t left join s on t.a=s.a order by t.pk")
+	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
 		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
 	}

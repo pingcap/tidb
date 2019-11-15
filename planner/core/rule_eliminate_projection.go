@@ -97,6 +97,9 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
 		oldCol.Index = newCols[i].Index
+		oldCol.ID = newCols[i].ID
+		oldCol.UniqueID = newCols[i].UniqueID
+		oldCol.VirtualExpr = newCols[i].VirtualExpr
 		newRoot.Schema().Columns[i] = oldCol
 	}
 	return newRoot
