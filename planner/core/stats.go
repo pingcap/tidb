@@ -435,14 +435,14 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
-	helper := &FullJoinRowCountHelper{
-		Cartesian:     0 == len(p.EqualConditions),
-		LeftProfile:   leftProfile,
-		RightProfile:  rightProfile,
-		LeftJoinKeys:  p.LeftJoinKeys,
-		RightJoinKeys: p.RightJoinKeys,
-		LeftSchema:    childSchema[0],
-		RightSchema:   childSchema[1],
+	helper := &fullJoinRowCountHelper{
+		cartesian:     0 == len(p.EqualConditions),
+		leftProfile:   leftProfile,
+		rightProfile:  rightProfile,
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    childSchema[0],
+		rightSchema:   childSchema[1],
 	}
 	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
