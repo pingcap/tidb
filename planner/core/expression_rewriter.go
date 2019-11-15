@@ -773,23 +773,23 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	// normal column equal condition, so we specially mark the inner operand here.
 	if v.Not || asScalar {
 		for i, rCol := range np.Schema().Columns {
-			lexpr2 := lexpr
+			larg := lexpr
 			lSf, isSf := lexpr.(*expression.ScalarFunction)
 			if isSf {
-				lexpr2 = lSf.GetArgs()[i]
+				larg = lSf.GetArgs()[i]
 			}
 			rCol.InOperand = true
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead.
-			lCol, ok := lexpr2.(*expression.Column)
+			lCol, ok := larg.(*expression.Column)
 			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
-			lCon, ok := lexpr2.(*expression.Constant)
+			lCon, ok := larg.(*expression.Constant)
 			if ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
-			lClc, ok := lexpr2.(*expression.CorrelatedColumn)
+			lClc, ok := larg.(*expression.CorrelatedColumn)
 			if ok && !lClc.Data.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
 				rCol.InOperand = false
 			}
