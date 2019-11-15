@@ -183,12 +183,8 @@ func (b *builtinSysDateWithoutFspSig) vectorized() bool {
 func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	loc := b.ctx.GetSessionVars().Location()
-	nowTs, err := getStmtTimestamp(b.ctx)
-	if err != nil {
-		return err
-	}
+	now := time.Now().In(loc)
 
-	now := nowTs.In(loc)
 	result.ResizeTime(n, false)
 	times := result.Times()
 	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)

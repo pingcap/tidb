@@ -1059,6 +1059,17 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		c.Assert(err, IsNil)
 		n := v.GetMysqlTime()
 		c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
+
+		baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, ast.Sysdate, vecExprBenchCase{retEvalType: types.ETDatetime})
+		resetStmtContext(s.ctx)
+		err = baseFunc.vecEvalTime(input, output)
+		c.Assert(err, IsNil)
+		last = time.Now()
+		times := output.Times()
+		for i := 0; i < 1024; i++ {
+			c.Assert(times[i].String(), GreaterEqual, last.Format(types.TimeFormat))
+		}
+
 	}
 
 	last := time.Now()
