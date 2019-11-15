@@ -697,11 +697,33 @@ func (b *builtinGetFormatSig) getFormat(format, location string) string {
 }
 
 func (b *builtinLastDaySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLastDaySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if times[i].InvalidZero() {
+			return handleInvalidTimeError(b.ctx,
+				types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String()))
+		}
+		tm := times[i].Time
+		year, month := tm.Year(), tm.Month()
+		lastDay := types.GetLastDay(year, month)
+		times[i] = types.Time{
+			Time: types.FromDate(year, month, lastDay, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp:  types.DefaultFsp,
+		}
+	}
+	return nil
 }
 
 func (b *builtinAddDateStringDecimalSig) vectorized() bool {
