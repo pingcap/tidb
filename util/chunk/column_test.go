@@ -986,6 +986,13 @@ func (s *testChunkSuite) TestResetColumn(c *check.C) {
 	// is used by MergeNulls.
 	col0.Reset(types.ETInt)
 	col0.MergeNulls(col1)
+
+	col := NewColumn(types.NewFieldType(mysql.TypeDatetime), 0)
+	col.Reset(types.ETDuration)
+	col.AppendDuration(types.Duration{})
+	// using col.reset() above will let this assertion fail since the length of initialized elemBuf
+	// is sizeTime.
+	c.Assert(len(col.data), check.Equals, sizeGoDuration)
 }
 
 func BenchmarkMergeNullsVectorized(b *testing.B) {
