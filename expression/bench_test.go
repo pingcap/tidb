@@ -693,6 +693,8 @@ type vecExprBenchCase struct {
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	// This field is optional.
 	geners []dataGenerator
+	// constants are used to generate constant data for children[i].
+	constants []*Constant
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
@@ -919,8 +921,12 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	cols := make([]Expression, childrenNumber)
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
-		fillColumn(eType, input, i, testCase)
-		cols[i] = &Column{Index: i, RetType: fts[i]}
+		if i < len(testCase.constants) && testCase.constants[i] != nil {
+			cols[i] = testCase.constants[i]
+		} else {
+			fillColumn(eType, input, i, testCase)
+			cols[i] = &Column{Index: i, RetType: fts[i]}
+		}
 	}
 	if len(cols) == 0 {
 		input.SetNumVirtualRows(1024)

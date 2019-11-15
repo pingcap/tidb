@@ -1942,11 +1942,25 @@ func (b *builtinSubDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinDateLiteralSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	literal, isNull, err := b.evalTime(chunk.Row{})
+	if err != nil {
+		return err
+	}
+	n := input.NumRows()
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
+	}
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		times[i] = literal
+	}
+	return nil
 }
 
 func (b *builtinTimeLiteralSig) vectorized() bool {
