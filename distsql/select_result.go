@@ -85,6 +85,9 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if r.selectResp != nil {
+		r.memConsume(-int64(r.selectRespSize))
+	}
 	if resultSubset == nil {
 		r.selectResp = nil
 		return nil
@@ -95,6 +98,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	r.selectRespSize = r.selectResp.Size()
+	r.memConsume(int64(r.selectRespSize))
 	if err := r.selectResp.Error; err != nil {
 		return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 	}
@@ -249,5 +253,8 @@ func (r *selectResult) Close() error {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	if r.selectResp != nil {
+		r.memConsume(-int64(r.selectRespSize))
+	}
 	return r.resp.Close()
 }
