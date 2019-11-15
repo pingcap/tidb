@@ -862,7 +862,6 @@ func (b *builtinFloorDecToDecSig) vectorized() bool {
 
 func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ResizeDecimal(n, false)
 	result, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
 		return err
@@ -871,8 +870,8 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
 	}
+	result.ResizeDecimal(n, false)
 	result.MergeNulls(result)
-
 	res := result.Decimals()
 	bufs := result.Decimals()
 
@@ -886,7 +885,6 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 			if err != nil {
 				return err
 			}
-
 		}
 		err = res[i].Round(rst, 0, types.ModeTruncate)
 		if err != nil || rst.Compare(&bufs[i]) == 0 {
