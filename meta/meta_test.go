@@ -358,18 +358,21 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
 	// Add multiple history jobs.
+	arg := "test arg"
 	historyJob1 := &model.Job{ID: 1234}
-	err = t.AddHistoryDDLJob(historyJob1)
+	historyJob1.Args = append(job.Args, arg)
+	err = t.AddHistoryDDLJob(historyJob1, true)
 	c.Assert(err, IsNil)
 	historyJob2 := &model.Job{ID: 123}
-	err = t.AddHistoryDDLJob(historyJob2)
+	historyJob2.Args = append(job.Args, arg)
+	err = t.AddHistoryDDLJob(historyJob2, false)
 	c.Assert(err, IsNil)
 	all, err := t.GetAllHistoryDDLJobs()
 	c.Assert(err, IsNil)
@@ -377,6 +380,13 @@ func (s *testSuite) TestDDL(c *C) {
 	for _, job := range all {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
+		arg1 := ""
+		job.DecodeArgs(&arg1)
+		if job.ID == historyJob1.ID {
+			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
+		} else {
+			c.Assert(job.Args, IsNil)
+		}
 	}
 
 	// Test for get last N history ddl jobs.
