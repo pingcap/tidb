@@ -216,12 +216,13 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 			}
 
 			if eraseAll {
+				g.DeleteAll()
 				for _, e := range newExprs {
-					g.DeleteAllBeforeInsert(e)
-					// If we delete all of the other GroupExprs, we can break the search.
-					g.Explored = true
-					return false, nil
+					g.Insert(e)
 				}
+				// If we delete all of the other GroupExprs, we can break the search.
+				g.Explored = true
+				return false, nil
 			}
 
 			eraseCur = eraseCur || eraseOld
