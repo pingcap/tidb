@@ -575,12 +575,32 @@ func (b *builtinFromDaysSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinMicroSecondSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).MicroSecond())
+	}
+	return nil
 }
+
 
 func (b *builtinSubDatetimeAndStringSig) vectorized() bool {
 	return false
