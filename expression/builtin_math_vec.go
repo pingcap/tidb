@@ -853,7 +853,7 @@ func (b *builtinCeilDecToDecSig) vectorized() bool {
 }
 
 func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-		return errors.Errorf("not implemented")
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinFloorDecToDecSig) vectorized() bool {
@@ -880,25 +880,25 @@ func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		result := new(types.MyDecimal)
+		rst := new(types.MyDecimal)
 		if bufs[i].IsNegative() {
-			err = res[i].Round(result, 0, types.ModeTruncate)
+			err = res[i].Round(rst, 0, types.ModeTruncate)
 			if err != nil {
 				return err
 			}
 
 		}
-		err = res[i].Round(result, 0, types.ModeTruncate)
-		if err != nil || result.Compare(&bufs[i]) == 0 {
+		err = res[i].Round(rst, 0, types.ModeTruncate)
+		if err != nil || rst.Compare(&bufs[i]) == 0 {
 			if err != nil {
 				return err
 			}
 		}
-		err = types.DecimalSub(result, types.NewDecFromInt(1), result)
+		err = types.DecimalSub(rst, types.NewDecFromInt(1), rst)
 		if err != nil {
 			return err
 		}
-		res[i] = *result
+		res[i] = *rst
 	}
 	return nil
 }
