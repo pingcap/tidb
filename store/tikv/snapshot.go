@@ -89,10 +89,6 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 	s.cached = nil
 }
 
-func (s *tikvSnapshot) SetPriority(priority int) {
-	s.priority = pb.CommandPri(priority)
-}
-
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
@@ -366,6 +362,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	switch opt {
 	case kv.ReplicaRead:
 		s.replicaRead = val.(kv.ReplicaReadType)
+	case kv.Priority:
+		s.priority = kvPriorityToCommandPri(val.(int))
 	}
 }
 
