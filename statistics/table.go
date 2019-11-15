@@ -736,11 +736,9 @@ func (coll *HistColl) GetAvgRowSizeChunkFormat(cols []*expression.Column) (size 
 				size += pseudoColSize
 				continue
 			}
-			// We differentiate if the column is encoded as key or value, because the resulted size
-			// is different.
 			size += colHist.AvgColSizeChunkFormat(coll.Count)
 		}
-		// Add 1/8 byte for each column's nullBitMap.
+		// Add 1/8 bytes for each column's nullBitMap.
 		size += float64(len(cols)) / 8
 	}
 	return size
