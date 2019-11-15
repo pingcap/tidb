@@ -1451,10 +1451,6 @@ func (b *builtinInstrBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		strI := str.GetString(i)
 		substrI := substr.GetString(i)
 		idx := strings.Index(strI, substrI)
-		if idx == -1 {
-			res[i] = 0
-			continue
-		}
 		res[i] = int64(idx + 1)
 	}
 	return nil
