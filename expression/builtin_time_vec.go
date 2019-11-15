@@ -1957,7 +1957,7 @@ func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ResizeTime(n, false)
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range times {
 		times[i] = literal
 	}
 	return nil
