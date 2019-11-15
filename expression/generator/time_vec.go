@@ -213,23 +213,6 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	{{ else if eq .SigName "builtinAddStringAndStringSig" }}
 		{{ template "ConvertStringToDuration" . }}
 		{{ template "strDurationAddDuration" . }}
-	{{ else if eq .SigName "builtinAddDateAndDurationSig" }}
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		fsp1 := int8(b.args[1].GetType().Decimal)
-		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
-		if err != nil {
-			return err
-		}
-		output := sum.String()
-	{{ else if eq .SigName "builtinAddDateAndStringSig" }}
-		{{ template "ConvertStringToDuration" . }}
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
-		if err != nil {
-			return err
-		}
-		output := sum.String()
 	{{ end }}
 
 		// commit result
@@ -547,8 +530,6 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinAddStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinAddStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration"},
-	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String"},
 
 	{SigName: "builtinAddTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinAddTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
