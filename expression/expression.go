@@ -173,7 +173,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
-// IsEQCondFromIn checks if an expression is equal condition converted from `[not] in (subq)`.
+// NotNull checks if an expression is constantly not null.
 func NotNull(l Expression) bool {
 	switch l := l.(type) {
 	case *Column:
