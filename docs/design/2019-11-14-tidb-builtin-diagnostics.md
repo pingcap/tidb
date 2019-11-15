@@ -31,18 +31,18 @@ The implementation of this proposal is divided into four layers:
 The following is a flow chart from information collection to analysis using the diagnostic rules to analyze the collected information:
 
 ```
-+-L0--------------+             +-L3-----+
++-L1--------------+             +-L3-----+
 | +-------------+ |             |        |
 | |   Metrics   | |             |        |
 | +-------------+ |             |        |
 | +-------------+ |             |        |
-| |   Disk IO   | +---L1:gRPC-->+        |
+| |   Disk IO   | +---L2:gRPC-->+        |
 | +-------------+ |             |        |
 | +-------------+ |             |  TiDB  |
 | |  Network IO | |             |        |
 | +-------------+ |             |        |
 | +-------------+ |             |        |
-| |   Hardware  | +---L1:HTTP-->+        |
+| |   Hardware  | +---L2:HTTP-->+        |
 | +-------------+ |             |        |
 | +-------------+ |             |        |
 | | System Info | |             |        |
