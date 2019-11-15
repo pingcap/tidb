@@ -79,7 +79,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 			return uint64(0)
 		}
 		return int64(0)
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeNull:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 		return ""
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		return []byte{}

@@ -124,20 +124,11 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	1999.00	root	Column#8
-<<<<<<< HEAD
 └─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(1, Column#5)
-  ├─IndexReader_11	1999.00	root	index:IndexScan_10
-  │ └─IndexScan_10	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─TableReader_13	1985.00	root	data:TableScan_12
-    └─TableScan_12	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
-=======
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
   ├─TableReader_9	1999.00	root	data:TableScan_8
   │ └─TableScan_8	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
-  └─TableReader_14	0.00	root	data:Selection_13
-    └─Selection_13	0.00	cop[tikv]	eq(1, Column#5)
-      └─TableScan_12	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
->>>>>>> b274eb2079dcbe9166825e677d4496046c494856
+  └─TableReader_13	1985.00	root	data:TableScan_12
+    └─TableScan_12	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -147,13 +138,8 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
-<<<<<<< HEAD
-"HashLeftJoin_7" -> "IndexReader_11"
-"HashLeftJoin_7" -> "TableReader_13"
-=======
 "HashLeftJoin_7" -> "TableReader_9"
-"HashLeftJoin_7" -> "TableReader_14"
->>>>>>> b274eb2079dcbe9166825e677d4496046c494856
+"HashLeftJoin_7" -> "TableReader_13"
 }
 subgraph cluster8{
 node [style=filled, color=lightgrey]
@@ -167,13 +153,8 @@ color=black
 label = "cop"
 "TableScan_12"
 }
-<<<<<<< HEAD
-"IndexReader_11" -> "IndexScan_10"
-"TableReader_13" -> "TableScan_12"
-=======
 "TableReader_9" -> "TableScan_8"
-"TableReader_14" -> "Selection_13"
->>>>>>> b274eb2079dcbe9166825e677d4496046c494856
+"TableReader_13" -> "TableScan_12"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
