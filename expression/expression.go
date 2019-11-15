@@ -158,13 +158,33 @@ func (e CNFExprs) Shallow() CNFExprs {
 	return cnf
 }
 
+func isColumnInOperand(c *Column) bool {
+	return c.InOperand
+}
+
 // IsEQCondFromIn checks if an expression is equal condition converted from `[not] in (subq)`.
 func IsEQCondFromIn(expr Expression) bool {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	return exprsContainInOperand(sf.GetArgs())
+	cols := make([]*Column, 0, 1)
+	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	return len(cols) > 0
+}
+
+// IsEQCondFromIn checks if an expression is equal condition converted from `[not] in (subq)`.
+func NotNull(l Expression) bool {
+	switch l := l.(type) {
+	case *Column:
+		return mysql.HasNotNullFlag(l.GetType().Flag)
+	case *Constant:
+		return !l.Value.IsNull()
+	case *CorrelatedColumn:
+		return mysql.HasNotNullFlag(l.GetType().Flag)
+	}
+
+	return false
 }
 
 // EvalBool evaluates expression list to a boolean value. The first returned value

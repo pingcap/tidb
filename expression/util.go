@@ -114,22 +114,6 @@ func ExtractColumns(expr Expression) []*Column {
 	return extractColumns(result, expr, nil)
 }
 
-func exprsContainInOperand(exprs []Expression) bool {
-	for _, expr := range exprs {
-		switch v := expr.(type) {
-		case *Column:
-			if v.InOperand {
-				return true
-			}
-		case *ScalarFunction:
-			if exprsContainInOperand(v.GetArgs()) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // ExtractCorColumns extracts correlated column from given expression.
 func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 	switch v := expr.(type) {

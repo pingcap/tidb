@@ -397,14 +397,7 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 		rCol.InOperand = true
 		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
 		// as normal column equal condition.
-		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-			rCol.InOperand = false
-		}
-		if lCon, ok := l.(*expression.Constant); ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-			rCol.InOperand = false
-		}
-		lClc, ok := l.(*expression.CorrelatedColumn)
-		if ok && !lClc.Data.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+		if mysql.HasNotNullFlag(r.GetType().Flag) && expression.NotNull(l) {
 			rCol.InOperand = false
 		}
 	}
@@ -779,18 +772,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 				larg = lSf.GetArgs()[i]
 			}
 			rCol.InOperand = true
-			// If both input columns of `in` expression are not null, we can treat the expression
-			// as normal column equal condition instead.
-			lCol, ok := larg.(*expression.Column)
-			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-				rCol.InOperand = false
-			}
-			lCon, ok := larg.(*expression.Constant)
-			if ok && !lCon.Value.IsNull() && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-				rCol.InOperand = false
-			}
-			lClc, ok := larg.(*expression.CorrelatedColumn)
-			if ok && mysql.HasNotNullFlag(lClc.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			// If both input columns of `!= all / = any` expression are not null, we can treat the expression
+			// as normal column equal condition.
+			if mysql.HasNotNullFlag(rCol.GetType().Flag) && expression.NotNull(larg) {
 				rCol.InOperand = false
 			}
 		}
