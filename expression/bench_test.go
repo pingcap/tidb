@@ -199,6 +199,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func getRandomTime() types.MysqlTime {
+	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
+		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+
+}
+
 // dataGenerator is used to generate data for test.
 type dataGenerator interface {
 	gen() interface{}
@@ -237,7 +243,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return d
 	case types.ETDatetime, types.ETTimestamp:
-		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+		gt := getRandomTime()
 		t := types.Time{Time: gt, Type: convertETType(g.eType)}
 		return t
 	case types.ETDuration:
@@ -290,6 +296,13 @@ func (g *jsonStringGener) gen() interface{} {
 		panic(err)
 	}
 	return j.String()
+}
+
+type jsonTimeGener struct{}
+
+func (g *jsonTimeGener) gen() interface{} {
+	tm := types.Time{Time: getRandomTime(), Type: mysql.TypeDatetime, Fsp: types.DefaultFsp}
+	return json.CreateBinary(tm.String())
 }
 
 type rangeDurationGener struct {
@@ -513,36 +526,85 @@ func (g *randHexStrGener) gen() interface{} {
 	return string(buf)
 }
 
-// dataTimeStrGener is used to generate strings which are dataTime format
-type dataTimeStrGener struct{}
+// dateTimeGener is used to generate a dataTime
+type dateTimeGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
 
-func (g *dataTimeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
+func (g *dateTimeGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
+	gt := types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	t := types.Time{Time: gt, Type: mysql.TypeDatetime}
+	return t
+}
+
+// dateTimeStrGener is used to generate strings which are dataTime format
+type dateTimeStrGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
+
+func (g *dateTimeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
+	dataTimeStr := fmt.Sprintf("%d-%d-%d %d:%d:%d",
+		g.Year, g.Month, g.Day, hour, minute, second)
+	if g.Fsp > 0 && g.Fsp <= 6 {
+		microFmt := fmt.Sprintf(".%%0%dd", g.Fsp)
+		return dataTimeStr + fmt.Sprintf(microFmt, rand.Int()%(10^g.Fsp))
+	}
 
-	return fmt.Sprintf("%d-%d-%d %d:%d:%d",
-		year, month, day, hour, minute, second)
+	return dataTimeStr
 }
 
 // timeStrGener is used to generate strings which are time format
-type timeStrGener struct{}
-
-func (g *timeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
-
-	return fmt.Sprintf("%d-%d-%d", year, month, day)
+type timeStrGener struct {
+	Year  int
+	Month int
+	Day   int
 }
 
-// dataStrGener is used to generate strings which are data format
-type dataStrGener struct{}
+func (g *timeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 
-func (g *dataStrGener) gen() interface{} {
+	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
+}
+
+// dateStrGener is used to generate strings which are data format
+type dateStrGener struct{}
+
+func (g *dateStrGener) gen() interface{} {
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)

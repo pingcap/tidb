@@ -441,9 +441,9 @@ drop table if exists t;
 create table t(a int, b int);
 explain select a from t order by rand();
 id	count	task	operator info
-Projection_8	10000.00	root	Column#4
+Projection_8	10000.00	root	Column#1
 └─Sort_4	10000.00	root	Column#5:asc
-  └─Projection_9	10000.00	root	Column#4, rand()
+  └─Projection_9	10000.00	root	Column#1, rand()
     └─TableReader_7	10000.00	root	data:TableScan_6
       └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a, b from t order by abs(2);
@@ -452,9 +452,9 @@ TableReader_8	10000.00	root	data:TableScan_7
 └─TableScan_7	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a from t order by abs(rand())+1;
 id	count	task	operator info
-Projection_8	10000.00	root	Column#4
+Projection_8	10000.00	root	Column#1
 └─Sort_4	10000.00	root	Column#5:asc
-  └─Projection_9	10000.00	root	Column#4, plus(abs(rand()), 1)
+  └─Projection_9	10000.00	root	Column#1, plus(abs(rand()), 1)
     └─TableReader_7	10000.00	root	data:TableScan_6
       └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t1;

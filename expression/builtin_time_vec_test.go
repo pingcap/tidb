@@ -54,7 +54,6 @@ func (g *unitStrGener) gen() interface{} {
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {},
 	ast.DateDiff:    {},
-	ast.TimeDiff:    {},
 	ast.DateFormat:  {},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
@@ -69,7 +68,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.MicroSecond: {},
-	ast.Now:         {},
+	ast.Now: {
+		{retEvalType: types.ETDatetime},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{0, 7}},
+		},
+	},
 	ast.DayOfWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
@@ -87,7 +91,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
 	},
-	ast.MakeDate: {},
+	ast.MakeDate: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{0, 2200}, &rangeInt64Gener{0, 365}},
+		},
+	},
 	ast.MakeTime: {},
 	ast.PeriodAdd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
@@ -144,16 +152,16 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.Timestamp: {
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataTimeStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateTimeStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{new(dataTimeStrGener), new(dataStrGener)}},
+			geners: []dataGenerator{new(dateTimeStrGener), new(dateStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{new(dataTimeStrGener), nil}},
+			geners: []dataGenerator{new(dateTimeStrGener), nil}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{nil, new(dataStrGener)}},
+			geners: []dataGenerator{nil, new(dateStrGener)}},
 	},
 	ast.MonthName: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -211,7 +219,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.Sysdate: {
-		{retEvalType: types.ETDatetime},
+		// Because there is a chance that a time error will cause the test to fail,
+		// we cannot use the vectorized test framework to test builtinSysDateWithoutFspSig.
+		// We test the builtinSysDateWithoutFspSig in TestSysDate function.
+		// {retEvalType: types.ETDatetime},
 	},
 }
 

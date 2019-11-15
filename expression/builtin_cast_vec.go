@@ -463,7 +463,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	fsp := int8(b.tp.Decimal)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if result.IsNull(i) {
 			continue
 		}
 		s, err := buf.GetJSON(i).Unquote()
