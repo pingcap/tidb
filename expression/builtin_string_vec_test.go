@@ -166,7 +166,11 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.BitLength: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.FindInSet: {},
+	ast.FindInSet: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"case"}, &constStrGener{"test,case"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{""}, &constStrGener{"test,case"}}},
+	},
 	ast.MakeSet: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString}},
 	},
@@ -189,7 +193,23 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.FromBase64: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 100}}},
 	},
-	ast.ExportSet: {},
+	ast.ExportSet: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners:        []dataGenerator{&rangeInt64Gener{10, 100}, &constStrGener{"Y"}, &constStrGener{"N"}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString},
+			geners:        []dataGenerator{&rangeInt64Gener{10, 100}, &constStrGener{"Y"}, &constStrGener{"N"}, &constStrGener{","}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&rangeInt64Gener{10, 100}, &constStrGener{"Y"}, &constStrGener{"N"}, &constStrGener{","}, &rangeInt64Gener{-10, 70}},
+		},
+	},
 	ast.Repeat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 10}}},
 	},
@@ -255,6 +275,21 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 				&constStrGener{"%y-%m-%d"},
 			},
 		},
+	},
+	ast.Strcmp: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{
+			&selectStringGener{
+				candidates: []string{
+					"test",
+				},
+			},
+			&selectStringGener{
+				candidates: []string{
+					"test",
+				},
+			},
+		}},
 	},
 }
 
