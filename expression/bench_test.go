@@ -641,13 +641,6 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
-type randBinaryLiteralGener struct {
-}
-
-func (g *randBinaryLiteralGener) gen() interface{} {
-	return "X'01af'"
-}
-
 // locationGener is used to generate location for the built-in function GetFormat.
 type locationGener struct {
 	nullRation float64
@@ -713,6 +706,8 @@ type vecExprBenchCase struct {
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	// This field is optional.
 	geners []dataGenerator
+	// constants are used to generate constant data for children[i].
+	constants []*Constant
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
@@ -808,7 +803,11 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
-		cols[i] = &Column{Index: i, RetType: fts[i]}
+		if i < len(testCase.constants) && testCase.constants[i] != nil {
+			cols[i] = testCase.constants[i]
+		} else {
+			cols[i] = &Column{Index: i, RetType: fts[i]}
+		}
 	}
 
 	expr, err := NewFunction(ctx, funcName, eType2FieldType(testCase.retEvalType), cols...)
@@ -940,7 +939,11 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
-		cols[i] = &Column{Index: i, RetType: fts[i]}
+		if i < len(testCase.constants) && testCase.constants[i] != nil {
+			cols[i] = testCase.constants[i]
+		} else {
+			cols[i] = &Column{Index: i, RetType: fts[i]}
+		}
 	}
 	if len(cols) == 0 {
 		input.SetNumVirtualRows(1024)

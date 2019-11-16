@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -40,6 +41,9 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString},
 			geners: []dataGenerator{&realStrGener{rangeRealGener{begin: -100000.0, end: 100000.0, nullRation: 0.5}}},
+		},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString},
+			constants: []*Constant{{Value: types.NewBinaryLiteralDatum([]byte("TiDB")), RetType: types.NewFieldType(mysql.TypeVarString)}},
 		},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime},
 			geners: []dataGenerator{&dateTimeGenerWithFsp{
