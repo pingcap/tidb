@@ -120,6 +120,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
 		},
 	},
+	ast.UnixTimestamp: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETTimestamp}},
+	},
 	ast.TimestampDiff:    {},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
