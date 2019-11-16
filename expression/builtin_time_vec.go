@@ -1359,19 +1359,18 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 	n := input.NumRows()
 
 	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
-	if err!=nil{
+	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(timeBuf)
-
 	if err := b.args[0].VecEvalTime(b.ctx, input, timeBuf); err != nil {
 		return err
 	}
-	result.ResizeDecimal(n,false)
-	Ts:=result.Decimals()
-	for i:=0;i<n;i++{
+	result.ResizeDecimal(n, false)
+	Ts := result.Decimals()
+	for i := 0; i < n; i++ {
 		if timeBuf.IsNull(i) {
-			result.SetNull(i,true)
+			result.SetNull(i, true)
 			continue
 		}
 		t, err := timeBuf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
@@ -1380,7 +1379,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			continue
 		}
 		tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
-		if err!=nil{
+		if err != nil {
 			return err
 		}
 		Ts[i] = *tmp
