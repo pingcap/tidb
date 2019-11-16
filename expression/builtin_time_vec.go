@@ -1148,11 +1148,53 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinStrToDateDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	bufStrings, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufStrings)
+	if err := b.args[0].VecEvalString(b.ctx, input, bufStrings); err != nil {
+		return err
+	}
+
+	bufFormats, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufFormats)
+	if err := b.args[1].VecEvalString(b.ctx, input, bufFormats); err != nil {
+		return err
+	}
+
+	result.ResizeGoDuration(n, false)
+	d64s := result.GoDurations()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if bufStrings.IsNull(i) || bufFormats.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		var t types.Time
+		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
+		if !succ {
+			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+		}
+		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
+			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+		}
+		t.Fsp = int8(b.tp.Decimal)
+		dur, err := t.ConvertToDuration()
+		if err != nil {
+			return err
+		}
+		d64s[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubTimeDateTimeNullSig) vectorized() bool {
