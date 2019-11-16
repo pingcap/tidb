@@ -182,6 +182,13 @@ func NotNull(l Expression) bool {
 		return !l.Value.IsNull()
 	case *CorrelatedColumn:
 		return mysql.HasNotNullFlag(l.GetType().Flag)
+	case *ScalarFunction:
+		for _, arg := range l.GetArgs() {
+			if !NotNull(arg) {
+				return false
+			}
+		}
+		return true
 	}
 
 	return false
