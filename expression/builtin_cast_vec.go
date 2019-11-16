@@ -1245,10 +1245,7 @@ func (b *builtinCastStringAsRealSig) vectorized() bool {
 
 func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if IsBinaryLiteral(b.args[0]) {
-		// This block is skipped by first line of `builtinCastStringAsRealSig.evalReal`
-		// if IsBinaryLiteral(b.args[0]) {
-		// 	return b.args[0].EvalReal(b.ctx, row)
-		// }
+		// This block is skipped by `castAsRealFunctionClass.getFunction()`
 		if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 			return err
 		}
