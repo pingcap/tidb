@@ -782,6 +782,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhi64s
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 		if rh == 0 {
+			result.SetNull(i, true)
 			return handleDivisionByZeroError(b.ctx)
 		}
 		resulti64s[i] = int64(uint64(lh) / uint64(rh))
@@ -796,6 +797,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhi64s
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 		if rh == 0 {
+			result.SetNull(i, true)
 			return handleDivisionByZeroError(b.ctx)
 		}
 		val, err := types.DivUintWithInt(uint64(lh), rh)
@@ -814,6 +816,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhi64s
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 		if rh == 0 {
+			result.SetNull(i, true)
 			return handleDivisionByZeroError(b.ctx)
 		}
 		val, err := types.DivInt64(lh, rh)
@@ -832,6 +835,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhi64s
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 		if rh == 0 {
+			result.SetNull(i, true)
 			return handleDivisionByZeroError(b.ctx)
 		}
 		val, err := types.DivIntWithUint(lh, uint64(rh))
