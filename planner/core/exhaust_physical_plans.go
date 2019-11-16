@@ -677,14 +677,25 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		Desc:            desc,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
+	if rowCount <= 0 {
+		rowCount = float64(1)
+	}
+	selectivity := float64(1)
+	countAfterAccess := rowCount
+	if len(ts.filterCondition) > 0 {
+		var err error
+		selectivity, _, err = ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor")
+			selectivity = selectionFactor
+		}
+		countAfterAccess = rowCount / selectivity
+	}
 	ts.stats = &property.StatsInfo{
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     math.Min(1.0, rowCount),
+		RowCount:     math.Min(1.0, countAfterAccess),
 		StatsVersion: ds.stats.StatsVersion,
 		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
-	}
-	for i := range ds.stats.Cardinality {
-		ds.stats.Cardinality[i] = 1
 	}
 	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
@@ -695,7 +706,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
-	selStats := ts.stats.Scale(selectionFactor)
+	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	t := finishCopTask(ds.ctx, copTask).(*rootTask)
 	reader := t.p
@@ -745,7 +756,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
-	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	cop := &copTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -769,26 +779,46 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		cop.tablePlan = ts
 	}
 	is.initSchema(path.index, path.fullIdxCols, cop.tablePlan != nil)
-	rowSize := is.indexScanRowSize(path.index, ds, true)
-	sessVars := ds.ctx.GetSessionVars()
-	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
+	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
+	// - estimated row count of outer plan is 0;
+	// - estimated row count of inner "DataSource + filters" is 0;
+	// if it is the first case, it does not matter what row count we set for inner task, since the cost of index join would
+	// always be 0 then;
+	// if it is the second case, HashJoin should always be cheaper than IndexJoin then, so we set row count of inner task
+	// to table size, to simply make it more expensive.
+	if rowCount <= 0 {
+		rowCount = ds.tableStats.RowCount
+	}
 	tmpPath := &accessPath{
 		indexFilters:     indexConds,
 		tableFilters:     tblConds,
+		countAfterIndex:  rowCount,
 		countAfterAccess: rowCount,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
-	if len(indexConds) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
-		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+	if len(tblConds) > 0 {
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tblConds)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor")
 			selectivity = selectionFactor
 		}
-		tmpPath.countAfterIndex = rowCount * selectivity
+		tmpPath.countAfterIndex = rowCount / selectivity
+		tmpPath.countAfterAccess = tmpPath.countAfterIndex
 	}
-	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
-	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
+	if len(indexConds) > 0 {
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor")
+			selectivity = selectionFactor
+		}
+		tmpPath.countAfterAccess = tmpPath.countAfterIndex / selectivity
+	}
+	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.countAfterAccess)
+	rowSize := is.indexScanRowSize(path.index, ds, true)
+	sessVars := ds.ctx.GetSessionVars()
+	cop.cst = tmpPath.countAfterAccess * rowSize * sessVars.ScanFactor
+	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	t := finishCopTask(ds.ctx, cop).(*rootTask)
 	reader := t.p

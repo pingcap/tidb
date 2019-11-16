@@ -1,0 +1,10 @@
+use test;
+drop table if exists e, lo;
+create table e(a int, b int, key idx_a(a), key idx_b(b)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+load stats 's/explain_join_stats_e.json';
+create table lo(a int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (a)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002;
+load stats 's/explain_join_stats_lo.json';
+-- HashJoin(43ms) would execute faster than IndexJoin(1230ms)
+explain select count(*) from e, lo where lo.a=e.a and e.b=22336;
+-- Pay attention to the estimated row count of e
+explain select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
