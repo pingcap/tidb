@@ -1182,10 +1182,18 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 		var t types.Time
 		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
 		if !succ {
-			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
-			return handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
 		t.Fsp = int8(b.tp.Decimal)
 		dur, err := t.ConvertToDuration()

@@ -283,8 +283,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners:        []dataGenerator{&dateStrGener{}, nil},
+			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
 			constants:     []*Constant{nil, {Value: types.NewDatum("%H:%i:%s"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			// "%H%i%s" is wrong format, STR_TO_DATE should be failed for all rows
+			constants: []*Constant{nil, {Value: types.NewDatum("%H%i%s"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 	ast.GetFormat: {
