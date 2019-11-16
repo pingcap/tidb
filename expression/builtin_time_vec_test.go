@@ -223,6 +223,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		// we cannot use the vectorized test framework to test builtinSysDateWithoutFspSig.
 		// We test the builtinSysDateWithoutFspSig in TestSysDate function.
 		// {retEvalType: types.ETDatetime},
+		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
+		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 }
 
