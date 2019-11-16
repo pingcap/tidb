@@ -348,6 +348,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case TiDBStoreLimit:
+		return checkInt64SystemVar(name, value, 0, math.MaxInt64, vars)
 	case SyncBinlog:
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
@@ -608,7 +610,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines:
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil
