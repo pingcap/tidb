@@ -200,6 +200,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func getRandomTime() types.MysqlTime {
+	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
+		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+
+}
+
 // dataGenerator is used to generate data for test.
 type dataGenerator interface {
 	gen() interface{}
@@ -222,9 +228,9 @@ func (g *defaultGener) gen() interface{} {
 		return rand.Int63()
 	case types.ETReal:
 		if rand.Float64() < 0.5 {
-			return -rand.Float64()
+			return -rand.Float64() * 1000000
 		}
-		return rand.Float64()
+		return rand.Float64() * 1000000
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
 		var f float64
@@ -238,7 +244,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return d
 	case types.ETDatetime, types.ETTimestamp:
-		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+		gt := getRandomTime()
 		t := types.Time{Time: gt, Type: convertETType(g.eType)}
 		return t
 	case types.ETDuration:
@@ -257,6 +263,18 @@ func (g *defaultGener) gen() interface{} {
 		return randString()
 	}
 	return nil
+}
+
+// selectStringGener select one string randomly from the candidates array
+type selectStringGener struct {
+	candidates []string
+}
+
+func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[rand.Intn(len(g.candidates))]
 }
 
 type constJSONGener struct {
@@ -279,6 +297,13 @@ func (g *jsonStringGener) gen() interface{} {
 		panic(err)
 	}
 	return j.String()
+}
+
+type jsonTimeGener struct{}
+
+func (g *jsonTimeGener) gen() interface{} {
+	tm := types.Time{Time: getRandomTime(), Type: mysql.TypeDatetime, Fsp: types.DefaultFsp}
+	return json.CreateBinary(tm.String())
 }
 
 type rangeDurationGener struct {
@@ -393,6 +418,18 @@ func (g *ipv6StrGener) gen() interface{} {
 	return ip.String()
 }
 
+// ipv4StrGener is used to generate ipv4 strings. For example 111.111.111.111
+type ipv4StrGener struct {
+}
+
+func (g *ipv4StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv4len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
 // ipv6ByteGener is used to generate ipv6 address in 16 bytes string.
 type ipv6ByteGener struct {
 }
@@ -490,36 +527,85 @@ func (g *randHexStrGener) gen() interface{} {
 	return string(buf)
 }
 
-// dataTimeStrGener is used to generate strings which are dataTime format
-type dataTimeStrGener struct{}
+// dateTimeGener is used to generate a dataTime
+type dateTimeGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
 
-func (g *dataTimeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
+func (g *dateTimeGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
+	gt := types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	t := types.Time{Time: gt, Type: mysql.TypeDatetime}
+	return t
+}
+
+// dateTimeStrGener is used to generate strings which are dataTime format
+type dateTimeStrGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
+
+func (g *dateTimeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
+	dataTimeStr := fmt.Sprintf("%d-%d-%d %d:%d:%d",
+		g.Year, g.Month, g.Day, hour, minute, second)
+	if g.Fsp > 0 && g.Fsp <= 6 {
+		microFmt := fmt.Sprintf(".%%0%dd", g.Fsp)
+		return dataTimeStr + fmt.Sprintf(microFmt, rand.Int()%(10^g.Fsp))
+	}
 
-	return fmt.Sprintf("%d-%d-%d %d:%d:%d",
-		year, month, day, hour, minute, second)
+	return dataTimeStr
 }
 
 // timeStrGener is used to generate strings which are time format
-type timeStrGener struct{}
-
-func (g *timeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
-
-	return fmt.Sprintf("%d-%d-%d", year, month, day)
+type timeStrGener struct {
+	Year  int
+	Month int
+	Day   int
 }
 
-// dataStrGener is used to generate strings which are data format
-type dataStrGener struct{}
+func (g *timeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 
-func (g *dataStrGener) gen() interface{} {
+	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
+}
+
+// dateStrGener is used to generate strings which are data format
+type dateStrGener struct{}
+
+func (g *dateStrGener) gen() interface{} {
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
@@ -540,6 +626,54 @@ type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+// locationGener is used to generate location for the built-in function GetFormat.
+type locationGener struct {
+	nullRation float64
+}
+
+func (g *locationGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 5 {
+	case 0:
+		return usaLocation
+	case 1:
+		return jisLocation
+	case 2:
+		return isoLocation
+	case 3:
+		return eurLocation
+	case 4:
+		return internalLocation
+	default:
+		return nil
+	}
+}
+
+// formatGener is used to generate a format for the built-in function GetFormat.
+type formatGener struct {
+	nullRation float64
+}
+
+func (g *formatGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 4 {
+	case 0:
+		return dateFormat
+	case 1:
+		return datetimeFormat
+	case 2:
+		return timestampFormat
+	case 3:
+		return timeFormat
+	default:
+		return nil
+	}
 }
 
 type vecExprBenchCase struct {
@@ -858,7 +992,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesEncrypt {
+			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				c.Assert(err, IsNil)
 			}
@@ -1061,7 +1195,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesEncrypt {
+			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				if err != nil {
 					panic(err)
