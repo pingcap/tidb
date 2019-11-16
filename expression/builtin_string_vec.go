@@ -1622,11 +1622,40 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 }
 
 func (b *builtinInstrBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInstrBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	substr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(substr)
+	if err := b.args[1].VecEvalString(b.ctx, input, substr); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str, substr)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		strI := str.GetString(i)
+		substrI := substr.GetString(i)
+		idx := strings.Index(strI, substrI)
+		res[i] = int64(idx + 1)
+	}
+	return nil
 }
 
 func (b *builtinLengthSig) vectorized() bool {
