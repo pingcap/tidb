@@ -158,24 +158,31 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	if isUnsigned, ok := b.hashSet[arg0]; ok {
-		if isUnsigned0 && isUnsigned {
-			return 1, false, nil
-		} else if !isUnsigned0 && !isUnsigned {
-			return 1, false, nil
-		} else if !isUnsigned0 && isUnsigned {
-			if arg0 >= 0 {
+	args := b.varArgs[1:]
+	threshold := 16
+
+	if len(b.args)-len(b.varArgs) >= threshold {
+		if isUnsigned, ok := b.hashSet[arg0]; ok {
+			if isUnsigned0 && isUnsigned {
 				return 1, false, nil
-			}
-		} else {
-			if arg0 >= 0 {
+			} else if !isUnsigned0 && !isUnsigned {
 				return 1, false, nil
+			} else if !isUnsigned0 && isUnsigned {
+				if arg0 >= 0 {
+					return 1, false, nil
+				}
+			} else {
+				if arg0 >= 0 {
+					return 1, false, nil
+				}
 			}
 		}
+	} else {
+		args = b.args[1:]
 	}
 
 	var hasNull bool
-	for _, arg := range b.varArgs[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, err
