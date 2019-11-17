@@ -693,6 +693,8 @@ type vecExprBenchCase struct {
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	// This field is optional.
 	geners []dataGenerator
+	// aesModeAttr information, needed by encryption functions
+	aesModes string
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
@@ -992,10 +994,8 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				c.Assert(err, IsNil)
-			}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			c.Assert(err, IsNil)
 			if funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
 					Username:     "tidb",
@@ -1195,11 +1195,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				if err != nil {
-					panic(err)
-				}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			if err != nil {
+				panic(err)
 			}
 			if funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
