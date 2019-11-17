@@ -1622,11 +1622,40 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 }
 
 func (b *builtinInstrBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInstrBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	substr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(substr)
+	if err := b.args[1].VecEvalString(b.ctx, input, substr); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str, substr)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		strI := str.GetString(i)
+		substrI := substr.GetString(i)
+		idx := strings.Index(strI, substrI)
+		res[i] = int64(idx + 1)
+	}
+	return nil
 }
 
 func (b *builtinLengthSig) vectorized() bool {
@@ -2022,11 +2051,30 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinCharLengthBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharLengthBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		res[i] = int64(len(str))
+	}
+	return nil
 }
 
 func (b *builtinBinSig) vectorized() bool {
@@ -2057,11 +2105,91 @@ func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalNumDecArgsForFormat evaluates first 2 arguments, i.e, x and d, for function `format`.
+func vecEvalNumDecArgsForFormat(b *baseBuiltinFunc, input *chunk.Chunk) ([]string, []string, []bool, error) {
+	n := input.NumRows()
+	isDecimal := b.args[0].GetType().EvalType() == types.ETDecimal
+	var buf0 *chunk.Column
+	buf0, err := b.bufAllocator.get(b.args[0].GetType().EvalType(), n)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return nil, nil, nil, err
+	}
+
+	xStrBuf := make([]string, n)
+	if isDecimal {
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
+			return nil, nil, nil, err
+		}
+		buf1.MergeNulls(buf0)
+		d64s := buf0.Decimals()
+		for i := 0; i < n; i++ {
+			if buf1.IsNull(i) {
+				continue
+			}
+			xStrBuf[i] = d64s[i].String()
+		}
+	} else {
+		if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
+			return nil, nil, nil, err
+		}
+		buf1.MergeNulls(buf0)
+		f64s := buf0.Float64s()
+		for i := 0; i < n; i++ {
+			if buf1.IsNull(i) {
+				continue
+			}
+			xStrBuf[i] = fmt.Sprintf(strconv.FormatFloat(f64s[i], 'f', -1, 64))
+		}
+	}
+
+	d64s := buf1.Int64s()
+	isNulls := make([]bool, n)
+	dStrBuf := make([]string, n)
+	for i := 0; i < n; i++ {
+		if buf1.IsNull(i) {
+			isNulls[i] = true
+			continue
+		}
+		isNulls[i] = false
+		dStrBuf[i] = strconv.FormatInt(d64s[i], 10)
+	}
+	return xStrBuf, dStrBuf, isNulls, nil
+}
+
+// evalString evals FORMAT(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	xStrBuf, dStrBuf, isNulls, err := vecEvalNumDecArgsForFormat(&b.baseBuiltinFunc, input)
+	if err != nil {
+		return err
+	}
+	n := input.NumRows()
+	result.ReserveString(n)
+	var formatString string
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+			continue
+		}
+		formatString, err = mysql.GetLocaleFormatFunction("en_US")(xStrBuf[i], dStrBuf[i])
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
 }
 
 func (b *builtinRightBinarySig) vectorized() bool {
