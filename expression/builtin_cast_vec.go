@@ -775,15 +775,17 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	resdecimal := result.Decimals()
 	if !b.inUnion {
 		for i := 0; i < n; i++ {
-			resdecimal[i].FromFloat64(bufreal[i])
+			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
+				return err
+			}
 		}
 	} else {
 		for i := 0; i < n; i++ {
 			if bufreal[i] >= 0 {
-				err = resdecimal[i].FromFloat64(bufreal[i])
-				if err != nil {
+				if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 					return err
 				}
+
 			} else {
 				_, err = types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
 				if err != nil {

@@ -1275,53 +1275,6 @@ func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinOctStringSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return err
-	}
-
-	result.ReserveString(n)
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-		negative, overflow := false, false
-		str := buf.GetString(i)
-		str = getValidPrefix(strings.TrimSpace(str), 10)
-		if len(str) == 0 {
-			result.AppendString("0")
-			continue
-		}
-		if str[0] == '-' {
-			negative, str = true, str[1:]
-		}
-		numVal, err := strconv.ParseUint(str, 10, 64)
-		if err != nil {
-			numError, ok := err.(*strconv.NumError)
-			if !ok || numError.Err != strconv.ErrRange {
-				return err
-			}
-			overflow = true
-		}
-		if negative && !overflow {
-			numVal = -numVal
-		}
-		result.AppendString(strconv.FormatUint(numVal, 8))
-	}
-	return nil
-}
-
 func (b *builtinEltSig) vectorized() bool {
 	return true
 }
