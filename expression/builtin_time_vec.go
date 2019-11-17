@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -1607,11 +1608,77 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinSubStringAndStringSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinSubStringAndStringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var (
+		s, arg0 string
+		arg1    types.Duration
+	)
+
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	arg1Type := b.args[1].GetType()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) || mysql.HasBinaryFlag(arg1Type.Flag) {
+			result.AppendNull()
+			continue
+		}
+
+		arg0 = buf0.GetString(i)
+		s = buf1.GetString(i)
+
+		arg1, err = types.ParseDuration(sc, s, getFsp4TimeAddSub(s))
+		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				result.AppendNull()
+				continue
+			}
+			return err
+		}
+		if isDuration(arg0) {
+			res, err := strDurationSubDuration(sc, arg0, arg1)
+			if err != nil {
+				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+					result.AppendNull()
+					continue
+				}
+				return err
+			}
+			result.AppendString(res)
+			continue
+		}
+		res, err := strDatetimeSubDuration(sc, arg0, arg1)
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
+	}
+
+	return nil
 }
 
 func (b *builtinUTCTimeWithoutArgSig) vectorized() bool {
