@@ -150,6 +150,12 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
+	isConst := b.args[1].ConstItem()
+	var key []byte
+	if isConst {
+		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
+	}
+
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		// According to doc: If either function argument is NULL, the function returns NULL.
@@ -164,7 +170,9 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 		iv = iv[0:aes.BlockSize]
-		key := encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+		if !isConst {
+			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+		}
 		var cipherText []byte
 
 		// ANNOTATION:
