@@ -1949,18 +1949,10 @@ func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 	n := input.NumRows()
 	mode := b.ctx.GetSessionVars().SQLMode
 	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
-		if err := types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String()); err != nil {
-			return err
-		}
-		result.ResizeTime(n, true)
-		return nil
+		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String())
 	}
 	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
-		if err := types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String()); err != nil {
-			return err
-		}
-		result.ResizeTime(n, true)
-		return nil
+		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String())
 	}
 
 	result.ResizeTime(n, false)
