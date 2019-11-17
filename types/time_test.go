@@ -245,6 +245,9 @@ func (s *testTimeSuite) TestTime(c *C) {
 	errTable := []string{
 		"232 10",
 		"-232 10",
+		"10:123",
+		"10:11:123",
+		"100:11:123",
 	}
 
 	for _, test := range errTable {

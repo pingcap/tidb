@@ -1168,14 +1168,14 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		}
 	case 2:
 		// HH:MM
-		_, err = fmt.Sscanf(integeralPart, "%2d:%2d", &hour, &minute)
+		_, err = fmt.Sscanf(integeralPart, "%2d:%2d ", &hour, &minute)
 	case 3:
 		// Time format maybe HH:MM:SS or HHH:MM:SS.
 		// See https://dev.mysql.com/doc/refman/5.7/en/time.html
 		if len(seps[0]) == 3 {
-			_, err = fmt.Sscanf(integeralPart, "%3d:%2d:%2d", &hour, &minute, &second)
+			_, err = fmt.Sscanf(integeralPart, "%3d:%2d:%2d ", &hour, &minute, &second)
 		} else {
-			_, err = fmt.Sscanf(integeralPart, "%2d:%2d:%2d", &hour, &minute, &second)
+			_, err = fmt.Sscanf(integeralPart, "%2d:%2d:%2d ", &hour, &minute, &second)
 		}
 	default:
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
