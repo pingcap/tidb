@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/terror"
 	"math"
 	"time"
 
@@ -1862,11 +1863,44 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinUnixTimestampIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	times := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			i64s[i] = 0
+			continue
+		}
+		t, err := times[i].Time.GoTime(getTimeZone(b.ctx))
+		if err != nil {
+			i64s[i] = 0
+		}
+		timestamp, err := goTimeToMysqlUnixTimestamp(t, 1)
+		if err != nil {
+			i64s[i] = 0
+			result.SetNull(i, true)
+			continue
+		}
+		intVal, err := timestamp.ToInt()
+		terror.Log(err)
+		i64s[i] = intVal
+	}
+	return nil
 }
 
 func (b *builtinAddDateDurationDecimalSig) vectorized() bool {

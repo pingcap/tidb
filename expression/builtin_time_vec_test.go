@@ -226,6 +226,21 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
 		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
+	ast.UnixTimestamp: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETDatetime},
+			childrenFieldTypes: []*types.FieldType{
+				{
+					Tp:      mysql.TypeDatetime,
+					Flen:    types.UnspecifiedLength,
+					Decimal: 0, // set to zero so that the test will use builtinUnixTimestampIntSig instead of builtinUnixTimestampDecSig
+					Flag:    mysql.BinaryFlag,
+				},
+			},
+			geners: []dataGenerator{&dateTimeGener{Fsp: 0}},
+		},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
