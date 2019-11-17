@@ -1268,11 +1268,44 @@ func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinInstrSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	substr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(substr)
+	if err := b.args[1].VecEvalString(b.ctx, input, substr); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str, substr)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		strI := strings.ToLower(str.GetString(i))
+		substrI := strings.ToLower(substr.GetString(i))
+		idx := strings.Index(strI, substrI)
+		if idx == -1 {
+			res[i] = 0
+			continue
+		}
+		res[i] = int64(utf8.RuneCountInString(strI[:idx]) + 1)
+	}
+	return nil
 }
 
 func (b *builtinOctStringSig) vectorized() bool {
