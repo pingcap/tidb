@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -445,11 +446,27 @@ func (b *builtinSubDateIntIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinUnixTimestampCurrentSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnixTimestampCurrentSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nowTs, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		return err
+	}
+	dec, err := goTimeToMysqlUnixTimestamp(nowTs, 1)
+	if err != nil {
+		return err
+	}
+	intVal, err := dec.ToInt()
+	terror.Log(err)
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	intRes := result.Int64s()
+	for i := 0; i < n; i++ {
+		intRes[i] = intVal
+	}
+	return nil
 }
 
 func (b *builtinSubDateIntRealSig) vectorized() bool {
