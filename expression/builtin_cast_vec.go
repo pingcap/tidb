@@ -915,10 +915,13 @@ func (b *builtinCastDurationAsRealSig) vecEvalReal(input *chunk.Chunk, result *c
 
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf)
-
 	f64s := result.Float64s()
+
 	var duration types.Duration
-	fsp := int8(b.args[0].GetType().Decimal)
+	fsp := int8(b.tp.Decimal)
+	if fsp, err = types.CheckFsp(int(fsp)); err != nil {
+		return err
+	}
 	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
