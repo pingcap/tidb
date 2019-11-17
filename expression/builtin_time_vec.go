@@ -1946,19 +1946,27 @@ func (b *builtinDateLiteralSig) vectorized() bool {
 }
 
 func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	literal, isNull, err := b.evalTime(chunk.Row{})
-	if err != nil {
-		return err
-	}
 	n := input.NumRows()
-	if isNull {
+	mode := b.ctx.GetSessionVars().SQLMode
+	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
+		if err := types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String()); err != nil {
+			return err
+		}
 		result.ResizeTime(n, true)
 		return nil
 	}
+	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
+		if err := types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String()); err != nil {
+			return err
+		}
+		result.ResizeTime(n, true)
+		return nil
+	}
+
 	result.ResizeTime(n, false)
 	times := result.Times()
 	for i := range times {
-		times[i] = literal
+		times[i] = b.literal
 	}
 	return nil
 }
