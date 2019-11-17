@@ -1103,6 +1103,9 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		sign = -1
 	}
 
+	// Time format may have leading and trailing whitespaces.
+	str = strings.TrimSpace(str)
+
 	// Time format may has day.
 	if n := strings.IndexByte(str, ' '); n >= 0 {
 		if day, err = strconv.Atoi(str[:n]); err == nil {
