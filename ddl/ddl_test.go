@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -98,6 +99,13 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
+
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.Log.SlowThreshold = 10000
+	// Test for add/drop primary key.
+	newCfg.AlterPrimaryKey = true
+	config.StoreGlobalConfig(&newCfg)
 
 	testleak.BeforeTest()
 	TestingT(t)
@@ -189,6 +197,16 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 	}
 }
 
+func testCreatePrimaryKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
+	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
+	job.Type = model.ActionAddPrimaryKey
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
 func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
 	err := d.doDDLJob(ctx, job)
@@ -214,10 +232,14 @@ func testAddColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 }
 
 func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+	tp := model.ActionDropIndex
+	if indexName == "primary" {
+		tp = model.ActionDropPrimaryKey
+	}
 	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
-		Type:       model.ActionDropIndex,
+		Type:       tp,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(indexName)},
 	}
