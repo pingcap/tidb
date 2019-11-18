@@ -142,7 +142,7 @@ LOOP:
 				if strings.HasPrefix(s, "--error") {
 					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
 				} else if strings.HasPrefix(s, "-- error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "-- error")), ",")
 				} else if strings.HasPrefix(s, "--echo") {
 					echo := strings.TrimSpace(strings.TrimPrefix(s, "--echo"))
 					t.buf.WriteString(echo)
