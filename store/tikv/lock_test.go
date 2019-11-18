@@ -201,7 +201,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
-	c.Assert(status.ttl, Greater, uint64(0), Commentf("rollback reason:%s", status.action))
+	c.Assert(status.ttl, Greater, uint64(0), Commentf("action:%s", status.action))
 }
 
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
@@ -288,7 +288,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
-	c.Assert(status.action, kvrpcpb.Action_MinCommitTSPushed)
+	c.Assert(status.action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
