@@ -362,6 +362,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerTask:        innerTask,
+		Concurrency:      p.ctx.GetSessionVars().IndexLookupJoinConcurrency,
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
 		CompareFilters:   compareFilters,
@@ -1352,6 +1353,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		Exprs:                p.Exprs,
 		CalculateNoDelay:     p.CalculateNoDelay,
 		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+		Concurrency:          p.ctx.GetSessionVars().ProjectionConcurrency,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
