@@ -324,11 +324,11 @@ func (b *builtinNameConstDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 }
 
 func (b *builtinNameConstJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalJSON(b.ctx, input, result)
 }
 
 func (b *builtinInet6AtonSig) vectorized() bool {
