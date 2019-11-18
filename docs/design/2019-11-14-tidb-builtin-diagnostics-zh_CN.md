@@ -133,7 +133,7 @@ TiDB/TiKV/PD 产生的日志都保存在各自的节点上，并且 TiDB 集群�
 - `end_time`: 日志检索的开始时间（unix 时间戳，单位毫秒），如果没有该谓词，则默认为 `int64::MAX`。
 - `pattern`: 如 SELECT * FROM tidb_cluster_log WHERE pattern LIKE "%gc%" 中的 %gc% 即为过滤的关键字
 - `level`: 日志等级，可以选为 DEBUG/INFO/WARN/WARNING/TRACE/CRITICAL/ERROR
-- `limit`: 返回日志的条数，如果没有指定，则限制为 64k 条，防止日志两太大占用大量网络
+- `limit`: 返回日志的条数，如果没有指定，则限制为 64k 条，防止日质量太大占用大量网络
 
 #### 节点性能采样数据
 
@@ -182,7 +182,22 @@ TiDB/TiKV/PD 产生的日志都保存在各自的节点上，并且 TiDB 集群�
     - 优势：该方案不依赖 Prometheus server，为后续移除 Prometheus 组件有一定帮助
     - 劣势：需要实现时序保存逻辑，并实现对应的查询引擎，实现难度和工作量大
 
-本提案倾向于方案二，虽然实现难度更大，但是对后续的工作有帮助。为了解决实现 PromQL 和时序数据保存的实现难度大和周期长的问题，可以暂时折中将 Prometheus 时序数据保存和查询相应的模块抽离出来，并嵌入到 PD 中。
+本提案倾向于方案二，虽然实现难度更大，但是对后续的工作有帮助。为了解决实现 PromQL 和时序数据保存的实现难度大和周期长的问题，将这个功能分为三个阶段实现（第三阶段视具体情况是否实现）：
+
+1. PD 中添加 `remote-metrics-storage` 配置，暂时配置为 Prometheus Server 的地址。PD 作为 proxy，将请求转移到 Prometheus 上执行，主要有以下考量：
+    - 后续 PD 实现查询接口实现自举，TiDB 不需要做其他改动
+    - 用户不使用 TiDB 部署的 Prometheus 而使用自建的监控服务，依然可以使用 SQL 查询监控信息以及诊断框架
+2. 将 Prometheus 时序数据保存和查询相应的模块抽离出来，并嵌入到 PD 中
+3. PD 内部实现自己的时序保存与查询（目前 CockroachDB 的方案）
+
+##### PD 性能分析
+
+PD 目前主要承载 TiDB 集群的调度和 TSO 服务，其中：
+
+1. TSO 获取仅对 Leader 内存中的一个原子变量进行累加
+2. 调度生成的 Operator 和 OperatorStep 仅保存在内存中，根据 Region 的心跳信息更新内存中的状态
+
+由以上信息可以得出在 PD 上新增监控功能对 PD 的性能影响在绝大部分情况下可以忽略不计。
 
 ### 系统信息获取
 
@@ -262,7 +277,7 @@ message ServerInfoResponse {
 
 - 终端用户：用户直接通过 SQL 查询获取集群信息排查问题
 - 运维系统：TiDB 的使用环境比较多样，客户可以通过 SQL 获取集群信息将 TiDB 集成到自己的运维系统中
-- 生态工具：外部工具通过 SQL 拿到集群信息实现功能定制，比如 `sqltop` 可以直接通过集群 `events_statements_summary_by_digest` 获取整个集群的 SQL 采样信息
+- 生态工具：外部工具通过 SQL 拿到集群信息实现功能定制，比如 `[sqltop](https://github.com/ngaut/sqltop)` 可以直接通过集群 `events_statements_summary_by_digest` 获取整个集群的 SQL 采样信息
 
 #### 集群拓扑系统表
 
@@ -681,3 +696,8 @@ mysql> select * from tidb_cluster_log where message like '%table%';
 - 内嵌 Lua：在运行时或启动过程中加载 Lua 脚本，脚本从 TiDB 读取系统表数据，并根据诊断规则判断并反馈结果
     - 优势：Lua 是一个完全依赖宿主的语言，语法简单，容易与宿主集成
     - 劣势：依赖另一个脚本语言
+- Shell Script：Shell 具备流程控制功能，所以可以用 Shell 定义诊断规则
+    - 优势：易于编写、加载和执行，对 TiDB 内部无侵入，只需要外部 Shell 执行对应 SQL 即可
+    - 劣势：需要在安装 mysql client 的机器上运行
+
+本提案暂时采用第三种方案，使用 Shell 编写诊断规则。对 TiDB 没有侵入，同时也为后续实现更好的方案提供扩展性。
