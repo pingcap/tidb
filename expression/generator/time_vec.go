@@ -213,6 +213,23 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	{{ else if eq .SigName "builtinAddStringAndStringSig" }}
 		{{ template "ConvertStringToDuration" . }}
 		{{ template "strDurationAddDuration" . }}
+	{{ else if eq .SigName "builtinAddDateAndDurationSig" }}
+		fsp0 := int8(b.args[0].GetType().Decimal)
+		fsp1 := int8(b.args[1].GetType().Decimal)
+		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		if err != nil {
+			return err
+		}
+		output := sum.String()
+	{{ else if eq .SigName "builtinAddDateAndStringSig" }}
+		{{ template "ConvertStringToDuration" . }}
+		fsp0 := int8(b.args[0].GetType().Decimal)
+		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		if err != nil {
+			return err
+		}
+		output := sum.String()
 	{{ end }}
 
 		// commit result
@@ -455,13 +472,22 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 		{{ range .Sigs }} // {{ .SigName }}
 			{
 				retEvalType: types.ET{{ .Output.ETName }}, 
+				{{- if eq .TestTypeA "" }}
 				childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}},
+				{{- else }}
+				childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}},
+				{{- end }}
 				{{- if ne .FieldTypeA "" }}
 				childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
 				{{- end }}
 				geners: []dataGenerator{
+					{{- if eq .TestTypeA "" }}
 					gener{defaultGener{eType: types.ET{{.TypeA.ETName}}, nullRation: 0.2}},
 					gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+					{{- else }}
+					gener{defaultGener{eType: types.ET{{ .TestTypeA }}, nullRation: 0.2}},
+					gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
+					{{- end }}
 				},
 			},
 		{{ end }}
@@ -530,6 +556,8 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinAddStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinAddStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
+	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
 
 	{SigName: "builtinAddTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinAddTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
@@ -551,6 +579,7 @@ type sig struct {
 	SigName                string
 	TypeA, TypeB, Output   TypeContext
 	FieldTypeA, FieldTypeB string // Optional
+	TestTypeA, TestTypeB   string // Optional, specific Type for test in builtinAddDateAndDurationSig & builtinAddDateAndStringSig
 	AllNull                bool
 }
 
