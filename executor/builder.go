@@ -1797,6 +1797,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			rowTypes:      innerTypes,
 			colLens:       v.IdxColLens,
 			hasPrefixCol:  hasPrefixCol,
+			joinKeys:      v.InnerJoinKeys,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
@@ -2146,7 +2147,8 @@ type mockPhysicalIndexReader struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager,
+	innerJoinKeys []*expression.Column) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plannercore.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents)
@@ -2155,7 +2157,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 	case *plannercore.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
-		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, innerJoinKeys)
 	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
 	// 	1. The inner child fetch data using indexLookupReader
 	// 	2. PK is not handle
@@ -2163,7 +2165,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
 	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
-		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, innerJoinKeys)
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}
@@ -2171,9 +2173,10 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 }
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
-	values []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	values []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager,
+	innerJoinKeys []*expression.Column) (Executor, error) {
 	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
-	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc)
+	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, innerJoinKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -2252,12 +2255,25 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 }
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
-	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
-	if !isDoubleRead {
-		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager,
+	innerJoinKeys []*expression.Column) (Executor, error) {
+	for _, ran := range indexRanges {
+		for i, key := range innerJoinKeys {
+			idx := v.Schema().ColumnIndex(key)
+			expr := v.Exprs[idx]
+			var err error
+			ran.LowVal[i], err = expr.ReverseEval(ran.LowVal[i], expression.Floor)
+			if err != nil {
+				return nil, err
+			}
+			ran.HighVal[i], err = expr.ReverseEval(ran.HighVal[i], expression.Floor)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
-	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
+	childExec, err := childBuilder.buildExecutorForIndexJoin(ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc, innerJoinKeys)
 	if err != nil {
 		return nil, err
 	}

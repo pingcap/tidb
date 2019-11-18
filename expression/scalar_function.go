@@ -76,6 +76,36 @@ func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk
 	return sf.Function.vecEvalJSON(input, result)
 }
 
+// ReverseEvalInt evaluates the only one column int value with given function result.
+func (sf *ScalarFunction) ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	return sf.Function.reverseEvalInt(res, rType)
+}
+
+// ReverseEvalReal evaluates the only one column real value with given function result.
+func (sf *ScalarFunction) ReverseEvalReal(res types.Datum, rType RoundingType) (val float64, err error) {
+	return sf.Function.reverseEvalReal(res, rType)
+}
+
+// ReverseEvalString evaluates the only one column string value with given function result.
+func (sf *ScalarFunction) ReverseEvalString(res types.Datum, rType RoundingType) (val string, err error) {
+	return sf.Function.reverseEvalString(res, rType)
+}
+
+// ReverseEvalDecimal evaluates the only one column decimal value with given function result.
+func (sf *ScalarFunction) ReverseEvalDecimal(res types.Datum, rType RoundingType) (val *types.MyDecimal, err error) {
+	return sf.Function.reverseEvalDecimal(res, rType)
+}
+
+// ReverseEvalTime evaluates the only one column time value with given function result.
+func (sf *ScalarFunction) ReverseEvalTime(res types.Datum, rType RoundingType) (val types.Time, err error) {
+	return sf.Function.reverseEvalTime(res, rType)
+}
+
+// ReverseEvalDuration evaluates the only one column duration value with given function result.
+func (sf *ScalarFunction) ReverseEvalDuration(res types.Datum, rType RoundingType) (val types.Duration, err error) {
+	return sf.Function.reverseEvalDuration(res, rType)
+}
+
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
@@ -84,6 +114,36 @@ func (sf *ScalarFunction) GetArgs() []Expression {
 // Vectorized returns if this expression supports vectorized evaluation.
 func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
+}
+
+// SupportReverseEval returns if this expression supports reversed evaluation.
+func (sf *ScalarFunction) SupportReverseEval() bool {
+	return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (sf *ScalarFunction) ReverseEval(res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch sf.RetType.EvalType() {
+	case types.ETInt:
+		ret, err := sf.ReverseEvalInt(res, rType)
+		return types.NewIntDatum(ret), err
+	case types.ETReal:
+		ret, err := sf.ReverseEvalReal(res, rType)
+		return types.NewFloat64Datum(ret), err
+	case types.ETString:
+		ret, err := sf.ReverseEvalString(res, rType)
+		return types.NewStringDatum(ret), err
+	case types.ETDecimal:
+		ret, err := sf.ReverseEvalDecimal(res, rType)
+		return types.NewDecimalDatum(ret), err
+	case types.ETTimestamp:
+		ret, err := sf.ReverseEvalTime(res, rType)
+		return types.NewTimeDatum(ret), err
+	case types.ETDuration:
+		ret, err := sf.ReverseEvalDuration(res, rType)
+		return types.NewDurationDatum(ret), err
+	}
+	return types.Datum{}, errors.Errorf("unknown evaluation type for Column in ReverseEval")
 }
 
 // GetCtx gets the context of function.

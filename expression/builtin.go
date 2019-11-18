@@ -48,6 +48,9 @@ type baseBuiltinFunc struct {
 
 	childrenVectorizedOnce *sync.Once
 	childrenVectorized     bool
+
+	childrenReversedOnce *sync.Once
+	childrenReversed     bool
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -246,6 +249,47 @@ func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error)
 	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
+func (b *baseBuiltinFunc) supportReverseEval() bool {
+	return false
+}
+
+func (b *baseBuiltinFunc) isChildrenReversed() bool {
+	b.childrenReversedOnce.Do(func() {
+		b.childrenReversed = true
+		for _, arg := range b.args {
+			if !arg.SupportReverseEval() {
+				b.childrenReversed = false
+				break
+			}
+		}
+	})
+	return b.childrenReversed
+}
+
+func (b *baseBuiltinFunc) reverseEvalInt(res types.Datum, rType RoundingType) (int64, error) {
+	return 0, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) reverseEvalReal(res types.Datum, rType RoundingType) (float64, error) {
+	return 0, errors.Errorf("baseBuiltinFunc.reverseEvalReal() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) reverseEvalString(res types.Datum, rType RoundingType) (string, error) {
+	return "", errors.Errorf("baseBuiltinFunc.reverseEvalString() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) reverseEvalDecimal(res types.Datum, rType RoundingType) (*types.MyDecimal, error) {
+	return nil, errors.Errorf("baseBuiltinFunc.reverseEvalDecimal() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) reverseEvalTime(res types.Datum, rType RoundingType) (types.Time, error) {
+	return types.Time{}, errors.Errorf("baseBuiltinFunc.reverseEvalTime() should never be called, please contact the TiDB team for help")
+}
+
+func (b *baseBuiltinFunc) reverseEvalDuration(res types.Datum, rType RoundingType) (types.Duration, error) {
+	return types.Duration{}, errors.Errorf("baseBuiltinFunc.reverseEvalDuration() should never be called, please contact the TiDB team for help")
+}
+
 func (b *baseBuiltinFunc) vectorized() bool {
 	return false
 }
@@ -372,9 +416,42 @@ type vecBuiltinFunc interface {
 	vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error
 }
 
+// RoundingType is used to indicate the rounding type for reversing evaluation.
+type RoundingType uint8
+
+const (
+	// Ceiling means rounding up.
+	Ceiling RoundingType = iota
+	// Floor means rounding down.
+	Floor
+)
+
+// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
+// For example, the buitinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
+// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
+type reverseBuiltinFunc interface {
+	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
+	supportReverseEval() bool
+	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
+	isChildrenReversed() bool
+	// reverseEvalInt evaluates the only one column int value with given function result.
+	reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error)
+	// reverseEvalReal evaluates the only one column real value with given function result.
+	reverseEvalReal(res types.Datum, rType RoundingType) (val float64, err error)
+	// reverseEvalString evaluates the only one column string value with given function result.
+	reverseEvalString(res types.Datum, rType RoundingType) (val string, err error)
+	// reverseEvalDecimal evaluates the only one column decimal value with given function result.
+	reverseEvalDecimal(res types.Datum, rType RoundingType) (val *types.MyDecimal, err error)
+	// reverseEvalTime evaluates the only one column time value with given function result.
+	reverseEvalTime(res types.Datum, rType RoundingType) (val types.Time, err error)
+	// reverseEvalDuration evaluates the only one column duration value with given function result.
+	reverseEvalDuration(res types.Datum, rType RoundingType) (val types.Duration, err error)
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	vecBuiltinFunc
+	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row chunk.Row) (val int64, isNull bool, err error)

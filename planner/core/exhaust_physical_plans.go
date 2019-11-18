@@ -460,6 +460,37 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	return indexHashJoins
 }
 
+// Check whether the expression can be the inner join keys.
+// There are two conditions:
+// 	1. Only exactly one Column in the expression. Note: t.a * 2 has one Column, but t.a + t.a has two Columns.
+//	2. The expression and all children in expression are ScalarFunction or Column or Constant,
+//	   and the ScalarFunction type must have reverse derivation.
+//     For example, the reverse derivation of t.b = t.a*2+1 is (t.b-1)/2 = t.a.
+func (p *LogicalJoin) exprBeTheInnerJoinKey(expr expression.Expression) (bool, *expression.Column) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		return true, x
+	case *expression.Constant:
+		return true, nil
+	case *expression.ScalarFunction:
+		if !x.SupportReverseEval() {
+			return false, nil
+		}
+		var retCol *expression.Column
+		for _, childExpr := range x.GetArgs() {
+			canBeJoinKey, col := p.exprBeTheInnerJoinKey(childExpr)
+			if (retCol != nil && col != nil) || !canBeJoinKey {
+				return false, nil
+			}
+			if col != nil {
+				retCol = col
+			}
+		}
+		return true, retCol
+	}
+	return false, nil
+}
+
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
@@ -484,7 +515,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
-	if (!isDataSource && !isUnionScan) || (isDataSource && ds.preferStoreType&preferTiFlash != 0) {
+	pj, isProjection := innerChild.(*LogicalProjection)
+	if !isDataSource && !isUnionScan && !isProjection {
+		return nil
+	}
+	if isDataSource && ds.preferStoreType&preferTiFlash != 0 {
 		return nil
 	}
 	if isUnionScan {
@@ -500,15 +535,35 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			}
 		}
 	}
+	if isProjection {
+		ds, isDataSource = pj.Children()[0].(*DataSource)
+		if !isDataSource || ds.preferStoreType&preferTiFlash != 0 {
+			return nil
+		}
+		for i, key := range innerJoinKeys {
+			idx := pj.schema.ColumnIndex(key)
+			if idx == -1 {
+				return nil
+			}
+			expr := pj.Exprs[idx]
+			canBeJoinKey, extractCol := p.exprBeTheInnerJoinKey(expr)
+			if !canBeJoinKey {
+				return nil
+			}
+			if extractCol != nil {
+				innerJoinKeys[i] = extractCol
+			}
+		}
+	}
 	var avgInnerRowCnt float64
 	if outerChild.statsInfo().RowCount > 0 {
 		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
 	}
-	joins = p.buildIndexJoinInner2TableScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
+	joins = p.buildIndexJoinInner2TableScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt, pj)
 	if joins != nil {
 		return
 	}
-	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
+	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt, pj)
 }
 
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
@@ -518,7 +573,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 // promised to be no worse than building IndexScan as the inner child.
 func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
-	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
+	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64,
+	proj *LogicalProjection,
+) (joins []PhysicalPlan) {
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath && path.storeType == kv.TiKV {
@@ -547,14 +604,14 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		return nil
 	}
 	joins = make([]PhysicalPlan, 0, 3)
-	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
+	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt, outerIdx, proj)
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if us == nil {
-		innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, outerIdx, proj)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
@@ -565,7 +622,9 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 
 func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
-	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
+	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64,
+	proj *LogicalProjection,
+) (joins []PhysicalPlan) {
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
@@ -593,7 +652,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.idxCols, outerJoinKeys)
-	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt)
+	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt, outerIdx, proj)
 
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// The index merge join's inner plan is different from index join, so we
@@ -601,7 +660,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if us == nil {
-		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, outerIdx, proj)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
@@ -663,6 +722,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	outerIdx int,
+	proj *LogicalProjection,
 ) task {
 	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
@@ -700,6 +761,9 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	t := finishCopTask(ds.ctx, copTask).(*rootTask)
 	reader := t.p
 	t.p = p.constructInnerUnionScan(us, reader)
+	if proj != nil {
+		t = p.constructInnerProjection(proj, t)
+	}
 	return t
 }
 
@@ -728,6 +792,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	outerIdx int,
+	proj *LogicalProjection,
 ) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -793,6 +859,18 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	t := finishCopTask(ds.ctx, cop).(*rootTask)
 	reader := t.p
 	t.p = p.constructInnerUnionScan(us, reader)
+	if proj != nil {
+		t = p.constructInnerProjection(proj, t)
+	}
+	return t
+}
+
+func (p *LogicalJoin) constructInnerProjection(proj *LogicalProjection, t *rootTask) *rootTask {
+	physicalProj := PhysicalProjection{
+		Exprs: proj.Exprs,
+	}.Init(proj.ctx, t.p.statsInfo(), proj.SelectBlockOffset())
+	physicalProj.SetSchema(proj.Schema().Clone())
+	t = physicalProj.attach2Task(t).(*rootTask)
 	return t
 }
 

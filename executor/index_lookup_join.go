@@ -91,6 +91,7 @@ type innerCtx struct {
 	keyCols       []int
 	colLens       []int
 	hasPrefixCol  bool
+	joinKeys      []*expression.Column
 }
 
 type lookUpJoinTask struct {
@@ -596,7 +597,7 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 }
 
 func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, lookUpContent []*indexJoinLookUpContent) error {
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, iw.joinKeys)
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -447,4 +448,44 @@ func (c *Constant) Vectorized() bool {
 		return c.DeferredExpr.Vectorized()
 	}
 	return true
+}
+
+// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+func (c *Constant) SupportReverseEval() bool {
+	return true
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (c *Constant) ReverseEval(res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	return types.Datum{}, errors.Errorf("Constant.ReverseEval() should never be called, please contact the TiDB team for help")
+}
+
+// ReverseEvalInt evaluates the only one column int value with given function result.
+func (c *Constant) ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	return 0, errors.Errorf("Constant.ReverseEvalInt() should never be called, please contact the TiDB team for help")
+}
+
+// ReverseEvalReal evaluates the only one column real value with given function result.
+func (c *Constant) ReverseEvalReal(res types.Datum, rType RoundingType) (val float64, err error) {
+	return 0, errors.Errorf("Constant.ReverseEvalReal() should never be called, please contact the TiDB team for help")
+}
+
+// ReverseEvalString evaluates the only one column string value with given function result.
+func (c *Constant) ReverseEvalString(res types.Datum, rType RoundingType) (val string, err error) {
+	return "", errors.Errorf("Constant.ReverseEvalString() should never be called, please contact the TiDB team for help")
+}
+
+// ReverseEvalDecimal evaluates the only one column decimal value with given function result.
+func (c *Constant) ReverseEvalDecimal(res types.Datum, rType RoundingType) (val *types.MyDecimal, err error) {
+	return nil, errors.Errorf("Constant.ReverseEvalDecimal() should never be called, please contact the TiDB team for help")
+}
+
+// ReverseEvalTime evaluates the only one column time value with given function result.
+func (c *Constant) ReverseEvalTime(res types.Datum, rType RoundingType) (val types.Time, err error) {
+	return types.Time{}, errors.Errorf("Constant.ReverseEvalTime() should never be called, please contact the TiDB team for help")
+}
+
+// ReverseEvalDuration evaluates the only one column duration value with given function result.
+func (c *Constant) ReverseEvalDuration(res types.Datum, rType RoundingType) (val types.Duration, err error) {
+	return types.Duration{}, errors.Errorf("Constant.ReverseEvalDuration() should never be called, please contact the TiDB team for help")
 }

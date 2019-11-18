@@ -22,6 +22,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"math"
 	"strconv"
 	"strings"
@@ -446,6 +447,20 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	return
 }
 
+func (b *builtinCastIntAsIntSig) reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	resVal := res.GetInt64()
+	switch x := b.args[0].(type) {
+	case *Column:
+		return resVal, nil
+	case *Constant:
+		return 0, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEvalInt(res, rType)
+	}
+	return 0, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastIntAsRealSig struct {
 	baseBuiltinCastFunc
 }
@@ -472,6 +487,31 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	return res, false, err
 }
 
+func (b *builtinCastIntAsIntSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsRealSig) reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	resVal := res.GetFloat64()
+	switch x := b.args[0].(type) {
+	case *Column:
+		if resVal > math.MaxInt64 {
+			return math.MaxInt64, nil
+		}
+		if rType == Ceiling {
+			return int64(math.Ceil(resVal)), nil
+		} else {
+			return int64(math.Floor(resVal)), nil
+		}
+	case *Constant:
+		return 0, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEvalInt(res, rType)
+	}
+	return 0, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastIntAsDecimalSig struct {
 	baseBuiltinCastFunc
 }
@@ -496,6 +536,32 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
 	return res, isNull, err
+}
+
+func (b *builtinCastIntAsDecimalSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsDecimalSig) reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	resVal := res.GetMysqlDecimal()
+	switch x := b.args[0].(type) {
+	case *Column:
+		val, err = resVal.ToInt()
+		// if err happen, then means decimal is overflow int64.
+		if err != nil || val == math.MaxInt64{
+			return val, nil
+		}
+		if resVal.GetDigitsFrac() > 0 && rType == Ceiling {
+			return val+1, nil
+		}
+		return val, nil
+	case *Constant:
+		return 0, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEvalInt(res, rType)
+	}
+	return 0, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastIntAsStringSig struct {
@@ -525,6 +591,39 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
+func (b *builtinCastIntAsStringSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsStringSig) reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	resVal := res.GetString()
+	switch x := b.args[0].(type) {
+	case *Column:
+		hasFrac := false
+		if strings.Index(resVal, ".") != -1 {
+			hasFrac = true
+			resVal = strings.Split(resVal, ".")[0]
+		}
+		val, err = strconv.ParseInt(resVal, 10, 64)
+		if err != nil {
+			if strings.Index(err.Error(), "value out of range") != -1 {
+				return math.MaxInt64, nil
+			}
+			return 0, err
+		}
+		if rType == Ceiling && hasFrac {
+			return val+1, nil
+		}
+		return val, nil
+	case *Constant:
+		return 0, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEvalInt(res, rType)
+	}
+	return 0, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastIntAsTimeSig struct {
 	baseBuiltinFunc
 }
@@ -551,6 +650,36 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	return res, false, nil
 }
 
+func (b *builtinCastIntAsTimeSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsTimeSig) reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	resVal := res.GetMysqlTime()
+	switch x := b.args[0].(type) {
+	case *Column:
+		valDecimal := resVal.ToNumber()
+		if valDecimal == nil {
+			return 0, errors.Errorf("failed to convert time to decimal.")
+		}
+		val, err = valDecimal.ToInt()
+		// if err happen, then means decimal is overflow int64.
+		if err != nil || val == math.MaxInt64{
+			return val, nil
+		}
+		if valDecimal.GetDigitsFrac() > 0 && rType == Ceiling {
+			return val+1, nil
+		}
+		return val, nil
+	case *Constant:
+		return 0, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEvalInt(res, rType)
+	}
+	return 0, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastIntAsDurationSig struct {
 	baseBuiltinFunc
 }
@@ -574,6 +703,36 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Dur
 		return res, true, err
 	}
 	return dur, false, err
+}
+
+func (b *builtinCastIntAsDurationSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsDurationSig) reverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
+	resVal := res.GetMysqlDuration()
+	switch x := b.args[0].(type) {
+	case *Column:
+		valDecimal := resVal.ToNumber()
+		if valDecimal == nil {
+			return 0, errors.Errorf("failed to convert time to decimal.")
+		}
+		val, err = valDecimal.ToInt()
+		// if err happen, then means decimal is overflow int64.
+		if err != nil || val == math.MaxInt64{
+			return val, nil
+		}
+		if valDecimal.GetDigitsFrac() > 0 && rType == Ceiling {
+			return val+1, nil
+		}
+		return val, nil
+	case *Constant:
+		return 0, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEvalInt(res, rType)
+	}
+	return 0, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastIntAsJSONSig struct {
