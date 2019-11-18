@@ -71,12 +71,12 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 
 // ScaleCostLimit implement Implementation interface.
 func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
-	if costLimit == math.MaxFloat64 {
-		return costLimit
-	}
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	if math.MaxFloat64/copIterWorkers < costLimit {
+		return costLimit
+	}
 	return costLimit * copIterWorkers
 }
 
@@ -116,14 +116,14 @@ type IndexReaderImpl struct {
 	tblColHists *statistics.HistColl
 }
 
-// ScaleCostLimit implement Implementation interface.
+// ScaleCostLimit implements Implementation interface.
 func (impl *IndexReaderImpl) ScaleCostLimit(costLimit float64) float64 {
-	if costLimit == math.MaxFloat64 {
-		return costLimit
-	}
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	if math.MaxFloat64/copIterWorkers < costLimit {
+		return costLimit
+	}
 	return costLimit * copIterWorkers
 }
 
