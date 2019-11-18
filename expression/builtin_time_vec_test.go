@@ -134,8 +134,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 				Flag:    mysql.BinaryFlag,
 			}},
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				&timeStrGener{},
+				&timeStrGener{},
 			},
 		},
 	},
