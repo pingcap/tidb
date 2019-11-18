@@ -14,7 +14,10 @@
 package implementation
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
@@ -71,6 +74,17 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	return impl.cost
 }
 
+// ScaleCostLimit implement Implementation interface.
+func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+	if costLimit == math.MaxFloat64 {
+		return costLimit
+	}
+	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	sessVars := reader.SCtx().GetSessionVars()
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	return costLimit * copIterWorkers
+}
+
 // TableScanImpl implementation of PhysicalTableScan.
 type TableScanImpl struct {
 	baseImpl
@@ -94,9 +108,9 @@ func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implement
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
 	var width float64
 	if impl.plan.SCtx().GetSessionVars().EnableChunkRPC {
-		width = impl.tblColHists.GetAvgRowSizeChunkFormat(impl.tblCols)
+		width = impl.tblColHists.GetTableAvgRowSizeChunkFormat(impl.tblCols, kv.TiKV, true)
 	} else {
-		width = impl.tblColHists.GetAvgRowSize(impl.tblCols, false)
+		width = impl.tblColHists.GetTableAvgRowSize(impl.tblCols, kv.TiKV, true)
 	}
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.ScanFactor * width
