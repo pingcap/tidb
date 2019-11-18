@@ -1706,6 +1706,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBMaxDeltaSchemaCount,
+	variable.TiDBStoreLimit,
 }
 
 var (
