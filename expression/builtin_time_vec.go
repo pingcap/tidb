@@ -935,12 +935,12 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	defer b.bufAllocator.put(buf2)
 
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf1, buf2)
 	i64s := result.Int64s()
 	ds := buf1.Times()
 	ms := buf2.Int64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if buf1.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		date := ds[i]
@@ -948,6 +948,10 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
+		}
+		if buf2.IsNull(i) {
 			result.SetNull(i, true)
 			continue
 		}
