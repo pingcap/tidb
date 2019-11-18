@@ -978,6 +978,23 @@ func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
 	}
 }
 
+func (s *testChunkSuite) TestResetColumn(c *check.C) {
+	col0 := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+	col1 := NewColumn(types.NewFieldType(mysql.TypeLonglong), 0)
+
+	// using col0.reset() here will cause panic since it doesn't reset the elemBuf field which
+	// is used by MergeNulls.
+	col0.Reset(types.ETInt)
+	col0.MergeNulls(col1)
+
+	col := NewColumn(types.NewFieldType(mysql.TypeDatetime), 0)
+	col.Reset(types.ETDuration)
+	col.AppendDuration(types.Duration{})
+	// using col.reset() above will let this assertion fail since the length of initialized elemBuf
+	// is sizeTime.
+	c.Assert(len(col.data), check.Equals, sizeGoDuration)
+}
+
 func BenchmarkMergeNullsVectorized(b *testing.B) {
 	cols := genNullCols(3)
 	b.ResetTimer()

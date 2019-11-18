@@ -1986,11 +1986,25 @@ func (b *builtinSubDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinDateLiteralSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	mode := b.ctx.GetSessionVars().SQLMode
+	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
+		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String())
+	}
+	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
+		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String())
+	}
+
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := range times {
+		times[i] = b.literal
+	}
+	return nil
 }
 
 func (b *builtinTimeLiteralSig) vectorized() bool {
