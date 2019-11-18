@@ -322,16 +322,16 @@ mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
 - 特殊 SQL 命令添加
 
     ```
-- 从文件中加载
+    mysql> admin metrics_schema add parse_duration `histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, sql_type))`
     ```
 
-- 从配置文件中 LOAD
+- 从文件中加载
 
     ```
     mysql> admin metrics_schema load external_metrics.txt
     #external_metrics.txt
     execution_duration = `histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, sql_type))`
-通过上述映射之后，就可以在 `metrics_schema` 库中查看到以下的表：
+    pd_client_cmd_ops = `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[$INTERVAL] offset $OFFSET_TIME)) by (type)`
     ```
 
 添加以上表之后就可以在 `metrics_schema` 库中查看对应的表：
