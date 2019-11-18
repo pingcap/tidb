@@ -582,7 +582,7 @@ func (s *testDDLSuite) TestCancelJobx(c *C) {
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
-	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
+	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, "", mysql.DefaultCharset, "")
 	c.Assert(err, IsNil)
 
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}

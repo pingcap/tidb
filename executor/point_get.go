@@ -44,6 +44,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		handle:       p.Handle,
 		startTS:      startTS,
 		lock:         p.Lock,
+		lockWaitTime: p.LockWaitTime,
 	}
 	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
@@ -55,14 +56,15 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	tblInfo  *model.TableInfo
-	handle   int64
-	idxInfo  *model.IndexInfo
-	idxVals  []types.Datum
-	startTS  uint64
-	snapshot kv.Snapshot
-	done     bool
-	lock     bool
+	tblInfo      *model.TableInfo
+	handle       int64
+	idxInfo      *model.IndexInfo
+	idxVals      []types.Datum
+	startTS      uint64
+	snapshot     kv.Snapshot
+	done         bool
+	lock         bool
+	lockWaitTime int64
 }
 
 // Open implements the Executor interface.
@@ -145,7 +147,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		return doLockKeys(ctx, e.ctx, key)
+		return doLockKeys(ctx, e.ctx, e.lockWaitTime, key)
 	}
 	return nil
 }

@@ -299,7 +299,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
-		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+		logutil.Logger(context.Background()).Info("check indices count",
 			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
@@ -502,7 +502,6 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		return true, nil
 	}
 	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
-
 	if err != nil {
 		return errors.Trace(err)
 	}

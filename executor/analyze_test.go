@@ -238,6 +238,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	// Should not panic.
+	tk.MustExec("analyze table t")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
@@ -274,6 +276,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	// Should not panic.
+	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
@@ -439,4 +443,31 @@ func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {
 	_, err := tk.Exec("analyze table t")
 	c.Assert(err.Error(), Equals, "mock buildStatsFromResult error")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"), IsNil)
+}
+
+func (s *testSuite1) TestExtractTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, 0)", i+10))
+	}
+	tk.MustExec("analyze table t")
+	is := s.dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
+	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
+	c.Assert(len(colStats.CMSketch.TopN()), Equals, 1)
+	item := colStats.CMSketch.TopN()[0]
+	c.Assert(item.Count, Equals, uint64(11))
+	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
+	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
+	item = idxStats.CMSketch.TopN()[0]
+	c.Assert(item.Count, Equals, uint64(11))
 }
