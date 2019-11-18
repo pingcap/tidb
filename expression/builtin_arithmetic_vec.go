@@ -752,7 +752,6 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-	result.MergeNulls(lh)
 
 	rh := result
 	lhi64s := lh.Int64s()
@@ -772,6 +771,7 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	case !isLHSUnsigned && !isRHSUnsigned:
 		err = b.divideSS(result, lhi64s, rhi64s, resulti64s)
 	}
+	result.MergeNulls(lh)
 	return err
 }
 
