@@ -1033,11 +1033,11 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 // callerStartTS is the start ts of reader transaction.
 // currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
 func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64,
-	rollbackIfNotExist bool) (ttl uint64, commitTS uint64, rollbackReason kvrpcpb.RollbackReason, err error) {
+	rollbackIfNotExist bool) (ttl uint64, commitTS uint64, action kvrpcpb.Action, err error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	rollbackReason = kvrpcpb.RollbackReason_NoReason
+	action = kvrpcpb.Action_NoAction
 
 	startKey := mvccEncode(primaryKey, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
@@ -1070,7 +1070,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 					err = errors.Trace(err)
 					return
 				}
-				return 0, 0, kvrpcpb.RollbackReason_TTLExpire, nil
+				return 0, 0, kvrpcpb.Action_TTLExpireRollback, nil
 			}
 
 			// If this is a large transaction and the lock is active, push forward the minCommitTS.
@@ -1079,6 +1079,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 				// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 				if lock.minCommitTS < callerStartTS+1 {
 					lock.minCommitTS = callerStartTS + 1
+					action = kvrpcpb.Action_MinCommitTSPushed
 
 					// Remove this condition should not affect correctness.
 					// We do it because pushing forward minCommitTS as far as possible could avoid
@@ -1101,7 +1102,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 				}
 			}
 
-			return lock.ttl, 0, rollbackReason, nil
+			return lock.ttl, 0, action, nil
 		}
 
 		// If current transaction's lock does not exist.
@@ -1114,10 +1115,10 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 		if ok {
 			// If current transaction is already committed.
 			if c.valueType != typeRollback {
-				return 0, c.commitTS, rollbackReason, nil
+				return 0, c.commitTS, action, nil
 			}
 			// If current transaction is already rollback.
-			return 0, 0, kvrpcpb.RollbackReason_NoReason, nil
+			return 0, 0, kvrpcpb.Action_NoAction, nil
 		}
 	}
 
@@ -1138,10 +1139,10 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 			err = errors.Trace(err1)
 			return
 		}
-		return 0, 0, kvrpcpb.RollbackReason_LockNotExist, nil
+		return 0, 0, kvrpcpb.Action_LockNotExistRollback, nil
 	}
 
-	return 0, 0, rollbackReason, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
+	return 0, 0, action, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
 		StartTs:    lockTS,
 		PrimaryKey: primaryKey,
 	}}

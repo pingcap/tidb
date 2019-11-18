@@ -391,7 +391,7 @@ func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) 
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	} else {
-		resp.LockTtl, resp.CommitVersion, resp.RollbackReason = ttl, commitTS, rollbackReason
+		resp.LockTtl, resp.CommitVersion, resp.Action = ttl, commitTS, rollbackReason
 	}
 	return &resp
 }

@@ -107,9 +107,9 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 
 // TxnStatus represents a txn's final status. It should be Lock or Commit or Rollback.
 type TxnStatus struct {
-	ttl            uint64
-	commitTS       uint64
-	rollbackReason kvrpcpb.RollbackReason
+	ttl      uint64
+	commitTS uint64
+	action   kvrpcpb.Action
 }
 
 // IsCommitted returns true if the txn's final status is Commit.
@@ -487,7 +487,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			status.ttl = cmdResp.LockTtl
 		} else {
 			if cmdResp.CommitVersion == 0 {
-				status.rollbackReason = cmdResp.RollbackReason
+				status.action = cmdResp.Action
 				tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
 			} else {
 				tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()

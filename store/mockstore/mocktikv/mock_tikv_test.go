@@ -664,35 +664,35 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	startTS := uint64(5 << 18)
 	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", startTS, 666)
 
-	ttl, commitTS, _, err := s.store.CheckTxnStatus([]byte("pk"), startTS, 0, 666, false)
+	ttl, commitTS, action, err := s.store.CheckTxnStatus([]byte("pk"), startTS, startTS+100, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(666))
 	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
-	s.mustCommitOK(c, [][]byte{[]byte("pk")}, startTS, startTS+2)
+	s.mustCommitOK(c, [][]byte{[]byte("pk")}, startTS, startTS+101)
 
 	ttl, commitTS, _, err = s.store.CheckTxnStatus([]byte("pk"), startTS, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
-	c.Assert(commitTS, Equals, uint64(startTS+2))
+	c.Assert(commitTS, Equals, uint64(startTS+101))
 
 	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", startTS, 666)
 	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, startTS)
 
-	var reason kvrpcpb.RollbackReason
-	ttl, commitTS, reason, err = s.store.CheckTxnStatus([]byte("pk1"), startTS, 0, 666, false)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk1"), startTS, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
-	c.Assert(reason, Equals, kvrpcpb.RollbackReason_NoReason)
+	c.Assert(action, Equals, kvrpcpb.Action_NoAction)
 
 	s.mustPrewriteWithTTLOK(c, putMutations("pk2", "val"), "pk2", startTS, 666)
 	currentTS := uint64(777 << 18)
-	ttl, commitTS, reason, err = s.store.CheckTxnStatus([]byte("pk2"), startTS, 0, currentTS, false)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk2"), startTS, 0, currentTS, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
-	c.Assert(reason, Equals, kvrpcpb.RollbackReason_TTLExpire)
+	c.Assert(action, Equals, kvrpcpb.Action_TTLExpireRollback)
 
 	// Cover the TxnNotFound case.
 	_, _, _, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, false)
@@ -702,11 +702,11 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	c.Assert(notFound.StartTs, Equals, uint64(5))
 	c.Assert(string(notFound.PrimaryKey), Equals, "txnNotFound")
 
-	ttl, commitTS, reason, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, true)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, true)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
-	c.Assert(reason, Equals, kvrpcpb.RollbackReason_LockNotExist)
+	c.Assert(action, Equals, kvrpcpb.Action_LockNotExistRollback)
 
 	// Check the rollback tombstone blocks this prewrite which comes with a smaller startTS.
 	req := &kvrpcpb.PrewriteRequest{
