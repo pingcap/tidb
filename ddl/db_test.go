@@ -1029,9 +1029,13 @@ LOOP:
 		return
 	}
 
-	// test index range
-	for i := 0; i < 100; i++ {
-		index := rand.Intn(len(keys) - 3)
+	// Test index range with lower/upper boundary and random inner cases
+	step := len(keys) / 20
+	for i := 0; i <= 20; i++ {
+		index := i * step
+		if index > len(keys)-3 {
+			index = len(keys) - 3
+		}
 		rows := tk.MustQuery("select c1 from test_add_index where c3 >= ? order by c1 limit 3", keys[index]).Rows()
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
