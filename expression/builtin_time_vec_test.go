@@ -52,9 +52,13 @@ func (g *unitStrGener) gen() interface{} {
 }
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
-	ast.DateLiteral: {},
-	ast.DateDiff:    {},
-	ast.DateFormat:  {},
+	ast.DateLiteral: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
+			constants: []*Constant{{Value: types.NewStringDatum("2019-11-11"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+	},
+	ast.DateDiff:   {},
+	ast.DateFormat: {},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},
@@ -142,6 +146,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			},
 		},
 	},
+	ast.Week: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
+	},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
@@ -219,7 +226,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.Sysdate: {
-		{retEvalType: types.ETDatetime},
+		// Because there is a chance that a time error will cause the test to fail,
+		// we cannot use the vectorized test framework to test builtinSysDateWithoutFspSig.
+		// We test the builtinSysDateWithoutFspSig in TestSysDate function.
+		// {retEvalType: types.ETDatetime},
+		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
+		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 }
 

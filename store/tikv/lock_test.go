@@ -201,7 +201,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	status, err = s.store.lockResolver.GetTxnStatus(startTS, startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
-	c.Assert(status.ttl, Greater, uint64(0))
+	c.Assert(status.ttl, Greater, uint64(0), Commentf("action:%s", status.action))
 }
 
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
@@ -234,6 +234,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
+	c.Assert(status.action, Equals, kvrpcpb.Action_NoAction)
 
 	// Check a committed txn.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
@@ -279,6 +280,8 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
+	c.Assert(currentTS, Greater, txn.StartTS())
+
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
@@ -287,6 +290,9 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
+	// TODO: It should be Action_MinCommitTSPushed if minCommitTS is set in the Prewrite request.
+	// Update here to kvrpcpb.Action_MinCommitTSPushed in the next PR.
+	c.Assert(status.action, Equals, kvrpcpb.Action_NoAction)
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
@@ -303,10 +309,11 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	status, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, 0, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
+	c.Assert(status.action, Equals, kvrpcpb.Action_NoAction)
 
 	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
@@ -366,7 +373,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 	lock = &Lock{
 		Key:     []byte("second"),
-		Primary: []byte("key"),
+		Primary: []byte("key_not_exist"),
 		TxnID:   startTS,
 		TTL:     1000,
 	}
@@ -374,6 +381,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
+	c.Assert(status.action, Equals, kvrpcpb.Action_LockNotExistRollback)
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
