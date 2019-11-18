@@ -1599,9 +1599,9 @@ func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk.MustExec("insert into t1 values(\"abcd\", 1, 1), (\"bacd\", 2, 2), (\"cbad\", 3, 3)")
 	tk.MustExec("insert into t2 values(\"bcd\", 1, 1), (\"acd\", 2, 2), (\"bad\", 3, 3)")
 	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
-		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
+		"abcd 1 1 bcd 1 1",
 	))
 	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
 		"bacd 2 2",
