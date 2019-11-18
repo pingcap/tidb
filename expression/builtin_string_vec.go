@@ -23,9 +23,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -538,11 +540,37 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinConvertSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	expr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(expr)
+	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
+		return err
+	}
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	if encoding == nil {
+		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	}
+	result.ReserveString(n)
+	result.MergeNulls(expr)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		exprI := expr.GetString(i)
+		target, _, err := transform.String(encoding.NewDecoder(), exprI)
+		if err != nil {
+			return err
+		}
+		result.AppendString(target)
+	}
+	return nil
 }
 
 func (b *builtinSubstringIndexSig) vectorized() bool {
