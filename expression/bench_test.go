@@ -1019,7 +1019,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				c.Assert(err, IsNil)
 			}
-			if funcName == ast.User {
+			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
 					Username:     "tidb",
 					Hostname:     "localhost",
@@ -1224,7 +1224,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					panic(err)
 				}
 			}
-			if funcName == ast.User {
+			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
 					Username:     "tidb",
 					Hostname:     "localhost",
