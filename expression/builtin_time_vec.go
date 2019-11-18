@@ -931,9 +931,6 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		mode := int(ms[i])
-		if buf2.IsNull(i) {
-			mode = 0
-		}
 		week := date.Time.Week(int(mode))
 		i64s[i] = int64(week)
 	}
