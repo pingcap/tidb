@@ -483,11 +483,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
+		status.action = cmdResp.Action
 		if cmdResp.LockTtl != 0 {
 			status.ttl = cmdResp.LockTtl
 		} else {
 			if cmdResp.CommitVersion == 0 {
-				status.action = cmdResp.Action
 				tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
 			} else {
 				tikvLockResolverCountWithQueryTxnStatusCommitted.Inc()
