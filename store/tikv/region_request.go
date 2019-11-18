@@ -182,7 +182,7 @@ func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 		st.tokenCount.Sub(1)
 		return
 	}
-	logutil.BgLogger().Warn("release store token failed, count equals to 0")
+	logutil.Logger(context.Background()).Warn("release store token failed, count equals to 0")
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
