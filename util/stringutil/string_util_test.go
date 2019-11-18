@@ -163,8 +163,10 @@ func BenchmarkMatchSpecial(b *testing.B) {
 	patChars, patTypes := CompilePattern(pattern, escape)
 
 	b.StartTimer()
-	match := DoMatch(target, patChars, patTypes)
-	if match {
-		b.Fatal("Unmatch expected.")
+	for i := 0; i < b.N; i++ {
+		match := DoMatch(target, patChars, patTypes)
+		if match {
+			b.Fatal("Unmatch expected.")
+		}
 	}
 }
