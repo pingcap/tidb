@@ -308,22 +308,22 @@ mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
     ```
     # tidb.toml
     [metrics_schema]
-    qps = `sum(rate(tidb_server_query_total[$INTERVAL] offset $OFFSET_TIME)) by (result)`
+    qps = `sum(rate(tidb_server_query_total[$STEP])) by (result)`
     memory_usage = `process_resident_memory_bytes{job="tidb"}`
-    goroutines = `rate(go_gc_duration_seconds_sum{job="tidb"}[$INTERVAL] offset $OFFSET_TIME)`
+    goroutines = `rate(go_gc_duration_seconds_sum{job="tidb"}[$STEP])`
     ```
 
 - HTTP API 注入
 
     ```
     curl -XPOST http://host:port/metrics_schema?name=distsql_duration&expr=`histogram_quantile(0.999, 
-    sum(rate(tidb_distsql_handle_query_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, type))`
+    sum(rate(tidb_distsql_handle_query_duration_seconds_bucket[$STEP])) by (le, type))`
     ```
 
 - 特殊 SQL 命令
 
     ```
-    mysql> admin metrics_schema add parse_duration `histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, sql_type))`
+    mysql> admin metrics_schema add parse_duration `histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket[$STEP])) by (le, sql_type))`
     ```
 
 - 从文件中加载
@@ -331,8 +331,8 @@ mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
     ```
     mysql> admin metrics_schema load external_metrics.txt
     #external_metrics.txt
-    execution_duration = `histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, sql_type))`
-    pd_client_cmd_ops = `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[$INTERVAL] offset $OFFSET_TIME)) by (type)`
+    execution_duration = `histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket[$STEP])) by (le, sql_type))`
+    pd_client_cmd_ops = `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[$STEP])) by (type)`
     ```
 
 添加以上表之后就可以在 `metrics_schema` 库中查看对应的表：
@@ -385,6 +385,9 @@ mysql> desc pd_client_cmd_ops;
 | value      | float       | YES  |     | NULL              |       |
 | interval   | int         | YES  |     | 60                |       |
 | start_time | int         | YES  |     | CURRENT_TIMESTAMP |       |
+| end_time   | int         | YES  |     |                   |       |
+| end_time   | int         | YES  |     |                   |       |
+| step       | int         | YES  |     |                   |       |
 +------------+-------------+------+-----+-------------------+-------+
 3 rows in set (0.02 sec)
 
@@ -406,7 +409,7 @@ mysql> select address, type, value from pd_client_cmd_ops;
 +------------------+----------------------+---------+
 11 rows in set (0.00 sec)
 
-mysql> select address, type, value from pd_client_cmd_ops where start_time=’2019-11-14 10:00:00’;
+mysql> select address, type, value from pd_client_cmd_ops where start_time='2019-11-14 10:00:00' and end_time='2019-11-14 10:05:00';
 +------------------+----------------------+---------+
 | address          | type                 | value   |
 +------------------+----------------------+---------+
