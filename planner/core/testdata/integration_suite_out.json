@@ -7,8 +7,8 @@
         "Plan": [
           "IndexLookUp_14 1.00 root limit embedded(offset:2, count:1)",
           "├─Limit_13 3.00 cop[tikv] offset:0, count:3",
-          "│ └─IndexScan_11 3.00 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:false",
-          "└─TableScan_12 1.00 cop[tikv] table:tbl, keep order:false, stats:pseudo"
+          "│ └─IndexScan_11 3.00 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#8, index:b, c, range:(1,+inf], keep order:false",
+          "└─TableScan_12 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -17,8 +17,8 @@
           "Projection_25 1.00 root Column#1, Column#2, Column#3",
           "└─IndexLookUp_24 1.00 root limit embedded(offset:2, count:1)",
           "  ├─Limit_23 3.00 cop[tikv] offset:0, count:3",
-          "  │ └─IndexScan_21 3.00 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:true, desc",
-          "  └─TableScan_22 1.00 cop[tikv] table:tbl, keep order:false, stats:pseudo"
+          "  │ └─IndexScan_21 3.00 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#10, index:b, c, range:(1,+inf], keep order:true, desc",
+          "  └─TableScan_22 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3,_tidb_rowid->#11, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -27,8 +27,8 @@
           "IndexLookUp_15 1.00 root limit embedded(offset:2, count:1)",
           "├─Limit_14 3.00 cop[tikv] offset:0, count:3",
           "│ └─Selection_13 3.00 cop[tikv] gt(Column#3, 1)",
-          "│   └─IndexScan_11 3.75 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:false",
-          "└─TableScan_12 1.00 cop[tikv] table:tbl, keep order:false, stats:pseudo"
+          "│   └─IndexScan_11 3.75 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#8, index:b, c, range:(1,+inf], keep order:false",
+          "└─TableScan_12 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -36,10 +36,10 @@
         "Plan": [
           "Limit_9 1.00 root offset:2, count:1",
           "└─IndexLookUp_15 3.00 root ",
-          "  ├─IndexScan_11 3.75 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:false",
+          "  ├─IndexScan_11 3.75 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#8, index:b, c, range:(1,+inf], keep order:false",
           "  └─Limit_14 3.00 cop[tikv] offset:0, count:3",
           "    └─Selection_13 3.00 cop[tikv] gt(Column#1, 1)",
-          "      └─TableScan_12 3.75 cop[tikv] table:tbl, keep order:false"
+          "      └─TableScan_12 3.75 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3, keep order:false"
         ]
       }
     ]
@@ -53,11 +53,11 @@
           "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(Column#1, Column#4)]",
           "├─TableReader_12 9990.00 root data:Selection_11",
           "│ └─Selection_11 9990.00 cop[tikv] not(isnull(Column#1))",
-          "│   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t1, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─Selection_13 7992.00 root from_unixtime(cast(Column#5))",
           "  └─TableReader_16 9990.00 root data:Selection_15",
           "    └─Selection_15 9990.00 cop[tikv] not(isnull(Column#4))",
-          "      └─TableScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "      └─TableScan_14 10000.00 cop[tikv] table:t2, mapping:a->#4,b->#5, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -71,9 +71,9 @@
           "HashLeftJoin_9 10000.00 root left outer join, inner:Selection_10 (REVERSED), equal:[eq(Column#1, Column#4)]",
           "├─Selection_10 8000.00 root ge(cast(Column#2), 2019-01-01 00:00:00.000000)",
           "│ └─TableReader_12 10000.00 root data:TableScan_11",
-          "│   └─TableScan_11 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│   └─TableScan_11 10000.00 cop[tikv] table:t1, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─TableReader_14 10000.00 root data:TableScan_13",
-          "  └─TableScan_13 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "  └─TableScan_13 10000.00 cop[tikv] table:t2, mapping:a->#4,b->#5, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]
