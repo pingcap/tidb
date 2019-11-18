@@ -87,6 +87,20 @@ func (r *repairInfo) FetchRepairedTableList(di *model.DBInfo, tbl *model.TableIn
 	return false
 }
 
+// GetRepairedTableInfoByTableName is exported for test.
+func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLowerName string) *model.TableInfo {
+	for _, db := range r.repairDBInfoMap {
+		if db.Name.L == schemaLowerName {
+			for _, t := range db.Tables {
+				if t.Name.L == tableLowerName {
+					return t
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // RemoveFromRepairList remove the table from repair info when repaired.
 func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string) {
 	repairedLowerName := schemaLowerName + "." + tableLowerName

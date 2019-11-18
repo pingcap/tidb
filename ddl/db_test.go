@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/domainutil"
 	"io"
 	"math"
 	"math/rand"
@@ -66,6 +67,7 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
+var _ = Suite(&testDBSuite6{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -131,6 +133,7 @@ type testDBSuite2 struct{ *testDBSuite }
 type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
+type testDBSuite6 struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -2002,6 +2005,73 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
 	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+}
+
+func (s *testDBSuite6) TestRepairTable(c *C) {
+	s.tk.MustExec("use test")
+	// Set the repair config.
+	turnRepairModeAndInit(true)
+	defer turnRepairModeAndInit(false)
+
+	// Domain reload the tableInfo and add it into repairInfo.
+	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10));")
+	dom := domain.GetDomain(s.s)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
+	originTableInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
+
+	hook := &ddl.TestDDLCallback{}
+	var repairErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type != model.ActionRepairTable {
+			return
+		}
+		if job.TableID != originTableInfo.ID {
+			repairErr = errors.New("table id should be the same")
+			return
+		}
+		if job.SchemaState != model.StateNone {
+			repairErr = errors.New("repair job state should be the none")
+			return
+		}
+		// Test whether it's readable, when repaired table is still stateNone.
+		tkInternal := testkit.NewTestKitWithInit(c, s.store)
+		_, repairErr = tkInternal.Exec("select * from origin")
+		// Repaired tableInfo has been filtered by `domain.InfoSchema()`, here will get an error cause user can't get access to it.
+		if repairErr != nil && repairErr.Error() == "[schema:1146]Table 'test.origin' doesn't exist" {
+			repairErr = nil
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// Exec the repair statement to override the tableInfo.
+	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key, b varchar(10));")
+	c.Assert(repairErr, IsNil)
+
+	// Check the repaired tableInfo is exactly the same with old one in tableID, colID.
+	// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
+	repairTable := testGetTableByName(c, s.s, "test", "origin")
+	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
+	c.Assert(len(repairTable.Meta().Columns), Equals, 2)
+	c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
+	c.Assert(repairTable.Meta().Columns[1].ID, Equals, originTableInfo.Columns[1].ID)
+}
+
+func turnRepairModeAndInit(on bool) {
+	if on {
+		list := make([]string, 0, 0)
+		list = append(list, "test.origin")
+		domainutil.RepairInfo.SetRepairMode(true)
+		domainutil.RepairInfo.SetRepairTableList(list)
+	} else {
+		list := make([]string, 0, 0)
+		domainutil.RepairInfo.SetRepairMode(false)
+		domainutil.RepairInfo.SetRepairTableList(list)
+	}
 }
 
 func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {

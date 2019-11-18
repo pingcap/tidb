@@ -523,7 +523,7 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 	// Check create table stmt whether it's is in REPAIR MODE.
-	if domainutil.RepairInfo.GetRepairMode() {
+	if !domainutil.RepairInfo.GetRepairMode() {
 		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
 		return
 	}

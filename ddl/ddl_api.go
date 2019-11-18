@@ -3955,17 +3955,22 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
 	newTableInfo.ID = oldTableInfo.ID
 	// If any old partitionInfo has lost, that means the partition id lost too, so did the data, repair failed.
-	for i, new := range newTableInfo.Partition.Definitions {
-		found := false
-		for _, old := range oldTableInfo.Partition.Definitions {
-			if new.Name.L == old.Name.L && stringSliceEqual(new.LessThan, old.LessThan) {
-				newTableInfo.Partition.Definitions[i].ID = old.ID
-				found = true
-				break
+	if newTableInfo.Partition != nil {
+		for i, new := range newTableInfo.Partition.Definitions {
+			found := false
+			if oldTableInfo.Partition == nil {
+				return ErrRepairTableFail.GenWithStackByArgs("Some old partition id has lost")
 			}
-		}
-		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("Some old partition id has lost")
+			for _, old := range oldTableInfo.Partition.Definitions {
+				if new.Name.L == old.Name.L && stringSliceEqual(new.LessThan, old.LessThan) {
+					newTableInfo.Partition.Definitions[i].ID = old.ID
+					found = true
+					break
+				}
+			}
+			if !found {
+				return ErrRepairTableFail.GenWithStackByArgs("Some old partition id has lost")
+			}
 		}
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
@@ -4016,10 +4021,6 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	if err == nil {
-		// Remove the table from repair list
-		domainutil.RepairInfo.RemoveFromRepairList(oldDBInfo.Name.L, oldTableInfo.Name.L)
-	}
 	return errors.Trace(err)
 }
 
