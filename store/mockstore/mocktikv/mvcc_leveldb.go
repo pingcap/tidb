@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlock"
@@ -464,7 +465,8 @@ func reverse(values []mvccValue) {
 }
 
 // PessimisticLock writes the pessimistic lock.
-func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error {
+func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
+	forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -476,6 +478,11 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
+		}
+		if lockWaitTime == kv.LockNoWait {
+			if _, ok := err.(*ErrLocked); ok {
+				break
+			}
 		}
 	}
 	if anyError {
@@ -712,6 +719,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 			return nil
 		}
 		// Overwrite the pessimistic lock.
+		if ttl < dec.lock.ttl {
+			// Maybe ttlManager has already set the lock TTL, don't decrease it.
+			ttl = dec.lock.ttl
+		}
 	} else {
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
@@ -794,6 +805,16 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 		}
 		return ErrRetryable("txn not found")
 	}
+	// Reject the commit request whose commitTS is less than minCommiTS.
+	if dec.lock.minCommitTS > commitTS {
+		return &ErrCommitTSExpired{
+			kvrpcpb.CommitTsExpired{
+				StartTs:           startTS,
+				AttemptedCommitTs: commitTS,
+				Key:               key,
+				MinCommitTs:       dec.lock.minCommitTS,
+			}}
+	}
 
 	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
 		return errors.Trace(err)
@@ -861,7 +882,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 		}
 		// If current transaction's lock exist.
 		if ok && dec.lock.startTS == startTS {
-			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+			if err = rollbackLock(batch, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
 			return nil
@@ -898,7 +919,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 	return nil
 }
 
-func rollbackLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS uint64) error {
+func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -959,7 +980,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		if ok && dec.lock.startTS == startTS {
 			// If the lock has already outdated, clean up it.
 			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+				if err = rollbackLock(batch, key, startTS); err != nil {
 					return err
 				}
 				return mvcc.db.Write(batch, nil)
@@ -1011,9 +1032,12 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 // primaryKey + lockTS together could locate the primary lock.
 // callerStartTS is the start ts of reader transaction.
 // currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
-func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64) (uint64, uint64, error) {
+func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64,
+	rollbackIfNotExist bool) (ttl uint64, commitTS uint64, action kvrpcpb.Action, err error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
+
+	action = kvrpcpb.Action_NoAction
 
 	startKey := mvccEncode(primaryKey, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
@@ -1025,9 +1049,11 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 		dec := lockDecoder{
 			expectKey: primaryKey,
 		}
-		ok, err := dec.Decode(iter)
+		var ok bool
+		ok, err = dec.Decode(iter)
 		if err != nil {
-			return 0, 0, errors.Trace(err)
+			err = errors.Trace(err)
+			return
 		}
 		// If current transaction's lock exists.
 		if ok && dec.lock.startTS == lockTS {
@@ -1036,18 +1062,21 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 
 			// If the lock has already outdated, clean up it.
 			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, lock, primaryKey, lockTS); err != nil {
-					return 0, 0, errors.Trace(err)
+				if err = rollbackLock(batch, primaryKey, lockTS); err != nil {
+					err = errors.Trace(err)
+					return
 				}
 				if err = mvcc.db.Write(batch, nil); err != nil {
-					return 0, 0, errors.Trace(err)
+					err = errors.Trace(err)
+					return
 				}
-				return 0, 0, nil
+				return 0, 0, kvrpcpb.Action_TTLExpireRollback, nil
 			}
 
 			// If this is a large transaction and the lock is active, push forward the minCommitTS.
-			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction.
+			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction (old version TiDB).
 			if lock.minCommitTS > 0 {
+				action = kvrpcpb.Action_MinCommitTSPushed
 				// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 				if lock.minCommitTS < callerStartTS+1 {
 					lock.minCommitTS = callerStartTS + 1
@@ -1060,40 +1089,63 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 					}
 
 					writeKey := mvccEncode(primaryKey, lockVer)
-					writeValue, err := lock.MarshalBinary()
-					if err != nil {
-						return 0, 0, errors.Trace(err)
+					writeValue, err1 := lock.MarshalBinary()
+					if err1 != nil {
+						err = errors.Trace(err1)
+						return
 					}
 					batch.Put(writeKey, writeValue)
-					if err = mvcc.db.Write(batch, nil); err != nil {
-						return 0, 0, errors.Trace(err)
+					if err1 = mvcc.db.Write(batch, nil); err1 != nil {
+						err = errors.Trace(err1)
+						return
 					}
 				}
 			}
 
-			return lock.ttl, 0, nil
+			return lock.ttl, 0, action, nil
 		}
 
 		// If current transaction's lock does not exist.
 		// If the commit info of the current transaction exists.
-		c, ok, err := getTxnCommitInfo(iter, primaryKey, lockTS)
-		if err != nil {
-			return 0, 0, errors.Trace(err)
+		c, ok, err1 := getTxnCommitInfo(iter, primaryKey, lockTS)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return
 		}
 		if ok {
 			// If current transaction is already committed.
 			if c.valueType != typeRollback {
-				return 0, c.commitTS, nil
+				return 0, c.commitTS, action, nil
 			}
 			// If current transaction is already rollback.
-			return 0, 0, nil
+			return 0, 0, kvrpcpb.Action_NoAction, nil
 		}
 	}
 
 	// If current transaction is not prewritted before, it may be pessimistic lock.
-	// When pessimistic lock rollback, it may not leave a 'rollbacked' tombstone.
-	logutil.BgLogger().Debug("CheckTxnStatus can't find the primary lock, pessimistic rollback?")
-	return 0, 0, nil
+	// When pessimistic txn rollback statement, it may not leave a 'rollbacked' tombstone.
+
+	// Or maybe caused by concurrent prewrite operation.
+	// Especially in the non-block reading case, the secondary lock is likely to be
+	// written before the primary lock.
+
+	if rollbackIfNotExist {
+		batch := &leveldb.Batch{}
+		if err1 := rollbackLock(batch, primaryKey, lockTS); err1 != nil {
+			err = errors.Trace(err1)
+			return
+		}
+		if err1 := mvcc.db.Write(batch, nil); err1 != nil {
+			err = errors.Trace(err1)
+			return
+		}
+		return 0, 0, kvrpcpb.Action_LockNotExistRollback, nil
+	}
+
+	return 0, 0, action, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
+		StartTs:    lockTS,
+		PrimaryKey: primaryKey,
+	}}
 }
 
 // TxnHeartBeat implements the MVCCStore interface.
@@ -1199,7 +1251,7 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 			if commitTS > 0 {
 				err = commitLock(batch, dec.lock, currKey, startTS, commitTS)
 			} else {
-				err = rollbackLock(batch, dec.lock, currKey, startTS)
+				err = rollbackLock(batch, currKey, startTS)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1239,7 +1291,7 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 				if commitTS > 0 {
 					err = commitLock(batch, dec.lock, currKey, dec.lock.startTS, commitTS)
 				} else {
-					err = rollbackLock(batch, dec.lock, currKey, dec.lock.startTS)
+					err = rollbackLock(batch, currKey, dec.lock.startTS)
 				}
 				if err != nil {
 					return errors.Trace(err)

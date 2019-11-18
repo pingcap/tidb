@@ -14,12 +14,10 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -27,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -62,6 +61,9 @@ type copTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols           []*expression.Column
 	idxMergePartPlans []PhysicalPlan
+	// rootTaskConds stores select conditions containing virtual columns.
+	// These conditions can't push to TiKV, so we have to add a selection for rootTask
+	rootTaskConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -131,7 +133,10 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -388,7 +393,8 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 // GetCost computes cost of hash join operator itself.
 func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	innerCnt, outerCnt := lCnt, rCnt
-	if p.InnerChildIdx == 1 {
+	// Taking the right as the inner for right join or using the outer to build a hash table.
+	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
 		innerCnt, outerCnt = rCnt, lCnt
 	}
 	sessVars := p.ctx.GetSessionVars()
@@ -434,6 +440,10 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.ConcurrencyFactor
+	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
+	if p.UseOuterToBuild {
+		cpuCost += innerCnt * sessVars.CPUFactor / float64(p.Concurrency)
+	}
 	return cpuCost + memoryCost
 }
 
@@ -623,8 +633,16 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType: ts.StoreType,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
+		ts.ExpandVirtualColumn()
 		newTask.p = p
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
+	}
+
 	return newTask
 }
 
@@ -865,38 +883,47 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
-	// Check if this aggregation can push down.
-	sc := p.ctx.GetSessionVars().StmtCtx
-	client := p.ctx.GetClient()
-	for _, aggFunc := range p.AggFuncs {
+// CheckAggCanPushCop checks whether the aggFuncs with groupByItems can
+// be pushed down to coprocessor.
+func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
+	sc := sctx.GetSessionVars().StmtCtx
+	client := sctx.GetClient()
+	for _, aggFunc := range aggFuncs {
+		if expression.ContainVirtualColumn(aggFunc.Args) {
+			return false
+		}
 		if copToFlash {
 			if !aggregation.CheckAggPushFlash(aggFunc) {
-				return nil, p.self
+				return false
 			}
-			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, p.GroupByItems...)); len(remain) > 0 {
-				return nil, p.self
+			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, groupByItems...)); len(remain) > 0 {
+				return false
 			}
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return nil, p.self
+			return false
 		}
 	}
-	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
+	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
 	if len(remained) > 0 {
-		return nil, p.self
+		return false
 	}
+	return true
+}
 
-	finalSchema := p.schema
-	partialSchema := expression.NewSchema()
-	p.schema = partialSchema
-	partialAgg := p.self
-
+// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
+// returns the body of finalAgg and the schema of partialAgg.
+func BuildFinalModeAggregation(
+	sctx sessionctx.Context,
+	aggFuncs []*aggregation.AggFuncDesc,
+	groupByItems []expression.Expression,
+	finalSchema *expression.Schema) (finalAggFuncs []*aggregation.AggFuncDesc, finalGbyItems []expression.Expression, partialSchema *expression.Schema) {
 	// TODO: Refactor the way of constructing aggregation functions.
+	partialSchema = expression.NewSchema()
 	partialCursor := 0
-	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
-	for i, aggFunc := range p.AggFuncs {
+	finalAggFuncs = make([]*aggregation.AggFuncDesc, len(aggFuncs))
+	for i, aggFunc := range aggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
@@ -904,8 +931,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  ft,
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -913,8 +939,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 		}
 		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -925,27 +950,35 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 		finalAggFunc.RetTp = aggFunc.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}
-
 	// add group by columns
-	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
-	for i, gbyExpr := range p.GroupByItems {
+	finalGbyItems = make([]expression.Expression, 0, len(groupByItems))
+	for _, gbyExpr := range groupByItems {
 		gbyCol := &expression.Column{
-			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
+			UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
-		groupByItems = append(groupByItems, gbyCol)
+		finalGbyItems = append(finalGbyItems, gbyCol)
 	}
+	return
+}
 
+func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
+	// Check if this aggregation can push down.
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copToFlash) {
+		return nil, p.self
+	}
+	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)
 	// Remove unnecessary FirstRow.
-	p.removeUnnecessaryFirstRow(finalAggFuncs, groupByItems)
-
+	p.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx, finalAggFuncs, finalGbyItems, p.AggFuncs, p.GroupByItems, partialSchema)
+	finalSchema := p.schema
+	p.schema = partialSchema
+	partialAgg := p.self
 	// Create physical "final" aggregation.
-	if p.tp == TypeStreamAgg {
+	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
-			GroupByItems: groupByItems,
+			GroupByItems: finalGbyItems,
 		}.initForStream(p.ctx, p.stats, p.blockOffset)
 		finalAgg.schema = finalSchema
 		return partialAgg, finalAgg
@@ -953,33 +986,40 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 
 	finalAgg := basePhysicalAgg{
 		AggFuncs:     finalAggFuncs,
-		GroupByItems: groupByItems,
+		GroupByItems: finalGbyItems,
 	}.initForHash(p.ctx, p.stats, p.blockOffset)
 	finalAgg.schema = finalSchema
 	return partialAgg, finalAgg
 }
 
-// Remove unnecessary FirstRow.
+// RemoveUnnecessaryFirstRow removes unnecessary FirstRow of the aggregation. This function can be
+// used for both LogicalAggregation and PhysicalAggregation.
 // When the select column is same with the group by key, the column can be removed and gets value from the group by key.
 // e.g
 // select a, count(b) from t group by a;
 // The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
 // Can optimize the schema to [count(b), a] , and change the index to get value.
-func (p *basePhysicalAgg) removeUnnecessaryFirstRow(finalAggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) {
+func RemoveUnnecessaryFirstRow(
+	sctx sessionctx.Context,
+	finalAggFuncs []*aggregation.AggFuncDesc,
+	finalGbyItems []expression.Expression,
+	partialAggFuncs []*aggregation.AggFuncDesc,
+	partialGbyItems []expression.Expression,
+	partialSchema *expression.Schema) []*aggregation.AggFuncDesc {
 	partialCursor := 0
-	partialAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(p.AggFuncs))
-	for i, aggFunc := range p.AggFuncs {
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
+	for i, aggFunc := range partialAggFuncs {
 		if aggFunc.Name == ast.AggFuncFirstRow {
 			canOptimize := false
-			for j, gbyExpr := range p.GroupByItems {
-				if gbyExpr.Equal(p.ctx, aggFunc.Args[0]) {
+			for j, gbyExpr := range partialGbyItems {
+				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
-					finalAggFuncs[i].Args[0] = groupByItems[j]
+					finalAggFuncs[i].Args[0] = finalGbyItems[j]
 					break
 				}
 			}
 			if canOptimize {
-				p.schema.Columns = append(p.schema.Columns[:partialCursor], p.schema.Columns[partialCursor+1:]...)
+				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
 				continue
 			}
 		}
@@ -989,9 +1029,9 @@ func (p *basePhysicalAgg) removeUnnecessaryFirstRow(finalAggFuncs []*aggregation
 		if aggregation.NeedValue(aggFunc.Name) {
 			partialCursor++
 		}
-		partialAggFuncs = append(partialAggFuncs, aggFunc)
+		newAggFuncs = append(newAggFuncs, aggFunc)
 	}
-	p.AggFuncs = partialAggFuncs
+	return newAggFuncs
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {

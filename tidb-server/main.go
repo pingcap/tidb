@@ -54,11 +54,13 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
+	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/struCoder/pidusage"
+	_ "go.uber.org/automaxprocs"
 	"go.uber.org/zap"
 )
 
@@ -291,13 +293,11 @@ func pushMetric(addr string, interval time.Duration) {
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
+	pusher := push.New(addr, job)
+	pusher = pusher.Gatherer(prometheus.DefaultGatherer)
+	pusher = pusher.Grouping("instance", instanceName())
 	for {
-		err := push.AddFromGatherer(
-			job,
-			map[string]string{"instance": instanceName()},
-			addr,
-			prometheus.DefaultGatherer,
-		)
+		err := pusher.Push()
 		if err != nil {
 			log.Error("could not push metrics to prometheus pushgateway", zap.String("err", err.Error()))
 		}
@@ -334,6 +334,20 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
+var deprecatedConfig = map[string]struct{}{
+	"pessimistic-txn.ttl": {},
+	"log.rotate":          {},
+}
+
+func isDeprecatedConfigItem(items []string) bool {
+	for _, item := range items {
+		if _, ok := deprecatedConfig[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
@@ -341,13 +355,24 @@ func loadConfig() string {
 		config.SetConfReloader(*configPath, reloadConfig, hotReloadConfigItems...)
 
 		err := cfg.Load(*configPath)
-		// This block is to accommodate an interim situation where strict config checking
-		// is not the default behavior of TiDB. The warning message must be deferred until
-		// logging has been set up. After strict config checking is the default behavior,
-		// This should all be removed.
-		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configCheck && !*configStrict {
-			return err.Error()
+		if err == nil {
+			return ""
 		}
+
+		// Unused config item erro turns to warnings.
+		if tmp, ok := err.(*config.ErrConfigValidationFailed); ok {
+			if isDeprecatedConfigItem(tmp.UndecodedItems) {
+				return err.Error()
+			}
+			// This block is to accommodate an interim situation where strict config checking
+			// is not the default behavior of TiDB. The warning message must be deferred until
+			// logging has been set up. After strict config checking is the default behavior,
+			// This should all be removed.
+			if !*configCheck && !*configStrict {
+				return err.Error()
+			}
+		}
+
 		terror.MustNil(err)
 	} else {
 		// configCheck should have the config file specified.
@@ -362,7 +387,8 @@ func loadConfig() string {
 // hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "Log.QueryLogMaxLen"}
+	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "Log.QueryLogMaxLen",
+	"TiKVClient.EnableChunkRPC", "TiKVClient.StoreLimit"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -384,6 +410,9 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
+	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
+		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
 	}
 }
 
@@ -528,7 +557,6 @@ func setGlobalVars() {
 	}
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
-	tikv.PessimisticLockTTL = uint64(parseDuration(cfg.PessimisticTxn.TTL).Seconds() * 1000)
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 }
 

@@ -110,9 +110,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table earlyclose (id int primary key)")
 
-	// Insert 1000 rows.
+	N := 100
+	// Insert N rows.
 	var values []string
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < N; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
@@ -125,10 +126,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+	s.cluster.SplitTable(s.mvccStore, tblID, N/2)
 
 	ctx := context.Background()
-	for i := 0; i < 500; i++ {
+	for i := 0; i < N/2; i++ {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
@@ -845,6 +846,13 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
+	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
+	tk.MustExec("set @@session.tidb_batch_insert=1;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustExec("set @@session.tidb_batch_insert=0;")
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
@@ -852,6 +860,14 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.EnableBatchDML = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(cfg)
+	}()
 
 	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")

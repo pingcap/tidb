@@ -148,7 +148,7 @@ type clientConn struct {
 	dbname       string            // default database name.
 	salt         []byte            // random bytes used for authentication.
 	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
-	lastCmd      string            // latest sql query string, currently used for logging error.
+	lastPacket   []byte            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	peerHost     string            // peer host
@@ -617,8 +617,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
-				zap.String("lastCmd", cc.lastCmd),
-				zap.Reflect("err", r),
+				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
+				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.String("stack", string(buf)),
 			)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
@@ -639,7 +639,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		cc.alloc.Reset()
-		// close connection when idle time is more than wait_timout
+		// close connection when idle time is more than wait_timeout
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
@@ -689,7 +689,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
-				zap.String("sql", queryStrForLog(string(data[1:]))),
+				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
@@ -801,9 +801,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 
 	t := time.Now()
+	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
@@ -941,7 +941,13 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		e := errors.Cause(originErr)
+		switch y := e.(type) {
+		case *terror.Error:
+			m = y.ToSQLError()
+		default:
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		}
 	}
 
 	cc.lastCode = m.Code
@@ -1143,21 +1149,23 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	rs, err := cc.ctx.Execute(ctx, sql)
+	rss, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
-		killConn(cc)
+	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
+		for _, rs := range rss {
+			terror.Call(rs.Close)
+		}
 		return executor.ErrQueryInterrupted
 	}
-	if rs != nil {
-		if len(rs) == 1 {
-			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
+	if rss != nil {
+		if len(rss) == 1 {
+			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
-			err = cc.writeMultiResultset(ctx, rs, false)
+			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
@@ -1232,7 +1240,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf := make([]byte, 4096)
 		stackSize := runtime.Stack(buf, false)
 		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("write query result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
@@ -1460,4 +1468,36 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 
 	return cc.writeOK()
+}
+
+var _ fmt.Stringer = getLastStmtInConn{}
+
+type getLastStmtInConn struct {
+	*clientConn
+}
+
+func (cc getLastStmtInConn) String() string {
+	if len(cc.lastPacket) == 0 {
+		return ""
+	}
+	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
+	switch cmd {
+	case mysql.ComInitDB:
+		return "Use " + string(data)
+	case mysql.ComFieldList:
+		return "ListFields " + string(data)
+	case mysql.ComQuery, mysql.ComStmtPrepare:
+		return queryStrForLog(string(hack.String(data)))
+	case mysql.ComStmtExecute, mysql.ComStmtFetch:
+		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		return queryStrForLog(cc.preparedStmt2String(stmtID))
+	case mysql.ComStmtClose, mysql.ComStmtReset:
+		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
+	default:
+		if cmdStr, ok := mysql.Command2Str[cmd]; ok {
+			return cmdStr
+		}
+		return string(hack.String(data))
+	}
 }

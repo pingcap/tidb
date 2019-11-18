@@ -285,7 +285,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := vecEval(ctx, expr, input, buf); err != nil {
+		if err := VecEval(ctx, expr, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -419,7 +419,8 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	return errors.Trace(err)
 }
 
-func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+// VecEval evaluates this expr according to its type.
+func VecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	switch expr.GetType().EvalType() {
 	case types.ETInt:
 		err = expr.VecEvalInt(ctx, input, result)
@@ -435,6 +436,8 @@ func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result
 		err = expr.VecEvalJSON(ctx, input, result)
 	case types.ETDecimal:
 		err = expr.VecEvalDecimal(ctx, input, result)
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
 	}
 	return
 }
@@ -492,8 +495,10 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 // Assignment represents a set assignment in Update, such as
 // Update t set c1 = hex(12), c2 = c3 where c2 = 1
 type Assignment struct {
-	Col  *Column
-	Expr Expression
+	Col *Column
+	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
+	ColName model.CIStr
+	Expr    Expression
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
@@ -556,14 +561,9 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	return expr
 }
 
-// TableInfo2Schema converts table info to schema with empty DBName.
-func TableInfo2Schema(ctx sessionctx.Context, tbl *model.TableInfo) *Schema {
-	return TableInfo2SchemaWithDBName(ctx, model.CIStr{}, tbl)
-}
-
-// TableInfo2SchemaWithDBName converts table info to schema.
-func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) *Schema {
-	cols := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
+// TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
+func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName) {
+	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -602,20 +602,23 @@ func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl 
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
-	return schema
+	return schema, names
 }
 
-// ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
-func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
+// ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
 	columns := make([]*Column, 0, len(colInfos))
+	names := make([]*types.FieldName, 0, len(colInfos))
 	for _, col := range colInfos {
 		if col.State != model.StatePublic {
 			continue
 		}
+		names = append(names, &types.FieldName{
+			ColName: col.Name,
+			TblName: tblName,
+			DBName:  dbName,
+		})
 		newCol := &Column{
-			ColName:  col.Name,
-			TblName:  tblName,
-			DBName:   dbName,
 			RetType:  &col.FieldType,
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -623,7 +626,7 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 		}
 		columns = append(columns, newCol)
 	}
-	return columns
+	return columns, names
 }
 
 // NewValuesFunc creates a new values function.
@@ -675,6 +678,7 @@ func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 // The `keepNull` controls what the istrue function will return when `arg` is null:
 // 1. keepNull is true and arg is null, the istrue function returns null.
 // 2. keepNull is false and arg is null, the istrue function returns 0.
+// TODO: remove this function. ScalarFunction should be newed in one place.
 func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
 		return arg, nil
@@ -684,9 +688,10 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 	if err != nil {
 		return nil, err
 	}
-	return &ScalarFunction{
+	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-	}, nil
+	}
+	return FoldConstant(sf), nil
 }

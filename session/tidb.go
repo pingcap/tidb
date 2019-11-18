@@ -20,6 +20,7 @@ package session
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -64,8 +65,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	ddlLease := schemaLease
-	statisticLease := statsLease
+	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
+	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -111,27 +112,27 @@ var (
 	// Default schema lease time is 1 second, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
 	// For production, you should set a big schema lease, like 300s+.
-	schemaLease = 1 * time.Second
+	schemaLease = int64(1 * time.Second)
 
 	// statsLease is the time for reload stats table.
-	statsLease = 3 * time.Second
+	statsLease = int64(3 * time.Second)
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(lease time.Duration) {
-	schemaLease = lease
+	atomic.StoreInt64(&schemaLease, int64(lease))
 }
 
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
-	statsLease = lease
+	atomic.StoreInt64(&statsLease, int64(lease))
 }
 
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
-	statsLease = -1
+	SetStatsLease(-1)
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -161,15 +162,26 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
+func recordAbortTxnDuration(sessVars *variable.SessionVars) {
+	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+	if sessVars.InRestrictedSQL {
+		transactionDurationInternalAbort.Observe(duration)
+	} else {
+		transactionDurationGeneralAbort.Observe(duration)
+	}
+}
+
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
 	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
+			recordAbortTxnDuration(sessVars)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
+			recordAbortTxnDuration(sessVars)
 		}
 		return meetsErr
 	}

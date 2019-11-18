@@ -15,11 +15,15 @@ package expression
 
 import (
 	"fmt"
+	"hash/crc32"
 	"math"
+	"math/rand"
 	"strconv"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -185,7 +189,7 @@ func (b *builtinAtan2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -657,11 +661,28 @@ func (b *builtinRoundWithFracIntSig) vectorized() bool {
 	return true
 }
 func (b *builtinCRC32Sig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCRC32Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := range i64s {
+		if !buf.IsNull(i) {
+			i64s[i] = int64(crc32.ChecksumIEEE(buf.GetBytes(i)))
+		}
+	}
+	return nil
 }
 
 func (b *builtinPISig) vectorized() bool {
@@ -679,27 +700,82 @@ func (b *builtinPISig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) err
 }
 
 func (b *builtinRandSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeFloat64(n, false)
+	f64s := result.Float64s()
+	b.mu.Lock()
+	for i := range f64s {
+		f64s[i] = b.randGen.Float64()
+	}
+	b.mu.Unlock()
+	return nil
 }
 
 func (b *builtinRandWithSeedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+	i64s := buf.Int64s()
+	f64s := result.Float64s()
+	rander := rand.NewSource(time.Now().UnixNano())
+	randGen := rand.New(rander)
+	for i := 0; i < n; i++ {
+		if !buf.IsNull(i) {
+			randGen = rand.New(rand.NewSource(i64s[i]))
+		}
+		f64s[i] = randGen.Float64()
+	}
+	return nil
 }
 
 func (b *builtinCeilIntToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+
+	i64s := buf.Int64s()
+	d := result.Decimals()
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if isUnsigned || i64s[i] >= 0 {
+			d[i] = *types.NewDecFromUint(uint64(i64s[i]))
+			continue
+		}
+		d[i] = *types.NewDecFromInt(i64s[i])
+	}
+	return nil
 }
 
 func (b *builtinTruncateIntSig) vectorized() bool {
@@ -781,19 +857,72 @@ func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 }
 
 func (b *builtinFloorDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	ds := result.Decimals()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		rst := new(types.MyDecimal)
+		if !ds[i].IsNegative() {
+			if err := ds[i].Round(rst, 0, types.ModeTruncate); err != nil {
+				return err
+			}
+		} else {
+			if err := ds[i].Round(rst, 0, types.ModeTruncate); err != nil {
+				return err
+			}
+			if rst.Compare(&ds[i]) != 0 {
+				if err := types.DecimalSub(rst, types.NewDecFromInt(1), rst); err != nil {
+					return err
+				}
+			}
+		}
+		ds[i] = *rst
+	}
+	return nil
 }
 
 func (b *builtinTruncateDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTruncateDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.MergeNulls(buf)
+	ds := result.Decimals()
+	i64s := buf.Int64s()
+	ft := b.getRetTp().Decimal
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		result := new(types.MyDecimal)
+		if err := ds[i].Round(result, mathutil.Min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
+			return err
+		}
+		ds[i] = *result
+	}
+	return nil
 }
 
 func (b *builtinRoundWithFracDecSig) vectorized() bool {
@@ -832,11 +961,37 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 }
 
 func (b *builtinFloorIntToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+
+	i64s := buf.Int64s()
+	d := result.Decimals()
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if isUnsigned || i64s[i] >= 0 {
+			d[i] = *types.NewDecFromUint(uint64(i64s[i]))
+			continue
+		}
+		d[i] = *types.NewDecFromInt(i64s[i])
+	}
+	return nil
 }
 
 func (b *builtinSignSig) vectorized() bool {

@@ -141,4 +141,5 @@ type CachedPrepareStmt struct {
 	PreparedAst *ast.Prepared
 	VisitInfos  []visitInfo
 	ColumnInfos interface{}
+	Executor    interface{}
 }

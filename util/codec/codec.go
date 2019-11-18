@@ -16,6 +16,7 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash"
 	"io"
 	"time"
@@ -91,7 +92,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
-			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
+			b, err = EncodeMySQLTime(sc, vals[i].GetMysqlTime(), mysql.TypeUnspecified, b)
 			if err != nil {
 				return b, err
 			}
@@ -169,8 +170,7 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 }
 
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
-func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
-	t := d.GetMysqlTime()
+func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []byte) (_ []byte, err error) {
 	// Encoding timestamp need to consider timezone. If it's not in UTC, transform to UTC first.
 	// This is compatible with `PBToExpr > convertTime`, and coprocessor assumes the passed timestamp is in UTC as well.
 	if tp == mysql.TypeUnspecified {
@@ -360,6 +360,13 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
 func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
+	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil)
+}
+
+// HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
+// sel indicates which rows are selected. If it is nil, all rows are selected.
+func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
+	isNull, sel []bool) (err error) {
 	var b []byte
 	column := chk.Column(colIdx)
 	rows := chk.NumRows()
@@ -367,6 +374,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		i64s := column.Int64s()
 		for i, v := range i64s {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -386,6 +396,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeFloat:
 		f32s := column.Float32s()
 		for i, f := range f32s {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -403,6 +416,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeDouble:
 		f64s := column.Float64s()
 		for i, f := range f64s {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -418,6 +434,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -434,6 +453,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		ts := column.Times()
 		for i, t := range ts {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -462,6 +484,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeDuration:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -479,6 +504,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 	case mysql.TypeNewDecimal:
 		ds := column.Decimals()
 		for i, d := range ds {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -498,6 +526,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeEnum:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -514,6 +545,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeSet:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -530,6 +564,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeBit:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -548,6 +585,9 @@ func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.
 		}
 	case mysql.TypeJSON:
 		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
@@ -1032,4 +1072,94 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 	} else {
 		chk.AppendFloat64(colIdx, val)
 	}
+}
+
+// HashGroupKey encodes each row of this column and append encoded data into buf.
+// Only use in the aggregate executor.
+func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldType) ([][]byte, error) {
+	var err error
+	switch ft.EvalType() {
+	case types.ETInt:
+		i64s := col.Int64s()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = encodeSignedInt(buf[i], i64s[i], false)
+			}
+		}
+	case types.ETReal:
+		f64s := col.Float64s()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], floatFlag)
+				buf[i] = EncodeFloat(buf[i], f64s[i])
+			}
+		}
+	case types.ETDecimal:
+		ds := col.Decimals()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], decimalFlag)
+				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.Flen, ft.Decimal)
+				if terror.ErrorEqual(err, types.ErrTruncated) {
+					err = sc.HandleTruncate(err)
+				} else if terror.ErrorEqual(err, types.ErrOverflow) {
+					err = sc.HandleOverflow(err, err)
+				}
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		ts := col.Times()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], uintFlag)
+				buf[i], err = EncodeMySQLTime(sc, ts[i], mysql.TypeUnspecified, buf[i])
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	case types.ETDuration:
+		ds := col.GoDurations()
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], durationFlag)
+				buf[i] = EncodeInt(buf[i], int64(ds[i]))
+			}
+		}
+	case types.ETJson:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = append(buf[i], jsonFlag)
+				j := col.GetJSON(i)
+				buf[i] = append(buf[i], j.TypeCode)
+				buf[i] = append(buf[i], j.Value...)
+			}
+		}
+	case types.ETString:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = encodeBytes(buf[i], col.GetBytes(i), false)
+			}
+		}
+	default:
+		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+	}
+	return buf, nil
 }

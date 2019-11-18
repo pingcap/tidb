@@ -107,12 +107,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 	for _, keyInfo := range innerPlan.Schema().Keys {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
-			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			c, err := joinKeys.FindColumn(columnName)
-			if err != nil {
-				return false, err
-			}
-			if c == nil {
+			if !joinKeys.Contains(col) {
 				joinKeysContainKeyInfo = false
 				break
 			}
@@ -134,18 +129,12 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		if path.isTablePath {
 			continue
 		}
-		idx := path.index
-		if !idx.Unique {
+		if !path.index.Unique {
 			continue
 		}
 		joinKeysContainIndex := true
-		for _, idxCol := range idx.Columns {
-			columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
-			c, err := joinKeys.FindColumn(columnName)
-			if err != nil {
-				return false, err
-			}
-			if c == nil {
+		for _, idxCol := range path.idxCols {
+			if !joinKeys.Contains(idxCol) {
 				joinKeysContainIndex = false
 				break
 			}

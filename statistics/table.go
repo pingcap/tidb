@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -238,7 +240,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount, true)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -249,7 +251,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount, false)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -385,7 +387,11 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 
 // getEqualCondSelectivity gets the selectivity of the equal conditions. `coverAll` means if the conditions
 // have covered all the index columns.
-func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool) float64 {
+func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
+	// In this case, the row count is at most 1.
+	if unique && coverAll {
+		return 1.0 / float64(idx.TotalCount())
+	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
 		// When the value is out of range, we could not found this value in the CM Sketch,
@@ -432,7 +438,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll)
+			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
 		} else {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
 			if err != nil {
@@ -445,7 +451,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				if err != nil {
 					return 0, err
 				}
-				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll)
+				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
 			}
 		}
 		// use histogram to estimate the range condition
@@ -686,4 +692,33 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 	}
 	// Add 1 byte for each column's flag byte. See `encode` for details.
 	return size + float64(len(cols))
+}
+
+// GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
+func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+	size = coll.GetAvgRowSize(cols, false)
+	switch storeType {
+	case kv.TiKV:
+		size += tablecodec.RecordRowKeyLen
+		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
+		size -= 8
+	case kv.TiFlash:
+		if !handleInCols {
+			size += 8 /* row_id length */
+		}
+	}
+	return
+}
+
+// GetIndexAvgRowSize computes average row size for a index scan.
+func (coll *HistColl) GetIndexAvgRowSize(cols []*expression.Column, isUnique bool) (size float64) {
+	size = coll.GetAvgRowSize(cols, true)
+	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
+	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
+	size += 19
+	if !isUnique {
+		// add the len("_")
+		size++
+	}
+	return
 }

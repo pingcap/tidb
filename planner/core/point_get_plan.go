@@ -24,12 +24,14 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -53,6 +55,7 @@ type PointGetPlan struct {
 	Lock             bool
 	IsForUpdate      bool
 	outputNames      []*types.FieldName
+	LockWaitTime     int64
 }
 
 type nameValuePair struct {
@@ -139,8 +142,13 @@ func (p *PointGetPlan) ResolveIndices() error {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PointGetPlan) OutputNames() []*types.FieldName {
+func (p *PointGetPlan) OutputNames() types.NameSlice {
 	return p.outputNames
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
+	p.outputNames = names
 }
 
 // BatchPointGetPlan represents a physical plan which contains a bunch of
@@ -216,8 +224,13 @@ func (p *BatchPointGetPlan) ResolveIndices() error {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *BatchPointGetPlan) OutputNames() []*types.FieldName {
+func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 	return p.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
+	p.names = names
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
@@ -240,7 +253,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
-			if x.LockTp == ast.SelectLockForUpdate {
+			if x.LockTp == ast.SelectLockForUpdate || x.LockTp == ast.SelectLockForUpdateNoWait {
 				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 				// is disabled (either by beginning transaction with START TRANSACTION or by setting
 				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -249,6 +262,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
+					fp.LockWaitTime = sessVars.LockWaitTimeout
+					if x.LockTp == ast.SelectLockForUpdateNoWait {
+						fp.LockWaitTime = kv.LockNoWait
+					}
 				}
 			}
 			return fp
@@ -599,11 +616,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan:    newBasePlan(ctx, "Point_Get", 0),
-		dbName:      dbName,
-		schema:      schema,
-		TblInfo:     tbl,
-		outputNames: names,
+		basePlan:     newBasePlan(ctx, plancodec.TypePointGet, 0),
+		dbName:       dbName,
+		schema:       schema,
+		TblInfo:      tbl,
+		outputNames:  names,
+		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
@@ -765,6 +783,10 @@ func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.Ex
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
 	if !tblInfo.PKIsHandle {
+		rowIDIdx := findInPairs("_tidb_rowid", pairs)
+		if rowIDIdx != -1 {
+			return pairs[rowIDIdx], types.NewFieldType(mysql.TypeLonglong)
+		}
 		return handlePair, nil
 	}
 	for _, col := range tblInfo.Columns {
@@ -852,6 +874,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 	}.Init(ctx)
+	updatePlan.names = fastSelect.outputNames
 	return updatePlan
 }
 
@@ -860,13 +883,14 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
 	for _, assign := range list {
-		idx, err := expression.FindColName(fastSelect.outputNames, assign.Column)
+		idx, err := expression.FindFieldName(fastSelect.outputNames, assign.Column)
 		if idx == -1 || err != nil {
 			return nil, true
 		}
 		col := fastSelect.schema.Columns[idx]
 		newAssign := &expression.Assignment{
-			Col: col,
+			Col:     col,
+			ColName: fastSelect.OutputNames()[idx].ColName,
 		}
 		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, fastSelect.schema, fastSelect.outputNames)
 		if err != nil {

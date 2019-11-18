@@ -148,23 +148,16 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		a.v[i] = conn
 
 		if allowBatch {
-			// Initialize batch streaming clients.
-			tikvClient := tikvpb.NewTikvClient(conn)
-			streamClient, err := tikvClient.BatchCommands(context.TODO())
-			if err != nil {
-				a.Close()
-				return errors.Trace(err)
-			}
 			batchClient := &batchCommandsClient{
-				target:  a.target,
-				conn:    conn,
-				client:  streamClient,
-				batched: sync.Map{},
-				idAlloc: 0,
-				closed:  0,
+				target:        a.target,
+				conn:          conn,
+				batched:       sync.Map{},
+				idAlloc:       0,
+				closed:        0,
+				tikvClientCfg: cfg.TiKVClient,
+				tikvLoad:      &a.tikvTransportLayerLoad,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-			go batchClient.batchRecvLoop(cfg.TiKVClient, &a.tikvTransportLayerLoad)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout, done)

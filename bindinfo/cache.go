@@ -14,11 +14,14 @@
 package bindinfo
 
 import (
+	"context"
 	"unsafe"
 
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 const (
@@ -28,58 +31,179 @@ const (
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
 	Invalid = "invalid"
+	// PendingVerify means the bind info needs to be verified.
+	PendingVerify = "pending verify"
 )
 
-// BindMeta stores the basic bind info and bindSql astNode.
-type BindMeta struct {
-	*BindRecord
-	// HintSet stores the set of hints of binding sql.
-	*HintsSet
-}
-
-// cache is a k-v map, key is original sql, value is a slice of BindMeta.
-type cache map[string][]*BindMeta
-
-// BindRecord represents a sql bind record retrieved from the storage.
-type BindRecord struct {
-	OriginalSQL string
-	BindSQL     string
-	Db          string
+// Binding stores the basic bind hint info.
+type Binding struct {
+	BindSQL string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
-	// 2. using: BindRecord is in the normal active mode.
+	// 2. using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
 	Charset    string
 	Collation  string
+	// Hint is the parsed hints, it is used to bind hints to stmt node.
+	Hint *HintsSet
+	// id is the string form of all hints. It is used to uniquely identify different hints.
+	// It would be non-empty only when the status is `Using` or `PendingVerify`.
+	id string
 }
 
-func newBindRecord(row chunk.Row) *BindRecord {
-	return &BindRecord{
-		OriginalSQL: row.GetString(0),
-		BindSQL:     row.GetString(1),
-		Db:          row.GetString(2),
-		Status:      row.GetString(3),
-		CreateTime:  row.GetTime(4),
-		UpdateTime:  row.GetTime(5),
-		Charset:     row.GetString(6),
-		Collation:   row.GetString(7),
+// cache is a k-v map, key is original sql, value is a slice of BindRecord.
+type cache map[string][]*BindRecord
+
+// BindRecord represents a sql bind record retrieved from the storage.
+type BindRecord struct {
+	OriginalSQL string
+	Db          string
+
+	Bindings []Binding
+}
+
+// HasUsingBinding checks if there are any using bindings in bind record.
+func (br *BindRecord) HasUsingBinding() bool {
+	for _, binding := range br.Bindings {
+		if binding.Status == Using {
+			return true
+		}
 	}
+	return false
 }
 
-// size calculates the memory size of a bind meta.
-func (m *BindRecord) size() float64 {
-	res := len(m.OriginalSQL) + len(m.BindSQL) + len(m.Db) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
+// FindBinding find bindings in BindRecord.
+func (br *BindRecord) FindBinding(hint string) *Binding {
+	for _, binding := range br.Bindings {
+		if binding.id == hint {
+			return &binding
+		}
+	}
+	return nil
+}
+
+func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSchema) error {
+	p := parser.New()
+	for i, bind := range br.Bindings {
+		if bind.Hint != nil || bind.id != "" {
+			continue
+		}
+		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
+		if err != nil {
+			return err
+		}
+		hints, err := GenHintsFromSQL(context.TODO(), sctx, stmtNode, is)
+		if err != nil {
+			return err
+		}
+		br.Bindings[i].Hint = CollectHint(stmtNode)
+		br.Bindings[i].id = hints
+	}
+	return nil
+}
+
+// `merge` merges two BindRecord. It will replace old bindings with new bindings if there are new updates.
+func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
+	if lBindRecord == nil {
+		return rBindRecord
+	}
+	if rBindRecord == nil {
+		return lBindRecord
+	}
+	result := lBindRecord.shallowCopy()
+	for _, rbind := range rBindRecord.Bindings {
+		found := false
+		for j, lbind := range lBindRecord.Bindings {
+			if lbind.id == rbind.id {
+				found = true
+				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
+					result.Bindings[j] = rbind
+				}
+				break
+			}
+		}
+		if !found {
+			result.Bindings = append(result.Bindings, rbind)
+		}
+	}
+	return result
+}
+
+func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
+	// Delete all bindings.
+	if len(deleted.Bindings) == 0 {
+		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
+	}
+	result := br.shallowCopy()
+	for _, deletedBind := range deleted.Bindings {
+		for i, bind := range result.Bindings {
+			if bind.id == deletedBind.id {
+				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// shallowCopy shallow copies the BindRecord.
+func (br *BindRecord) shallowCopy() *BindRecord {
+	result := BindRecord{
+		OriginalSQL: br.OriginalSQL,
+		Db:          br.Db,
+		Bindings:    make([]Binding, len(br.Bindings)),
+	}
+	copy(result.Bindings, br.Bindings)
+	return &result
+}
+
+func (br *BindRecord) isSame(other *BindRecord) bool {
+	return br.OriginalSQL == other.OriginalSQL && br.Db == other.Db
+}
+
+var statusIndex = map[string]int{
+	Using:   0,
+	deleted: 1,
+	Invalid: 2,
+}
+
+func (br *BindRecord) metrics() ([]float64, []int) {
+	sizes := make([]float64, len(statusIndex))
+	count := make([]int, len(statusIndex))
+	if br == nil {
+		return sizes, count
+	}
+	commonLength := float64(len(br.OriginalSQL) + len(br.Db))
+	// We treat it as deleted if there are no bindings. It could only occur in session handles.
+	if len(br.Bindings) == 0 {
+		sizes[statusIndex[deleted]] = commonLength
+		count[statusIndex[deleted]] = 1
+		return sizes, count
+	}
+	// Make the common length counted in the first binding.
+	sizes[statusIndex[br.Bindings[0].Status]] = commonLength
+	for _, binding := range br.Bindings {
+		sizes[statusIndex[binding.Status]] += binding.size()
+		count[statusIndex[binding.Status]] += 1
+	}
+	return sizes, count
+}
+
+// size calculates the memory size of a bind info.
+func (m *Binding) size() float64 {
+	res := len(m.BindSQL) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
 	return float64(res)
 }
 
-func (m *BindRecord) updateMetrics(scope string, inc bool) {
-	if inc {
-		metrics.BindMemoryUsage.WithLabelValues(scope, m.Status).Add(float64(m.size()))
-		metrics.BindTotalGauge.WithLabelValues(scope, m.Status).Inc()
-	} else {
-		metrics.BindMemoryUsage.WithLabelValues(scope, m.Status).Sub(float64(m.size()))
-		metrics.BindTotalGauge.WithLabelValues(scope, m.Status).Dec()
+func updateMetrics(scope string, before *BindRecord, after *BindRecord, sizeOnly bool) {
+	beforeSize, beforeCount := before.metrics()
+	afterSize, afterCount := after.metrics()
+	for status, index := range statusIndex {
+		metrics.BindMemoryUsage.WithLabelValues(scope, status).Add(afterSize[index] - beforeSize[index])
+		if !sizeOnly {
+			metrics.BindTotalGauge.WithLabelValues(scope, status).Add(float64(afterCount[index] - beforeCount[index]))
+		}
 	}
 }

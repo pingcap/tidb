@@ -115,7 +115,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		return variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
@@ -199,6 +199,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 
 	if name == variable.TiDBEnableStmtSummary {
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+	} else if name == variable.TiDBCapturePlanBaseline {
+		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
 
 	return nil

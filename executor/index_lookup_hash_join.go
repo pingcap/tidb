@@ -29,6 +29,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// numResChkHold indicates the number of resource chunks that an inner worker
+// holds at the same time.
+// It's used in 2 cases individually:
+// 1. IndexMergeJoin
+// 2. IndexNestedLoopHashJoin:
+//    It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
+//    Otherwise, there will be at most `concurrency` resource chunks throughout
+//    the execution of IndexNestedLoopHashJoin.
+const numResChkHold = 4
+
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
 // execute concurrently. The output order is not promised.
 //
@@ -45,15 +55,21 @@ type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
 	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
-
 	// We build individual joiner for each inner worker when using chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
-	joiners []joiner
+	joiners        []joiner
+	keepOuterOrder bool
+	curTask        *indexHashJoinTask
+	// taskCh is only used when `keepOuterOrder` is true.
+	taskCh chan *indexHashJoinTask
 }
 
 type indexHashJoinOuterWorker struct {
 	outerWorker
-	innerCh chan *indexHashJoinTask
+	innerCh        chan *indexHashJoinTask
+	keepOuterOrder bool
+	// taskCh is only used when the outer order needs to be promised.
+	taskCh chan *indexHashJoinTask
 }
 
 type indexHashJoinInnerWorker struct {
@@ -61,11 +77,13 @@ type indexHashJoinInnerWorker struct {
 	matchedOuterPtrs  []chunk.RowPtr
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
-	resultCh          chan *indexHashJoinResult
-	taskCh            <-chan *indexHashJoinTask
-	wg                *sync.WaitGroup
-	joinKeyBuf        []byte
-	outerRowStatus    []outerRowStatusFlag
+	// resultCh is valid only when indexNestedLoopHashJoin do not need to keep
+	// order. Otherwise, it will be nil.
+	resultCh       chan *indexHashJoinResult
+	taskCh         <-chan *indexHashJoinTask
+	wg             *sync.WaitGroup
+	joinKeyBuf     []byte
+	outerRowStatus []outerRowStatusFlag
 }
 
 type indexHashJoinResult struct {
@@ -76,9 +94,19 @@ type indexHashJoinResult struct {
 
 type indexHashJoinTask struct {
 	*lookUpJoinTask
-	outerRowStatus []outerRowStatusFlag
+	outerRowStatus [][]outerRowStatusFlag
 	lookupMap      *rowHashMap
 	err            error
+	keepOuterOrder bool
+	// resultCh is only used when the outer order needs to be promised.
+	resultCh chan *indexHashJoinResult
+	// matchedInnerRowPtrs is only valid when the outer order needs to be
+	// promised. Otherwise, it will be nil.
+	// len(matchedInnerRowPtrs) equals to
+	// lookUpJoinTask.outerResult.NumChunks(), and the elements of every
+	// matchedInnerRowPtrs[chkIdx][rowIdx] indicates the matched inner row ptrs
+	// of the corresponding outer row.
+	matchedInnerRowPtrs [][][]chunk.RowPtr
 }
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
@@ -121,16 +149,33 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	workerCtx, cancelFunc := context.WithCancel(ctx)
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *indexHashJoinTask, concurrency)
+	if e.keepOuterOrder {
+		e.taskCh = make(chan *indexHashJoinTask, concurrency)
+	}
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
 
-	e.resultCh = make(chan *indexHashJoinResult, concurrency)
+	if !e.keepOuterOrder {
+		e.resultCh = make(chan *indexHashJoinResult, concurrency)
+	} else {
+		// When `keepOuterOrder` is true, each task holds their own `resultCh`
+		// individually, thus we do not need a global resultCh.
+		e.resultCh = nil
+	}
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
-		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- newFirstChunk(e)
+		if !e.keepOuterOrder {
+			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
+			e.joinChkResourceCh[i] <- newFirstChunk(e)
+		} else {
+			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
+			for j := 0; j < numResChkHold; j++ {
+				e.joinChkResourceCh[i] <- newFirstChunk(e)
+			}
+		}
 	}
+
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerID := i
@@ -141,19 +186,31 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-		e.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
+		logutil.BgLogger().Error("IndexNestedLoopHashJoin failed", zap.Error(errors.Errorf("%v", r)))
+		if e.cancelFunc != nil {
+			e.cancelFunc()
+		}
 	}
 	e.workerWg.Done()
 }
 
 func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 	e.workerWg.Wait()
-	close(e.resultCh)
+	if e.resultCh != nil {
+		close(e.resultCh)
+	}
+	if e.taskCh != nil {
+		close(e.taskCh)
+	}
 }
 
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	if e.keepOuterOrder {
+		return e.runInOrder(ctx, req)
+	}
+	// unordered run
 	var (
 		result *indexHashJoinResult
 		ok     bool
@@ -174,6 +231,50 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 	return nil
 }
 
+func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) error {
+	var (
+		result *indexHashJoinResult
+		ok     bool
+	)
+	for {
+		if e.isDryUpTasks(ctx) {
+			return nil
+		}
+		select {
+		case result, ok = <-e.curTask.resultCh:
+			if !ok {
+				e.curTask = nil
+				continue
+			}
+			if result.err != nil {
+				return result.err
+			}
+		case <-ctx.Done():
+			return nil
+		}
+		req.SwapColumns(result.chk)
+		result.src <- result.chk
+		return nil
+	}
+}
+
+// isDryUpTasks indicates whether all the tasks have been processed.
+func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
+	if e.curTask != nil {
+		return false
+	}
+	var ok bool
+	select {
+	case e.curTask, ok = <-e.taskCh:
+		if !ok {
+			return true
+		}
+	case <-ctx.Done():
+		return true
+	}
+	return false
+}
+
 // Close implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.cancelFunc != nil {
@@ -184,6 +285,11 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		for range e.resultCh {
 		}
 		e.resultCh = nil
+	}
+	if e.taskCh != nil {
+		for range e.taskCh {
+		}
+		e.taskCh = nil
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
@@ -207,6 +313,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context, cancelFunc context.
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
 			return
 		}
+		if ow.keepOuterOrder {
+			if finished := ow.pushToChan(ctx, task, ow.taskCh); finished {
+				return
+			}
+		}
 	}
 }
 
@@ -215,9 +326,28 @@ func (ow *indexHashJoinOuterWorker) buildTask(ctx context.Context) (*indexHashJo
 	if task == nil || err != nil {
 		return nil, err
 	}
+	var (
+		resultCh            chan *indexHashJoinResult
+		matchedInnerRowPtrs [][][]chunk.RowPtr
+	)
+	if ow.keepOuterOrder {
+		resultCh = make(chan *indexHashJoinResult, numResChkHold)
+		matchedInnerRowPtrs = make([][][]chunk.RowPtr, task.outerResult.NumChunks())
+		for i := range matchedInnerRowPtrs {
+			matchedInnerRowPtrs[i] = make([][]chunk.RowPtr, task.outerResult.GetChunk(i).NumRows())
+		}
+	}
+	numChks := task.outerResult.NumChunks()
+	outerRowStatus := make([][]outerRowStatusFlag, numChks)
+	for i := 0; i < numChks; i++ {
+		outerRowStatus[i] = make([]outerRowStatusFlag, task.outerResult.GetChunk(i).NumRows())
+	}
 	return &indexHashJoinTask{
-		lookUpJoinTask: task,
-		outerRowStatus: make([]outerRowStatusFlag, task.outerResult.NumRows()),
+		lookUpJoinTask:      task,
+		outerRowStatus:      outerRowStatus,
+		keepOuterOrder:      ow.keepOuterOrder,
+		resultCh:            resultCh,
+		matchedInnerRowPtrs: matchedInnerRowPtrs,
 	}, nil
 }
 
@@ -236,13 +366,14 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 			outerCtx:         e.outerCtx,
 			ctx:              e.ctx,
 			executor:         e.children[0],
-			executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
 			batchSize:        32,
 			maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
-		innerCh: innerCh,
+		innerCh:        innerCh,
+		keepOuterOrder: e.keepOuterOrder,
+		taskCh:         e.taskCh,
 	}
 	return ow
 }
@@ -280,7 +411,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		cancelFunc()
 		return
 	}
-	h := fnv.New64()
+	h, resultCh := fnv.New64(), iw.resultCh
 	for {
 		select {
 		case <-ctx.Done():
@@ -294,7 +425,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			joinResult.err = task.err
 			break
 		}
-		err := iw.handleTask(ctx, cancelFunc, task, joinResult, h)
+		if task.keepOuterOrder {
+			resultCh = task.resultCh
+		}
+		err := iw.handleTask(ctx, cancelFunc, task, joinResult, h, resultCh)
 		if err != nil {
 			joinResult.err = err
 			break
@@ -305,9 +439,12 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		logutil.Logger(ctx).Error("indexHashJoinInnerWorker.run failed", zap.Error(joinResult.err))
 		return
 	}
-	if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
+	// When task.keepOuterOrder is TRUE(resultCh != iw.resultCh), the last
+	// joinResult will be checked when the a task has been processed, thus we do
+	// not need to check it here again.
+	if resultCh == iw.resultCh && joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
 		select {
-		case iw.resultCh <- joinResult:
+		case resultCh <- joinResult:
 		case <-ctx.Done():
 			return
 		}
@@ -328,30 +465,33 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 }
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, h hash.Hash64) {
-	rowIdx, numRows := 0, task.outerResult.NumRows()
-	buf := make([]byte, 1)
-	task.lookupMap = newRowHashMap(numRows)
-OUTER:
-	for ; rowIdx < numRows; rowIdx++ {
-		if task.outerMatch != nil && !task.outerMatch[rowIdx] {
-			continue
-		}
-		row := task.outerResult.GetRow(rowIdx)
-		keyColIdx := iw.outerCtx.keyCols
-		for _, i := range keyColIdx {
-			if row.IsNull(i) {
-				continue OUTER
+	buf, numChks := make([]byte, 1), task.outerResult.NumChunks()
+	task.lookupMap = newRowHashMap(task.outerResult.Len())
+	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
+		chk := task.outerResult.GetChunk(chkIdx)
+		numRows := chk.NumRows()
+	OUTER:
+		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
+				continue
 			}
+			row := chk.GetRow(rowIdx)
+			keyColIdx := iw.outerCtx.keyCols
+			for _, i := range keyColIdx {
+				if row.IsNull(i) {
+					continue OUTER
+				}
+			}
+			h.Reset()
+			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, keyColIdx, buf)
+			if err != nil {
+				cancelFunc()
+				logutil.Logger(ctx).Error("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
+				return
+			}
+			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
+			task.lookupMap.Put(h.Sum64(), rowPtr)
 		}
-		h.Reset()
-		err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, keyColIdx, buf)
-		if err != nil {
-			cancelFunc()
-			logutil.Logger(ctx).Error("indexHashJoinInnerWorker.buildHashTableForOuterResult failed", zap.Error(err))
-			return
-		}
-		rowPtr := chunk.RowPtr{ChkIdx: 0, RowIdx: uint32(rowIdx)}
-		task.lookupMap.Put(h.Sum64(), rowPtr)
 	}
 	return
 }
@@ -372,7 +512,7 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 	iw.wg.Done()
 }
 
-func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64) error {
+func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, cancelFunc context.CancelFunc, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
@@ -382,38 +522,44 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, cancelFunc c
 		return err
 	}
 	iw.wg.Wait()
-	return iw.doJoin(ctx, task, joinResult, h)
+	if !task.keepOuterOrder {
+		return iw.doJoinUnordered(ctx, task, joinResult, h, resultCh)
+	}
+	return iw.doJoinInOrder(ctx, task, joinResult, h, resultCh)
 }
 
-func (iw *indexHashJoinInnerWorker) doJoin(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64) error {
+func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
 	var ok bool
 	iter := chunk.NewIterator4List(task.innerResult)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		ok, joinResult = iw.joinMatchedInnerRow2Chunk(ctx, row, task, joinResult, h, iw.joinKeyBuf)
 		if !ok {
-			return errors.New("indexHashJoinInnerWorker.handleTask failed")
+			return errors.New("indexHashJoinInnerWorker.doJoinUnordered failed")
 		}
 	}
-	for rowIdx, val := range task.outerRowStatus {
-		if val == outerRowMatched {
-			continue
-		}
-		iw.joiner.onMissMatch(val == outerRowHasNull, task.outerResult.GetRow(rowIdx), joinResult.chk)
-		if joinResult.chk.IsFull() {
-			select {
-			case iw.resultCh <- joinResult:
-			case <-ctx.Done():
+	for chkIdx, outerRowStatus := range task.outerRowStatus {
+		chk := task.outerResult.GetChunk(chkIdx)
+		for rowIdx, val := range outerRowStatus {
+			if val == outerRowMatched {
+				continue
 			}
-			joinResult, ok = iw.getNewJoinResult(ctx)
-			if !ok {
-				return errors.New("indexHashJoinInnerWorker.handleTask failed")
+			iw.joiner.onMissMatch(val == outerRowHasNull, chk.GetRow(rowIdx), joinResult.chk)
+			if joinResult.chk.IsFull() {
+				select {
+				case resultCh <- joinResult:
+				case <-ctx.Done():
+				}
+				joinResult, ok = iw.getNewJoinResult(ctx)
+				if !ok {
+					return errors.New("indexHashJoinInnerWorker.doJoinUnordered failed")
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowIdx []int, err error) {
+func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowPtr []chunk.RowPtr, err error) {
 	h.Reset()
 	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.rowTypes, iw.keyCols, buf)
 	if err != nil {
@@ -424,10 +570,9 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 		return nil, nil, nil
 	}
 	matchedRows = make([]chunk.Row, 0, len(iw.matchedOuterPtrs))
-	matchedRowIdx = make([]int, 0, len(iw.matchedOuterPtrs))
+	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {
-		rowIdx := int(ptr.RowIdx)
-		outerRow := task.outerResult.GetRow(rowIdx)
+		outerRow := task.outerResult.GetRow(ptr)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.keyCols)
 		if err != nil {
 			return nil, nil, err
@@ -436,14 +581,14 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 			continue
 		}
 		matchedRows = append(matchedRows, outerRow)
-		matchedRowIdx = append(matchedRowIdx, rowIdx)
+		matchedRowPtr = append(matchedRowPtr, chunk.RowPtr{ChkIdx: ptr.ChkIdx, RowIdx: ptr.RowIdx})
 	}
-	return matchedRows, matchedRowIdx, nil
+	return matchedRows, matchedRowPtr, nil
 }
 
 func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Context, innerRow chunk.Row, task *indexHashJoinTask,
 	joinResult *indexHashJoinResult, h hash.Hash64, buf []byte) (bool, *indexHashJoinResult) {
-	matchedOuterRows, matchedOuterRowIdx, err := iw.getMatchedOuterRows(innerRow, task, h, buf)
+	matchedOuterRows, matchedOuterRowPtr, err := iw.getMatchedOuterRows(innerRow, task, h, buf)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -463,9 +608,9 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 			return false, joinResult
 		}
 		for _, status := range iw.outerRowStatus {
-			outerRowIdx := matchedOuterRowIdx[cursor]
-			if status == outerRowMatched || task.outerRowStatus[outerRowIdx] == outerRowUnmatched {
-				task.outerRowStatus[outerRowIdx] = status
+			chkIdx, rowIdx := matchedOuterRowPtr[cursor].ChkIdx, matchedOuterRowPtr[cursor].RowIdx
+			if status == outerRowMatched || task.outerRowStatus[chkIdx][rowIdx] == outerRowUnmatched {
+				task.outerRowStatus[chkIdx][rowIdx] = status
 			}
 			cursor++
 		}
@@ -481,4 +626,85 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 		}
 	}
 	return true, joinResult
+}
+
+func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx context.Context, innerRow chunk.Row, innerRowPtr chunk.RowPtr,
+	task *indexHashJoinTask, h hash.Hash64, buf []byte) error {
+	_, matchedOuterRowIdx, err := iw.getMatchedOuterRows(innerRow, task, h, buf)
+	if err != nil {
+		return err
+	}
+	for _, outerRowPtr := range matchedOuterRowIdx {
+		chkIdx, rowIdx := outerRowPtr.ChkIdx, outerRowPtr.RowIdx
+		task.matchedInnerRowPtrs[chkIdx][rowIdx] = append(task.matchedInnerRowPtrs[chkIdx][rowIdx], innerRowPtr)
+	}
+	return nil
+}
+
+// doJoinInOrder follows the following steps:
+// 1. collect all the matched inner row ptrs for every outer row
+// 2. do the join work
+//   2.1 collect all the matched inner rows using the collected ptrs for every outer row
+//   2.2 call tryToMatchInners for every outer row
+//   2.3 call onMissMatch when no inner rows are matched
+func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
+	defer func() {
+		if err == nil && joinResult.chk != nil {
+			if joinResult.chk.NumRows() > 0 {
+				select {
+				case resultCh <- joinResult:
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				joinResult.src <- joinResult.chk
+			}
+		}
+		close(resultCh)
+	}()
+	for i, numChunks := 0, task.innerResult.NumChunks(); i < numChunks; i++ {
+		for j, chk := 0, task.innerResult.GetChunk(i); j < chk.NumRows(); j++ {
+			row := chk.GetRow(j)
+			ptr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
+			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, h, iw.joinKeyBuf)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	// TODO: matchedInnerRowPtrs and matchedInnerRows can be moved to inner worker.
+	matchedInnerRows := make([]chunk.Row, len(task.matchedInnerRowPtrs))
+	var hasMatched, hasNull, ok bool
+	for chkIdx, innerRowPtrs4Chk := range task.matchedInnerRowPtrs {
+		for outerRowIdx, innerRowPtrs := range innerRowPtrs4Chk {
+			matchedInnerRows, hasMatched, hasNull = matchedInnerRows[:0], false, false
+			outerRow := task.outerResult.GetChunk(chkIdx).GetRow(outerRowIdx)
+			for _, ptr := range innerRowPtrs {
+				matchedInnerRows = append(matchedInnerRows, task.innerResult.GetRow(ptr))
+			}
+			iter := chunk.NewIterator4Slice(matchedInnerRows)
+			for iter.Begin(); iter.Current() != iter.End(); {
+				matched, isNull, err := iw.joiner.tryToMatchInners(outerRow, iter, joinResult.chk)
+				if err != nil {
+					return err
+				}
+				hasMatched, hasNull = matched || hasMatched, isNull || hasNull
+				if joinResult.chk.IsFull() {
+					select {
+					case resultCh <- joinResult:
+					case <-ctx.Done():
+						return nil
+					}
+					joinResult, ok = iw.getNewJoinResult(ctx)
+					if !ok {
+						return errors.New("indexHashJoinInnerWorker.doJoinInOrder failed")
+					}
+				}
+			}
+			if !hasMatched {
+				iw.joiner.onMissMatch(hasNull, outerRow, joinResult.chk)
+			}
+		}
+	}
+	return nil
 }
