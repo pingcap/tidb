@@ -502,6 +502,7 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	txn.Set(kv.Key("key"), []byte("value"))
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
+	c.Assert(err, IsNil)
 	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 1<<20)
 	// Test the old version TiDB data, this line is essential.
 	committer.zeroCommitTS = true
