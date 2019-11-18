@@ -1939,31 +1939,11 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinUnixTimestampIntSig) vectorized() bool {
-	return true
+	return false
 }
 
 func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDatetime, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-
-	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		return err
-	}
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		t, err := buf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
-		if buf.IsNull(i) || t.IsZero() || err != nil {
-			result.AppendInt64(0)
-			continue
-		}
-		i64s[i] = t.Unix()
-	}
-	return nil
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinAddDateDurationDecimalSig) vectorized() bool {
