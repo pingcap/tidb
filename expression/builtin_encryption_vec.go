@@ -455,7 +455,13 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
+	isConst := b.args[1].ConstItem()
+	var key []byte
+	if isConst {
+		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
+	}
 
+	sc := b.ctx.GetSessionVars().StmtCtx
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		// According to doc: If either function argument is NULL, the function returns NULL.
@@ -464,9 +470,11 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			continue
 		}
 		if isWarning {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+			sc.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
-		key := encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+		if !isConst {
+			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+		}
 
 		// NOTE: we can't use GetBytes, because in AESEncryptWithECB padding is automatically
 		//       added to str and this will damange the data layout in chunk.Column
