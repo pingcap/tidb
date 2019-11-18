@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -481,17 +480,13 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 		}
 	}
 	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s limit 1;", schema.L, table.L, colsStr)
-	logutil.Logger(context.Background()).Warn("---------------------------------", zap.String("sql", sql))
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	x := fmt.Sprintf("rows %v", rows)
-	logutil.Logger(context.Background()).Warn("---------------------------------", zap.String("x", x))
-	rowCount := rows[0].GetInt64(0)
-	if rowCount != 0 {
+	if len(rows) != 0 {
 		if isDataTruncated {
-			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
+			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, len(rows))
 		}
 		return errInvalidUseOfNull
 	}

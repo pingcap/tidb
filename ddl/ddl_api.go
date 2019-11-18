@@ -1900,6 +1900,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableDropPrimaryKey:
 			err = d.dropIndex(ctx, ident, true, model.NewCIStr(mysql.PrimaryKeyName))
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
