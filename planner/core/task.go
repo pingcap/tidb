@@ -145,7 +145,7 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p.self, t)
 }
 
-// GetCosts calculates the cost inside the Apply.
+// GetCost calculates the cost inside the Apply.
 func (p *PhysicalApply) GetCost(lCount, rCount float64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
