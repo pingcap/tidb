@@ -49,6 +49,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Set it to 300ms for testing lock resolve.
 	tikv.PessimisticLockTTL = 300
+	tikv.PrewriteMaxBackoff = 500
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -63,14 +64,13 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	s.dom.GetGlobalVarsCache().Disable()
 	c.Assert(err, IsNil)
-	tikv.PrewriteMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
-	tikv.PrewriteMaxBackoff = 20000
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+	tikv.PrewriteMaxBackoff = 20000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
