@@ -786,8 +786,8 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	}
 	cols := make([]Expression, len(testCase.childrenTypes))
 	input = chunk.New(fts, 1024, 1024)
-	for i := range testCase.childrenTypes {
-		fillColumn(fts[i].EvalType(), input, i, testCase)
+	for i, eType := range testCase.childrenTypes {
+		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 
@@ -918,8 +918,8 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	}
 	cols := make([]Expression, childrenNumber)
 	input = chunk.New(fts, 1024, 1024)
-	for i := range testCase.childrenTypes {
-		fillColumn(fts[i].EvalType(), input, i, testCase)
+	for i, eType := range testCase.childrenTypes {
+		fillColumn(eType, input, i, testCase)
 		cols[i] = &Column{Index: i, RetType: fts[i]}
 	}
 	if len(cols) == 0 {
