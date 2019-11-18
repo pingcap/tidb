@@ -1847,13 +1847,14 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			compareFuncs:  v.OuterCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
-			rowTypes:      innerTypes,
-			joinKeys:      v.InnerJoinKeys,
-			keyCols:       innerKeyCols,
-			compareFuncs:  v.CompareFuncs,
-			colLens:       v.IdxColLens,
-			desc:          v.Desc,
+			readerBuilder:           &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
+			rowTypes:                innerTypes,
+			joinKeys:                v.InnerJoinKeys,
+			keyCols:                 innerKeyCols,
+			compareFuncs:            v.CompareFuncs,
+			colLens:                 v.IdxColLens,
+			desc:                    v.Desc,
+			keyOff2KeyOffOrderByIdx: v.KeyOff2KeyOffOrderByIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
@@ -1919,6 +1920,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
 	}
+	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {

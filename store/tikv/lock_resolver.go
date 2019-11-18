@@ -109,6 +109,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 type TxnStatus struct {
 	ttl      uint64
 	commitTS uint64
+	action   kvrpcpb.Action
 }
 
 // IsCommitted returns true if the txn's final status is Commit.
@@ -397,7 +398,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		}
 
 		if l.LockType == kvrpcpb.Op_PessimisticLock {
-			return TxnStatus{l.TTL, 0}, nil
+			return TxnStatus{ttl: l.TTL}, nil
 		}
 
 		// Handle txnNotFound error.
@@ -482,6 +483,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
+		status.action = cmdResp.Action
 		if cmdResp.LockTtl != 0 {
 			status.ttl = cmdResp.LockTtl
 		} else {
