@@ -280,6 +280,8 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
+	c.Assert(currentTS, Greater, txn.StartTS())
+
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
@@ -288,7 +290,9 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
-	c.Assert(status.action, Equals, kvrpcpb.Action_MinCommitTSPushed)
+	// TODO: It should be Action_MinCommitTSPushed if minCommitTS is set in the Prewrite request.
+	// Update here to kvrpcpb.Action_MinCommitTSPushed in the next PR.
+	c.Assert(status.action, Equals, kvrpcpb.Action_NoAction)
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
