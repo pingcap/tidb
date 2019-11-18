@@ -41,7 +41,7 @@ var memTableToClusterTableMap = map[string]struct{}{
 }
 
 // clusterTableMap is the cluster table map.
-// This will initialize in init function.
+// It will be initialized in `init` function.
 var clusterTableMap = map[string]struct{}{}
 
 func init() {
