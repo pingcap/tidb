@@ -27,6 +27,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -526,36 +527,85 @@ func (g *randHexStrGener) gen() interface{} {
 	return string(buf)
 }
 
-// dataTimeStrGener is used to generate strings which are dataTime format
-type dataTimeStrGener struct{}
+// dateTimeGener is used to generate a dataTime
+type dateTimeGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
 
-func (g *dataTimeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
+func (g *dateTimeGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
+	gt := types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	t := types.Time{Time: gt, Type: mysql.TypeDatetime}
+	return t
+}
+
+// dateTimeStrGener is used to generate strings which are dataTime format
+type dateTimeStrGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
+
+func (g *dateTimeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
+	dataTimeStr := fmt.Sprintf("%d-%d-%d %d:%d:%d",
+		g.Year, g.Month, g.Day, hour, minute, second)
+	if g.Fsp > 0 && g.Fsp <= 6 {
+		microFmt := fmt.Sprintf(".%%0%dd", g.Fsp)
+		return dataTimeStr + fmt.Sprintf(microFmt, rand.Int()%(10^g.Fsp))
+	}
 
-	return fmt.Sprintf("%d-%d-%d %d:%d:%d",
-		year, month, day, hour, minute, second)
+	return dataTimeStr
 }
 
 // timeStrGener is used to generate strings which are time format
-type timeStrGener struct{}
-
-func (g *timeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
-
-	return fmt.Sprintf("%d-%d-%d", year, month, day)
+type timeStrGener struct {
+	Year  int
+	Month int
+	Day   int
 }
 
-// dataStrGener is used to generate strings which are data format
-type dataStrGener struct{}
+func (g *timeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 
-func (g *dataStrGener) gen() interface{} {
+	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
+}
+
+// dateStrGener is used to generate strings which are data format
+type dateStrGener struct{}
+
+func (g *dateStrGener) gen() interface{} {
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
@@ -942,9 +992,18 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesEncrypt {
+			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				c.Assert(err, IsNil)
+			}
+			if funcName == ast.User {
+				ctx.GetSessionVars().User = &auth.UserIdentity{
+					Username:     "tidb",
+					Hostname:     "localhost",
+					CurrentUser:  true,
+					AuthHostname: "localhost",
+					AuthUsername: "tidb",
+				}
 			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
@@ -1136,10 +1195,19 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesEncrypt {
+			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				if err != nil {
 					panic(err)
+				}
+			}
+			if funcName == ast.User {
+				ctx.GetSessionVars().User = &auth.UserIdentity{
+					Username:     "tidb",
+					Hostname:     "localhost",
+					CurrentUser:  true,
+					AuthHostname: "localhost",
+					AuthUsername: "tidb",
 				}
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
