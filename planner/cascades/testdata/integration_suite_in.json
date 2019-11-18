@@ -39,5 +39,14 @@
       "select b from t order by b limit 3",
       "select a from t order by a limit 1 offset 2"
     ]
+  },
+  {
+    "name": "TestIndexScan",
+    "cases": [
+      "select b from t",
+      "select a from t order by b",
+      "select c from t",
+      "select a from t order by c"
+    ]
   }
 ]

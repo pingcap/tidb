@@ -102,6 +102,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandTableGather
 	case *plannercore.TableScan:
 		return OperandTableScan
+	case *plannercore.IndexScan:
+		return OperandIndexScan
 	case *plannercore.LogicalShow:
 		return OperandShow
 	default:

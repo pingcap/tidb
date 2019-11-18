@@ -303,5 +303,64 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexScan",
+    "Cases": [
+      {
+        "SQL": "select b from t",
+        "Plan": [
+          "Projection_9 10000.00 root Column#2",
+          "└─IndexReader_14 10000.00 root index:IndexScan_15",
+          "  └─IndexScan_15 10000.00 cop[tikv] table:t, index:b, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "5",
+          "8"
+        ]
+      },
+      {
+        "SQL": "select a from t order by b",
+        "Plan": [
+          "Projection_11 10000.00 root Column#5",
+          "└─Projection_13 10000.00 root Column#1, Column#2",
+          "  └─IndexReader_16 10000.00 root index:IndexScan_17",
+          "    └─IndexScan_17 10000.00 cop[tikv] table:t, index:b, range:[NULL,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "4",
+          "7"
+        ]
+      },
+      {
+        "SQL": "select c from t",
+        "Plan": [
+          "Projection_7 10000.00 root Column#3",
+          "└─IndexReader_10 10000.00 root index:IndexScan_11",
+          "  └─IndexScan_11 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3",
+          "6",
+          "9"
+        ]
+      },
+      {
+        "SQL": "select a from t order by c",
+        "Plan": [
+          "Projection_9 10000.00 root Column#5",
+          "└─Projection_11 10000.00 root Column#1, Column#3",
+          "  └─IndexReader_13 10000.00 root index:IndexScan_14",
+          "    └─IndexScan_14 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "4",
+          "7"
+        ]
+      }
+    ]
   }
 ]

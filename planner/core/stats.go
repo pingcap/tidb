@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -234,7 +235,18 @@ func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		is.Ranges = ranger.FullRange()
 	}
 	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
-
+	path := is.Path
+	ds := is.Source
+	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.index)
+	path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
+	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
+		// TODO: DO NOT use ds.schema anymore, since it could be different from IndexScan's schema.
+		handleCol := ds.getPKIsHandleCol()
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+			path.idxCols = append(path.idxCols, handleCol)
+			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
+		}
+	}
 	// TODO: Fulfill the accessPath for skyline pruning.
 	return is.stats, nil
 }
