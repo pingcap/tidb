@@ -461,7 +461,7 @@ The solution is to fit the three core points in the following ways:
 
 This proposal needs to implement the following performance profiling table:
 
-| 表名 | 作用 |
+| Table | Description |
 |------|-----|
 | tidb_profile_cpu | TiDB CPU flame graph |
 | tikv_profile_cpu | TiKV CPU flame graph |
@@ -475,7 +475,7 @@ This proposal needs to implement the following performance profiling table:
 
 Current the `slow_query`/`events_statements_summary_by_digest`/`processlist` memory tables only contains single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
 
-| 表名 | 作用 |
+| Table Name | Description |
 |------|-----|
 | tidb_cluster_slow_query | all TiDB nodes' slow_query table data |
 | tidb_cluster_statements_summary | all TiDB nodes's statements summary table Data |

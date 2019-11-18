@@ -466,7 +466,7 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time='2019
 本提案需要实现以下性能剖析表：
 
 
-| 表名 | 作用 |
+| 表名 | 描述 |
 |------|-----|
 | tidb_profile_cpu | TiDB CPU 火焰图 |
 | tikv_profile_cpu | TiKV CPU 火焰图 |
@@ -480,7 +480,7 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time='2019
 
 目前 `slow_query`/`events_statements_summary_by_digest`/`processlist` 只包含单节点数据，本提案通过添加以下三张集群级别系统表使任何一个 TiDB 实例可以查看整个集群的信息：
 
-| 表名 | 作用 |
+| 表名 | 描述 |
 |------|-----|
 | tidb_cluster_slow_query | 所有 TiDB 节点的 slow_query 表数据 |
 | tidb_cluster_statements_summary | 所有 TiDB 节点的 statements summary 表数据 |
