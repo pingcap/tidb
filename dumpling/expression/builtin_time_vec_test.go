@@ -52,9 +52,13 @@ func (g *unitStrGener) gen() interface{} {
 }
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
-	ast.DateLiteral: {},
-	ast.DateDiff:    {},
-	ast.DateFormat:  {},
+	ast.DateLiteral: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
+			constants: []*Constant{{Value: types.NewStringDatum("2019-11-11"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+	},
+	ast.DateDiff:   {},
+	ast.DateFormat: {},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},
