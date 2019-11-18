@@ -226,9 +226,9 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 					continue
 				}
 			case patAny:
-				// Try to match at nx.
+				// Try to match at sIdx.
 				// If that doesn't work out,
-				// restart at nx+1 next.
+				// restart at sIdx+1 next.
 				nextPIdx = pIdx
 				nextSIdx = sIdx + 1
 				pIdx++
