@@ -74,8 +74,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/google/pprof => github.com/lonng/pprof v0.0.0-20191012154247-04dfd648ce8d
-
 go 1.13
 
 replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20191112090242-f12fde038340
