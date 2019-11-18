@@ -189,3 +189,24 @@ func (s *testIntegrationSuite) TestPpdWithSetVar(c *C) {
 	tk.MustQuery("select t01.c1,t01.c2,t01.c3 from (select t1.*,@c3:=@c3+1 as c3 from (select t.*,@c3:=0 from t order by t.c1)t1)t01 where t01.c3=1 and t01.c2='d'").Check(testkit.Rows())
 	tk.MustQuery("select t01.c1,t01.c2,t01.c3 from (select t1.*,@c3:=@c3+1 as c3 from (select t.*,@c3:=0 from t order by t.c1)t1)t01 where t01.c3=2 and t01.c2='d'").Check(testkit.Rows("2 d 2"))
 }
+
+func (s *testIntegrationSuite) BitColErrorMessage(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists bit_col_t")
+	tk.MustExec("create table bit_col_t (a bit(64))")
+	tk.MustExec("drop table bit_col_t")
+	tk.MustExec("create table bit_col_t (a bit(1))")
+	tk.MustExec("drop table bit_col_t")
+	_, err = tk.Exec("create table bit_col_t (a bit(0))")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("create table bit_col_t (a bit(65))")
+	c.Assert(err, NotNil)
+}
