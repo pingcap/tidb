@@ -469,6 +469,40 @@ func (g *ipv4CompatByteGener) gen() interface{} {
 	return string(ip[:net.IPv6len])
 }
 
+type charsetGener struct {
+	nullRation float64
+}
+
+func (g *charsetGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	switch rand.Uint32() % 10 {
+	case 0:
+		return &Constant{Value: types.NewDatum(charset.CharsetBin), RetType: types.NewFieldType(mysql.TypeString)}
+	case 1:
+		return &Constant{Value: types.NewDatum(charset.CollationBin), RetType: types.NewFieldType(mysql.TypeString)}
+	case 2:
+		return &Constant{Value: types.NewDatum(charset.CharsetUTF8), RetType: types.NewFieldType(mysql.TypeString)}
+	case 3:
+		return &Constant{Value: types.NewDatum(charset.CollationUTF8), RetType: types.NewFieldType(mysql.TypeString)}
+	case 4:
+		return &Constant{Value: types.NewDatum(charset.CharsetUTF8MB4), RetType: types.NewFieldType(mysql.TypeString)}
+	case 5:
+		return &Constant{Value: types.NewDatum(charset.CollationUTF8MB4), RetType: types.NewFieldType(mysql.TypeString)}
+	case 6:
+		return &Constant{Value: types.NewDatum(charset.CharsetASCII), RetType: types.NewFieldType(mysql.TypeString)}
+	case 7:
+		return &Constant{Value: types.NewDatum(charset.CollationASCII), RetType: types.NewFieldType(mysql.TypeString)}
+	case 8:
+		return &Constant{Value: types.NewDatum(charset.CharsetLatin1), RetType: types.NewFieldType(mysql.TypeString)}
+	case 9:
+		return &Constant{Value: types.NewDatum(charset.CollationLatin1), RetType: types.NewFieldType(mysql.TypeString)}
+	default:
+		return nil
+	}
+}
+
 // ipv4MappedByteGener is used to generate ipv4-mapped ipv6 bytes.
 type ipv4MappedByteGener struct {
 }

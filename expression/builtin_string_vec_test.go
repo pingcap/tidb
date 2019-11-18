@@ -59,7 +59,17 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.ConcatWS: {},
 	ast.Convert: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{
+				nil,
+				&charsetGener{10},
+			},
+			// childrenFieldTypes: []*types.FieldType{
+			// 	{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			// 	{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			// },
+		},
 	},
 	ast.Substring: {
 		{
