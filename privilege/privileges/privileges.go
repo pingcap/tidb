@@ -34,8 +34,8 @@ var _ privilege.Manager = (*UserPrivileges)(nil)
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
-	user string
-	host string
+	user     string
+	host     string
 	authHost string
 	*Handle
 }
