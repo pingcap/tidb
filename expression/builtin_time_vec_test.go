@@ -142,6 +142,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			},
 		},
 	},
+	ast.Week: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
+	},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
