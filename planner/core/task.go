@@ -145,19 +145,14 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p.self, t)
 }
 
-func (p *PhysicalApply) attach2Task(tasks ...task) task {
-	lTask := finishCopTask(p.ctx, tasks[0].copy())
-	rTask := finishCopTask(p.ctx, tasks[1].copy())
-	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+// GetCosts calculates the cost inside the Apply.
+func (p *PhysicalApply) GetCost(lCount, rCount float64) float64 {
 	var cpuCost float64
-	lCount := lTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	if len(p.LeftConditions) > 0 {
 		cpuCost += lCount * sessVars.CPUFactor
 		lCount *= selectionFactor
 	}
-	rCount := rTask.count()
 	if len(p.RightConditions) > 0 {
 		cpuCost += lCount * rCount * sessVars.CPUFactor
 		rCount *= selectionFactor
@@ -165,9 +160,23 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	if len(p.EqualConditions)+len(p.OtherConditions) > 0 {
 		cpuCost += lCount * rCount * sessVars.CPUFactor
 	}
+	return cpuCost
+}
+
+func (p *PhysicalApply) attach2Task(tasks ...task) task {
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
+	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	selfCost := p.GetCost(lTask.count(), rTask.count())
+	// Apply uses a NestedLoop method for execution.
+	// For every row from the left(outer) side, it executes
+	// the whole right(inner) plan tree. So the cost of apply
+	// should be : apply cost + left cost + left count * right cost
+	cost := selfCost + lTask.cost() + lTask.count()*rTask.cost()
 	return &rootTask{
 		p:   p,
-		cst: cpuCost + lTask.cost(),
+		cst: cost,
 	}
 }
 
