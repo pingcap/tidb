@@ -1589,3 +1589,23 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustExec("insert into 11390t values(1, 1)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
+
+func (s *testSuiteJoin1) TestIssue13177(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a varchar(20), b int, c int)")
+	tk.MustExec("create table t2(a varchar(20), b int, c int, primary key(a, b))")
+	tk.MustExec("insert into t1 values(\"abcd\", 1, 1), (\"bacd\", 2, 2), (\"cbad\", 3, 3)")
+	tk.MustExec("insert into t2 values(\"bcd\", 1, 1), (\"acd\", 2, 2), (\"bad\", 3, 3)")
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+		"bacd 2 2 acd 2 2",
+		"cbad 3 3 bad 3 3",
+		"abcd 1 1 bcd 1 1",
+	))
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+		"bacd 2 2",
+		"cbad 3 3",
+		"abcd 1 1",
+	))
+}
