@@ -219,7 +219,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.Sysdate: {
-		{retEvalType: types.ETDatetime},
+		// Because there is a chance that a time error will cause the test to fail,
+		// we cannot use the vectorized test framework to test builtinSysDateWithoutFspSig.
+		// We test the builtinSysDateWithoutFspSig in TestSysDate function.
+		// {retEvalType: types.ETDatetime},
+		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
+		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 }
 
