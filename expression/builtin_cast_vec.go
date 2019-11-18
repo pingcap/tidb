@@ -918,7 +918,7 @@ func (b *builtinCastDurationAsRealSig) vecEvalReal(input *chunk.Chunk, result *c
 	f64s := result.Float64s()
 
 	var duration types.Duration
-	fsp := int8(b.tp.Decimal)
+	fsp := int8(b.args[0].GetType().Decimal)
 	if fsp, err = types.CheckFsp(int(fsp)); err != nil {
 		return err
 	}
