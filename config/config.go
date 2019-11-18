@@ -283,6 +283,9 @@ type TiKVClient struct {
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
+	// If a store has been up to the limit, it will return error for successive request to
+	// prevent the store occupying too much token in dispatching level.
+	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
 }
 
 // Binlog is the config for binlog.
@@ -404,6 +407,7 @@ var defaultConf = Config{
 		BatchWaitSize:     8,
 
 		RegionCacheTTL: 600,
+		StoreLimit:     0,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
