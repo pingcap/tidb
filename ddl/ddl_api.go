@@ -1790,9 +1790,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
 		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
 	}
-	var err error
-	tbInfo.Charset, tbInfo.Collate, err = getCharsetAndCollateInTableOption(0, options)
-	return err
+	return nil
 }
 
 // isIgnorableSpec checks if the spec type is ignorable.
@@ -1805,36 +1803,36 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			caInfo, err := charset.GetCharsetDesc(opt.StrValue)
+			info, err := charset.GetCharsetDesc(opt.StrValue)
 			if err != nil {
 				return "", "", err
 			}
-			if len(ca) == 0 {
-				ca = caInfo.Name
-			} else if ca != caInfo.Name {
-				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(ca, caInfo.Name)
+			if len(chs) == 0 {
+				chs = info.Name
+			} else if chs != info.Name {
+				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
-			if len(co) == 0 {
-				co = caInfo.DefaultCollation
+			if len(coll) == 0 {
+				coll = info.DefaultCollation
 			}
 		case ast.TableOptionCollate:
-			coInfo, err := charset.GetCollationByName(opt.StrValue)
+			info, err := charset.GetCollationByName(opt.StrValue)
 			if err != nil {
 				return "", "", err
 			}
-			if len(ca) == 0 {
-				ca = coInfo.CharsetName
-			} else if ca != coInfo.CharsetName {
-				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(coInfo.Name, ca)
+			if len(chs) == 0 {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
-			co = coInfo.Name
+			coll = info.Name
 		}
 	}
 	return
