@@ -11,7 +11,7 @@ This proposal mainly solves the following problems in TiDB's process of obtainin
 
 - The toolchains are scattered, it needs to switch back and forth between different tools, and some Linux distributions do not have built-in corresponding tools or built-in tools don't have versions as expected.
 - The information acquisition methods are inconsistent, such as SQL, HTTP, export monitoring, login to each node to view logs, and so on.
-- There are many TiDB cluster components, and the correlation monitoring information between different components is inefficient and cumbersome.
+- There are many TiDB cluster components, and the comparison and correlation of monitoring of different components is inefficient and cumbersome.
 - TiDB does not have centralized log management components, and there is no efficient ways to filter, retrieve, analyze, and aggregate logs of the entire cluster.
 - The system table only contains the current node information, and does not reflect the state of the entire cluster, such as: SLOW_QUERY, PROCESSLIST, STATEMENTS_SUMMARY.
 
@@ -669,8 +669,11 @@ Diagnostic framework design needs to consider a variety of user scenarios, inclu
 - Users may block some diagnostics. For example, if the user expects to be a heterogeneous system, the heterogeneous diagnostic rules will be shielded
 - ...
 
-So we need to implement a diagnostic system that supports rules hot loading. We can consider embedding Lua inside the diagnostic framework to implement the rule definition. The reason for choosing Lua is because Lua is a language that is completely dependent on the host, and the syntax is simple and easy to perform `Introp` with the host language. The diagnostic framework only needs to add the `SQL Query/Diagnosis Report` interface to the Lua virtual machine so that the diagnostic rules can read in the data and feed back the diagnostic results.
+There is a need to implement a diagnostic system that supports regular hot loading, and currently has the following options:
 
-#### Diagnosing Rule Security
-
-After the diagnosis framework is implemented, the user will write various diagnostic rules according to the usage scenario. To prevent the unintended behavior in the diagnostic rules from affecting the host TiDB process, you need to shield the IO/ of the Lua virtual machine. OS related library.
+- Golang Plugin: Use different plugins to define diagnostic rules and load them into the TiDB process
+     - Advantages: Developed with Golang, low development threshold
+     - Disadvantages: Version management is error-prone and requires compiling plugins with the same version as the host TiDB
+- Embedded Lua: Loads Lua scripts at runtime or during startup, the script reads system table data from TiDB and evaluates and feeds back results based on diagnostic rules
+     - Advantages: Lua is a fully host-dependent language with simple syntax and easy integration with the host
+     - Disadvantages: Relying on another scripting language
