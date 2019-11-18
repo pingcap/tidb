@@ -27,6 +27,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -991,9 +992,18 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesEncrypt {
+			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				c.Assert(err, IsNil)
+			}
+			if funcName == ast.User {
+				ctx.GetSessionVars().User = &auth.UserIdentity{
+					Username:     "tidb",
+					Hostname:     "localhost",
+					CurrentUser:  true,
+					AuthHostname: "localhost",
+					AuthUsername: "tidb",
+				}
 			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
@@ -1185,10 +1195,19 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesEncrypt {
+			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
 				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 				if err != nil {
 					panic(err)
+				}
+			}
+			if funcName == ast.User {
+				ctx.GetSessionVars().User = &auth.UserIdentity{
+					Username:     "tidb",
+					Hostname:     "localhost",
+					CurrentUser:  true,
+					AuthHostname: "localhost",
+					AuthUsername: "tidb",
 				}
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
