@@ -2979,10 +2979,11 @@ func (b *PlanBuilder) buildUpdateLists(
 ) {
 	b.curClause = fieldList
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
-	columnsIdx := make(map[*ast.ColumnName]int, len(list))
+	var columnsIdx map[*ast.ColumnName]int
 	cacheColumnsIdx := false
 	if len(p.OutputNames()) > 16 {
 		cacheColumnsIdx = true
+		columnsIdx = make(map[*ast.ColumnName]int, len(list))
 	}
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
