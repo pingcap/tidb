@@ -1003,33 +1003,46 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		joinType:          v.JoinType,
 		isOuterJoin:       v.JoinType.IsOuterJoin(),
 		buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
+		useOuterToBuild:   v.UseOuterToBuild,
 	}
-
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
-	if v.InnerChildIdx == 0 {
-		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
-			return nil
-		}
-		e.buildSideExec = leftExec
-		e.probeSideExec = rightExec
-		e.probeSideFilter = v.RightConditions
-		e.buildKeys = v.LeftJoinKeys
-		e.probeKeys = v.RightJoinKeys
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
-		}
-	} else {
+	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
-		e.buildSideExec = rightExec
-		e.probeSideExec = leftExec
-		e.probeSideFilter = v.LeftConditions
-		e.buildKeys = v.RightJoinKeys
-		e.probeKeys = v.LeftJoinKeys
+	} else {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
+	if v.UseOuterToBuild {
+		// update the buildSideEstCount due to changing the build side
+		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
+		if v.InnerChildIdx == 1 {
+			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
+			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
+			e.outerFilter = v.LeftConditions
+		} else {
+			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
+			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
+			e.outerFilter = v.RightConditions
+		}
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
+		}
+	} else {
+		if v.InnerChildIdx == 0 {
+			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
+			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
+			e.outerFilter = v.RightConditions
+		} else {
+			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
+			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
+			e.outerFilter = v.LeftConditions
+		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
@@ -1834,13 +1847,14 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			compareFuncs:  v.OuterCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
-			rowTypes:      innerTypes,
-			joinKeys:      v.InnerJoinKeys,
-			keyCols:       innerKeyCols,
-			compareFuncs:  v.CompareFuncs,
-			colLens:       v.IdxColLens,
-			desc:          v.Desc,
+			readerBuilder:           &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
+			rowTypes:                innerTypes,
+			joinKeys:                v.InnerJoinKeys,
+			keyCols:                 innerKeyCols,
+			compareFuncs:            v.CompareFuncs,
+			colLens:                 v.IdxColLens,
+			desc:                    v.Desc,
+			keyOff2KeyOffOrderByIdx: v.KeyOff2KeyOffOrderByIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
@@ -1906,6 +1920,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
 	}
+	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {

@@ -824,8 +824,10 @@ func (c *logFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 	if argsLen == 1 {
 		sig = &builtinLog1ArgSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Log1Arg)
 	} else {
 		sig = &builtinLog2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Log2Args)
 	}
 
 	return sig, nil
@@ -894,6 +896,7 @@ func (c *log2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinLog2Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Log2)
 	return sig, nil
 }
 
@@ -930,6 +933,7 @@ func (c *log10FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinLog10Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Log10)
 	return sig, nil
 }
 
@@ -974,6 +978,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if len(args) == 0 {
 		seed := time.Now().UnixNano()
 		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
+		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
 		// If an integer argument N is specified, it is used as the seed value:
@@ -987,8 +992,10 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			seed = time.Now().UnixNano()
 		}
 		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
+		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedSig{bt}
+		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeed)
 	}
 	return sig, nil
 }
@@ -1053,6 +1060,7 @@ func (c *powFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 	sig := &builtinPowSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Pow)
 	return sig, nil
 }
 
@@ -1100,6 +1108,7 @@ func (c *convFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETInt)
 	bf.tp.Flen = 64
 	sig := &builtinConvSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Conv)
 	return sig, nil
 }
 
@@ -1205,6 +1214,7 @@ func (c *crc32FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	bf.tp.Flen = 10
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinCRC32Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_CRC32)
 	return sig, nil
 }
 
@@ -1239,6 +1249,7 @@ func (c *signFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
 	sig := &builtinSignSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Sign)
 	return sig, nil
 }
 
@@ -1278,6 +1289,7 @@ func (c *sqrtFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinSqrtSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Sqrt)
 	return sig, nil
 }
 
@@ -1314,6 +1326,7 @@ func (c *acosFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinAcosSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Acos)
 	return sig, nil
 }
 
@@ -1351,6 +1364,7 @@ func (c *asinFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinAsinSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Asin)
 	return sig, nil
 }
 
@@ -1401,8 +1415,10 @@ func (c *atanFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 	if argsLen == 1 {
 		sig = &builtinAtan1ArgSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Atan1Arg)
 	} else {
 		sig = &builtinAtan2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Atan2Args)
 	}
 
 	return sig, nil
@@ -1465,6 +1481,7 @@ func (c *cosFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinCosSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Cos)
 	return sig, nil
 }
 
@@ -1498,6 +1515,7 @@ func (c *cotFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinCotSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Cot)
 	return sig, nil
 }
 
@@ -1539,6 +1557,7 @@ func (c *degreesFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinDegreesSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Degrees)
 	return sig, nil
 }
 
@@ -1573,6 +1592,7 @@ func (c *expFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinExpSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Exp)
 	return sig, nil
 }
 
@@ -1618,6 +1638,7 @@ func (c *piFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	bf.tp.Decimal = 6
 	bf.tp.Flen = 8
 	sig = &builtinPISig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_PI)
 	return sig, nil
 }
 
@@ -1647,6 +1668,7 @@ func (c *radiansFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinRadiansSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Radians)
 	return sig, nil
 }
 
@@ -1680,6 +1702,7 @@ func (c *sinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinSinSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Sin)
 	return sig, nil
 }
 
@@ -1713,6 +1736,7 @@ func (c *tanFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinTanSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Tan)
 	return sig, nil
 }
 
@@ -1761,13 +1785,17 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETInt:
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) {
 			sig = &builtinTruncateUintSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_TruncateUint)
 		} else {
 			sig = &builtinTruncateIntSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_TruncateInt)
 		}
 	case types.ETReal:
 		sig = &builtinTruncateRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_TruncateReal)
 	case types.ETDecimal:
 		sig = &builtinTruncateDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_TruncateDecimal)
 	}
 
 	return sig, nil

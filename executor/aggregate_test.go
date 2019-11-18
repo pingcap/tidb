@@ -632,18 +632,18 @@ func (s *testSuiteAgg) TestInjectProjBelowTopN(c *C) {
 	tk.MustExec("create table t (i int);")
 	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
 	tk.MustQuery("explain select * from t order by i + 1").Check(testkit.Rows(
-		"Projection_8 10000.00 root Column#3",
+		"Projection_8 10000.00 root Column#1",
 		"└─Sort_4 10000.00 root Column#4:asc",
-		"  └─Projection_9 10000.00 root Column#3, plus(Column#3, 1)",
+		"  └─Projection_9 10000.00 root Column#1, plus(Column#3, 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
 		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("select * from t order by i + 1 ")
 	rs.Check(testkit.Rows(
 		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
 	tk.MustQuery("explain select * from t order by i + 1 limit 2").Check(testkit.Rows(
-		"Projection_15 2.00 root Column#3",
+		"Projection_15 2.00 root Column#1",
 		"└─TopN_7 2.00 root Column#4:asc, offset:0, count:2",
-		"  └─Projection_16 2.00 root Column#3, plus(Column#1, 1)",
+		"  └─Projection_16 2.00 root Column#1, plus(Column#1, 1)",
 		"    └─TableReader_12 2.00 root data:TopN_11",
 		"      └─TopN_11 2.00 cop[tikv] plus(Column#1, 1):asc, offset:0, count:2",
 		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
