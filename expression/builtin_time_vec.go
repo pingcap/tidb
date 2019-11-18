@@ -1663,6 +1663,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 			res, err := strDurationSubDuration(sc, arg0, arg1)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+					sc.AppendWarning(err)
 					result.AppendNull()
 					continue
 				}
