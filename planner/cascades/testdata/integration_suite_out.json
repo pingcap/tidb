@@ -3,76 +3,63 @@
     "Name": "TestPKIsHandleRangeScan",
     "Cases": [
       {
-        "SQL": "explain select b from t where a > 1",
-        "Result": [
+        "SQL": "select b from t where a > 1",
+        "Plan": [
           "Projection_8 3333.33 root Column#2",
           "└─TableReader_9 3333.33 root data:TableScan_10",
           "  └─TableScan_10 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select b from t where a > 1",
+        ],
         "Result": [
           "4",
           "6"
         ]
       },
       {
-        "SQL": "explain select b from t where a > 1 and a < 3",
-        "Result": [
+        "SQL": "select b from t where a > 1 and a < 3",
+        "Plan": [
           "Projection_8 2.00 root Column#2",
           "└─TableReader_9 2.00 root data:TableScan_10",
           "  └─TableScan_10 2.00 cop[tikv] table:t, range:(1,3), keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select b from t where a > 1 and a < 3",
+        ],
         "Result": null
       },
       {
-        "SQL": "explain select b from t where a > 1 and b < 6",
-        "Result": [
+        "SQL": "select b from t where a > 1 and b < 6",
+        "Plan": [
           "Projection_9 2666.67 root Column#2",
           "└─TableReader_10 2666.67 root data:Selection_11",
           "  └─Selection_11 2666.67 cop[tikv] lt(Column#2, 6)",
           "    └─TableScan_12 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select b from t where a > 1 and b < 6",
+        ],
         "Result": [
           "4"
         ]
       },
       {
-        "SQL": "explain select a from t where a * 3 + 1 > 9 and a < 5",
-        "Result": [
+        "SQL": "select a from t where a * 3 + 1 > 9 and a < 5",
+        "Plan": [
           "Projection_9 4.00 root Column#1",
           "└─TableReader_10 4.00 root data:Selection_11",
           "  └─Selection_11 4.00 cop[tikv] gt(plus(mul(Column#1, 3), 1), 9)",
           "    └─TableScan_12 5.00 cop[tikv] table:t, range:[-inf,5), keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select a from t where a * 3 + 1 > 9 and a < 5",
+        ],
         "Result": [
           "3"
         ]
       },
       {
-        "SQL": "explain select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
+        "SQL": "select a from t group by a having sum(b) > 4",
+        "Plan": [
+          "Projection_11 6400.00 root Column#1",
+          "└─Projection_12 6400.00 root Column#1, Column#3",
+          "  └─Selection_13 6400.00 root gt(Column#3, 4)",
+          "    └─HashAgg_18 8000.00 root group by:Column#7, funcs:sum(Column#5), firstrow(Column#7)",
+          "      └─TableReader_19 8000.00 root data:HashAgg_20",
+          "        └─HashAgg_20 8000.00 cop[tikv] group by:Column#1, funcs:sum(Column#2)",
+          "          └─TableScan_16 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
-          "Projection_10 3.20 root Column#1",
-          "└─Selection_11 3.20 root lt(sin(cast(Column#1)), 0.5)",
-          "  └─TableReader_12 4.00 root data:Selection_13",
-          "    └─Selection_13 4.00 cop[tikv] gt(plus(mul(Column#1, 3), 1), 9)",
-          "      └─TableScan_14 5.00 cop[tikv] table:t, range:[-inf,5), keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select a from t where a * 3 + 1 > 9 and sin(a) < 0.5 and a < 5",
-        "Result": [
-          "3"
+          "5"
         ]
       }
     ]
@@ -81,15 +68,12 @@
     "Name": "TestSort",
     "Cases": [
       {
-        "SQL": "explain select a from t order by a",
-        "Result": [
+        "SQL": "select a from t order by a",
+        "Plan": [
           "Projection_7 10000.00 root Column#1",
           "└─TableReader_8 10000.00 root data:TableScan_9",
           "  └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select a from t order by a",
+        ],
         "Result": [
           "1",
           "2",
@@ -98,16 +82,13 @@
         ]
       },
       {
-        "SQL": "explain select b from t order by b",
-        "Result": [
+        "SQL": "select b from t order by b",
+        "Plan": [
           "Projection_7 10000.00 root Column#2",
           "└─Sort_12 10000.00 root Column#2:asc",
           "  └─TableReader_10 10000.00 root data:TableScan_11",
           "    └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select b from t order by b",
+        ],
         "Result": [
           "11",
           "22",
@@ -116,8 +97,8 @@
         ]
       },
       {
-        "SQL": "explain select b from t order by a+b",
-        "Result": [
+        "SQL": "select b from t order by a+b",
+        "Plan": [
           "Projection_7 10000.00 root Column#2",
           "└─Projection_12 10000.00 root Column#2, Column#1",
           "  └─Sort_8 10000.00 root Column#4:asc",
@@ -125,10 +106,7 @@
           "      └─Projection_9 10000.00 root Column#2, Column#1",
           "        └─TableReader_10 10000.00 root data:TableScan_11",
           "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select b from t order by a+b",
+        ],
         "Result": [
           "11",
           "22",
@@ -137,8 +115,8 @@
         ]
       },
       {
-        "SQL": "explain select b from t order by b, a+b, a",
-        "Result": [
+        "SQL": "select b from t order by b, a+b, a",
+        "Plan": [
           "Projection_7 10000.00 root Column#2",
           "└─Projection_12 10000.00 root Column#2, Column#1",
           "  └─Sort_8 10000.00 root Column#2:asc, Column#4:asc, Column#1:asc",
@@ -146,10 +124,7 @@
           "      └─Projection_9 10000.00 root Column#2, Column#1",
           "        └─TableReader_10 10000.00 root data:TableScan_11",
           "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select b from t order by b, a+b, a",
+        ],
         "Result": [
           "11",
           "22",
@@ -163,52 +138,41 @@
     "Name": "TestAggregation",
     "Cases": [
       {
-        "SQL": "explain select sum(a) from t",
+        "SQL": "select sum(a) from t",
+        "Plan": [
+          "Projection_8 1.00 root Column#3",
+          "└─HashAgg_13 1.00 root funcs:sum(Column#4)",
+          "  └─TableReader_14 1.00 root data:HashAgg_15",
+          "    └─HashAgg_15 1.00 cop[tikv] funcs:sum(Column#1)",
+          "      └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
-          "Projection_6 1.00 root Column#3",
-          "└─HashAgg_7 1.00 root funcs:sum(Column#4)",
-          "  └─Projection_10 10000.00 root cast(Column#1)",
-          "    └─TableReader_8 10000.00 root data:TableScan_9",
-          "      └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select a from t",
-        "Result": [
-          "1",
-          "2",
-          "3",
-          "4"
-        ]
-      },
-      {
-        "SQL": "explain select max(a), min(b) from t",
-        "Result": [
-          "Projection_6 1.00 root Column#3, Column#4",
-          "└─HashAgg_7 1.00 root funcs:max(Column#1), min(Column#2)",
-          "  └─TableReader_8 10000.00 root data:TableScan_9",
-          "    └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "10"
         ]
       },
       {
         "SQL": "select max(a), min(b) from t",
+        "Plan": [
+          "Projection_8 1.00 root Column#3, Column#4",
+          "└─HashAgg_12 1.00 root funcs:max(Column#5), min(Column#6)",
+          "  └─TableReader_13 1.00 root data:HashAgg_14",
+          "    └─HashAgg_14 1.00 cop[tikv] funcs:max(Column#1), min(Column#2)",
+          "      └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
           "4 11"
         ]
       },
       {
-        "SQL": "explain select b, avg(a) from t group by b order by b",
-        "Result": [
-          "Projection_8 8000.00 root Column#2, Column#3",
-          "└─Sort_14 8000.00 root Column#2:asc",
-          "  └─HashAgg_10 8000.00 root group by:Column#6, funcs:avg(Column#4), firstrow(Column#5)",
-          "    └─Projection_13 10000.00 root cast(Column#1), Column#2, Column#2",
-          "      └─TableReader_11 10000.00 root data:TableScan_12",
-          "        └─TableScan_12 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "select b, avg(a) from t group by b order by b",
+        "Plan": [
+          "Projection_10 8000.00 root Column#2, Column#3",
+          "└─Sort_19 8000.00 root Column#2:asc",
+          "  └─HashAgg_12 8000.00 root group by:Column#10, funcs:avg(Column#8), firstrow(Column#9)",
+          "    └─Projection_15 10000.00 root cast(Column#1), Column#2, Column#2",
+          "      └─TableReader_13 10000.00 root data:TableScan_14",
+          "        └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
           "11 1.0000",
           "22 2.0000",
@@ -217,20 +181,34 @@
         ]
       },
       {
-        "SQL": "explain select b, avg(a) from t group by b having sum(a) > 1 order by b",
+        "SQL": "select b, sum(a) from t group by b order by b",
+        "Plan": [
+          "Projection_10 8000.00 root Column#2, Column#3",
+          "└─Sort_19 8000.00 root Column#2:asc",
+          "  └─HashAgg_16 8000.00 root group by:Column#6, funcs:sum(Column#4), firstrow(Column#6)",
+          "    └─TableReader_17 8000.00 root data:HashAgg_18",
+          "      └─HashAgg_18 8000.00 cop[tikv] group by:Column#2, funcs:sum(Column#1)",
+          "        └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
-          "Projection_10 6400.00 root Column#2, Column#3",
-          "└─Projection_12 6400.00 root Column#2, Column#3, Column#4",
-          "  └─Sort_22 6400.00 root Column#2:asc",
-          "    └─Selection_21 6400.00 root gt(Column#4, 1)",
-          "      └─HashAgg_15 8000.00 root group by:Column#10, funcs:avg(Column#7), sum(Column#8), firstrow(Column#9)",
-          "        └─Projection_18 10000.00 root cast(Column#1), cast(Column#1), Column#2, Column#2",
-          "          └─TableReader_16 10000.00 root data:TableScan_17",
-          "            └─TableScan_17 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "11 1",
+          "22 2",
+          "33 3",
+          "44 4"
         ]
       },
       {
         "SQL": "select b, avg(a) from t group by b having sum(a) > 1 order by b",
+        "Plan": [
+          "Projection_12 6400.00 root Column#2, Column#3",
+          "└─Projection_14 6400.00 root Column#2, Column#3, Column#4",
+          "  └─Sort_27 6400.00 root Column#2:asc",
+          "    └─Selection_26 6400.00 root gt(Column#4, 1)",
+          "      └─HashAgg_17 8000.00 root group by:Column#15, funcs:avg(Column#12), sum(Column#13), firstrow(Column#14)",
+          "        └─Projection_20 10000.00 root cast(Column#1), cast(Column#1), Column#2, Column#2",
+          "          └─TableReader_18 10000.00 root data:TableScan_19",
+          "            └─TableScan_19 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
           "22 2.0000",
           "33 3.0000",
@@ -238,35 +216,29 @@
         ]
       },
       {
-        "SQL": "explain select max(a+b) from t",
-        "Result": [
-          "Projection_6 1.00 root Column#3",
-          "└─HashAgg_7 1.00 root funcs:max(Column#4)",
-          "  └─Projection_10 10000.00 root plus(Column#1, Column#2)",
-          "    └─TableReader_8 10000.00 root data:TableScan_9",
-          "      └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "select max(a+b) from t",
+        "Plan": [
+          "Projection_8 1.00 root Column#3",
+          "└─HashAgg_13 1.00 root funcs:max(Column#4)",
+          "  └─TableReader_14 1.00 root data:HashAgg_15",
+          "    └─HashAgg_15 1.00 cop[tikv] funcs:max(plus(Column#1, Column#2))",
+          "      └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
           "48"
         ]
       },
       {
-        "SQL": "explain select sum(a) from t group by a, a+b order by a",
-        "Result": [
-          "Projection_8 8000.00 root Column#3",
-          "└─Projection_10 8000.00 root Column#3, Column#1",
-          "  └─Sort_16 8000.00 root Column#1:asc",
-          "    └─HashAgg_12 8000.00 root group by:Column#7, Column#8, funcs:sum(Column#5), firstrow(Column#6)",
-          "      └─Projection_15 10000.00 root cast(Column#1), Column#1, Column#1, plus(Column#1, Column#2)",
-          "        └─TableReader_13 10000.00 root data:TableScan_14",
-          "          └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "select sum(a) from t group by a, a+b order by a",
+        "Plan": [
+          "Projection_10 8000.00 root Column#3",
+          "└─Projection_12 8000.00 root Column#3, Column#1",
+          "  └─Sort_21 8000.00 root Column#1:asc",
+          "    └─HashAgg_14 8000.00 root group by:Column#11, Column#12, funcs:sum(Column#9), firstrow(Column#10)",
+          "      └─Projection_17 10000.00 root cast(Column#1), Column#1, Column#1, plus(Column#1, Column#2)",
+          "        └─TableReader_15 10000.00 root data:TableScan_16",
+          "          └─TableScan_16 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
         "Result": [
           "1",
           "2",
