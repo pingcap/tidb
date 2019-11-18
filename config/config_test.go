@@ -61,6 +61,7 @@ unrecognized-option-test = true
 
 	_, err = f.WriteString(`
 token-limit = 0
+alter-primary-key = true
 split-region-max-num=10000
 [performance]
 [tikv-client]
@@ -81,6 +82,9 @@ max-sql-length=1024
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
+
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
