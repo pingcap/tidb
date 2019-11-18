@@ -2,7 +2,7 @@
 
 ## Summary
 
-目前 TiDB 诊断信息获取主要依赖外部工具（perf/iosnoop/iotop/vmstat/sar/...）、监控系统（Prometheus/Grafana）、日志文件、HTTP API 和 TiDB 提供的系统表。分散的工具链和繁杂的获取方式导致 TiDB 的集群的使用门槛高、运维难度大、不能提前发现问题以及遇到问题不能及时排查、诊断和恢复集群等。
+目前 TiDB 获取诊断信息主要依赖外部工具（perf/iosnoop/iotop/vmstat/sar/...）、监控系统（Prometheus/Grafana）、日志文件、HTTP API 和 TiDB 提供的系统表。分散的工具链和繁杂的获取方式导致 TiDB 的集群的使用门槛高、运维难度大、不能提前发现问题以及遇到问题不能及时排查、诊断和恢复集群等。
 本提案提出一种新的方法，在 TiDB 中内置获取诊断信息的功能，并将诊断信息使用系统表的形式对外暴露，使用户可以使用 SQL 的方式进行查询。
 
 ## Motivation
@@ -10,7 +10,7 @@
 本提案主要解决 TiDB 在获取诊断信息过程中的以下问题：
 
 - 工具链分散，需要在不同工具之间来回切换，且部分 Linux 发行版未内置相应工具或内置工具的版本不一致。
-- 信息获取方式不一致，比如有 SQL、HTTP、导出监控，登录各个节点查看日志等。
+- 信息获取方式不一致，比如有 SQL、HTTP、导出监控、登录各个节点查看日志等。
 - TiDB 集群组件较多，不同组件之间对比关联监控信息低效且繁琐。
 - TiDB 没有集中日志管理组件，没有高效的手段对整个集群的日志进行过滤、检索、分析、聚合。
 - 系统表只包含当前节点信息，不能体现整个集群的状态，如：SLOW_QUERY, PROCESSLIST, STATEMENTS_SUMMARY。
@@ -110,15 +110,15 @@ TiDB/TiKV/PD 三个组件都需要实现系统信息采集模块，其中 TiDB/P
 
 所有节点都包含当前节点的生效配置，不需要额外的步骤既可拿到配置信息。
 
-#### 节点日志查询
+#### 节点日志信息
 
-TiDB 集群部署过程中没有部署额外的日志收集组件，TiDB/TiKV/PD 产生的日志都保存在各自的节点上，在日志检索中主要遇到以下问题：
+TiDB/TiKV/PD 产生的日志都保存在各自的节点上，并且 TiDB 集群部署过程中没有部署额外的日志收集组件，所以在日志检索中有以下问题：
 
 - 日志分布在各个节点，需要单独登陆到每一个节点使用关键字进行搜索
 - 日志文件会每天 rotate，所以在单个节点也需要对多个日志文件进行搜索
 - 没有简单的方式对多个节点的日志按照时间排序整合到同一个文件
 
-要解决以上问题，有以下两种解决方案：
+本提案提供以下两种思路来解决以上问题：
 
 - 引入第三方日志收集组件对所有节点的日志进行收集
     - 优势：统一的日志管理，日志可以长时间保存，并易于检索，并且多个组件的日志可以按照时间排序归并
@@ -127,7 +127,7 @@ TiDB 集群部署过程中没有部署额外的日志收集组件，TiDB/TiKV/PD
     - 优势：不引入三方组件，谓词下推后只返回过滤后的日志，能轻易的与 TiDB SQL 进行集成，并能复用 SQL 引擎的过滤、聚合等
     - 劣势：如果节点日志删除后，不能检索到对应日志
 
-根据以上的优劣势，本提案使用第二种方案，即各个节点提供日志搜索接口，TiDB 将日志搜索的 SQL 中谓词下推到各个节点，日志搜索接口的语义为：搜索本地日志文件，并使用谓词进行过滤，匹配的结果返回。
+根据以上的优劣势分析，本提案使用第二种方案，即各个节点提供日志搜索接口，TiDB 将日志搜索的 SQL 中谓词下推到各个节点，日志搜索接口的语义为：搜索本地日志文件，并使用谓词进行过滤，匹配的结果返回。
 
 - `start_time`: 日志检索的开始时间（unix 时间戳，单位毫秒），如果没有该谓词，则默认为 0。
 - `end_time`: 日志检索的开始时间（unix 时间戳，单位毫秒），如果没有该谓词，则默认为 `int64::MAX`。
@@ -154,6 +154,7 @@ TiDB 集群部署过程中没有部署额外的日志收集组件，TiDB/TiKV/PD
 
     ```
     curl http://127.0.0.1:10080/debug/pprof/profile > cpu.pprof
+    go tool pprof -svg cpu.svn cpu.pprof
     ```
 
 目前存在的两个主要问题：
@@ -161,29 +162,29 @@ TiDB 集群部署过程中没有部署额外的日志收集组件，TiDB/TiKV/PD
 - 生产环境中不一定包含对应的外部工具（perf/flamegraph.pl/go）
 - TiKV 和 TiDB 没有统一的方式
 
-为了解决以上两个问题，本提案将获取火焰图的方法内置到 TiDB 中，统一使用 SQL 触发采样并将采样数据转换为火焰图作为查询结果显示，一方面降低对外部工具的依赖，同时也极大的提升效率。各个节点实现采样数据采集功能并提供采样接口，对上层输出指定格式的采样数据。暂定输出为 github.com/google/pprof 定义的 ProtoBuf 格式。
+为了解决以上两个问题，本提案将获取火焰图的方法内置到 TiDB 中，统一使用 SQL 触发采样并将采样数据转换为火焰图作为查询结果显示，一方面降低对外部工具的依赖，同时也极大的提升效率。各个节点实现采样数据采集功能并提供采样接口，对上层输出指定格式的采样数据。暂定输出为 `[pprof](github.com/google/pprof)` 定义的 ProtoBuf 格式。
 
 采样数据获取方式：
 
 - TiDB/PD: 使用 Golang Runtime 内置的采样数据获取接口
-- TiKV: 使用 github.com/tikv/pprof-rs 库采集采样数据
+- TiKV: 使用 `[pprof-rs](github.com/tikv/pprof-rs)` 库采集采样数据
 
 #### 节点监控信息
 
-监控信息主要是各个组件内部定义的监控指标，目前 TiDB/TiKV/PD 都会提供 `/metrics` HTTP API，然后通过部署的 Prometheus 组件定时（默认配置 15s）的拉取集群各个节点的监控指标。并且部署了 Grafana 组件用于从 Prometheus 拉取监控数据，进行可视化展示。
+监控信息主要是各个组件内部定义的监控指标。目前 TiDB/TiKV/PD 都会提供 `/metrics` HTTP API，然后通过部署的 Prometheus 组件定时（默认配置 15s）的拉取集群各个节点的监控指标。并且部署了 Grafana 组件用于从 Prometheus 拉取监控数据，进行可视化展示。
 
-监控信息不同于实时获取的系统信息，监控数据是一个时序数据，包含各个节点在各个时间点的数据，对于排查问题和诊断问题有非常重要的用途，所以监控信息的保存和查询对于本提案实现 TiDB 内置 SQL 诊断非常重要。为了能够在 TiDB 内使用 SQL 查询监控数据，目前有以下备选方案：
+监控信息不同于实时获取的系统信息，监控数据是一个时序数据。包含各个节点在各个时间点的数据，对于排查问题和诊断问题有非常重要的用途，所以监控信息的保存和查询对于本提案实现 TiDB 内置 SQL 诊断非常重要。为了能够在 TiDB 内使用 SQL 查询监控数据，目前有以下备选方案：
 
 - 使用 Prometheus client 和 PromQL 查询 Prometheus server 的数据
     - 优势：有现成解决方案，只需要将 Prometheus server 的地址注册到 TiDB 即可，实现简单
     - 劣势：增强了 TiDB 对 Prometheus 的依赖，为后续完全移除 Prometheus 增加了困难
 - 将最近一段时间内（暂定 1 天）的监控数据保存到 PD，从 PD 中查询监控数据
-本提案倾向于方案二，虽然实现难度更大，但是对后续的工作有帮助。为了解决实现 PromQL 和时序数据保存的实现难度大和周期长的问题，可以暂时折中将 Prometheus 时序数据保存和查询相应的模块抽离出来，并嵌入到 PD 中。
+    - 优势：该方案不依赖 Prometheus server，为后续移除 Prometheus 组件有一定帮助
     - 劣势：需要实现时序保存逻辑，并实现对应的查询引擎，实现难度和工作量大
+
+本提案倾向于方案二，虽然实现难度更大，但是对后续的工作有帮助。为了解决实现 PromQL 和时序数据保存的实现难度大和周期长的问题，可以暂时折中将 Prometheus 时序数据保存和查询相应的模块抽离出来，并嵌入到 PD 中。
+
 ### 系统信息获取
-本提案倾向于方案二，虽然实现难度更大，但是对后续的工作有帮助，为了解决实现 PromQL 和时序数据保存的实现难度大和周期长的问题，可以暂时折中将 Prometheus 时序数据保存和查询相应的模块抽离出来，并嵌入到 PD 中。
-由于 TiDB/TiKV/PD 组件之前已经可以通过 HTTP API 对外暴露部分系统信息，并且 PD 主要通过 HTTP API 对外提供服务，所以本提案的部分接口会复用已有接口，使用 HTTP API 从各个组件获取数据，比如获取配置信息。
-### TiDB 通过各个组件接口获取系统信息
 
 由于 TiDB/TiKV/PD 组件之前已经可以通过 HTTP API 对外暴露部分系统信息，并且 PD 主要通过 HTTP API 对外提供服务，所以本提案的部分接口会复用已有逻辑，使用 HTTP API 从各个组件获取数据，比如配置信息获取。
 
@@ -240,32 +241,32 @@ message ServerInfoResponse {
 	repeated ServerInfoItem items = 1;
 }
 ```
-目前 TiDB/TiKV/PD 包含部分可复用 HTTP API，本提案暂不将对应接口迁移至 gRPC Service，迁移工作由后续其他计划完成。所有 HTTP API 需要以 JSON 格式返回数据，以下是提案中可能用到的 HTTP API 列表：
-#### 可复用的 HTTP API
-- 获取配置信息
-目前 TiDB/TiKV/PD 存在的可复用 HTTP API，本提案暂不将对应接口迁移至 gRPC Service，迁移工作由后续其他计划完成，所有 HTTP API 需要以 JSON 格式返回数据，以下是提案中可能用到的 HTTP API 列表：
 
-- 配置信息获取
+#### 可复用的 HTTP API
+
+目前 TiDB/TiKV/PD 包含部分可复用 HTTP API，本提案暂不将对应接口迁移至 gRPC Service，迁移工作由后续其他计划完成。所有 HTTP API 需要以 JSON 格式返回数据，以下是提案中可能用到的 HTTP API 列表：
+
+- 获取配置信息
     - PD: /pd/api/v1/config
     - TiDB/TiKV: /config
 - 性能采样接口: TiDB/PD 包含以下所有接口，TiKV 暂时只包含 CPU 性能采样接口
     - CPU: /debug/pprof/profile
     - Memory: /debug/pprof/heap
     - Allocs: /debug/pprof/allocs
-### 集群信息系统表
+    - Mutex: /debug/pprof/mutex
     - Block: /debug/pprof/block
-每个 TiDB 实例均可以通过前两层提供的 HTTP API 或 gRPC Service 访问其他节点的信息，从而实现集群的 Global View，本提案中通过新建一系列相关系统表将采集到的集群信息向上层提供数据，上层包括不限于：
-### 信息聚合定义系统表
-- 终端用户：用户通过 SQL 查询获取集群信息用于排查问题
-- 运维系统：能够通过 SQL 获取集群信息将使 TiDB 集成到自己的运维系统中更加方便
+
+### 集群信息系统表
+
+每个 TiDB 实例均可以通过前两层提供的 HTTP API 或 gRPC Service 访问其他节点的信息，从而实现集群的 Global View。本提案中通过新建一系列相关系统表将采集到的集群信息向上层提供数据，上层包括不限于：
 
 - 终端用户：用户直接通过 SQL 查询获取集群信息排查问题
 - 运维系统：TiDB 的使用环境比较多样，客户可以通过 SQL 获取集群信息将 TiDB 集成到自己的运维系统中
 - 生态工具：外部工具通过 SQL 拿到集群信息实现功能定制，比如 `sqltop` 可以直接通过集群 `events_statements_summary_by_digest` 获取整个集群的 SQL 采样信息
-要为 TiDB 实例提供一个 **Global View**，首先需要为 TiDB 实例提供一个拓扑系统表，可以从拓扑系统表中获取各个节点的 HTTP API Address 和 gRPC Service Address，从而方便的构造出各个远程 API 的 Endpoint，进一步获取目标节点采集的信息。
+
 #### 集群拓扑系统表
 
-要为 TiDB 实例提供一个 Global View，首先需要为 TiDB 实例提供一个拓扑系统表，可以从拓扑系统表中获取各个节点的 HTTP API Address 和 gRPC Service Address，从而方便的构造出各个远程 API 的 Endpoint，进一步获取目标节点采集的信息。
+要为 TiDB 实例提供一个 **Global View**，首先需要为 TiDB 实例提供一个拓扑系统表，可以从拓扑系统表中获取各个节点的 HTTP API Address 和 gRPC Service Address，从而方便的构造出各个远程 API 的 Endpoint，进一步获取目标节点采集的信息。
 
 本提案实现完成可以通过 SQL 查询以下结果：
 
@@ -297,10 +298,10 @@ mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
 +------+-----------------+-----------------+-----------------------------------------------+
 3 rows in set (0.00 sec)
 ```
-由于监控指标会随着程序迭代而添加和删除，对于同一个监控指标，可能会通过不同的表达式获取监控不同维度的信息，鉴于以上两个需求，需要设计一个有弹性的监控系统表框架，本提案暂时才采取以下方案：将表达式映射为 `metrics_schema` 数据库中的系统表，表达式与系统表的关系可以通过以下方式关联：
+
 #### 监控信息系统表
 
-由于监控指标会随着程序的迭代添加和删除监控指标，对于同一个监控指标，可能有不同的表达式获取监控不同维度的信息，鉴于以上两个需求，需要设计一个有弹性的监控系统表框架，本提案暂时才采取以下方案：将表达式映射为 `metrics_schema` 数据库中的系统表，表达式与系统表的关系可以通过以下方式关联：
+由于监控指标会随着程序的迭代添加和删除监控指标，对于同一个监控指标，可能有不同的表达式获取监控不同维度的信息。鉴于以上两个需求，需要设计一个有弹性的监控系统表框架，本提案暂时才采取以下方案：将表达式映射为 `metrics_schema` 数据库中的系统表，表达式与系统表的关系可以通过以下方式关联：
 
 - 定义在配置文件
 
@@ -319,7 +320,7 @@ mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
     sum(rate(tidb_distsql_handle_query_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, type))`
     ```
 
-- 特殊 SQL 命令添加
+- 特殊 SQL 命令
 
     ```
     mysql> admin metrics_schema add parse_duration `histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, sql_type))`
@@ -352,10 +353,10 @@ mysql> show tables;
 | execution_duration                  |
 | pd_client_cmd_ops                   |
 +-------------------------------------+
-PromQL 表达式查询结果如何转换为系统表中的数据主要取决于查询结果的 Schema，下面以表达式 `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[1m]offset 0)) by (type)` 为例子，查询的结果为：
+7 rows in set (0.00 sec)
 ```
 
-表达式映射到系统表时字段的确定方式主要取决与表达式执行结果的数据，下面以表达式 `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[1m]offset 0)) by (type)` 为例子，查询的结果为：
+表达式映射到系统表时字段的确定方式主要取决与表达式执行结果的数据。以表达式 `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[1m]offset 0)) by (type)` 为例，查询的结果为：
 
 
 | Element | Value |
@@ -425,13 +426,13 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time=’20
 ```
 
 对于多个 label 的 PromQL 就会有多个列的数据，可以方便的使用已有的 SQL 执行引擎对数据过滤、聚合得到期望的结果。
-通过各个节点的 `/debug/pprof/profile` 拿到对应节点性能采样数据，然后使用 SQL 查询结果的方式向用户输出聚合后性能剖析结果。由于 SQL 查询结果不能以 svg 的格式输出，所以需要解决输出内容展示的问题。
 
 #### 节点性能剖析系统表
 
 通过各个节点的 `/debug/pprof/profile` 拿到对应节点性能采样数据，然后对采样数据进行聚合，最终使用 SQL 查询结果的方式想用户输出性能剖析结果。由于 SQL 查询结果不能以 svg 的格式输出，所以需要解决输出内容展示的问题。
 
 火焰图快速定位问题的核心点是：
+
 - 提供全局视野
 - 展示全部调用路径
 - 层次化展示
@@ -439,6 +440,7 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time=’20
 本提案提出的解决方案聚焦在解决核心问题的点上，而未拘泥于是图形展示形式。最终的方案为：对采样数据进行聚合，并将所有的调用路径使用树形结构逐行进行展示。
 
 解决方案是通过以下方式契合三个核心点：
+
 - 提供全局视野：对每一个聚合结果使用单独的一列展示在全局的使用比例，可以方便过滤排序
 - 展示全部调用路径：将所有的调用路径都作为查询结果，并使用单独的列对各个调用路径的子树进行编号，可以方便的通过过滤只查看某一个子树
 - 层次化展示：使用树形结构展示堆栈，使用单独的列记录栈的深度，可以方便的对不同栈的深度进行过滤
