@@ -14,13 +14,13 @@
 package expression
 
 import (
-	"math"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"math"
+	"strconv"
+	"time"
 )
 
 func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -785,7 +785,47 @@ func (b *builtinAddDateDurationIntSig) vectorized() bool {
 }
 
 func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	defer b.bufAllocator.put(buf)
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
+		return err
+	}
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf.MergeNulls(buf1)
+	buf2.MergeNulls(buf)
+	result.MergeNulls(buf2)
+	result.ResizeGoDuration(n, false)
+	res := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			res[i] = types.ZeroDuration.Duration
+			continue
+		}
+		unit := buf2.GetString(i)
+		dur := buf.GetDuration(i, 0)
+		temp := buf1.GetInt64(i)
+		interval := strconv.FormatInt(temp, 10)
+		q, _, err := b.addDuration(b.ctx, dur, interval, unit)
+		if err != nil {
+			return nil
+		}
+		res[i] = q.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubDateIntStringSig) vectorized() bool {
