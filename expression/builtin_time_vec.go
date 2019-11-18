@@ -1847,9 +1847,7 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	}
 	defer b.bufAllocator.put(lhsBuf)
 	if err := b.args[1].VecEvalTime(b.ctx, input, lhsBuf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 	rhsBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
@@ -1857,9 +1855,7 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	}
 	defer b.bufAllocator.put(rhsBuf)
 	if err := b.args[2].VecEvalTime(b.ctx, input, rhsBuf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 
 	result.ResizeInt64(n, false)
@@ -1871,19 +1867,15 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 		if result.IsNull(i) {
 			continue
 		}
-		if lhsBuf.IsNull(i) || rhsBuf.IsNull(i) {
-			if err := handleInvalidTimeError(b.ctx, err); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
 		if invalidLHS, invalidRHS := lhs[i].InvalidZero(), rhs[i].InvalidZero(); invalidLHS || invalidRHS {
 			if invalidLHS {
 				err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(lhs[i].String()))
 			}
 			if invalidRHS {
 				err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(rhs[i].String()))
+			}
+			if err != nil {
+				return err
 			}
 		}
 		i64s[i] = types.TimestampDiff(unitBuf.GetString(i), lhs[i], rhs[i])
