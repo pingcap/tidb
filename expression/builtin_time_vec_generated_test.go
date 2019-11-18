@@ -102,20 +102,20 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		// builtinAddDateAndDurationSig
 		{
 			retEvalType:        types.ETString,
-			childrenTypes:      []types.EvalType{types.ETDuration, types.ETDuration},
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDuration},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 			},
 		},
 		// builtinAddDateAndStringSig
 		{
 			retEvalType:        types.ETString,
-			childrenTypes:      []types.EvalType{types.ETDuration, types.ETString},
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETString},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
 			},
 		},
