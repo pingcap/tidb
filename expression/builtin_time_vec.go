@@ -1424,11 +1424,44 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinUnixTimestampDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	zone := getTimeZone(b.ctx)
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	decimals := result.Decimals()
+	ds := buf.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		var t time.Time
+		if t, err = ds[i].Time.GoTime(zone); err != nil {
+			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		rec, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+		if err != nil {
+			return err
+		}
+		decimals[i] = *rec
+	}
+	return nil
 }
 
 func (b *builtinPeriodAddSig) vectorized() bool {
@@ -1906,11 +1939,31 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinUnixTimestampIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		t, err := buf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
+		if buf.IsNull(i) || t.IsZero() || err != nil {
+			result.AppendInt64(0)
+			continue
+		}
+		i64s[i] = t.Unix()
+	}
+	return nil
 }
 
 func (b *builtinAddDateDurationDecimalSig) vectorized() bool {

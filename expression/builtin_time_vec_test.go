@@ -125,6 +125,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.TimestampDiff:    {},
 	ast.TimestampLiteral: {},
+	ast.UnixTimestamp: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.SubDate:          {},
 	ast.AddDate:          {},
 	ast.SubTime:          {},
