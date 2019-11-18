@@ -781,7 +781,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinAddDateDurationIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -792,21 +792,26 @@ func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, resul
 	}
 	defer b.bufAllocator.put(buf2)
 	buf, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
 	defer b.bufAllocator.put(buf)
 	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
 	defer b.bufAllocator.put(buf1)
-
 	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
 		return err
 	}
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
 		return err
 	}
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf.MergeNulls(buf1)
-	buf2.MergeNulls(buf)
+	result.MergeNulls(buf1)
+	result.MergeNulls(buf)
 	result.MergeNulls(buf2)
 	result.ResizeGoDuration(n, false)
 	res := result.GoDurations()
@@ -816,7 +821,7 @@ func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, resul
 			continue
 		}
 		unit := buf2.GetString(i)
-		dur := buf.GetDuration(i, 0)
+		dur := buf.GetDuration(i, b.args[0].GetType().Decimal)
 		temp := buf1.GetInt64(i)
 		interval := strconv.FormatInt(temp, 10)
 		q, _, err := b.addDuration(b.ctx, dur, interval, unit)
