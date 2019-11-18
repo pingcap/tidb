@@ -455,7 +455,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		w.waitSchemaChanged(context.TODO(), d, waitTime, schemaVer, job)
+		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
