@@ -115,8 +115,7 @@ func (c *Column) Reset(eType types.EvalType) {
 	}
 }
 
-// reset resets this Column but doesn't modify the elemBuf field since
-// it doesn't know what type the data is.
+// reset resets the underlying data of this Column but doesn't modify its data type.
 func (c *Column) reset() {
 	c.length = 0
 	c.nullBitmap = c.nullBitmap[:0]
