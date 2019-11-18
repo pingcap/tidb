@@ -290,9 +290,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
-	// TODO: It should be Action_MinCommitTSPushed if minCommitTS is set in the Prewrite request.
-	// Update here to kvrpcpb.Action_MinCommitTSPushed in the next PR.
-	c.Assert(status.action, Equals, kvrpcpb.Action_NoAction)
+	c.Assert(status.action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
@@ -496,4 +494,34 @@ func init() {
 	maxLockTTL = 120
 	ttlFactor = 6
 	oracleUpdateInterval = 2
+}
+
+func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
+	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 1<<20)
+	// Test the old version TiDB data, this line is essential.
+	committer.zeroCommitTS = true
+	err = committer.prewriteKeys(bo, committer.keys)
+	c.Assert(err, IsNil)
+
+	lock := s.mustGetLock(c, []byte("key"))
+	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(pushed, HasLen, 0)
+	c.Assert(expire, Greater, int64(0))
+
+	expire, pushed, err = newLockResolver(s.store).ResolveLocks(bo, math.MaxUint64, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(pushed, HasLen, 0)
+	c.Assert(expire, Greater, int64(0))
+
+	// Clean up this test.
+	lock.TTL = uint64(0)
+	expire, _, err = newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(expire, Equals, int64(0))
 }

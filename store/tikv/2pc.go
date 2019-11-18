@@ -127,6 +127,9 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
+
+	// Used in the test code.
+	zeroCommitTS bool
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -489,10 +492,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 		}
 	}
 	var minCommitTS uint64
-	if c.forUpdateTS > 0 {
-		minCommitTS = c.forUpdateTS + 1
-	} else {
-		minCommitTS = c.startTS + 1
+	if !c.zeroCommitTS {
+		if c.forUpdateTS > 0 {
+			minCommitTS = c.forUpdateTS + 1
+		} else {
+			minCommitTS = c.startTS + 1
+		}
 	}
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
