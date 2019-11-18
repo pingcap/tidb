@@ -15,6 +15,7 @@ package cascades
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/util/ranger"
@@ -53,6 +54,7 @@ const (
 	rulePushSelDownAggregation
 	rulePushSelDownJoin
 	ruleEnumeratePaths
+	rulePushAggDownGather
 	ruleTransformLimitToTopN
 )
 
@@ -64,6 +66,7 @@ var transformationRuleList = []Transformation{
 	&PushSelDownAggregation{},
 	&PushSelDownJoin{},
 	&EnumeratePaths{},
+	&PushAggDownGather{},
 	&TransformLimitToTopN{},
 }
 
@@ -78,6 +81,9 @@ var defaultTransformationMap = map[memo.Operand][]TransformationID{
 	},
 	memo.OperandDataSource: {
 		ruleEnumeratePaths,
+	},
+	memo.OperandAggregation: {
+		rulePushAggDownGather,
 	},
 	memo.OperandLimit: {
 		ruleTransformLimitToTopN,
@@ -238,6 +244,92 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil
+}
+
+// PushAggDownGather splits Aggregation to two stages, final and partial1,
+// and pushed the partial Aggregation down to the child of TableGather.
+type PushAggDownGather struct {
+}
+
+// GetPattern implements Transformation interface. The pattern of this rule
+// is `Aggregation -> TableGather`.
+func (r *PushAggDownGather) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandTableGather, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Mode != aggregation.CompleteMode {
+			return false
+		}
+	}
+	childEngine := expr.Children[0].GetExpr().Children[0].EngineType
+	if childEngine != memo.EngineTiKV {
+		// TODO: Remove this check when we have implemented TiFlashAggregation.
+		return false
+	}
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, false)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Agg->Gather` to `Agg(Final) -> Gather -> Agg(Partial1)`.
+func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	aggSchema := old.GetExpr().Group.Prop.Schema
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TableGather)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	// The old Aggregation should stay unchanged for other transformation.
+	// So we build a new LogicalAggregation for the partialAgg.
+	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
+	for i, aggFunc := range agg.AggFuncs {
+		newAggFunc := &aggregation.AggFuncDesc{
+			HasDistinct: false,
+			Mode:        aggregation.Partial1Mode,
+		}
+		newAggFunc.Name = aggFunc.Name
+		newAggFunc.RetTp = aggFunc.RetTp
+		// The args will be changed below, so that we have to build a new slice for it.
+		newArgs := make([]expression.Expression, len(aggFunc.Args))
+		copy(newArgs, aggFunc.Args)
+		newAggFunc.Args = newArgs
+		partialAggFuncs[i] = newAggFunc
+	}
+	partialGbyItems := make([]expression.Expression, len(agg.GroupByItems))
+	copy(partialGbyItems, agg.GroupByItems)
+	partialAgg := plannercore.LogicalAggregation{
+		AggFuncs:     partialAggFuncs,
+		GroupByItems: partialGbyItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	partialAgg.CopyAggHints(agg)
+
+	finalAggFuncs, finalGbyItems, partialSchema :=
+		plannercore.BuildFinalModeAggregation(partialAgg.SCtx(), partialAgg.AggFuncs, partialAgg.GroupByItems, aggSchema)
+	// Remove unnecessary FirstRow.
+	partialAgg.AggFuncs =
+		plannercore.RemoveUnnecessaryFirstRow(partialAgg.SCtx(), finalAggFuncs, finalGbyItems, partialAgg.AggFuncs, partialAgg.GroupByItems, partialSchema)
+	finalAgg := plannercore.LogicalAggregation{
+		AggFuncs:     finalAggFuncs,
+		GroupByItems: finalGbyItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	finalAgg.CopyAggHints(agg)
+
+	partialAggExpr := memo.NewGroupExpr(partialAgg)
+	partialAggExpr.SetChildren(childGroup)
+	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialSchema).SetEngineType(childGroup.EngineType)
+	gatherExpr := memo.NewGroupExpr(gather)
+	gatherExpr.SetChildren(partialAggGroup)
+	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialSchema)
+	finalAggExpr := memo.NewGroupExpr(finalAgg)
+	finalAggExpr.SetChildren(gatherGroup)
+	// We don't erase the old complete mode Aggregation because
+	// this transformation would not always be better.
+	return []*memo.GroupExpr{finalAggExpr}, false, false, nil
 }
 
 // PushSelDownSort pushes the Selection down to the child of Sort.

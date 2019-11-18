@@ -257,8 +257,14 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
-	// TODO: Implement TiKVHashAgg
-	return impl.NewTiDBHashAggImpl(hashAgg), nil
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBHashAggImpl(hashAgg), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVHashAggImpl(hashAgg), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
+	}
 }
 
 // ImplLimit is the implementation rule which implements LogicalLimit

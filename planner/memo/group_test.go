@@ -137,6 +137,7 @@ func (impl *fakeImpl) SetCost(float64)                                 {}
 func (impl *fakeImpl) GetCost() float64                                { return 0 }
 func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan               { return impl.plan }
 func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return nil }
+func (impl *fakeImpl) ScaleCostLimit(float64) float64                  { return 0 }
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), nil)
 	emptyProp := &property.PhysicalProperty{}
