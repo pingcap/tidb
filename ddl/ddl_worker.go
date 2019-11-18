@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -426,9 +427,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)
 			}
-			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
-			}
+			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
 
@@ -459,6 +458,16 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+	}
+}
+
+func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
+	if job.IsDone() || job.IsRollbackDone() ||
+		// Drainer receives a binlog without this column of data when the job is in the "Delete only" state.
+		// In this case, if we don't do special treatment, Drainer will think that this binlog has one less column.
+		// So we add this binlog to enable Drainer to handle DML correctly in this schema state.
+		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
+		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, job.Query)
 	}
 }
 
