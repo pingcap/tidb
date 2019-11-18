@@ -625,6 +625,7 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
+	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
 	leftGroup = buildChildSelectionGroup(sel, leftCond, joinExpr.Children[0])
 	rightGroup = buildChildSelectionGroup(sel, rightCond, joinExpr.Children[1])
 	newJoinExpr := memo.NewGroupExpr(join)
