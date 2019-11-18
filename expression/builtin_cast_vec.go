@@ -778,11 +778,10 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				return err
 			}
-		} else {
-			_, err = types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return err
-			}
+		}
+		_, err = types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
