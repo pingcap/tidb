@@ -128,9 +128,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.UnixTimestamp: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.SubDate:          {},
-	ast.AddDate:          {},
-	ast.SubTime:          {},
+	ast.SubDate: {},
+	ast.AddDate: {},
+	ast.SubTime: {},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
 		// arg1 has BinaryFlag here.
