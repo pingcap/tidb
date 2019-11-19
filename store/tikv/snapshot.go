@@ -298,7 +298,9 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	}
 
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
-		panic("cache miss")
+		if bo.ctx.Value("TestSnapshotCache") != nil {
+			panic("cache miss")
+		}
 	})
 
 	cli := clientHelper{

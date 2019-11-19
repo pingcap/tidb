@@ -122,6 +122,7 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
+	c.Assert(txn.Delete(kv.Key("y")), IsNil) // store data is affected by other tests.
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
