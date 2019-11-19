@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite2) TestShowVisibility(c *C) {
+func (s *testSuite5) TestShowVisibility(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database showdatabase")
 	tk.MustExec("use showdatabase")
@@ -73,7 +73,7 @@ func (s *testSuite2) TestShowVisibility(c *C) {
 	tk.MustExec("drop database showdatabase")
 }
 
-func (s *testSuite2) TestShowDatabasesInfoSchemaFirst(c *C) {
+func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 	tk.MustExec(`create user 'show'@'%'`)
@@ -97,7 +97,7 @@ func (s *testSuite2) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk.MustExec(`drop database BBBB`)
 }
 
-func (s *testSuite2) TestShowWarnings(c *C) {
+func (s *testSuite5) TestShowWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings (a int)`
@@ -128,7 +128,7 @@ func (s *testSuite2) TestShowWarnings(c *C) {
 	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "0"))
 }
 
-func (s *testSuite2) TestShowErrors(c *C) {
+func (s *testSuite5) TestShowErrors(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_errors (a int)`
@@ -139,7 +139,7 @@ func (s *testSuite2) TestShowErrors(c *C) {
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
-func (s *testSuite2) TestIssue3641(c *C) {
+func (s *testSuite5) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
@@ -147,7 +147,7 @@ func (s *testSuite2) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
-func (s *testSuite2) TestIssue10549(c *C) {
+func (s *testSuite5) TestIssue10549(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE newdb;")
 	tk.MustExec("CREATE ROLE 'app_developer';")
@@ -162,7 +162,7 @@ func (s *testSuite2) TestIssue10549(c *C) {
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 }
 
-func (s *testSuite3) TestIssue11165(c *C) {
+func (s *testSuite5) TestIssue11165(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE ROLE 'r_manager';")
 	tk.MustExec("CREATE USER 'manager'@'localhost';")
@@ -175,7 +175,7 @@ func (s *testSuite3) TestIssue11165(c *C) {
 }
 
 // TestShow2 is moved from session_test
-func (s *testSuite2) TestShow2(c *C) {
+func (s *testSuite5) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -285,15 +285,14 @@ func (s *testSuite2) TestShow2(c *C) {
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
-	AllPrivs := "Select,Insert,Update,Delete,Create,Drop,Process,References,Alter,Show Databases,Super,Execute,Index,Create User,Trigger,Create View,Show View,Create Role,Drop Role,CREATE TEMPORARY TABLES,LOCK TABLES,CREATE ROUTINE,ALTER ROUTINE,EVENT,SHUTDOWN"
 	tk.MustExec(`grant all on *.* to 'root'@'%'`)
-	tk.MustQuery("show grants").Check(testkit.Rows(`GRANT ` + AllPrivs + ` ON *.* TO 'root'@'%'`))
+	tk.MustQuery("show grants").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION`))
 
-	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ` + AllPrivs + ` ON *.* TO 'root'@'%'`))
-	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ` + AllPrivs + ` ON *.* TO 'root'@'%'`))
+	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION`))
+	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION`))
 }
 
-func (s *testSuite2) TestShowCreateUser(c *C) {
+func (s *testSuite5) TestShowCreateUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
@@ -334,7 +333,7 @@ func (s *testSuite2) TestShowCreateUser(c *C) {
 	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 }
 
-func (s *testSuite2) TestUnprivilegedShow(c *C) {
+func (s *testSuite5) TestUnprivilegedShow(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE testshow")
@@ -365,7 +364,7 @@ func (s *testSuite2) TestUnprivilegedShow(c *C) {
 
 }
 
-func (s *testSuite2) TestCollation(c *C) {
+func (s *testSuite5) TestCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -380,7 +379,7 @@ func (s *testSuite2) TestCollation(c *C) {
 	c.Assert(fields[5].Column.Tp, Equals, mysql.TypeLonglong)
 }
 
-func (s *testSuite2) TestShowTableStatus(c *C) {
+func (s *testSuite5) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -420,7 +419,7 @@ func (s *testSuite2) TestShowTableStatus(c *C) {
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
 }
 
-func (s *testSuite2) TestShowSlow(c *C) {
+func (s *testSuite5) TestShowSlow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// The test result is volatile, because
 	// 1. Slow queries is stored in domain, which may be affected by other tests.
@@ -433,13 +432,13 @@ func (s *testSuite2) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
-func (s *testSuite2) TestShowOpenTables(c *C) {
+func (s *testSuite5) TestShowOpenTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
 }
 
-func (s *testSuite2) TestShowCreateTable(c *C) {
+func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -447,15 +446,25 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
+	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1`  "))
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS select JSON_MERGE('{}', '{}') as col;  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int,b int)")
+	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`),`test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1` GROUP BY `a`  "))
+	tk.MustExec("drop view v1")
+	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b`,`test`.`t1`.`a`,`test`.`t1`.`b`,`a` AS `c` FROM `test`.`t1`  "))
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop view v1")
 
 	// For issue #9211
 	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
@@ -602,7 +611,7 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	))
 }
 
-func (s *testSuite2) TestShowEscape(c *C) {
+func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")

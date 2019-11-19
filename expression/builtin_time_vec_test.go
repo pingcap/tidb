@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -24,21 +25,69 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
+type periodGener struct{}
+
+func (g *periodGener) gen() interface{} {
+	return int64((rand.Intn(2500)+1)*100 + rand.Intn(12) + 1)
+}
+
+// unitStrGener is used to generate strings which are unit format
+type unitStrGener struct{}
+
+func (g *unitStrGener) gen() interface{} {
+	units := []string{
+		"MICROSECOND",
+		"SECOND",
+		"MINUTE",
+		"HOUR",
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+	}
+
+	n := rand.Int() % len(units)
+	return units[n]
+}
+
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
-	ast.DateLiteral: {},
-	ast.DateDiff:    {},
-	ast.TimeDiff:    {},
-	ast.DateFormat:  {},
+	ast.DateLiteral: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
+			constants: []*Constant{{Value: types.NewStringDatum("2019-11-11"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+	},
+	ast.DateDiff:   {},
+	ast.DateFormat: {},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
 	},
-	ast.Minute:      {},
-	ast.Second:      {},
+	ast.Minute: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.Second: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
+	ast.ToSeconds: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.MicroSecond: {},
-	ast.Now:         {},
-	ast.DayOfWeek:   {},
-	ast.DayOfYear:   {},
-	ast.Day:         {},
+	ast.Now: {
+		{retEvalType: types.ETDatetime},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{0, 7}},
+		},
+	},
+	ast.DayOfWeek: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.DayOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Day: {},
+	ast.ToDays: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
@@ -46,21 +95,59 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
 	},
-	ast.MakeDate:   {},
-	ast.MakeTime:   {},
-	ast.PeriodAdd:  {},
-	ast.PeriodDiff: {},
-	ast.Quarter:    {},
+	ast.MakeDate: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{0, 2200}, &rangeInt64Gener{0, 365}},
+		},
+	},
+	ast.MakeTime: {},
+	ast.PeriodAdd: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
+	},
+	ast.PeriodDiff: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
+	},
+	ast.Quarter: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.TimeFormat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{&rangeDurationGener{0.5}, &timeFormatGener{0.5}}},
 	},
-	ast.TimeToSec:        {},
-	ast.TimestampAdd:     {},
-	ast.TimestampDiff:    {},
+	ast.TimeToSec: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+	},
+	ast.TimestampAdd: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
+		},
+	},
+	ast.TimestampDiff: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDatetime, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil}},
+	},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
 	ast.AddDate:          {},
-	ast.SubTime:          {},
+	ast.SubTime: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {
+				Tp:      mysql.TypeString,
+				Flen:    types.UnspecifiedLength,
+				Decimal: types.UnspecifiedLength,
+				Flag:    mysql.BinaryFlag,
+			}},
+			geners: []dataGenerator{
+				&timeStrGener{},
+				&timeStrGener{},
+			},
+		},
+	},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
 		// arg1 has BinaryFlag here.
@@ -79,6 +166,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			},
 		},
 	},
+	ast.Week: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
+	},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
@@ -89,16 +180,16 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.Timestamp: {
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataTimeStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateTimeStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dataStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{new(dataTimeStrGener), new(dataStrGener)}},
+			geners: []dataGenerator{new(dateTimeStrGener), new(dateStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{new(dataTimeStrGener), nil}},
+			geners: []dataGenerator{new(dateTimeStrGener), nil}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{nil, new(dataStrGener)}},
+			geners: []dataGenerator{nil, new(dateStrGener)}},
 	},
 	ast.MonthName: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -106,12 +197,65 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DayOfMonth: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
+	ast.DayName: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
 	ast.UTCDate: {
 		{retEvalType: types.ETDatetime},
+	},
+	ast.UTCTimestamp: {
+		{retEvalType: types.ETTimestamp},
+		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
+	},
+	ast.UnixTimestamp: {
+		{retEvalType: types.ETInt},
+	},
+	ast.UTCTime: {
+		{retEvalType: types.ETDuration},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 	ast.Weekday: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
+	},
+	ast.YearWeek: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
+	},
+	ast.WeekOfYear: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.FromDays: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.FromUnixTime: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
+			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
+		},
+	},
+	ast.StrToDate: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&timeStrGener{}, &constStrGener{"%y-%m-%d"}},
+		},
+	},
+	ast.GetFormat: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&formatGener{0.2}, &locationGener{0.2}},
+		},
+	},
+	ast.Sysdate: {
+		// Because there is a chance that a time error will cause the test to fail,
+		// we cannot use the vectorized test framework to test builtinSysDateWithoutFspSig.
+		// We test the builtinSysDateWithoutFspSig in TestSysDate function.
+		// {retEvalType: types.ETDatetime},
+		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
+		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
 }
 

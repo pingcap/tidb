@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -107,7 +108,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, UnknownSystemVar.GenWithStackByArgs(key)
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
 	// For virtual system variables:
 	switch sysVar.Name {
@@ -171,7 +172,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
 	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, UnknownSystemVar.GenWithStackByArgs(key)
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
 	if sysVar.Scope == ScopeNone {
 		return sysVar.Value, true, nil
@@ -187,7 +188,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
-		return UnknownSystemVar
+		return ErrUnknownSystemVar
 	}
 	sVal := ""
 	var err error
@@ -208,7 +209,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar, exists := SysVars[name]
 	if !exists {
-		return UnknownSystemVar.GenWithStackByArgs(name)
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
 	case ScopeGlobal, ScopeNone:
@@ -279,7 +280,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
 		}
-		return value, UnknownSystemVar.GenWithStackByArgs(name)
+		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch name {
 	case ConnectTimeout:
@@ -347,6 +348,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case TiDBStoreLimit:
+		return checkInt64SystemVar(name, value, 0, math.MaxInt64, vars)
 	case SyncBinlog:
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
@@ -392,7 +395,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
-		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableArrow,
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
 		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression, TiDBRecordPlanInSlowLog:
@@ -498,6 +501,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptNetworkFactor,
 		TiDBOptScanFactor,
 		TiDBOptDescScanFactor,
+		TiDBOptSeekFactor,
 		TiDBOptMemoryFactor,
 		TiDBOptConcurrencyFactor:
 		v, err := strconv.ParseFloat(value, 64)
@@ -606,7 +610,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines:
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil
@@ -624,6 +628,24 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBIsolationReadEngines:
+		engines := strings.Split(value, ",")
+		var formatVal string
+		for i, engine := range engines {
+			engine = strings.TrimSpace(engine)
+			if i != 0 {
+				formatVal += ","
+			}
+			switch {
+			case strings.EqualFold(engine, kv.TiKV.Name()):
+				formatVal += kv.TiKV.Name()
+			case strings.EqualFold(engine, kv.TiFlash.Name()):
+				formatVal += kv.TiFlash.Name()
+			default:
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+		}
+		return formatVal, nil
 	}
 	return value, nil
 }

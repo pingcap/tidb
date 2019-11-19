@@ -21,12 +21,10 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestUnary(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected interface{}
@@ -66,8 +64,6 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -130,8 +126,6 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLeftShift(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -163,8 +157,6 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRightShift(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -203,8 +195,6 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitXor(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -243,8 +233,6 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitOr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -290,8 +278,6 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicOr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -358,8 +344,6 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitAnd(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected int64
@@ -398,8 +382,6 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitNeg(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -445,8 +427,6 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -498,7 +478,6 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
-	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -585,8 +564,6 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicXor(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {

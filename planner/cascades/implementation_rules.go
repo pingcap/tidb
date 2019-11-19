@@ -14,6 +14,9 @@
 package cascades
 
 import (
+	"math"
+
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
@@ -47,6 +50,19 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	},
 	memo.OperandSelection: {
 		&ImplSelection{},
+	},
+	memo.OperandSort: {
+		&ImplSort{},
+	},
+	memo.OperandAggregation: {
+		&ImplHashAgg{},
+	},
+	memo.OperandLimit: {
+		&ImplLimit{},
+	},
+	memo.OperandTopN: {
+		&ImplTopN{},
+		&ImplTopNAsLimit{},
 	},
 }
 
@@ -185,4 +201,142 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
 	}
+}
+
+// ImplSort is the implementation rule which implements LogicalSort
+// to PhysicalSort or NominalSort.
+type ImplSort struct {
+}
+
+// Match implements ImplementationRule match interface.
+func (r *ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	ls := expr.ExprNode.(*plannercore.LogicalSort)
+	return plannercore.MatchItems(prop, ls.ByItems)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+// If all of the sort items are columns, generate a NominalSort, otherwise
+// generate a PhysicalSort.
+func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	ls := expr.ExprNode.(*plannercore.LogicalSort)
+	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
+		newProp.ExpectedCnt = reqProp.ExpectedCnt
+		ns := plannercore.NominalSort{}.Init(ls.SCtx(), ls.SelectBlockOffset(), newProp)
+		return impl.NewNominalSortImpl(ns), nil
+	}
+	ps := plannercore.PhysicalSort{ByItems: ls.ByItems}.Init(
+		ls.SCtx(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		ls.SelectBlockOffset(),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
+	)
+	return impl.NewSortImpl(ps), nil
+}
+
+// ImplHashAgg is the implementation rule which implements LogicalAggregation
+// to PhysicalHashAgg.
+type ImplHashAgg struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	// TODO: deal with the hints when we have implemented StreamAgg.
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	hashAgg := plannercore.NewPhysicalHashAgg(
+		la,
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
+	)
+	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBHashAggImpl(hashAgg), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVHashAggImpl(hashAgg), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
+	}
+}
+
+// ImplLimit is the implementation rule which implements LogicalLimit
+// to PhysicalLimit.
+type ImplLimit struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalLimit := expr.ExprNode.(*plannercore.LogicalLimit)
+	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
+	physicalLimit := plannercore.PhysicalLimit{
+		Offset: logicalLimit.Offset,
+		Count:  logicalLimit.Count,
+	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.SelectBlockOffset(), newProp)
+	return impl.NewLimitImpl(physicalLimit), nil
+}
+
+// ImplTopN is the implementation rule which implements LogicalTopN
+// to PhysicalTopN.
+type ImplTopN struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	return plannercore.MatchItems(prop, topN.ByItems)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lt := expr.ExprNode.(*plannercore.LogicalTopN)
+	resultProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	topN := plannercore.PhysicalTopN{
+		ByItems: lt.ByItems,
+		Count:   lt.Count,
+		Offset:  lt.Offset,
+	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), resultProp)
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBTopNImpl(topN), nil
+	default:
+		// TODO: return TiKVTopNImpl after we have implemented push topN down gather.
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
+	}
+}
+
+// ImplTopNAsLimit is the implementation rule which implements LogicalTopN
+// as PhysicalLimit with required order property.
+type ImplTopNAsLimit struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
+	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lt := expr.ExprNode.(*plannercore.LogicalTopN)
+	newProp := &property.PhysicalProperty{ExpectedCnt: float64(lt.Count + lt.Offset)}
+	newProp.Items = make([]property.Item, len(lt.ByItems))
+	for i, item := range lt.ByItems {
+		newProp.Items[i].Col = item.Expr.(*expression.Column)
+		newProp.Items[i].Desc = item.Desc
+	}
+	physicalLimit := plannercore.PhysicalLimit{
+		Offset: lt.Offset,
+		Count:  lt.Count,
+	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), newProp)
+	return impl.NewLimitImpl(physicalLimit), nil
 }

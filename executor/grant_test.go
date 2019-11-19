@@ -53,6 +53,12 @@ func (s *testSuite3) TestGrantGlobal(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
+	//with grant option
+	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost' WITH GRANT OPTION;")
+	for _, v := range mysql.AllGlobalPrivs {
+		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
+		tk.MustQuery(sql).Check(testkit.Rows("Y"))
+	}
 }
 
 func (s *testSuite3) TestGrantDBScope(c *C) {
@@ -96,6 +102,13 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	// Grant select priv to the user, with grant option.
 	tk.MustExec("GRANT select ON test.* TO 'testWithGrant'@'localhost' WITH GRANT OPTION;")
 	tk.MustQuery("SELECT grant_priv FROM mysql.DB WHERE User=\"testWithGrant\" and host=\"localhost\" and db=\"test\"").Check(testkit.Rows("Y"))
+
+	tk.MustExec("CREATE USER 'testWithGrant1'")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("N"))
+	tk.MustExec("GRANT ALL ON *.* TO 'testWithGrant1'")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("N"))
+	tk.MustExec("GRANT ALL ON *.* TO 'testWithGrant1' WITH GRANT OPTION")
+	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
 func (s *testSuite3) TestTableScope(c *C) {
@@ -124,7 +137,7 @@ func (s *testSuite3) TestTableScope(c *C) {
 	tk.MustExec("USE test;")
 	tk.MustExec(`CREATE TABLE test2(c1 int);`)
 	// Grant all table scope privs.
-	tk.MustExec("GRANT ALL ON test2 TO 'testTbl1'@'localhost';")
+	tk.MustExec("GRANT ALL ON test2 TO 'testTbl1'@'localhost' WITH GRANT OPTION;")
 	// Make sure all the table privs for granted user are in the Table_priv set.
 	for _, v := range mysql.AllTablePrivs {
 		rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTbl1" and host="localhost" and db="test" and Table_name="test2";`).Rows()
