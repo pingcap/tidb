@@ -673,15 +673,15 @@ func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
 	}
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select * from information_schema.tidb_cluster_info").Check(testkit.Rows(
-		"1 tidb tidb-0 :4000 :10080 5.7.25-TiDB-None None",
-		"2 pd pd-0 "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
-		"3 tikv tikv-0 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
+		"tidb :4000 :10080 5.7.25-TiDB-None None",
+		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
+		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
 	))
 
 	instances := []string{
-		"pd,pd-0,127.0.0.1:11080," + mockAddr,
-		"tidb,tidb-0,127.0.0.1:11080," + mockAddr,
-		"tikv,tikv-0,127.0.0.1:11080," + mockAddr,
+		"pd,127.0.0.1:11080," + mockAddr,
+		"tidb,127.0.0.1:11080," + mockAddr,
+		"tikv,127.0.0.1:11080," + mockAddr,
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
@@ -709,32 +709,32 @@ func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	tk.MustQuery("select * from information_schema.tidb_cluster_config").Check(testkit.Rows(
-		"1 pd pd-0 127.0.0.1:11080 key1 value1",
-		"2 pd pd-0 127.0.0.1:11080 key2.nest1 n-value1",
-		"3 pd pd-0 127.0.0.1:11080 key2.nest2 n-value2",
-		"4 pd pd-0 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"5 pd pd-0 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"6 pd pd-0 127.0.0.1:11080 key3.nest1 n-value1",
-		"7 pd pd-0 127.0.0.1:11080 key3.nest2 n-value2",
-		"8 tidb tidb-0 127.0.0.1:11080 key1 value1",
-		"9 tidb tidb-0 127.0.0.1:11080 key2.nest1 n-value1",
-		"10 tidb tidb-0 127.0.0.1:11080 key2.nest2 n-value2",
-		"11 tidb tidb-0 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"12 tidb tidb-0 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"13 tidb tidb-0 127.0.0.1:11080 key3.nest1 n-value1",
-		"14 tidb tidb-0 127.0.0.1:11080 key3.nest2 n-value2",
-		"15 tikv tikv-0 127.0.0.1:11080 key1 value1",
-		"16 tikv tikv-0 127.0.0.1:11080 key2.nest1 n-value1",
-		"17 tikv tikv-0 127.0.0.1:11080 key2.nest2 n-value2",
-		"18 tikv tikv-0 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"19 tikv tikv-0 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"20 tikv tikv-0 127.0.0.1:11080 key3.nest1 n-value1",
-		"21 tikv tikv-0 127.0.0.1:11080 key3.nest2 n-value2",
+		"pd 127.0.0.1:11080 key1 value1",
+		"pd 127.0.0.1:11080 key2.nest1 n-value1",
+		"pd 127.0.0.1:11080 key2.nest2 n-value2",
+		"pd 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"pd 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"pd 127.0.0.1:11080 key3.nest1 n-value1",
+		"pd 127.0.0.1:11080 key3.nest2 n-value2",
+		"tidb 127.0.0.1:11080 key1 value1",
+		"tidb 127.0.0.1:11080 key2.nest1 n-value1",
+		"tidb 127.0.0.1:11080 key2.nest2 n-value2",
+		"tidb 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"tidb 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"tidb 127.0.0.1:11080 key3.nest1 n-value1",
+		"tidb 127.0.0.1:11080 key3.nest2 n-value2",
+		"tikv 127.0.0.1:11080 key1 value1",
+		"tikv 127.0.0.1:11080 key2.nest1 n-value1",
+		"tikv 127.0.0.1:11080 key2.nest2 n-value2",
+		"tikv 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
+		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
 	))
-	tk.MustQuery("select TYPE, NAME, `KEY`, VALUE from information_schema.tidb_cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
-		"pd pd-0 key3.key4.nest4 n-value5",
-		"tidb tidb-0 key3.key4.nest4 n-value5",
-		"tikv tikv-0 key3.key4.nest4 n-value5",
+	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.tidb_cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
+		"pd key3.key4.nest4 n-value5",
+		"tidb key3.key4.nest4 n-value5",
+		"tikv key3.key4.nest4 n-value5",
 	))
 }
 
