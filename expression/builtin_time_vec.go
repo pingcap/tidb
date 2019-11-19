@@ -1356,33 +1356,52 @@ func (b *builtinUnixTimestampDecSig) vectorized() bool {
 }
 
 func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-
+    n := input.NumRows()
+	result.ResizeDecimal(n, false)
+	Ts := result.Decimals()
 	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(timeBuf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, timeBuf); err != nil {
-		return err
-	}
-	result.ResizeDecimal(n, false)
-	Ts := result.Decimals()
-	for i := 0; i < n; i++ {
-		if timeBuf.IsNull(i) {
-			result.SetNull(i, true)
-			continue
+		var row chunk.Row
+		for i := 0; i < n; i++ {
+			row = input.GetRow(i)
+			val, isNull, err := b.args[0].EvalTime(b.ctx, row)
+			if isNull || err != nil {
+				Ts[i] = *new(types.MyDecimal)
+				result.SetNull(i, true)
+				continue
+			}
+			t, err := val.Time.GoTime(getTimeZone(b.ctx))
+			if err != nil {
+				Ts[i] = *new(types.MyDecimal)
+				continue
+			}
+			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			if err != nil {
+				return err
+			}
+			Ts[i] = *tmp
 		}
-		t, err := timeBuf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
-		if err != nil {
-			Ts[i] = *new(types.MyDecimal)
-			continue
+	} else {
+		result.MergeNulls(timeBuf)
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			t, err := timeBuf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
+			if err != nil {
+				Ts[i] = *new(types.MyDecimal)
+				continue
+			}
+			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			if err != nil {
+				return err
+			}
+			Ts[i] = *tmp
 		}
-		tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
-		if err != nil {
-			return err
-		}
-		Ts[i] = *tmp
 	}
 
 	return nil
