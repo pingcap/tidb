@@ -831,11 +831,11 @@ func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	}
 
 	result.ResizeTime(n, false)
+	result.MergeNulls(bufStrings, bufFormats)
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if bufStrings.IsNull(i) || bufFormats.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		var t types.Time
