@@ -189,6 +189,7 @@ type ExecStmt struct {
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
 func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
+	logutil.BgLogger().Warn("xxx------------------------------------------ 00x")
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", a.OriginText())

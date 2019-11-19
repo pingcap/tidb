@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -32,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -556,11 +559,15 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
+
 	// Do not handle partitioned table.
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
 	// bypass the logical plan optimization, it can't support partitioned table.
 	pi := tbl.GetPartitionInfo()
+	if pi != nil && pi.Type != model.PartitionTypeHash {
+		return nil
+	}
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
@@ -571,52 +578,48 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			return nil
 		}
 	}
+	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	if schema == nil {
+		return nil
+	}
+	dbName := tblName.Schema.L
+	if dbName == "" {
+		dbName = ctx.GetSessionVars().CurrentDB
+	}
+
 	pairs := make([]nameValuePair, 0, 4)
-	pairs = getNameValuePairs(pairs, tblAlias, selStmt.Where)
+	logutil.BgLogger().Warn("xxx------------------------------------------======================================overflows ----------------------- 0")
+	pairs, isTableDual := getNameValuePairs(ctx.GetSessionVars().StmtCtx, tbl, tblAlias, pairs, selStmt.Where)
+	logutil.BgLogger().Warn("xxx------------------------------------------======================================overflows ----------------------- 1",
+		zap.Bool("ok", isTableDual), zap.Bool("pairs is nil", pairs == nil))
+	if isTableDual {
+		p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+		p.IsTableDual = true
+		return p
+	}
 	if pairs == nil {
 		return nil
 	}
 
 	var partitionInfo *model.PartitionDefinition
 	if pi != nil {
-		if pi.Type != model.PartitionTypeHash {
-			return nil
-		}
 		partitionInfo = getPartitionInfo(ctx, tbl, pairs)
+		logutil.BgLogger().Warn("xxx------------------------------------------======================================overflows ----------------------- is part",
+			zap.Bool("has part info", partitionInfo != nil))
 		if partitionInfo == nil {
 			return nil
 		}
 	}
+
 	handlePair, fieldType := findPKHandle(tbl, pairs)
+	logutil.BgLogger().Warn("xxx------------------------------------------ 001",
+		zap.Reflect("val", handlePair.value), zap.Reflect("p", handlePair.param),
+		zap.String("where", selStmt.Where.Text()),
+		zap.Bool("nil", handlePair.value.Kind() == types.KindNull),
+		zap.Int("len", len(pairs)))
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
-		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-		if schema == nil {
-			return nil
-		}
-		dbName := tblName.Schema.L
-		if dbName == "" {
-			dbName = ctx.GetSessionVars().CurrentDB
-		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
-		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
-		if err != nil {
-			if terror.ErrorEqual(types.ErrOverflow, err) {
-				p.IsTableDual = true
-				return p
-			}
-			// some scenarios cast to int with error, but we may use this value in point get
-			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
-				return nil
-			}
-		}
-		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
-		if err != nil {
-			return nil
-		} else if cmp != 0 {
-			p.IsTableDual = true
-			return p
-		}
-		p.Handle = intDatum.GetInt64()
+		p.Handle = handlePair.value.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
 		p.PartitionInfo = partitionInfo
@@ -634,19 +637,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxValues == nil {
 			continue
 		}
-		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-		if schema == nil {
-			return nil
-		}
-		dbName := tblName.Schema.L
-		if dbName == "" {
-			dbName = ctx.GetSessionVars().CurrentDB
-		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
 		p.PartitionInfo = partitionInfo
+		logutil.BgLogger().Warn("xxx------------------------------------------ 002", zap.Reflect("val", idxValues[0].GetInt64()))
 		return p
 	}
 	return nil
@@ -769,21 +765,22 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.ExprNode) []nameValuePair {
+func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+	pairs []nameValuePair, isTableDual bool) {
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	if binOp.Op == opcode.LogicAnd {
-		nvPairs = getNameValuePairs(nvPairs, tblName, binOp.L)
-		if nvPairs == nil {
-			return nil
+		nvPairs, isTableDual = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.L)
+		if nvPairs == nil || isTableDual {
+			return nil, isTableDual
 		}
-		nvPairs = getNameValuePairs(nvPairs, tblName, binOp.R)
-		if nvPairs == nil {
-			return nil
+		nvPairs, isTableDual = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.R)
+		if nvPairs == nil || isTableDual {
+			return nil, isTableDual
 		}
-		return nvPairs
+		return nvPairs, isTableDual
 	} else if binOp.Op == opcode.EQ {
 		var d types.Datum
 		var colName *ast.ColumnNameExpr
@@ -806,17 +803,46 @@ func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.Ex
 				param = x
 			}
 		} else {
-			return nil
+			return nil, false
 		}
 		if d.IsNull() {
-			return nil
+			return nil, false
 		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
-			return nil
+			return nil, false
 		}
-		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param})
+		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
+		if col == nil || // Handling the case when the column is _tidb_rowid.
+			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
+		}
+		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+		logutil.BgLogger().Warn("yyy--------------------------------",
+			zap.String("col", colName.Name.String()), zap.Reflect("dVal", dVal.GetString()),
+			zap.String("d", d.GetString()), zap.Reflect("kind", d.Kind()),
+			zap.String("field", col.FieldType.String()), zap.Error(err))
+		if err != nil {
+			if terror.ErrorEqual(types.ErrOverflow, err) {
+				return nil, true
+			}
+			// Some scenarios cast to int with error, but we may use this value in point get.
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil, false
+			}
+		}
+		// The converted result must be same as original datum.
+		cmp, err := d.CompareDatum(stmtCtx, &dVal)
+		logutil.BgLogger().Warn("yyy--------------------------------", zap.Bool("cmp is 0", cmp == 0),
+			zap.String("tp", col.FieldType.String()), zap.Int("tp", int(col.FieldType.Tp)), zap.String("collate", col.Collate))
+		if err != nil {
+			return nil, false
+		} else if cmp != 0 {
+			return nil, true
+		}
+
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
-	return nil
+	return nil, false
 }
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
