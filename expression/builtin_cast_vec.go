@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -1272,11 +1273,65 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinCastStringAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if IsBinaryLiteral(b.args[0]) {
+		buf, err := b.bufAllocator.get(types.ETDecimal, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(buf)
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
+			return err
+		}
+		bfdecimal := buf.Decimals()
+		res := result.Decimals()
+		result.MergeNulls(buf)
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			res[i] = bfdecimal[i]
+		}
+		return nil
+	}
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		fmt.Println("I am here1")
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		fmt.Println("I am here2")
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	res := result.Decimals()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		tempdecimal := new(types.MyDecimal)
+		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res[i].IsNegative()) {
+			te := buf.GetString(i)
+			err = sc.HandleTruncate(tempdecimal.FromString([]byte(te)))
+			if err != nil {
+				fmt.Println("I am here3")
+				return err
+			}
+		}
+		_, err = types.ProduceDecWithSpecifiedTp(tempdecimal, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		res[i] = *tempdecimal
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsTimeSig) vectorized() bool {

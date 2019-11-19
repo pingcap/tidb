@@ -299,6 +299,22 @@ func (g *jsonStringGener) gen() interface{} {
 	return j.String()
 }
 
+type decimalStringGener struct {
+	rangeDecimalGener
+}
+
+func (g *decimalStringGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	if g.end < g.begin {
+		g.begin = -100000
+		g.end = 100000
+	}
+	f := rand.Float64()*(g.end-g.begin) + g.begin
+	return fmt.Sprintf("%f", f)
+}
+
 type jsonTimeGener struct{}
 
 func (g *jsonTimeGener) gen() interface{} {
