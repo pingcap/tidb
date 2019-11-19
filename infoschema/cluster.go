@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
@@ -25,13 +26,13 @@ import (
 )
 
 const (
-	clusterTablePrefix                            = "TIDB_CLUSTER_"
+	clusterTablePrefix = "TIDB_CLUSTER_"
 )
 
 // Cluster table list.
 const (
-	clusterTableSlowLog                             = clusterTablePrefix + tableSlowLog
-	clusterTableProcesslist                         = clusterTablePrefix + tableProcesslist
+	clusterTableSlowLog     = clusterTablePrefix + tableSlowLog
+	clusterTableProcesslist = clusterTablePrefix + tableProcesslist
 )
 
 // memTableToClusterTableMap means add memory table to cluster table.
@@ -77,6 +78,8 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 		rows, err = dataForSlowLog(ctx)
 	case clusterTableProcesslist:
 		rows = dataForProcesslist(ctx)
+	default:
+		err = errors.Errorf("unknown cluster table: %v", tableName)
 	}
 	if err != nil {
 		return nil, err
