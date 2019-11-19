@@ -296,7 +296,12 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	pkCol := ds.getPKIsHandleCol()
-	candidate.isMatchProp = len(prop.Items) == 1 && pkCol != nil && prop.Items[0].Col.Equal(nil, pkCol)
+	if len(prop.Items) == 1 && pkCol != nil {
+		candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+		if path.storeType == kv.TiFlash {
+			candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+		}
+	}
 	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
 	candidate.isSingleScan = true
 	return candidate
@@ -448,6 +453,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}, nil
 		}
 		if path.isTablePath {
+			if ds.preferStoreType&preferTiFlash != 0 && path.storeType == kv.TiKV {
+				continue
+			}
+			if ds.preferStoreType&preferTiKV != 0 && path.storeType == kv.TiFlash {
+				continue
+			}
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
 				return nil, err
@@ -455,10 +466,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			if tblTask.cost() < t.cost() {
 				t = tblTask
 			}
-			continue
-		}
-		// TiFlash storage do not support index scan.
-		if ds.preferStoreType&preferTiFlash != 0 {
 			continue
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
@@ -1046,12 +1053,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.tableFilters,
 		StoreType:       path.storeType,
 	}.Init(ds.ctx, ds.blockOffset)
-	if ds.preferStoreType&preferTiFlash != 0 {
-		ts.StoreType = kv.TiFlash
-	}
-	if ds.preferStoreType&preferTiKV != 0 {
-		ts.StoreType = kv.TiKV
-	}
 	if ts.StoreType == kv.TiFlash {
 		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
 		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
