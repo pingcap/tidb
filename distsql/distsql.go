@@ -82,8 +82,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
@@ -123,8 +121,6 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 	result := &selectResult{
 		label:      "analyze",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    label,
 		encodeType: tipb.EncodeType_TypeDefault,
@@ -141,8 +137,6 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 	result := &selectResult{
 		label:      "checksum",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    metrics.LblGeneral,
 		encodeType: tipb.EncodeType_TypeDefault,

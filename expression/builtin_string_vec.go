@@ -522,11 +522,71 @@ func (b *builtinQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinInsertBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	pos, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(pos)
+	if err := b.args[1].VecEvalInt(b.ctx, input, pos); err != nil {
+		return err
+	}
+	length, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(length)
+	if err := b.args[2].VecEvalInt(b.ctx, input, length); err != nil {
+		return err
+	}
+	newstr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(newstr)
+	if err := b.args[3].VecEvalString(b.ctx, input, newstr); err != nil {
+		return err
+	}
+	posIs := pos.Int64s()
+	lengthIs := length.Int64s()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if str.IsNull(i) || pos.IsNull(i) || length.IsNull(i) || newstr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		strI := str.GetString(i)
+		strLength := int64(len(strI))
+		posI := posIs[i]
+		if posI < 1 || posI > strLength {
+			result.AppendString(strI)
+			continue
+		}
+		lengthI := lengthIs[i]
+		if lengthI > strLength-posI+1 || lengthI < 0 {
+			lengthI = strLength - posI + 1
+		}
+		newstrI := newstr.GetString(i)
+		if uint64(strLength-lengthI+int64(len(newstrI))) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strI[0:posI-1] + newstrI + strI[posI+lengthI-1:])
+	}
+	return nil
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
