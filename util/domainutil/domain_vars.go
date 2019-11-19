@@ -22,7 +22,7 @@ import (
 
 type repairInfo struct {
 	repairMode      bool
-	repairTableList []string
+	repairTableList atomic.Value
 	repairDBInfoMap atomic.Value
 }
 
@@ -41,12 +41,12 @@ func (r *repairInfo) SetRepairMode(mode bool) {
 
 // InRepairMode tet the simple repaired table list.
 func (r *repairInfo) GetRepairTableList() []string {
-	return r.repairTableList
+	return r.repairTableList.Load().([]string)
 }
 
 // InRepairMode set the simple repaired table list.
 func (r *repairInfo) SetRepairTableList(list []string) {
-	r.repairTableList = list
+	r.repairTableList.Store(list)
 }
 
 // GetTablesInRepair return the map of repaired table in repair.
@@ -63,7 +63,8 @@ func (r *repairInfo) GetRepairCleanFunc() func(a, b string) {
 func (r *repairInfo) FetchRepairedTableList(di *model.DBInfo, tbl *model.TableInfo) bool {
 	if r.repairMode {
 		isRepair := false
-		for _, tn := range r.repairTableList {
+		ls := r.repairTableList.Load().([]string)
+		for _, tn := range ls {
 			// Use dbName and tableName to specified a table.
 			if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
 				isRepair = true
@@ -109,12 +110,14 @@ func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLower
 func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string) {
 	repairedLowerName := schemaLowerName + "." + tableLowerName
 	// Remove from the repair list.
-	for i, rt := range r.repairTableList {
+	ls := r.repairTableList.Load().([]string)
+	for i, rt := range ls {
 		if strings.ToLower(rt) == repairedLowerName {
-			r.repairTableList = append(r.repairTableList[:i], r.repairTableList[i+1:]...)
+			ls = append(ls[:i], ls[i+1:]...)
 			break
 		}
 	}
+	r.repairTableList.Store(ls)
 	// Remove from the repair map.
 	mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
 	for _, db := range mp {
@@ -161,6 +164,6 @@ func (t repairKeyType) String() (res string) {
 func init() {
 	RepairInfo = repairInfo{}
 	RepairInfo.repairMode = false
-	RepairInfo.repairTableList = []string{}
+	RepairInfo.repairTableList.Store([]string{})
 	RepairInfo.repairDBInfoMap.Store(make(map[int64]*model.DBInfo, 0))
 }
