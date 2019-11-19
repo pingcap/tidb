@@ -29,10 +29,12 @@ const (
 	clusterTablePrefix = "TIDB_CLUSTER_"
 )
 
-// Cluster table list.
+// Cluster table list, attention:
+// 1. the table name should be upper case.
+// 2. clusterTableName should equal to "TIDB_CLUSTER_" + memTableTableName.
 const (
-	clusterTableSlowLog     = clusterTablePrefix + tableSlowLog
-	clusterTableProcesslist = clusterTablePrefix + tableProcesslist
+	clusterTableSlowLog     = "TIDB_CLUSTER_SLOW_QUERY"  // clusterTablePrefix + tableSlowLog
+	clusterTableProcesslist = "TIDB_CLUSTER_PROCESSLIST" // clusterTablePrefix + tableProcesslist
 )
 
 // memTableToClusterTableMap means add memory table to cluster table.
