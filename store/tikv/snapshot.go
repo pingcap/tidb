@@ -89,10 +89,6 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 	s.cached = nil
 }
 
-func (s *tikvSnapshot) SetPriority(priority int) {
-	s.priority = pb.CommandPri(priority)
-}
-
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
@@ -244,7 +240,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
-			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, locks)
+			msBeforeExpired, _, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, locks)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -332,7 +328,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+			msBeforeExpired, _, err := s.store.lockResolver.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -366,6 +362,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	switch opt {
 	case kv.ReplicaRead:
 		s.replicaRead = val.(kv.ReplicaReadType)
+	case kv.Priority:
+		s.priority = kvPriorityToCommandPri(val.(int))
 	}
 }
 
@@ -397,7 +395,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	}
 	if keyErr.Retryable != "" {
 		notFoundDetail := prettyLockNotFoundKey(keyErr.GetRetryable())
-		return kv.ErrTxnRetryable.FastGenByArgs(keyErr.GetRetryable() + " " + notFoundDetail)
+		return kv.ErrTxnRetryable.GenWithStackByArgs(keyErr.GetRetryable() + " " + notFoundDetail)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
