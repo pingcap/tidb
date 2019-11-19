@@ -1905,6 +1905,8 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 			if err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
 		}
 		i64s[i] = types.TimestampDiff(unitBuf.GetString(i), lhs[i], rhs[i])
 	}
