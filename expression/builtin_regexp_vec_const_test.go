@@ -94,7 +94,7 @@ func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
 		b.ResetTimer()
 		it := chunk.NewIterator4Chunk(input)
 		for i := 0; i < b.N; i++ {
-			output.Reset()
+			output.Reset(types.ETInt)
 			for row := it.Begin(); row != it.End(); row = it.Next() {
 				v, isNull, err := bf.evalInt(row)
 				if err != nil {
