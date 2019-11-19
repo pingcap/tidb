@@ -467,7 +467,7 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 		// In this case, if we don't do special treatment, Drainer will think that this binlog has one less column.
 		// So we add this binlog to enable Drainer to handle DML correctly in this schema state.
 		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
-		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, job.Query)
+		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
 }
 
