@@ -46,6 +46,18 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 	hasNull := make([]bool, n)
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	if b.hashSet != nil {
+		for i := 0; i < n; i++ {
+			arg0 := args0[i]
+			if isUnsigned, ok := b.hashSet[arg0]; ok {
+				if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
+					r64s[i] = 1
+				} else if arg0 >= 0 {
+					r64s[i] = 1
+				}
+			}
+		}
+	}
 	var compareResult int
 
 	for j := 1; j < len(b.args); j++ {
@@ -56,6 +68,9 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		args1 := buf1.Int64s()
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
+			if r64s[i] != 0 {
+				continue
+			}
 			if buf1.IsNull(i) {
 				hasNull[i] = true
 				continue

@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -30,6 +31,40 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	},
 	ast.BitCount: {},
 	ast.GetParam: {},
+	ast.In: {
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETInt,
+				types.ETInt, types.ETInt, types.ETInt, types.ETInt,
+				types.ETInt, //types.ETInt, types.ETInt, types.ETInt,
+				// types.ETInt, types.ETInt, types.ETInt, types.ETInt,
+				// types.ETInt, types.ETInt, types.ETInt, types.ETInt,
+				// types.ETInt, types.ETInt, types.ETInt, types.ETInt,
+			},
+			constants: []*Constant{
+				nil,
+				nil, nil, nil, nil,
+				&Constant{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(3), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(4), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(5), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(7), RetType: types.NewFieldType(mysql.TypeInt24)},
+				//&Constant{Value: types.NewDatum(8), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(9), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(10), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(11), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(12), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(13), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(14), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(15), RetType: types.NewFieldType(mysql.TypeInt24)},
+				// &Constant{Value: types.NewDatum(16), RetType: types.NewFieldType(mysql.TypeInt24)},
+			},
+			geners: []dataGenerator{&rangeInt64Gener{1, 2}, nil, nil, nil, nil},
+		},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFunc(c *C) {

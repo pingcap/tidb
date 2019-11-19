@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -79,7 +80,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
-		inInt := builtinInIntSig{baseBuiltinFunc: bf, threshold: 16}
+		inInt := builtinInIntSig{baseBuiltinFunc: bf, threshold: 1}
 		err := inInt.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inInt, err
@@ -118,23 +119,23 @@ type builtinInIntSig struct {
 	baseBuiltinFunc
 	args      []Expression
 	hashSet   map[int64]bool
-	hasNull   bool
 	threshold int
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	fmt.Println("enter buildHashMapForConstArgs")
 	b.args = make([]Expression, 0, len(b.baseBuiltinFunc.args))
 	b.args = append(b.args, b.baseBuiltinFunc.args[0])
 	b.hashSet = make(map[int64]bool, len(b.baseBuiltinFunc.args)-1)
 	count := 0
-	for i := 1; i < len(b.args); i++ {
+	for i := 1; i < len(b.baseBuiltinFunc.args); i++ {
 		if b.baseBuiltinFunc.args[i].ConstItem() {
 			val, isNull, err := b.baseBuiltinFunc.args[i].EvalInt(ctx, chunk.Row{})
 			if err != nil {
 				return err
 			}
 			if isNull {
-				b.hasNull = true
+				b.args = append(b.args, b.baseBuiltinFunc.args[i])
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.baseBuiltinFunc.args[i].GetType().Flag)
@@ -143,10 +144,10 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 			b.args = append(b.args, b.baseBuiltinFunc.args[i])
 		}
 	}
+	fmt.Println("const count = ", count, ", threshold = ", b.threshold)
 	if count < b.threshold {
 		b.args = b.baseBuiltinFunc.args
 		b.hashSet = nil
-		b.hasNull = false
 	}
 
 	return nil
@@ -159,7 +160,6 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 	for _, arg := range b.args {
 		newSig.args = append(newSig.args, arg)
 	}
-	newSig.hasNull = b.hasNull
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
 	return newSig
@@ -174,18 +174,11 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if b.hashSet != nil {
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
-			if isUnsigned0 && isUnsigned {
+			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
 				return 1, false, nil
-			} else if !isUnsigned0 && !isUnsigned {
+			}
+			if arg0 >= 0 {
 				return 1, false, nil
-			} else if !isUnsigned0 && isUnsigned {
-				if arg0 >= 0 {
-					return 1, false, nil
-				}
-			} else {
-				if arg0 >= 0 {
-					return 1, false, nil
-				}
 			}
 		}
 	}
@@ -219,34 +212,34 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 			}
 		}
 	}
-	return 0, hasNull || b.hasNull, nil
+	return 0, hasNull, nil
 }
 
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
-	hashSet map[string]bool
-	hasNull bool
-	varArgs []Expression
+	args      []Expression
+	hashSet   map[string]bool
+	threshold int
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.varArgs = make([]Expression, 0, len(b.args))
-	b.varArgs = append(b.varArgs, b.args[0])
+	b.args = make([]Expression, 0, len(b.args))
+	b.args = append(b.args, b.baseBuiltinFunc.args[0])
 	b.hashSet = make(map[string]bool, len(b.args)-1)
-	for i := 1; i < len(b.args); i++ {
+	for i := 1; i < len(b.baseBuiltinFunc.args); i++ {
 		if b.args[i].ConstItem() {
-			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
+			val, isNull, err := b.baseBuiltinFunc.args[i].EvalString(ctx, chunk.Row{})
 			if err != nil {
 				return err
 			}
 			if isNull {
-				b.hasNull = true
+				b.args = append(b.args, b.baseBuiltinFunc.args[i])
 				continue
 			}
 			b.hashSet[val] = true
 		} else {
-			b.varArgs = append(b.varArgs, b.args[i])
+			b.args = append(b.args, b.baseBuiltinFunc.args[i])
 		}
 	}
 
