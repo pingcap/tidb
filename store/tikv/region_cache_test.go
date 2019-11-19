@@ -530,7 +530,7 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	// pre-load store2's address into cache via follower-read.
 	loc, err := client.regionCache.LocateKey(s.bo, testKey)
 	c.Assert(err, IsNil)
-	fctx, err := client.regionCache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0)
+	fctx, err := client.regionCache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(fctx.Store.storeID, Equals, s.store2)
 	c.Assert(fctx.Addr, Equals, "store2")
