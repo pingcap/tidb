@@ -76,17 +76,18 @@ type outerMergeCtx struct {
 }
 
 type innerMergeCtx struct {
-	readerBuilder *dataReaderBuilder
-	rowTypes      []*types.FieldType
-	joinKeys      []*expression.Column
-	keyCols       []int
-	compareFuncs  []expression.CompareFunc
-	colLens       []int
-	desc          bool
+	readerBuilder           *dataReaderBuilder
+	rowTypes                []*types.FieldType
+	joinKeys                []*expression.Column
+	keyCols                 []int
+	compareFuncs            []expression.CompareFunc
+	colLens                 []int
+	desc                    bool
+	keyOff2KeyOffOrderByIdx []int
 }
 
 type lookUpMergeJoinTask struct {
-	outerResult   *chunk.ListInMemory
+	outerResult   *chunk.List
 	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
@@ -323,7 +324,7 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
-		outerResult: chunk.NewListInMemory(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
+		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
 	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
@@ -346,10 +347,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 			break
 		}
 
-		err = task.outerResult.Add(execChk)
-		if err != nil {
-			return task, err
-		}
+		task.outerResult.Add(execChk)
 		requiredRows -= execChk.NumRows()
 		task.memTracker.Consume(execChk.MemoryUsage())
 	}
@@ -426,15 +424,20 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
 			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
-			for id, joinKey := range imw.outerMergeCtx.joinKeys {
-				cmp, _, err := imw.outerMergeCtx.compareFuncs[id](imw.ctx, joinKey, joinKey, rowI, rowJ)
+			var cmp int64
+			var err error
+			for _, keyOff := range imw.keyOff2KeyOffOrderByIdx {
+				joinKey := imw.outerMergeCtx.joinKeys[keyOff]
+				cmp, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
-				if cmp != 0 || imw.nextColCompareFilters == nil {
-					return cmp < 0
+				if cmp != 0 {
+					break
 				}
-				return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
 			}
-			return false
+			if cmp != 0 || imw.nextColCompareFilters == nil {
+				return cmp < 0
+			}
+			return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
@@ -574,8 +577,8 @@ func (imw *innerMergeWorker) fetchInnerRowsWithSameKey(ctx context.Context, task
 }
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
-	for i := 0; i < len(imw.outerMergeCtx.joinKeys); i++ {
-		cmp, _, err := imw.innerMergeCtx.compareFuncs[i](imw.ctx, imw.outerMergeCtx.joinKeys[i], imw.innerMergeCtx.joinKeys[i], outerRow, innerRow)
+	for _, keyOff := range imw.innerMergeCtx.keyOff2KeyOffOrderByIdx {
+		cmp, _, err := imw.innerMergeCtx.compareFuncs[keyOff](imw.ctx, imw.outerMergeCtx.joinKeys[keyOff], imw.innerMergeCtx.joinKeys[keyOff], outerRow, innerRow)
 		if err != nil || cmp != 0 {
 			return int(cmp), err
 		}

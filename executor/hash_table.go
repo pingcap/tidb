@@ -91,7 +91,7 @@ type hashRowContainer struct {
 	memTracker *memory.Tracker
 
 	// records stores the chunks in memory.
-	records *chunk.ListInMemory
+	records *chunk.List
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *chunk.ListInDisk
 
@@ -117,7 +117,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	if estCount < maxChunkSize*estCountMinFactor {
 		estCount = 0
 	}
-	initList := chunk.NewListInMemory(hCtx.allTypes, maxChunkSize, maxChunkSize)
+	initList := chunk.NewList(hCtx.allTypes, maxChunkSize, maxChunkSize)
 	c := &hashRowContainer{
 		sc:   sCtx.GetSessionVars().StmtCtx,
 		hCtx: hCtx,
@@ -130,16 +130,17 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	return c
 }
 
-// GetMatchedRows get matched rows from probeRow. It can be called
+// GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		if c.alreadySpilled() {
 			matchedRow, err = c.recordsInDisk.GetRow(ptr)
@@ -158,6 +159,7 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 			continue
 		}
 		matched = append(matched, matchedRow)
+		matchedPtrs = append(matchedPtrs, ptr)
 	}
 	return
 }
@@ -192,6 +194,13 @@ func (c *hashRowContainer) alreadySpilledSafe() bool { return atomic.LoadUint32(
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
+	return c.PutChunkSelected(chk, nil)
+}
+
+// PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
 	var chkIdx uint32
 	if c.alreadySpilled() {
 		// append chk to disk.
@@ -202,10 +211,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 		}
 	} else {
 		chkIdx = uint32(c.records.NumChunks())
-		err := c.records.Add(chk)
-		if err != nil {
-			return err
-		}
+		c.records.Add(chk)
 		if atomic.LoadUint32(&c.exceeded) != 0 {
 			err := c.spillToDisk()
 			if err != nil {
@@ -221,13 +227,13 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 
 	hCtx := c.hCtx
 	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
 			continue
 		}
 		key := c.hCtx.hashVals[i].Sum64()
@@ -272,7 +278,7 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return &spillDiskAction{c: c}
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.ListInMemory. If
+// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, spillDiskAction.Action is
 // triggered.
 type spillDiskAction struct {
