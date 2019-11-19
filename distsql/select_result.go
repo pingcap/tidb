@@ -80,7 +80,7 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
-	refetch:
+refetch:
 	r.respChkIdx = 0
 	resultSubset, err := r.resp.Next(ctx)
 	if err != nil {
