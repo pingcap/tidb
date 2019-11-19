@@ -1356,7 +1356,7 @@ func (b *builtinUnixTimestampDecSig) vectorized() bool {
 }
 
 func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-    n := input.NumRows()
+	n := input.NumRows()
 	result.ResizeDecimal(n, false)
 	Ts := result.Decimals()
 	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
