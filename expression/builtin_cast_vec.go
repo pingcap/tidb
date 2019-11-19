@@ -1282,6 +1282,9 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 			return err
 		}
 		tempres, err = types.ProduceDecWithSpecifiedTp(tempres, b.tp, sc)
+		if err != nil {
+			return err
+		}
 		res[i] = *tempres
 	}
 	return nil
