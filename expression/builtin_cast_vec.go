@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -1279,33 +1278,17 @@ func (b *builtinCastStringAsDecimalSig) vectorized() bool {
 func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if IsBinaryLiteral(b.args[0]) {
-		buf, err := b.bufAllocator.get(types.ETDecimal, n)
-		if err != nil {
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 			return err
-		}
-		defer b.bufAllocator.put(buf)
-		if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
-			return err
-		}
-		bfdecimal := buf.Decimals()
-		res := result.Decimals()
-		result.MergeNulls(buf)
-		for i := 0; i < n; i++ {
-			if result.IsNull(i) {
-				continue
-			}
-			res[i] = bfdecimal[i]
 		}
 		return nil
 	}
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
-		fmt.Println("I am here1")
 		return err
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		fmt.Println("I am here2")
 		return err
 	}
 	result.ResizeDecimal(n, false)
@@ -1321,7 +1304,6 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 			te := buf.GetString(i)
 			err = sc.HandleTruncate(tempdecimal.FromString([]byte(te)))
 			if err != nil {
-				fmt.Println("I am here3")
 				return err
 			}
 		}
