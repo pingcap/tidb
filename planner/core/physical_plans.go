@@ -219,6 +219,23 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
+// ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
+func (ts *PhysicalTableScan) ExpandVirtualColumn() {
+	for _, col := range ts.schema.Columns {
+		if col.VirtualExpr == nil {
+			continue
+		}
+
+		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
+		for _, baseCol := range baseCols {
+			if !ts.schema.Contains(baseCol) {
+				ts.schema.Columns = append(ts.schema.Columns, baseCol)
+				ts.Columns = append(ts.Columns, FindColumnInfoByID(ts.Table.Columns, baseCol.ID))
+			}
+		}
+	}
+}
+
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
 	physicalSchemaProducer
@@ -298,6 +315,8 @@ type PhysicalIndexJoin struct {
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
 
+	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
+	KeyOff2KeyOffOrderByIdx []int
 	// NeedOuterSort means whether outer rows should be sorted to build range.
 	NeedOuterSort bool
 	// CompareFuncs store the compare functions for outer join keys and inner join key.
