@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -287,6 +288,14 @@ func (g *constJSONGener) gen() interface{} {
 		panic(err)
 	}
 	return *j
+}
+
+type decimalJSONGener struct{}
+
+func (g *decimalJSONGener) gen() interface{} {
+	dec := rand.Float64()
+	s1 := strconv.FormatFloat(dec, 'E', -1, 64)
+	return json.CreateBinary(s1)
 }
 
 type jsonStringGener struct{}

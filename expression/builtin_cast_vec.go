@@ -1256,11 +1256,35 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastJSONAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	res := result.Decimals()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		tempres, err := types.ConvertJSONToDecimal(sc, buf.GetJSON(i))
+		if err != nil {
+			return err
+		}
+		tempres, err = types.ProduceDecWithSpecifiedTp(tempres, b.tp, sc)
+		res[i] = *tempres
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsRealSig) vectorized() bool {
