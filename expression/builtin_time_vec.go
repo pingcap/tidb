@@ -810,10 +810,8 @@ func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, resul
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.MergeNulls(buf1)
-	result.MergeNulls(buf)
-	result.MergeNulls(buf2)
 	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf1, buf, buf2)
 	res := result.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -824,11 +822,12 @@ func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, resul
 		dur := buf.GetDuration(i, b.args[0].GetType().Decimal)
 		temp := buf1.GetInt64(i)
 		interval := strconv.FormatInt(temp, 10)
-		q, _, err := b.addDuration(b.ctx, dur, interval, unit)
+		respoint, isNull, err := b.addDuration(b.ctx, dur, interval, unit)
 		if err != nil {
 			return nil
 		}
-		res[i] = q.Duration
+		result.SetNull(i, isNull)
+		res[i] = respoint.Duration
 	}
 	return nil
 }
