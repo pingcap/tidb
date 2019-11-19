@@ -93,16 +93,16 @@ func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
-	return newPartitionExprBySchema(tblInfo, columns)
+	return newPartitionExprBySchema(ctx, tblInfo, columns)
 }
 
-func newPartitionExprBySchema(tblInfo *model.TableInfo, columns []*expression.Column) (*PartitionExpr, error) {
+func newPartitionExprBySchema(ctx sessionctx.Context, tblInfo *model.TableInfo, columns []*expression.Column) (*PartitionExpr, error) {
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
-		return generatePartitionExpr(pi, columns)
+		return generatePartitionExpr(ctx, pi, columns)
 	case model.PartitionTypeHash:
-		return generateHashPartitionExpr(pi, columns)
+		return generateHashPartitionExpr(ctx, pi, columns)
 	}
 	panic("cannot reach here")
 }
@@ -143,11 +143,10 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 	panic("create table assert len(columns) = 1")
 }
 
-func generatePartitionExpr(pi *model.PartitionInfo,
+func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
-	ctx := mock.NewContext()
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
@@ -205,11 +204,10 @@ func generatePartitionExpr(pi *model.PartitionInfo,
 	}, nil
 }
 
-func generateHashPartitionExpr(pi *model.PartitionInfo,
+func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
-	ctx := mock.NewContext()
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	schema := expression.NewSchema(columns...)
@@ -243,8 +241,10 @@ func generateHashPartitionExpr(pi *model.PartitionInfo,
 }
 
 // PartitionExpr returns the partition expression.
-func (t *partitionedTable) PartitionExpr(columns []*expression.Column) (*PartitionExpr, error) {
-	return newPartitionExprBySchema(t.meta, columns)
+func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expression.Column) (*PartitionExpr, error) {
+	// TODO: a better performance implementation:
+	// traverse the Expression, find all columns and rewrite them.
+	return newPartitionExprBySchema(ctx, t.meta, columns)
 }
 
 func partitionRecordKey(pid int64, handle int64) kv.Key {
