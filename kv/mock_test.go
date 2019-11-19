@@ -34,7 +34,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
-	snapshot.SetPriority(0)
+	snapshot.SetOption(Priority, PriorityNormal)
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
