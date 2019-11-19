@@ -112,7 +112,8 @@ func (b *builtinGetParamStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		v := sessionVars.PreparedParams[idxI]
 		str, err := v.ToString()
 		if err != nil {
-			return nil
+			result.AppendNull()
+			continue
 		}
 		result.AppendString(str)
 	}
