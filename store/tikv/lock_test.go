@@ -16,12 +16,14 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -501,13 +503,11 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
-	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 0)
-	c.Assert(err, IsNil)
-	committer.lockTTL = txnLockTTL(txn.(*tikvTxn).startTime, 1<<20)
-	// Test the old version TiDB data, this line is essential.
-	committer.zeroCommitTS = true
-	err = committer.prewriteKeys(bo, committer.keys)
-	c.Assert(err, IsNil)
+
+	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
 
 	lock := s.mustGetLock(c, []byte("key"))
 	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
