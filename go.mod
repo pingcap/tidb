@@ -44,6 +44,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20191112054303-0b0ad0d4a92e
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90
+	github.com/prometheus/common v0.4.1
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
 	github.com/shirou/gopsutil v2.18.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect

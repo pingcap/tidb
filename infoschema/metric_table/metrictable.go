@@ -1,11 +1,23 @@
 package metric_table
 
 import (
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"fmt"
 	"github.com/pingcap/tidb/types"
 	"strconv"
+	"strings"
+
+	"github.com/pingcap/parser/mysql"
+	pmodel "github.com/prometheus/common/model"
+)
+
+const (
+	promQLQuantileKey       = "$QUANTILE"
+	promQLLabelConditionKey = "$LABEL_CONDITION"
+	promQRangeDurationKey   = "$RANGE_DURATION"
+)
+
+const (
+	MetricDBName = "METRIC"
 )
 
 type metricTableDef struct {
@@ -14,12 +26,6 @@ type metricTableDef struct {
 	quantile      float64
 	rangeDuration int64 // unit is second.
 }
-
-const (
-	promQLQuantileKey       = "$QUANTILE"
-	promQLLabelConditionKey = "$LABEL_CONDITION"
-	promQRangeDurationKey   = "$RANGE_DURATION"
-)
 
 var metricTableMap = map[string]metricTableDef{
 	"query_duration": {
@@ -51,6 +57,32 @@ func (def *metricTableDef) genColumnInfos() []columnInfo {
 	return cols
 }
 
+func (def *metricTableDef) genPromQL(labels []string) string {
+	promQL := def.promQL
+	if strings.Contains(promQL, promQLQuantileKey) {
+		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(def.quantile, 'f', -1, 64), -1)
+	}
+
+	// TODO: add label condition.
+	if strings.Contains(promQL, promQLLabelConditionKey) {
+		promQL = strings.Replace(promQL, promQLLabelConditionKey, "", -1)
+	}
+
+	if strings.Contains(promQL, promQRangeDurationKey) {
+		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(def.rangeDuration, 10)+"s", -1)
+	}
+	fmt.Printf("gen promQL: %v\n\n", promQL)
+	return promQL
+}
+
+func (def *metricTableDef) genRows(value pmodel.Value) [][]types.Datum {
+	var rows [][]types.Datum
+	switch value.Type() {
+	case pmodel.ValMatrix:
+
+	}
+}
+
 type columnInfo struct {
 	name  string
 	tp    byte
@@ -58,45 +90,4 @@ type columnInfo struct {
 	flag  uint
 	deflt interface{}
 	elems []string
-}
-
-func buildColumnInfo(col columnInfo) *model.ColumnInfo {
-	mCharset := charset.CharsetBin
-	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
-		mCharset = charset.CharsetUTF8MB4
-		mCollation = charset.CollationUTF8MB4
-		mFlag = col.flag
-	}
-	fieldType := types.FieldType{
-		Charset: mCharset,
-		Collate: mCollation,
-		Tp:      col.tp,
-		Flen:    col.size,
-		Flag:    mFlag,
-	}
-	return &model.ColumnInfo{
-		Name:         model.NewCIStr(col.name),
-		FieldType:    fieldType,
-		State:        model.StatePublic,
-		DefaultValue: col.deflt,
-	}
-}
-
-func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
-	cols := make([]*model.ColumnInfo, 0, len(cs))
-	for _, c := range cs {
-		cols = append(cols, buildColumnInfo(c))
-	}
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tableName),
-		Columns: cols,
-		State:   model.StatePublic,
-		Charset: mysql.DefaultCharset,
-		Collate: mysql.DefaultCollationName,
-	}
 }
