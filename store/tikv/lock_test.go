@@ -16,12 +16,14 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -290,19 +292,17 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(status.CommitTS(), Equals, uint64(0))
-	// TODO: It should be Action_MinCommitTSPushed if minCommitTS is set in the Prewrite request.
-	// Update here to kvrpcpb.Action_MinCommitTSPushed in the next PR.
-	c.Assert(status.action, Equals, kvrpcpb.Action_NoAction)
+	c.Assert(status.action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
-	timeBeforeExpire, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	timeBeforeExpire, _, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(timeBeforeExpire > int64(0), IsTrue)
 
 	// Force rollback the lock using lock.TTL = 0.
 	lock.TTL = uint64(0)
-	timeBeforeExpire, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	timeBeforeExpire, _, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(timeBeforeExpire, Equals, int64(0))
 
@@ -496,4 +496,33 @@ func init() {
 	maxLockTTL = 120
 	ttlFactor = 6
 	oracleUpdateInterval = 2
+}
+
+func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("key"), []byte("value"))
+	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+
+	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
+
+	lock := s.mustGetLock(c, []byte("key"))
+	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(pushed, HasLen, 0)
+	c.Assert(expire, Greater, int64(0))
+
+	expire, pushed, err = newLockResolver(s.store).ResolveLocks(bo, math.MaxUint64, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(pushed, HasLen, 0)
+	c.Assert(expire, Greater, int64(0))
+
+	// Clean up this test.
+	lock.TTL = uint64(0)
+	expire, _, err = newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	c.Assert(err, IsNil)
+	c.Assert(expire, Equals, int64(0))
 }
