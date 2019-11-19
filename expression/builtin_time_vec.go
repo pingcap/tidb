@@ -842,12 +842,12 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	durations := buf.GoDurations()
+	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(durations[i].Microseconds())
+		i64s[i] = int64((ds[i] % time.Second) / time.Microsecond)
 	}
 	return nil
 }
