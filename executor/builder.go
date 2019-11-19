@@ -698,7 +698,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		SetList:                   v.SetList,
-		GenColumns:                v.GenCols.Columns,
 		GenExprs:                  v.GenCols.Exprs,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
@@ -730,7 +729,6 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		Table:        tbl,
 		Columns:      v.Columns,
-		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
 	err := insertVal.initInsertColumns()
