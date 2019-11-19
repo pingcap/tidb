@@ -36,7 +36,6 @@ var _ privilege.Manager = (*UserPrivileges)(nil)
 type UserPrivileges struct {
 	user     string
 	host     string
-	authHost string
 	*Handle
 }
 
@@ -62,7 +61,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(activeRoles, p.user, p.authHost, db, table, column, priv)
+	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -140,8 +139,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
-		p.host = host
-		p.authHost = h
+		p.host = h
 		success = true
 		return
 	}
@@ -161,8 +159,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	p.user = user
-	p.host = host
-	p.authHost = h
+	p.host = h
 	success = true
 	return
 }
@@ -173,7 +170,7 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
-	if mysqlPriv.DBIsVisible(p.user, p.authHost, db) {
+	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
 		return true
 	}
 	allRoles := mysqlPriv.FindAllRole(activeRoles)
@@ -218,7 +215,7 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 	}
 	mysqlPrivilege := p.Handle.Get()
 	u := p.user
-	h := p.authHost
+	h := p.host
 	for _, r := range roleList {
 		ok := mysqlPrivilege.FindRole(u, h, r)
 		if !ok {
