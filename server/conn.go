@@ -1442,7 +1442,7 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 	fieldData := cc.alloc.AllocWithLen(0, 1024)
 
 	req := rs.NewChunk()
-	is_dumpfile := into.Tp == ast.SelectIntoDumpfile
+	isDumpfile := into.Tp == ast.SelectIntoDumpfile
 
 	var lineTerm []byte
 	var lineStart []byte
@@ -1452,7 +1452,7 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 	var fieldEnclose byte
 	var encloseOptFlag bool
 
-	if is_dumpfile {
+	if isDumpfile {
 		fieldTerm = nil
 	} else {
 		lineTerm = []byte(into.LinesInfo.Terminated)
@@ -1497,19 +1497,19 @@ func (r *ResultSetReader) Read(b []byte) (int, error) {
 		for i := 0; i < rowCount; i++ {
 			fieldData = fieldData[:0]
 
-			fieldData, err = dumpTextRowOnly(fieldData, rs.Columns(), req.GetRow(i), is_dumpfile,
+			fieldData, err = dumpTextRowOnly(fieldData, rs.Columns(), req.GetRow(i), isDumpfile,
 				fieldTerm, fieldEscape, fieldEnclose, encloseOptFlag)
 			if err != nil {
 				return 0, err
 			}
 
-			if !is_dumpfile {
+			if !isDumpfile {
 				r.data = append(r.data, lineStart...)
 			}
 
 			r.data = append(r.data, fieldData...)
 
-			if !is_dumpfile {
+			if !isDumpfile {
 				r.data = append(r.data, lineTerm...)
 			}
 
