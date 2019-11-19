@@ -112,34 +112,34 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseBuiltinFunc
-	args      []Expression
-	hashSet   map[int64]bool
-	threshold int
+	nonConstArgs []Expression
+	hashSet      map[int64]bool
+	threshold    int
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.args = make([]Expression, 0, len(b.baseBuiltinFunc.args))
-	b.args = append(b.args, b.baseBuiltinFunc.args[0])
-	b.hashSet = make(map[int64]bool, len(b.baseBuiltinFunc.args)-1)
+	b.nonConstArgs = make([]Expression, 0, len(b.args))
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	count := 0
-	for i := 1; i < len(b.baseBuiltinFunc.args); i++ {
-		if b.baseBuiltinFunc.args[i].ConstItem() {
-			val, isNull, err := b.baseBuiltinFunc.args[i].EvalInt(ctx, chunk.Row{})
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
 			if err != nil {
 				return err
 			}
 			if isNull {
-				b.args = append(b.args, b.baseBuiltinFunc.args[i])
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.baseBuiltinFunc.args[i].GetType().Flag)
+			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
 			count++
 		} else {
-			b.args = append(b.args, b.baseBuiltinFunc.args[i])
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
-		b.args = b.baseBuiltinFunc.args
+		b.nonConstArgs = b.args
 		b.hashSet = nil
 	}
 
@@ -149,9 +149,9 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 func (b *builtinInIntSig) Clone() builtinFunc {
 	newSig := &builtinInIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.args = make([]Expression, 0, len(b.args))
-	for _, arg := range b.args {
-		newSig.args = append(newSig.args, arg)
+	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
+	for _, arg := range b.nonConstArgs {
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg)
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
@@ -165,6 +165,12 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
+	var args []Expression
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+	} else {
+		args = b.args
+	}
 	if b.hashSet != nil {
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
 			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
@@ -177,7 +183,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, err
