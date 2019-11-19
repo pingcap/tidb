@@ -602,9 +602,7 @@ drop table if exists t;
 create table t(a int);
 explain select * from t where _tidb_rowid = 0;
 id	count	task	operator info
-Projection_4	8000.00	root	Column#1
-└─TableReader_6	10000.00	root	data:TableScan_5
-  └─TableScan_5	10000.00	cop[tikv]	table:t, range:[0,0], keep order:false, stats:pseudo
+Point_Get_1	1.00	root	table:t, handle:0
 explain select * from t where _tidb_rowid > 0;
 id	count	task	operator info
 Projection_4	8000.00	root	Column#1
