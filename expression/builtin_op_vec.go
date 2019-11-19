@@ -206,11 +206,23 @@ func (b *builtinBitNegSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinUnaryMinusDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnaryMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	decs := result.Decimals()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		decs[i] = *types.DecimalNeg(&decs[i])
+	}
+	return nil
 }
 
 func (b *builtinIntIsNullSig) vectorized() bool {
