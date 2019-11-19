@@ -290,16 +290,18 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		return err
 	}
+
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
 	times := buf.Times()
 	decs := result.Decimals()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	dec := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		dec := new(types.MyDecimal)
+		*dec = types.MyDecimal{}
 		times[i].FillNumber(dec)
 		dec, err = types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
 		if err != nil {
@@ -551,11 +553,12 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 	decs := result.Decimals()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	dec := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		dec := &types.MyDecimal{}
+		*dec = types.MyDecimal{}
 		if !(conditionUnionAndUnsigned && decs[i].IsNegative()) {
 			*dec = decs[i]
 		}
@@ -943,12 +946,13 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 	result.MergeNulls(buf)
 	decs := result.Decimals()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	dec := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 
-		dec := new(types.MyDecimal)
+		*dec = types.MyDecimal{}
 		if !isUnsigned {
 			dec.FromInt(nums[i])
 		} else if b.inUnion && nums[i] < 0 {
