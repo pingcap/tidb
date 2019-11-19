@@ -666,7 +666,8 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	if v.SelectPlan != nil {
 		// Try to update the forUpdateTS for insert/replace into select statements.
-		if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
+		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
 			return nil
 		}
 	}
@@ -1477,8 +1478,6 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	if !txnCtx.IsPessimistic {
 		return nil
 	}
-	// For insert/replace select statements, we should always update forUpdateTS, whether it is a PointGetPlan or not.
-	// But it seems the selectPlan could not be a PointGetPlan in these statements.
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
 		return nil
 	}
