@@ -558,9 +558,9 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
 	result.ReserveString(n)
-	result.MergeNulls(expr)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if expr.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 		exprI := expr.GetString(i)
