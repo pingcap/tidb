@@ -248,6 +248,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 		"10:123",
 		"10:11:123",
 		"100:11:123",
+		"-1a 10:11:12",
 	}
 
 	for _, test := range errTable {

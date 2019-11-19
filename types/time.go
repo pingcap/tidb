@@ -1106,11 +1106,23 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 	// Time format may have leading and trailing whitespaces.
 	str = strings.TrimSpace(str)
 
-	// Time format may has day.
+	// Time format may have day.
 	if n := strings.IndexByte(str, ' '); n >= 0 {
-		if day, err = strconv.Atoi(str[:n]); err == nil {
-			dayExists = true
+		day, err = strconv.Atoi(str[:n])
+		// Time format may have date
+		if err != nil {
+			t, err1 := ParseDatetime(sc, str)
+			if err1 != nil {
+				return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
+			}
+			var dur Duration
+			dur, err1 = t.ConvertToDuration()
+			if err1 != nil {
+				return ZeroDuration, errors.Trace(err)
+			}
+			return dur.RoundFrac(fsp)
 		}
+		dayExists = true
 		str = str[n+1:]
 	}
 
@@ -1153,6 +1165,8 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 				_, err = fmt.Sscanf(integeralPart, "%2d", &second)
 			case 1: // 0S
 				_, err = fmt.Sscanf(integeralPart, "%1d", &second)
+			case 0:
+				return ZeroDuration, nil
 			default: // Maybe contains date.
 				t, err1 := ParseDatetime(sc, str)
 				if err1 != nil {
