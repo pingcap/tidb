@@ -87,11 +87,36 @@ func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinGetParamStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGetParamStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sessionVars := b.ctx.GetSessionVars()
+	n := input.NumRows()
+	idx, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(idx)
+	if err := b.args[0].VecEvalInt(b.ctx, input, idx); err != nil {
+		return err
+	}
+	idxIs := idx.Int64s()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if idx.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		idxI := idxIs[i]
+		v := sessionVars.PreparedParams[idxI]
+		str, err := v.ToString()
+		if err != nil {
+			return nil
+		}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinSetVarSig) vectorized() bool {
