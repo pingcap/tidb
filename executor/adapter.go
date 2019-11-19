@@ -24,7 +24,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -547,30 +546,22 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 }
 
-// GetTimestampWithRetry tries to get timestamp using retry and backoff mechanism
-func (a *ExecStmt) GetTimestampWithRetry(ctx context.Context) (uint64, error) {
-	tsoMaxBackoff := 15000
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.GetTimestampWithRetry", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	bo := tikv.NewBackoffer(ctx, tsoMaxBackoff)
-	for {
-		ts, err := a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
-		// mock get ts fail
-		failpoint.Inject("ExecStmtGetTsError", func() (uint64, error) {
-			return 0, errors.New("ExecStmtGetTsError")
-		})
-
-		if err == nil {
-			return ts, nil
-		}
-		err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("ExecStmt get timestamp failed: %v", err))
+// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
+func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
+	if newForUpdateTS == 0 {
+		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
-			return 0, errors.Trace(err)
+			return err
 		}
+		newForUpdateTS = version.Ver
 	}
+	txn, err := seCtx.Txn(true)
+	if err != nil {
+		return err
+	}
+	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
+	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
+	return nil
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
@@ -606,11 +597,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
 		if err != nil {
-			newForUpdateTS, tsErr := a.GetTimestampWithRetry(ctx)
+			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr != nil {
 				return nil, tsErr
 			}
-			txnCtx.SetForUpdateTS(newForUpdateTS)
 		}
 		return nil, err
 	}
@@ -618,18 +608,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	if newForUpdateTS == 0 {
-		newForUpdateTS, err = a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	txnCtx.SetForUpdateTS(newForUpdateTS)
-	txn, err := a.Ctx.Txn(true)
+	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
 	}
-	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err

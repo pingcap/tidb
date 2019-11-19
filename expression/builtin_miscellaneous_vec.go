@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"strings"
@@ -324,11 +325,11 @@ func (b *builtinNameConstDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 }
 
 func (b *builtinNameConstJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalJSON(b.ctx, input, result)
 }
 
 func (b *builtinInet6AtonSig) vectorized() bool {
@@ -484,11 +485,37 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinInet6NtoaSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	val, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(val)
+	if err := b.args[0].VecEvalString(b.ctx, input, val); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if val.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		valI := val.GetString(i)
+		ip := net.IP([]byte(valI)).String()
+		if len(valI) == net.IPv6len && !strings.Contains(ip, ":") {
+			ip = fmt.Sprintf("::ffff:%s", ip)
+		}
+		if net.ParseIP(ip) == nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(ip)
+	}
+	return nil
 }
 
 func (b *builtinNameConstRealSig) vectorized() bool {
