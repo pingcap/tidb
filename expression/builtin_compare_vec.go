@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -403,68 +401,16 @@ func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-	args0 := buf0.Int64s()
-	args1 := buf1.Int64s()
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
 	i64s := result.Int64s()
-	checkNulls := func(i int) int64 {
+	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
 		if isNull0 && isNull1 {
-			return 1
-		}
-		if isNull0 != isNull1 {
-			return 0
-		}
-		return -1
-	}
-	switch {
-	case isUnsigned0 && isUnsigned1:
-		for i := 0; i < n; i++ {
-			if nulls := checkNulls(i); nulls >= 0 {
-				i64s[i] = nulls
-				continue
-			}
-			if types.CompareUint64(uint64(args0[i]), uint64(args1[i])) == 0 {
-				i64s[i] = 1
-				continue
-			}
-			i64s[i] = 0
-		}
-	case !isUnsigned0 && !isUnsigned1:
-		for i := 0; i < n; i++ {
-			if nulls := checkNulls(i); nulls >= 0 {
-				i64s[i] = nulls
-				continue
-			}
-			if types.CompareInt64(args0[i], args1[i]) == 0 {
-				i64s[i] = 1
-				continue
-			}
-			i64s[i] = 0
-		}
-	case isUnsigned0 && !isUnsigned1:
-		for i := 0; i < n; i++ {
-			if nulls := checkNulls(i); nulls >= 0 {
-				i64s[i] = nulls
-				continue
-			}
-			if args1[i] < 0 || args0[i] > math.MaxInt64 || types.CompareInt64(args0[i], args1[i]) != 0 {
-				i64s[i] = 0
-				continue
-			}
 			i64s[i] = 1
-		}
-	case !isUnsigned0 && isUnsigned1:
-		for i := 0; i < n; i++ {
-			if nulls := checkNulls(i); nulls >= 0 {
-				i64s[i] = nulls
-				continue
-			}
-			if args0[i] < 0 || args1[i] > math.MaxInt64 || types.CompareInt64(args0[i], args1[i]) != 0 {
-				i64s[i] = 0
-				continue
-			}
+		} else if isNull0 || isNull1 || i64s[i] != 0 {
+			i64s[i] = 0
+		} else {
 			i64s[i] = 1
 		}
 	}
