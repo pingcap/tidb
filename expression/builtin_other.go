@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -89,10 +88,6 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig.setPbCode(tipb.ScalarFuncSig_InInt)
 	case types.ETString:
 		inStr := builtinInStringSig{baseBuiltinFunc: bf}
-		err := inStr.buildHashMapForConstArgs(ctx)
-		if err != nil {
-			return &inStr, err
-		}
 		sig = &inStr
 		sig.setPbCode(tipb.ScalarFuncSig_InString)
 	case types.ETReal:
@@ -123,7 +118,6 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	fmt.Println("enter buildHashMapForConstArgs")
 	b.args = make([]Expression, 0, len(b.baseBuiltinFunc.args))
 	b.args = append(b.args, b.baseBuiltinFunc.args[0])
 	b.hashSet = make(map[int64]bool, len(b.baseBuiltinFunc.args)-1)
@@ -144,7 +138,6 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 			b.args = append(b.args, b.baseBuiltinFunc.args[i])
 		}
 	}
-	fmt.Println("const count = ", count, ", threshold = ", b.threshold)
 	if count < b.threshold {
 		b.args = b.baseBuiltinFunc.args
 		b.hashSet = nil
@@ -218,32 +211,6 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
-	args      []Expression
-	hashSet   map[string]bool
-	threshold int
-}
-
-func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.args = make([]Expression, 0, len(b.args))
-	b.args = append(b.args, b.baseBuiltinFunc.args[0])
-	b.hashSet = make(map[string]bool, len(b.args)-1)
-	for i := 1; i < len(b.baseBuiltinFunc.args); i++ {
-		if b.args[i].ConstItem() {
-			val, isNull, err := b.baseBuiltinFunc.args[i].EvalString(ctx, chunk.Row{})
-			if err != nil {
-				return err
-			}
-			if isNull {
-				b.args = append(b.args, b.baseBuiltinFunc.args[i])
-				continue
-			}
-			b.hashSet[val] = true
-		} else {
-			b.args = append(b.args, b.baseBuiltinFunc.args[i])
-		}
-	}
-
-	return nil
 }
 
 func (b *builtinInStringSig) Clone() builtinFunc {
