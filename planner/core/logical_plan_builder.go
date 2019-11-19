@@ -429,6 +429,16 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferTiFlash(alias) {
 		ds.preferStoreType |= preferTiFlash
 	}
+	if hintInfo.ifPreferTiKV(alias) {
+		if ds.preferStoreType != 0 {
+			errMsg := "Storage hints are conflict, you can only specify one storage type of each table"
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.preferStoreType = 0
+			return
+		}
+		ds.preferStoreType |= preferTiKV
+	}
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -2101,7 +2111,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
 		indexHintList                                                         []indexHintInfo
-		tiflashTables                                                         []hintTableInfo
+		tiflashTables, tikvTables                                             []hintTableInfo
 		aggHints                                                              aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2158,6 +2168,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			if hint.StoreType.L == HintTiFlash {
 				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
+			if hint.StoreType.L == HintTiKV {
+				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2167,7 +2180,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
-		flashTables:               tiflashTables,
+		tiflashTables:             tiflashTables,
+		tikvTables:                tikvTables,
 		aggHints:                  aggHints,
 	})
 }
