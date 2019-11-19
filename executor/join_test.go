@@ -1067,6 +1067,30 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	}
 }
 
+func (s *testSuiteJoin3) TestIssue13449(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("create table t(a int, index(a));")
+	tk.MustExec("create table s(a int, index(a));")
+	for i := 1; i <= 128; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.MustExec("insert into s values(1), (128)")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustExec("set @@tidb_index_join_batch_size=32;")
+
+	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
+		"IndexHashJoin_35 12487.50 root inner join, inner:IndexReader_27, outer key:Column#1, inner key:Column#3",
+		"├─IndexReader_37 9990.00 root index:IndexScan_36",
+		"│ └─IndexScan_36 9990.00 cop[tikv] table:t, index:a, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─IndexReader_27 1.25 root index:Selection_26",
+		"  └─Selection_26 1.25 cop[tikv] not(isnull(Column#3))",
+		"    └─IndexScan_25 1.25 cop[tikv] table:s, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
+}
+
 func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
