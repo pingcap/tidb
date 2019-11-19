@@ -313,9 +313,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
-	// SetPriority snapshot set the priority
-	SetPriority(priority int)
-
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt Option, val interface{})

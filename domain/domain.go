@@ -863,6 +863,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 					continue
 				}
 				do.bindHandle.CaptureBaselines()
+				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}
 	}()

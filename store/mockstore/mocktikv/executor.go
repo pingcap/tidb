@@ -152,6 +152,7 @@ type tableScanExec struct {
 	kvRanges       []kv.KeyRange
 	startTS        uint64
 	isolationLevel kvrpcpb.IsolationLevel
+	resolvedLocks  []uint64
 	mvccStore      MVCCStore
 	cursor         int
 	seekKey        []byte
@@ -286,9 +287,9 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	var pairs []Pair
 	var pair Pair
 	if e.Desc {
-		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel)
+		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel, e.resolvedLocks)
 	} else {
-		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel)
+		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel, e.resolvedLocks)
 	}
 	if len(pairs) > 0 {
 		pair = pairs[0]
@@ -329,6 +330,7 @@ type indexScanExec struct {
 	kvRanges       []kv.KeyRange
 	startTS        uint64
 	isolationLevel kvrpcpb.IsolationLevel
+	resolvedLocks  []uint64
 	mvccStore      MVCCStore
 	cursor         int
 	seekKey        []byte
@@ -458,9 +460,9 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	var pairs []Pair
 	var pair Pair
 	if e.Desc {
-		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel)
+		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel, e.resolvedLocks)
 	} else {
-		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel)
+		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel, e.resolvedLocks)
 	}
 	if len(pairs) > 0 {
 		pair = pairs[0]
