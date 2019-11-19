@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -379,11 +381,94 @@ func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinNullEQIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	result.ResizeInt64(n, false)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	args0 := buf0.Int64s()
+	args1 := buf1.Int64s()
+	i64s := result.Int64s()
+	checkNulls := func(i int) int64 {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		if isNull0 && isNull1 {
+			return 1
+		}
+		if isNull0 != isNull1 {
+			return 0
+		}
+		return -1
+	}
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			if nulls := checkNulls(i); nulls >= 0 {
+				i64s[i] = nulls
+				continue
+			}
+			if types.CompareUint64(uint64(args0[i]), uint64(args1[i])) == 0 {
+				i64s[i] = 1
+				continue
+			}
+			i64s[i] = 0
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			if nulls := checkNulls(i); nulls >= 0 {
+				i64s[i] = nulls
+				continue
+			}
+			if types.CompareInt64(args0[i], args1[i]) == 0 {
+				i64s[i] = 1
+				continue
+			}
+			i64s[i] = 0
+		}
+	case isUnsigned0 && !isUnsigned1:
+		for i := 0; i < n; i++ {
+			if nulls := checkNulls(i); nulls >= 0 {
+				i64s[i] = nulls
+				continue
+			}
+			if args1[i] < 0 || args0[i] > math.MaxInt64 || types.CompareInt64(args0[i], args1[i]) != 0 {
+				i64s[i] = 0
+				continue
+			}
+			i64s[i] = 1
+		}
+	case !isUnsigned0 && isUnsigned1:
+		for i := 0; i < n; i++ {
+			if nulls := checkNulls(i); nulls >= 0 {
+				i64s[i] = nulls
+				continue
+			}
+			if args0[i] < 0 || args1[i] > math.MaxInt64 || types.CompareInt64(args0[i], args1[i]) != 0 {
+				i64s[i] = 0
+				continue
+			}
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinIntervalIntSig) vectorized() bool {
