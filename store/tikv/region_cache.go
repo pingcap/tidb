@@ -902,6 +902,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 			logutil.Logger(context.Background()).Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
