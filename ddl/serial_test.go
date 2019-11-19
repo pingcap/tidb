@@ -90,7 +90,7 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err := tk.Exec("alter table primary_key_test add primary key(a)")
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = tk.Exec("alter table primary_key_test drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	c.Assert(err.Error(), Equals, "[ddl:206]Unsupported drop primary key when alter-primary-key is false")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
