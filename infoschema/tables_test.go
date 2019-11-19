@@ -610,14 +610,13 @@ func (s *testTableSuite) TestForServersInfo(c *C) {
 	c.Assert(len(serversInfo), Equals, 1)
 
 	for _, info := range serversInfo {
-		c.Assert(result.Rows()[0][0], Equals, strconv.FormatInt(info.ServerID, 10))
-		c.Assert(result.Rows()[0][1], Equals, info.ID)
-		c.Assert(result.Rows()[0][2], Equals, info.IP)
-		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.Port), 10))
-		c.Assert(result.Rows()[0][4], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
-		c.Assert(result.Rows()[0][5], Equals, info.Lease)
-		c.Assert(result.Rows()[0][6], Equals, info.Version)
-		c.Assert(result.Rows()[0][7], Equals, info.GitHash)
+		c.Assert(result.Rows()[0][0], Equals, info.ID)
+		c.Assert(result.Rows()[0][1], Equals, info.IP)
+		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
+		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
+		c.Assert(result.Rows()[0][4], Equals, info.Lease)
+		c.Assert(result.Rows()[0][5], Equals, info.Version)
+		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
 	}
 }
 

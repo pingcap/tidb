@@ -46,7 +46,7 @@ var memTableToClusterTableMap = map[string]struct{}{
 var clusterTableMap = map[string]struct{}{}
 
 func init() {
-	var clusterTableCols = columnInfo{"NODE_ID", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil}
+	var clusterTableCols = columnInfo{"ADDRESS", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil}
 	for memTableName := range memTableToClusterTableMap {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
@@ -88,9 +88,10 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 }
 
 func appendClusterColumnsToRows(rows [][]types.Datum) [][]types.Datum {
-	nodeID := infosync.GetGlobalServerID()
+	serverInfo := infosync.GetServerInfo()
+	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
 	for i := range rows {
-		rows[i] = append(rows[i], types.NewStringDatum("tidb"+strconv.FormatInt(nodeID, 10)))
+		rows[i] = append(rows[i], types.NewStringDatum(addr))
 	}
 	return rows
 }

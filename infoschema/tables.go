@@ -663,7 +663,6 @@ var tableTiKVRegionPeersCols = []columnInfo{
 }
 
 var tableTiDBServersInfoCols = []columnInfo{
-	{"TIDB_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DDL_ID", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"IP", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PORT", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -1880,7 +1879,6 @@ func dataForServersInfo() ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
 		row := types.MakeDatums(
-			int(info.ServerID),   // Server_ID
 			info.ID,              // DDL_ID
 			info.IP,              // IP
 			int(info.Port),       // PORT
