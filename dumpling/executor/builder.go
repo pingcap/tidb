@@ -672,6 +672,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	if v.SelectPlan != nil {
+		// Try to update the forUpdateTS for insert/replace into select statements.
+		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
+		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
+			return nil
+		}
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
