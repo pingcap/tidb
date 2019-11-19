@@ -2675,50 +2675,69 @@ LOOP:
 
 func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
 	s.mustExec(c, "create table t1 (c1 int, c2 int);")
 
 	tbl := s.testGetTable(c, "t1")
-	var insertErr error
+	getModifyColumn := func() *table.Column {
+		t := s.testGetTable(c, "t1")
+		for _, col := range t.Cols() {
+			if col.Name.L == "c2" {
+				return col
+			}
+		}
+		return nil
+	}
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	// Check insert null before job first update.
+	times := 0
 	hook := &ddl.TestDDLCallback{}
+	s.tk.MustExec("delete from t1")
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		var c2 *table.Column
-		t := s.testGetTable(c, "t1")
-		for _, col := range t.Cols() {
-			if col.Name.L == "c2" {
-				c2 = col
-			}
+		if times == 0 {
+			_, checkErr = tk2.Exec("insert into t1 values ();")
 		}
-		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			_, insertErr = s.tk.Exec("insert into t1 values ();")
-		}
+		times++
 	}
-
-	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	done := make(chan error, 1)
-	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	err := <-done
-	c.Assert(err, IsNil)
+	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
-	var c2 *table.Column
-	t := s.testGetTable(c, "t1")
-	for _, col := range t.Cols() {
-		if col.Name.L == "c2" {
-			c2 = col
+	// Check insert error when column has PreventNullInsertFlag.
+	s.tk.MustExec("delete from t1")
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
 		}
+		if job.State != model.JobStateRunning {
+			return
+		}
+		// now c2 has PreventNullInsertFlag, an error is expected.
+		_, checkErr = tk2.Exec("insert into t1 values ();")
 	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.tk.MustExec("alter table t1 change c2 c2 bigint not null;")
+	c.Assert(checkErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
+
+	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
-	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
-	_, insertErr = s.tk.Exec("insert into t1 values ();")
-	c.Assert(insertErr.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.mustExec(c, "drop table t1")
+	_, err = s.tk.Exec("insert into t1 values ();")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
