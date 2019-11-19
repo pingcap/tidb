@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1741,11 +1742,67 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinTrim3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		useDefaultRemStr := buf1.IsNull(i)
+		direction := ast.TrimDirectionType(buf2.GetInt64(i))
+		baseStr := buf0.GetString(i)
+		remStr := buf1.GetString(i)
+		if direction == ast.TrimLeading {
+			if useDefaultRemStr {
+				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
+			} else {
+				result.AppendString(trimLeft(baseStr, remStr))
+			}
+		} else if direction == ast.TrimTrailing {
+			if useDefaultRemStr {
+				result.AppendString(strings.TrimRight(baseStr, spaceChars))
+			} else {
+				result.AppendString(trimRight(baseStr, remStr))
+			}
+		} else {
+			if useDefaultRemStr {
+				result.AppendString(strings.Trim(baseStr, spaceChars))
+			} else {
+				tmpStr := trimLeft(baseStr, remStr)
+				result.AppendString(trimRight(tmpStr, remStr))
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinOrdSig) vectorized() bool {
