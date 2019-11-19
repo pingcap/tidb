@@ -215,6 +215,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	ctx := context.Background()
 	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
 	committer.lockTTL = txnLockTTL(txn.startTime, 10<<20)
 	c.Assert(committer.prewriteKeys(bo, committer.keys), IsNil)
 
@@ -230,6 +231,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	// Commit txn, check the final commit ts is pushed.
 	c.Assert(committer.commitKeys(bo, committer.keys), IsNil)
 	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, []byte("x"))
+	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Greater, txn1.StartTS())
 }
