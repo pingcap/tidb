@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -82,18 +81,12 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
-	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		data, err := m.decodeIndexKeyValue(key, value, tps)
 		if err != nil {
 			return err
 		}
 
-		mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
-		if err != nil || !matched {
-			return err
-		}
 		m.addedRows = append(m.addedRows, data)
 		return nil
 	})
@@ -165,18 +158,12 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
 func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
-	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		row, err := m.decodeRecordKeyValue(key, value)
 		if err != nil {
 			return err
 		}
 
-		mutableRow.SetDatums(row...)
-		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
-		if err != nil || !matched {
-			return err
-		}
 		m.addedRows = append(m.addedRows, row)
 		return nil
 	})

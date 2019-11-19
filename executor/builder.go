@@ -858,6 +858,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	// Get the handle column index of the below Plan.
 	us.belowHandleIndex = v.HandleCol.Index
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
+
+	if sel, ok := reader.(*SelectionExec); ok {
+		reader = sel.children[0]
+	}
+
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -873,6 +878,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		us.table = x.table
+		us.virtualColumnIndex = x.virtualColumnIndex
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -903,6 +909,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		us.table = x.table
+		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return reader

@@ -92,6 +92,54 @@ func (s *testSuite7) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t where c1 < 5").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select c2 from t").Check(testkit.Rows("1"))
 	tk.MustExec("commit")
+
+	// Test general virtual column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int as (a+1), c int as (b+1), index(c));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, default, default), (2, default, default), (3, default, default);")
+	// TableReader
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "2 3 4", "3 4 5"))
+	tk.MustQuery("select b from t;").Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery("select c from t;").Check(testkit.Rows("3", "4", "5"))
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1", "2", "3"))
+	// IndexReader
+	tk.MustQuery("select c from t where c > 3;").Check(testkit.Rows("4", "5"))
+	tk.MustQuery("select c from t order by c;").Check(testkit.Rows("3", "4", "5"))
+	// IndexLookup
+	tk.MustQuery("select * from t where c > 3;").Check(testkit.Rows("2 3 4", "3 4 5"))
+	tk.MustQuery("select a, b from t use index(c) where c > 3;").Check(testkit.Rows("2 3", "3 4"))
+	tk.MustQuery("select a, c from t use index(c) where c > 3;").Check(testkit.Rows("2 4", "3 5"))
+	tk.MustQuery("select b, c from t use index(c) where c > 3;").Check(testkit.Rows("3 4", "4 5"))
+	// Delete and update some data
+	tk.MustExec("delete from t where c > 4;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "2 3 4"))
+	tk.MustExec("update t set a = 3 where b > 1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5", "3 4 5"))
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5", "3 4 5"))
+	// Again with non-empty table
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, default, default), (2, default, default), (3, default, default);")
+	// TableReader
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5", "3 4 5", "1 2 3", "2 3 4", "3 4 5"))
+	tk.MustQuery("select b from t;").Check(testkit.Rows("4", "4", "2", "3", "4"))
+	tk.MustQuery("select c from t;").Check(testkit.Rows("3", "4", "5", "5", "5"))
+	tk.MustQuery("select a from t;").Check(testkit.Rows("3", "3", "1", "2", "3"))
+	// IndexReader
+	tk.MustQuery("select c from t where c > 3;").Check(testkit.Rows("4", "5", "5", "5"))
+	tk.MustQuery("select c from t order by c;").Check(testkit.Rows("3", "4", "5", "5", "5"))
+	// IndexLookup
+	tk.MustQuery("select * from t where c > 3;").Check(testkit.Rows("3 4 5", "3 4 5", "2 3 4", "3 4 5"))
+	tk.MustQuery("select a, b from t use index(c) where c > 3;").Check(testkit.Rows("2 3", "3 4", "3 4", "3 4"))
+	tk.MustQuery("select a, c from t use index(c) where c > 3;").Check(testkit.Rows("2 4", "3 5", "3 5", "3 5"))
+	tk.MustQuery("select b, c from t use index(c) where c > 3;").Check(testkit.Rows("3 4", "4 5", "4 5", "4 5"))
+	// Delete and update some data
+	tk.MustExec("delete from t where c > 4;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "2 3 4"))
+	tk.MustExec("update t set a = 3 where b > 2;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "3 4 5"))
+	tk.MustExec("commit;")
 }
 
 func (s *testSuite7) TestUnionScanWithCastCondition(c *C) {
