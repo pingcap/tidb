@@ -1,6 +1,8 @@
 package metric_table
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -9,7 +11,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"time"
+	"github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 // metricSchemaTable stands for the fake table all its data is in the memory.
@@ -57,6 +59,8 @@ func (vt *metricSchemaTable) Meta() *model.TableInfo {
 	return vt.meta
 }
 
+type promQLQueryRange = v1.Range
+
 func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	tblDef, ok := metricTableMap[vt.meta.Name.L]
 	if !ok {
@@ -65,11 +69,13 @@ func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Colum
 
 	metricAddr := getMetricAddr()
 	// TODO:
-	_, err = queryMetric(metricAddr, tblDef, getDefaultStartTime(), getDefaultEndTime(), getDefaultStep())
+	queryRange := getDefaultQueryRange()
+	queryValue, err := queryMetric(metricAddr, tblDef, queryRange)
 	if err != nil {
 		return nil, err
 	}
 
+	fullRows = tblDef.genRows(queryValue, queryRange)
 	if len(cols) == len(vt.cols) {
 		return
 	}
@@ -84,16 +90,8 @@ func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Colum
 	return rows, nil
 }
 
-func getDefaultStartTime() time.Time {
-	return time.Now()
-}
-
-func getDefaultEndTime() time.Time {
-	return time.Now()
-}
-
-func getDefaultStep() time.Duration {
-	return time.Minute
+func getDefaultQueryRange() promQLQueryRange {
+	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Minute}
 }
 
 // IterRecords implements table.Table IterRecords interface.

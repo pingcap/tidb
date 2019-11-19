@@ -1,20 +1,19 @@
 package metric_table
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"time"
 
-	"context"
-	"fmt"
-	pmodel "github.com/prometheus/common/model"
-
 	"github.com/prometheus/client_golang/api"
 	"github.com/prometheus/client_golang/api/prometheus/v1"
+	pmodel "github.com/prometheus/common/model"
 )
 
 const promReadTimeout = time.Second * 10
 
-func queryMetric(promAddr string, def metricTableDef, startTime, endTime time.Time, step time.Duration) (pmodel.Value, error) {
+func queryMetric(promAddr string, def metricTableDef, queryRange v1.Range) (pmodel.Value, error) {
 	promClient, err := api.NewClient(api.Config{
 		Address: fmt.Sprintf("http://%s", promAddr),
 	})
@@ -26,16 +25,12 @@ func queryMetric(promAddr string, def metricTableDef, startTime, endTime time.Ti
 	ctx, cancel := context.WithTimeout(context.Background(), promReadTimeout)
 	defer cancel()
 
-	//startTime := time.Unix(1574096967, 0)
-	//endTime := time.Unix(1574097267, 0)
-	//_ = endTime
-
 	promQL := def.genPromQL(nil)
-	return queryRangePromQL(ctx, promQLAPI, promQL, startTime, endTime, step)
+	return queryRangePromQL(ctx, promQLAPI, promQL, queryRange)
 }
 
-func queryRangePromQL(ctx context.Context, api v1.API, promQL string, startTime, endTime time.Time, step time.Duration) (pmodel.Value, error) {
-	result, warning, err := api.QueryRange(ctx, promQL, v1.Range{Start: startTime, End: endTime, Step: step})
+func queryRangePromQL(ctx context.Context, api v1.API, promQL string, queryRange v1.Range) (pmodel.Value, error) {
+	result, warning, err := api.QueryRange(ctx, promQL, queryRange)
 	if err != nil {
 		return nil, err
 	}

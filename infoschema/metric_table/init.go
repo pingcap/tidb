@@ -2,13 +2,14 @@ package metric_table
 
 import (
 	"fmt"
+	"sync"
+
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/types"
-	"sync"
 )
 
 var once sync.Once
@@ -18,7 +19,6 @@ func Init() {
 	initOnce := func() {
 		dbID := autoid.GenLocalSchemaID()
 		metricTables := make([]*model.TableInfo, 0)
-
 		for name, def := range metricTableMap {
 			cols := def.genColumnInfos()
 			tableInfo := buildTableMeta(name, cols)
