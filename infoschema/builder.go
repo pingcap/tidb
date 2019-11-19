@@ -54,7 +54,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		)
 	}
 	var oldTableID, newTableID int64
-	var inRepair bool
+	var isRepair bool
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionRecoverTable:
@@ -70,7 +70,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionRepairTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
-		inRepair = true
+		isRepair = true
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
@@ -100,7 +100,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
-		err := b.applyCreateTable(m, dbInfo, newTableID, alloc, inRepair)
+		err := b.applyCreateTable(m, dbInfo, newTableID, alloc, isRepair)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -184,7 +184,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator, inRepair bool) error {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator, isRepair bool) error {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return errors.Trace(err)
@@ -198,7 +198,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		)
 	}
 	// Check whether tableInfo should be added to repairInfo.
-	if !inRepair && domainutil.RepairInfo.FetchRepairedTableList(dbInfo, tblInfo) {
+	if domainutil.RepairInfo.GetRepairMode() && !isRepair && domainutil.RepairInfo.FetchRepairedTableList(dbInfo, tblInfo) {
 		return nil
 	}
 
