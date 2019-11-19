@@ -431,7 +431,8 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	}
 	if hintInfo.ifPreferTiKV(alias) {
 		if ds.preferStoreType != 0 {
-			errMsg := "Storage hints are conflict, you can only specify one storage type of each table"
+			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
+				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			ds.preferStoreType = 0
