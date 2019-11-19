@@ -79,7 +79,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
-		inInt := builtinInIntSig{baseBuiltinFunc: bf}
+		inInt := builtinInIntSig{baseBuiltinFunc: bf, threshold: 16}
 		err := inInt.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inInt, err
@@ -87,7 +87,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inInt
 		sig.setPbCode(tipb.ScalarFuncSig_InInt)
 	case types.ETString:
-		sig = &builtinInStringSig{baseBuiltinFunc: bf}
+		inStr := builtinInStringSig{baseBuiltinFunc: bf}
+		err := inStr.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inStr, err
+		}
+		sig = &inStr
 		sig.setPbCode(tipb.ScalarFuncSig_InString)
 	case types.ETReal:
 		sig = &builtinInRealSig{baseBuiltinFunc: bf}
@@ -111,18 +116,20 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseBuiltinFunc
-	hashSet map[int64]bool
-	hasNull bool
-	varArgs []Expression
+	args      []Expression
+	hashSet   map[int64]bool
+	hasNull   bool
+	threshold int
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.varArgs = make([]Expression, 0, len(b.args))
-	b.varArgs = append(b.varArgs, b.args[0])
-	b.hashSet = make(map[int64]bool, len(b.args)-1)
+	b.args = make([]Expression, 0, len(b.baseBuiltinFunc.args))
+	b.args = append(b.args, b.baseBuiltinFunc.args[0])
+	b.hashSet = make(map[int64]bool, len(b.baseBuiltinFunc.args)-1)
+	count := 0
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem() {
-			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
+		if b.baseBuiltinFunc.args[i].ConstItem() {
+			val, isNull, err := b.baseBuiltinFunc.args[i].EvalInt(ctx, chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -130,10 +137,16 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
+			b.hashSet[val] = mysql.HasUnsignedFlag(b.baseBuiltinFunc.args[i].GetType().Flag)
+			count++
 		} else {
-			b.varArgs = append(b.varArgs, b.args[i])
+			b.args = append(b.args, b.baseBuiltinFunc.args[i])
 		}
+	}
+	if count < b.threshold {
+		b.args = b.baseBuiltinFunc.args
+		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -142,26 +155,24 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 func (b *builtinInIntSig) Clone() builtinFunc {
 	newSig := &builtinInIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.varArgs = make([]Expression, 0, len(b.varArgs))
-	for _, arg := range b.varArgs {
-		newSig.varArgs = append(newSig.varArgs, arg)
+	newSig.args = make([]Expression, 0, len(b.args))
+	for _, arg := range b.args {
+		newSig.args = append(newSig.args, arg)
 	}
 	newSig.hasNull = b.hasNull
 	newSig.hashSet = b.hashSet
+	newSig.threshold = b.threshold
 	return newSig
 }
 
 func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.varArgs[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	args := b.varArgs[1:]
-	threshold := 16
-
-	if len(b.args)-len(b.varArgs) >= threshold {
+	if b.hashSet != nil {
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
 			if isUnsigned0 && isUnsigned {
 				return 1, false, nil
@@ -177,12 +188,10 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 				}
 			}
 		}
-	} else {
-		args = b.args[1:]
 	}
 
 	var hasNull bool
-	for _, arg := range args {
+	for _, arg := range b.args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -216,6 +225,32 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
+	hashSet map[string]bool
+	hasNull bool
+	varArgs []Expression
+}
+
+func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.varArgs = make([]Expression, 0, len(b.args))
+	b.varArgs = append(b.varArgs, b.args[0])
+	b.hashSet = make(map[string]bool, len(b.args)-1)
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.hasNull = true
+				continue
+			}
+			b.hashSet[val] = true
+		} else {
+			b.varArgs = append(b.varArgs, b.args[i])
+		}
+	}
+
+	return nil
 }
 
 func (b *builtinInStringSig) Clone() builtinFunc {
