@@ -392,9 +392,10 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 	if err != nil {
 		return nil, err
 	}
-	return &ScalarFunction{
+	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-	}, nil
+	}
+	return FoldConstant(sf), nil
 }

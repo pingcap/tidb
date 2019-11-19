@@ -150,9 +150,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 		hasNullArg := false
 		allConstArg := true
 		isDeferredConst := false
+		newFoldedArgs := make([]Expression, len(args))
 		for i := 0; i < len(args); i++ {
 			foldedArg, isDeferred := foldConstant(args[i])
-			x.GetArgs()[i] = foldedArg
+			newFoldedArgs[i] = foldedArg
 			con, conOK := foldedArg.(*Constant)
 			argIsConst[i] = conOK
 			allConstArg = allConstArg && conOK
@@ -164,7 +165,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))
-			for i, arg := range args {
+			for i, arg := range newFoldedArgs {
 				if argIsConst[i] {
 					constArgs[i] = arg
 				} else {
@@ -191,7 +192,11 @@ func foldConstant(expr Expression) (Expression, bool) {
 				}
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
-			return expr, isDeferredConst
+			exprWithFoldedArg, err := NewFunctionBase(x.GetCtx(), x.FuncName.L, x.GetType(), newFoldedArgs...)
+			if err != nil {
+				return expr, false
+			}
+			return exprWithFoldedArg, isDeferredConst
 		}
 		value, err := x.Eval(chunk.Row{})
 		if err != nil {
