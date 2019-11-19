@@ -1281,7 +1281,6 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 		if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 			return err
 		}
-		return nil
 	}
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
