@@ -859,6 +859,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	us.belowHandleIndex = v.HandleCol.Index
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
+	// If the push-downed condition contains virtual column, we may build a selection upon reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.children[0]
 	}

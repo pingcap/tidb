@@ -124,6 +124,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
 	reader := us.children[0]
 
+	// If the push-downed condition contains virtual column, we may build a selection upon reader. Since unionScanExec
+	// has already contained condition, we can ignore the selection.
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.children[0]
 	}
