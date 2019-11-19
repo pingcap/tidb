@@ -1694,14 +1694,24 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat.GenWithStackByArgs(buf), err) {
-		return err
-	}
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
+
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat.GenWithStackByArgs(buf), err) {
+		var isNull bool
+		for i := 0; i < n; i++ {
+			i64s[i], isNull, err = b.evalInt(input.GetRow(i))
+			if err != nil {
+				return err
+			}
+			if isNull {
+				result.SetNull(i, true)
+			}
+		}
+	}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
