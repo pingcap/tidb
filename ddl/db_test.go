@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/domainutil"
 	"io"
 	"math"
 	"math/rand"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -2016,7 +2016,7 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	// Domain reload the tableInfo and add it into repairInfo.
 	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10));")
 	dom := domain.GetDomain(s.s)
-	// Make sure the table schema is the new schema.
+	// Make sure the table schema is latest.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
@@ -2049,16 +2049,23 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
-	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key, b varchar(10));")
+	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a float primary key, b varchar(5));")
 	c.Assert(repairErr, IsNil)
 
-	// Check the repaired tableInfo is exactly the same with old one in tableID, colID.
+	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
 	// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
 	repairTable := testGetTableByName(c, s.s, "test", "origin")
 	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
 	c.Assert(len(repairTable.Meta().Columns), Equals, 2)
 	c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
 	c.Assert(repairTable.Meta().Columns[1].ID, Equals, originTableInfo.Columns[1].ID)
+	c.Assert(len(repairTable.Meta().Indices), Equals, 1)
+	c.Assert(repairTable.Meta().Indices[0].ID, Equals, originTableInfo.Columns[0].ID)
+
+	// Exec the show create table statement to make sure new tableInfo has been set.
+	result := s.tk.MustQuery("show create table origin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` float NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
 }
 
 func turnRepairModeAndInit(on bool) {

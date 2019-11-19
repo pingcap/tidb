@@ -3935,15 +3935,15 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	// tableInfo and oldDBInfo's existence have been checked in preprocessor.
 	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
 	if !ok || oldTableInfo == nil {
-		return ErrRepairTableFail.GenWithStackByArgs("Get the repaired table failed")
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired table")
 	}
 	oldDBInfo, ok := (ctx.Value(domainutil.RepairedDatabase)).(*model.DBInfo)
 	if !ok || oldDBInfo == nil {
-		return ErrRepairTableFail.GenWithStackByArgs("Get the repaired DB failed")
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired database")
 	}
 	// By now only support same db repair.
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
-		return ErrRepairTableFail.GenWithStackByArgs("Repaired table should in same database with the old one")
+		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
 	}
 	// Cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
 	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
@@ -4018,8 +4018,11 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableInfo},
 	}
-
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		// Remove the old TableInfo from repairInfo before domain reload.
+		domainutil.RepairInfo.RemoveFromRepairList(oldDBInfo.Name.L, oldTableInfo.Name.L)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

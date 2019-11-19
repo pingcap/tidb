@@ -54,9 +54,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		)
 	}
 	var oldTableID, newTableID int64
+	var inRepair bool
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable, model.ActionDropView:
@@ -66,6 +67,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, oldTableID, newTableID)
+	case model.ActionRepairTable:
+		newTableID = diff.TableID
+		tblIDs = append(tblIDs, newTableID)
+		inRepair = true
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
@@ -95,7 +100,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
-		err := b.applyCreateTable(m, dbInfo, newTableID, alloc)
+		err := b.applyCreateTable(m, dbInfo, newTableID, alloc, inRepair)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -179,7 +184,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator, inRepair bool) error {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return errors.Trace(err)
@@ -193,7 +198,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		)
 	}
 	// Check whether tableInfo should be added to repairInfo.
-	if domainutil.RepairInfo.FetchRepairedTableList(dbInfo, tblInfo) {
+	if !inRepair && domainutil.RepairInfo.FetchRepairedTableList(dbInfo, tblInfo) {
 		return nil
 	}
 

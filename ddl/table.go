@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/domainutil"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -943,11 +942,9 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		// Remove the old TableInfo from repairInfo before notifying.
-		domainutil.RepairInfo.RemoveFromRepairList(job.SchemaName, tblInfo.Name.L)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStack("invalid table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("invalid table state %v", tblInfo.State)
 	}
 }
