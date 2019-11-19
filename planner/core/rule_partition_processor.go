@@ -91,7 +91,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr(columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -103,7 +103,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	var partitionExprs []expression.Expression
 	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {
-		pExpr, err := table.PartitionExpr(ds.TblCols, ds.names)
+		pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
 		if err != nil {
 			return nil, err
 		}

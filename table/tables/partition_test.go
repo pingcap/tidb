@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -264,11 +265,11 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr(columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+		PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 	}
 	ctx := mock.NewContext()
 	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
-	pe, err := tbl.(partitionExpr).PartitionExpr(columns, names)
+	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
 	c.Assert(err, IsNil)
 	c.Assert(pe.Column.ID, Equals, int64(1))
 
