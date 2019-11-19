@@ -527,13 +527,20 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	err := client.Put(testKey, testValue)
 	c.Assert(err, IsNil)
 
-	// pre-load store2's address into cache via follower-read.
+	// move region1's leader to store2 and pre-load store-cache.
 	loc, err := client.regionCache.LocateKey(s.bo, testKey)
+	c.Assert(err, IsNil)
+	client.regionCache.InvalidateCachedRegion(loc.Region)
+	s.cluster.ChangeLeader(s.region1, s.peer2)
+	loc, err = client.regionCache.LocateKey(s.bo, testKey)
 	c.Assert(err, IsNil)
 	fctx, err := client.regionCache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(fctx.Store.storeID, Equals, s.store2)
 	c.Assert(fctx.Addr, Equals, "store2")
+
+	// cleanup region1's region-cache
+	client.regionCache.InvalidateCachedRegion(loc.Region)
 
 	// make store2 using store1's addr and store1 offline
 	store1Addr := s.storeAddr(s.store1)
