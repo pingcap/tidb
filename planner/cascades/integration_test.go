@@ -73,14 +73,17 @@ func (s *testIntegrationSuite) TestPKIsHandleRangeScan(c *C) {
 	var input []string
 	var output []struct {
 		SQL    string
+		Plan   []string
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
+		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -105,14 +108,17 @@ func (s *testIntegrationSuite) TestSort(c *C) {
 	var input []string
 	var output []struct {
 		SQL    string
+		Plan   []string
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
+		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -126,14 +132,17 @@ func (s *testIntegrationSuite) TestAggregation(c *C) {
 	var input []string
 	var output []struct {
 		SQL    string
+		Plan   []string
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
+		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
