@@ -2040,13 +2040,6 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustQuery("select * from t4").Check(testkit.Rows("1 20 2 21"))
 
 	// generated columns with default function is not allowed
-	// Note: Here is a bug in Mysql, it's allowed to insert `DEFAULT(a)` into a generated column.
-	// In TiDB, it is disallowed to insert `DEFAULT(a)` into a generated column.
-	// The above rule is equally effective in other DML statements like:
-	// - `INSERT t SET a = DEFAULT(a)`
-	// - `UPDATE t SET a = DEFAULT(a)`
-	// - `REPLACE t SET a = DEFAULT(a)`
-	// - `INSERT t (1) ON DUPLICATE KEY UPDATE a = DEFAULT(a)`
 	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
 	tk.MustGetErrCode("insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
 

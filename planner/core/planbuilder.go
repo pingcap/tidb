@@ -1940,6 +1940,8 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		if isDefaultExpr {
 			defaultExpr.Name = assign.Column
 		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
 			if isDefaultExpr {
 				continue
