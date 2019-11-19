@@ -302,7 +302,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = t.AddHistoryDDLJob(jobs[i])
+		err = t.AddHistoryDDLJob(jobs[i], true)
 		c.Assert(err, IsNil)
 		historyJobs, err1 := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
 		c.Assert(err1, IsNil)
