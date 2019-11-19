@@ -118,6 +118,19 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
+func setStoreBootstrap(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	storeBootstrapped[storeUUID] = true
+}
+
+// used for test
+func unsetStoreBootstrap(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	delete(storeBootstrapped, storeUUID)
+}
+
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
