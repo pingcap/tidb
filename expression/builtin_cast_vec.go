@@ -530,11 +530,33 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastDecimalAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	decs := result.Decimals()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		dec := &types.MyDecimal{}
+		if !(conditionUnionAndUnsigned && decs[i].IsNegative()) {
+			*dec = decs[i]
+		}
+		dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		decs[i] = *dec
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsTimeSig) vectorized() bool {
