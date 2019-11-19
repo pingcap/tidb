@@ -1172,11 +1172,11 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	}
 
 	result.ResizeGoDuration(n, false)
+	result.MergeNulls(bufStrings, bufFormats)
 	d64s := result.GoDurations()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if bufStrings.IsNull(i) || bufFormats.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		var t types.Time
