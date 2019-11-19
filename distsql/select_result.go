@@ -80,39 +80,40 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
-refetch:
-	r.respChkIdx = 0
-	resultSubset, err := r.resp.Next(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if r.selectResp != nil {
-		r.memConsume(-int64(r.selectRespSize))
-	}
-	if resultSubset == nil {
-		r.selectResp = nil
-		return nil
-	}
-	r.selectResp = new(tipb.SelectResponse)
-	err = r.selectResp.Unmarshal(resultSubset.GetData())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	r.selectRespSize = r.selectResp.Size()
-	r.memConsume(int64(r.selectRespSize))
-	if err := r.selectResp.Error; err != nil {
-		return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
-	}
-	sc := r.ctx.GetSessionVars().StmtCtx
-	for _, warning := range r.selectResp.Warnings {
-		sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
-	}
-	r.updateCopRuntimeStats(resultSubset.GetExecDetails().CalleeAddress, resultSubset.RespTime())
-	r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
-	r.partialCount++
-	sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
-	if len(r.selectResp.Chunks) == 0 {
-		goto refetch
+	for {
+		r.respChkIdx = 0
+		resultSubset, err := r.resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if r.selectResp != nil {
+			r.memConsume(-int64(r.selectRespSize))
+		}
+		if resultSubset == nil {
+			r.selectResp = nil
+			return nil
+		}
+		r.selectResp = new(tipb.SelectResponse)
+		err = r.selectResp.Unmarshal(resultSubset.GetData())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.selectRespSize = r.selectResp.Size()
+		r.memConsume(int64(r.selectRespSize))
+		if err := r.selectResp.Error; err != nil {
+			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+		}
+		sc := r.ctx.GetSessionVars().StmtCtx
+		for _, warning := range r.selectResp.Warnings {
+			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		}
+		r.updateCopRuntimeStats(resultSubset.GetExecDetails().CalleeAddress, resultSubset.RespTime())
+		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+		r.partialCount++
+		sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
+		if len(r.selectResp.Chunks) != 0 {
+			break
+		}
 	}
 	return nil
 }
