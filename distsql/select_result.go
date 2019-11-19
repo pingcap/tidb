@@ -80,6 +80,7 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
+	refetch:
 	r.respChkIdx = 0
 	resultSubset, err := r.resp.Next(ctx)
 	if err != nil {
@@ -111,7 +112,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 	r.partialCount++
 	sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
 	if len(r.selectResp.Chunks) == 0 {
-		return r.fetchResp(ctx)
+		goto refetch
 	}
 	return nil
 }
@@ -137,6 +138,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Errorf("unsupported encode type:%v", r.encodeType)
 }
 
+// NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
