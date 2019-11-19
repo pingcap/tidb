@@ -559,6 +559,8 @@ func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk
 	if err := b.args[3].VecEvalString(b.ctx, input, newstr); err != nil {
 		return err
 	}
+	posIs := pos.Int64s()
+	lengthIs := length.Int64s()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if str.IsNull(i) || pos.IsNull(i) || length.IsNull(i) || newstr.IsNull(i) {
@@ -567,12 +569,12 @@ func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		strI := str.GetString(i)
 		strLength := int64(len(strI))
-		posI := pos.GetInt64(i)
+		posI := posIs[i]
 		if posI < 1 || posI > strLength {
 			result.AppendString(strI)
 			continue
 		}
-		lengthI := length.GetInt64(i)
+		lengthI := lengthIs[i]
 		if lengthI > strLength-posI+1 || lengthI < 0 {
 			lengthI = strLength - posI + 1
 		}
