@@ -158,7 +158,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		// no more data.
 		if row == nil {
-			break
+			return nil
 		}
 		mutableRow.SetDatums(row...)
 
