@@ -28,10 +28,33 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.IsIPv6: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.Sleep:     {},
-	ast.UUID:      {},
-	ast.Inet6Ntoa: {},
-	ast.InetAton:  {},
+	ast.Sleep: {},
+	ast.UUID:  {},
+	ast.Inet6Ntoa: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
+			&selectStringGener{
+				candidates: []string{
+					"192.168.0.1",
+					"2001:db8::68", //ipv6
+				},
+			}}},
+	},
+	ast.InetAton: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4StrGener{}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
+			&selectStringGener{
+				candidates: []string{
+					"11.11.11.11.",    // last char is .
+					"266.266.266.266", // int in string exceed 255
+					"127",
+					".122",
+					".123.123",
+					"127.255",
+					"127.2.1",
+				},
+			}}},
+	},
 	ast.IsIPv4Mapped: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4MappedByteGener{}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{}}},
@@ -65,6 +88,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString, types.ETReal}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETString, types.ETJson}},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}},
 	},
 }

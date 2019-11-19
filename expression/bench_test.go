@@ -27,6 +27,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -199,6 +200,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func getRandomTime() types.MysqlTime {
+	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
+		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+
+}
+
 // dataGenerator is used to generate data for test.
 type dataGenerator interface {
 	gen() interface{}
@@ -237,7 +244,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return d
 	case types.ETDatetime, types.ETTimestamp:
-		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+		gt := getRandomTime()
 		t := types.Time{Time: gt, Type: convertETType(g.eType)}
 		return t
 	case types.ETDuration:
@@ -256,6 +263,18 @@ func (g *defaultGener) gen() interface{} {
 		return randString()
 	}
 	return nil
+}
+
+// selectStringGener select one string randomly from the candidates array
+type selectStringGener struct {
+	candidates []string
+}
+
+func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[rand.Intn(len(g.candidates))]
 }
 
 type constJSONGener struct {
@@ -278,6 +297,13 @@ func (g *jsonStringGener) gen() interface{} {
 		panic(err)
 	}
 	return j.String()
+}
+
+type jsonTimeGener struct{}
+
+func (g *jsonTimeGener) gen() interface{} {
+	tm := types.Time{Time: getRandomTime(), Type: mysql.TypeDatetime, Fsp: types.DefaultFsp}
+	return json.CreateBinary(tm.String())
 }
 
 type rangeDurationGener struct {
@@ -392,6 +418,18 @@ func (g *ipv6StrGener) gen() interface{} {
 	return ip.String()
 }
 
+// ipv4StrGener is used to generate ipv4 strings. For example 111.111.111.111
+type ipv4StrGener struct {
+}
+
+func (g *ipv4StrGener) gen() interface{} {
+	var ip net.IP = make([]byte, net.IPv4len)
+	for i := range ip {
+		ip[i] = uint8(rand.Intn(256))
+	}
+	return ip.String()
+}
+
 // ipv6ByteGener is used to generate ipv6 address in 16 bytes string.
 type ipv6ByteGener struct {
 }
@@ -489,36 +527,85 @@ func (g *randHexStrGener) gen() interface{} {
 	return string(buf)
 }
 
-// dataTimeStrGener is used to generate strings which are dataTime format
-type dataTimeStrGener struct{}
+// dateTimeGener is used to generate a dataTime
+type dateTimeGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
 
-func (g *dataTimeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
+func (g *dateTimeGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
+	gt := types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	t := types.Time{Time: gt, Type: mysql.TypeDatetime}
+	return t
+}
+
+// dateTimeStrGener is used to generate strings which are dataTime format
+type dateTimeStrGener struct {
+	Fsp   int
+	Year  int
+	Month int
+	Day   int
+}
+
+func (g *dateTimeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
+	dataTimeStr := fmt.Sprintf("%d-%d-%d %d:%d:%d",
+		g.Year, g.Month, g.Day, hour, minute, second)
+	if g.Fsp > 0 && g.Fsp <= 6 {
+		microFmt := fmt.Sprintf(".%%0%dd", g.Fsp)
+		return dataTimeStr + fmt.Sprintf(microFmt, rand.Int()%(10^g.Fsp))
+	}
 
-	return fmt.Sprintf("%d-%d-%d %d:%d:%d",
-		year, month, day, hour, minute, second)
+	return dataTimeStr
 }
 
 // timeStrGener is used to generate strings which are time format
-type timeStrGener struct{}
-
-func (g *timeStrGener) gen() interface{} {
-	year := rand.Intn(2200)
-	month := rand.Intn(10) + 1
-	day := rand.Intn(20) + 1
-
-	return fmt.Sprintf("%d-%d-%d", year, month, day)
+type timeStrGener struct {
+	Year  int
+	Month int
+	Day   int
 }
 
-// dataStrGener is used to generate strings which are data format
-type dataStrGener struct{}
+func (g *timeStrGener) gen() interface{} {
+	if g.Year == 0 {
+		g.Year = 1970 + rand.Intn(100)
+	}
+	if g.Month == 0 {
+		g.Month = rand.Intn(10) + 1
+	}
+	if g.Day == 0 {
+		g.Day = rand.Intn(20) + 1
+	}
 
-func (g *dataStrGener) gen() interface{} {
+	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
+}
+
+// dateStrGener is used to generate strings which are data format
+type dateStrGener struct{}
+
+func (g *dateStrGener) gen() interface{} {
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
@@ -606,6 +693,10 @@ type vecExprBenchCase struct {
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	// This field is optional.
 	geners []dataGenerator
+	// aesModeAttr information, needed by encryption functions
+	aesModes string
+	// constants are used to generate constant data for children[i].
+	constants []*Constant
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
@@ -625,7 +716,7 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 	}
 
 	col := chk.Column(colIdx)
-	col.Reset()
+	col.Reset(eType)
 	for i := 0; i < batchSize; i++ {
 		v := gen.gen()
 		if v == nil {
@@ -701,7 +792,11 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
-		cols[i] = &Column{Index: i, RetType: fts[i]}
+		if i < len(testCase.constants) && testCase.constants[i] != nil {
+			cols[i] = testCase.constants[i]
+		} else {
+			cols[i] = &Column{Index: i, RetType: fts[i]}
+		}
 	}
 
 	expr, err := NewFunction(ctx, funcName, eType2FieldType(testCase.retEvalType), cols...)
@@ -833,7 +928,11 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	input = chunk.New(fts, 1024, 1024)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
-		cols[i] = &Column{Index: i, RetType: fts[i]}
+		if i < len(testCase.constants) && testCase.constants[i] != nil {
+			cols[i] = testCase.constants[i]
+		} else {
+			cols[i] = &Column{Index: i, RetType: fts[i]}
+		}
 	}
 	if len(cols) == 0 {
 		input.SetNumVirtualRows(1024)
@@ -905,9 +1004,16 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				c.Assert(err, IsNil)
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			c.Assert(err, IsNil)
+			if funcName == ast.CurrentUser || funcName == ast.User {
+				ctx.GetSessionVars().User = &auth.UserIdentity{
+					Username:     "tidb",
+					Hostname:     "localhost",
+					CurrentUser:  true,
+					AuthHostname: "localhost",
+					AuthUsername: "tidb",
+				}
 			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
@@ -1099,10 +1205,17 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				if err != nil {
-					panic(err)
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			if err != nil {
+				panic(err)
+			}
+			if funcName == ast.CurrentUser || funcName == ast.User {
+				ctx.GetSessionVars().User = &auth.UserIdentity{
+					Username:     "tidb",
+					Hostname:     "localhost",
+					CurrentUser:  true,
+					AuthHostname: "localhost",
+					AuthUsername: "tidb",
 				}
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
@@ -1169,7 +1282,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				switch testCase.retEvalType {
 				case types.ETInt:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalInt(row)
 							if err != nil {
@@ -1184,7 +1297,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETReal:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalReal(row)
 							if err != nil {
@@ -1199,7 +1312,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETDecimal:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalDecimal(row)
 							if err != nil {
@@ -1214,7 +1327,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETDatetime, types.ETTimestamp:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalTime(row)
 							if err != nil {
@@ -1229,7 +1342,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETDuration:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalDuration(row)
 							if err != nil {
@@ -1244,7 +1357,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETJson:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalJSON(row)
 							if err != nil {
@@ -1259,7 +1372,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					}
 				case types.ETString:
 					for i := 0; i < b.N; i++ {
-						output.Reset()
+						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
 							v, isNull, err := baseFunc.evalString(row)
 							if err != nil {
