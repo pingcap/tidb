@@ -21,7 +21,7 @@ import (
 )
 
 type repairInfo struct {
-	repairMode      bool
+	repairMode      atomic.Value
 	repairTableList atomic.Value
 	repairDBInfoMap atomic.Value
 }
@@ -31,12 +31,12 @@ var RepairInfo repairInfo
 
 // InRepairMode get whether TiDB is in repairMode.
 func (r *repairInfo) GetRepairMode() bool {
-	return r.repairMode
+	return r.repairMode.Load().(bool)
 }
 
 // InRepairMode set whether TiDB is in repairMode.
 func (r *repairInfo) SetRepairMode(mode bool) {
-	r.repairMode = mode
+	r.repairMode.Store(mode)
 }
 
 // InRepairMode tet the simple repaired table list.
@@ -61,7 +61,7 @@ func (r *repairInfo) GetRepairCleanFunc() func(a, b string) {
 
 // FetchRepairedTableList fetch the repaired table list from meta.
 func (r *repairInfo) FetchRepairedTableList(di *model.DBInfo, tbl *model.TableInfo) bool {
-	if r.repairMode {
+	if r.repairMode.Load().(bool) {
 		isRepair := false
 		ls := r.repairTableList.Load().([]string)
 		for _, tn := range ls {
@@ -163,7 +163,7 @@ func (t repairKeyType) String() (res string) {
 
 func init() {
 	RepairInfo = repairInfo{}
-	RepairInfo.repairMode = false
+	RepairInfo.repairMode.Store(false)
 	RepairInfo.repairTableList.Store([]string{})
 	RepairInfo.repairDBInfoMap.Store(make(map[int64]*model.DBInfo, 0))
 }
