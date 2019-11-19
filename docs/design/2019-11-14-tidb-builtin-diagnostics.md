@@ -208,48 +208,59 @@ Since the TiKV follow-up plan completely removes the HTTP API, in addition to th
 #### gRPC Service Definition
 
 ```proto
-service Diagnosis {
-  rpc search_log(SearchLogRequest) returns (SearchLogResponse);
-  rpc server_info(ServerInfoRequest) returns (ServerInfoResponse);
+// Diagnostics service for TiDB cluster components.
+service Diagnostics {
+	// Searchs log in the target node
+	rpc search_log(SearchLogRequest) returns (SearchLogResponse) {};
+	// Retrieves server info in the target node
+	rpc server_info(ServerInfoRequest) returns (ServerInfoResponse) {};
+}
+
+enum LogLevel {
+	Debug = 0;
+	Info = 1;
+	Warn = 2;
+	Trace = 3;
+	Critical = 4;
+	Error = 5;
 }
 
 message SearchLogRequest {
-  optional uint64 start_time = 1;
-  optional uint64 end_time = 2;
-  optional uint64 level = 3;
-  optional uint64 pattern = 4;
-  optional uint64 limit = 5;
+	int64 start_time = 1;
+	int64 end_time = 2;
+	LogLevel level = 3;
+	string pattern = 4;
+	int64 limit = 5;
 }
 
 message SearchLogResponse {
-  optional string type = 1;
-  optional string address = 2;
-  optional uint64 count = 3;
-  repeated LogMessage log_message = 4;
+	repeated LogMessage messages = 1;
 }
 
 message LogMessage {
-  optional uint64 time = 1;
-  optional uint64 level = 2;
-  optional uint64 message = 3;
+	int64 time = 1;
+	LogLevel level = 2;
+	string message = 3;
 }
 
 enum ServerInfoType {
-	Undefined = 0;
+	All = 0;
 	HardwareInfo = 1;
 	SystemInfo = 2;
 	LoadInfo = 3;
 }
 
 message ServerInfoRequest {
-	optional ServerInfoType tp = 1;
+	ServerInfoType tp = 1;
 }
 
 message ServerInfoItem {
-	// name is cpu, memory, disk, network ...
-	string name = 1;
-	string key = 2;
-	string value = 3;
+	// cpu, memory, disk, network ...
+	string tp = 1;
+	// eg. network: lo1/eth0, cpu: core1/core2, disk: sda1/sda2 
+	string name = 2;
+	string key = 3;
+	string value = 4;
 }
 
 message ServerInfoResponse {
