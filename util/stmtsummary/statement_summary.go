@@ -79,10 +79,11 @@ type stmtSummaryByDigest struct {
 	// basic
 	schemaName    string
 	digest        string
+	stmtType      string
 	normalizedSQL string
 	sampleSQL     string
-	tableIDs      string
-	indexNames    string
+	tables        []stmtctx.TableEntry
+	indexNames    []string
 	sampleUser    string
 	execCount     int64
 	// latency
@@ -155,12 +156,10 @@ type StmtExecInfo struct {
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
 	CompileLatency time.Duration
-	TableIDs       string
-	IndexNames     string
+	StmtCtx        *stmtctx.StatementContext
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
-	AffectedRows   uint64
 	StartTime      time.Time
 }
 
@@ -240,8 +239,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 	sqls := make([]string, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		// `normalizedSQL` won't change once created, so locking is not needed.
-		if strings.HasPrefix(ssbd.normalizedSQL, "select") {
+		// `stmtType` won't change once created, so locking is not needed.
+		if ssbd.stmtType == "select" {
 			ssbd.Lock()
 			if ssbd.execCount > 1 {
 				schemas = append(schemas, ssbd.schemaName)
@@ -324,18 +323,14 @@ func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
 	if len(normalizedSQL) > int(maxSQLLength) {
 		normalizedSQL = normalizedSQL[:maxSQLLength]
 	}
-	sampleSQL := sei.OriginalSQL
-	if len(sampleSQL) > int(maxSQLLength) {
-		sampleSQL = sampleSQL[:maxSQLLength]
-	}
 
 	ssbd := &stmtSummaryByDigest{
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
+		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
 		normalizedSQL: normalizedSQL,
-		sampleSQL:     sampleSQL,
-		tableIDs:      sei.TableIDs,
-		indexNames:    sei.IndexNames,
+		tables:        sei.StmtCtx.Tables,
+		indexNames:    sei.StmtCtx.IndexNames,
 		minLatency:    sei.TotalLatency,
 		backoffTypes:  make(map[fmt.Stringer]int),
 		firstSeen:     sei.StartTime,
@@ -349,9 +344,16 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
-	if ssbd.sampleUser == "" {
+	if sei.User != "" {
 		ssbd.sampleUser = sei.User
 	}
+
+	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
+	sampleSQL := sei.OriginalSQL
+	if len(sampleSQL) > int(maxSQLLength) {
+		sampleSQL = sampleSQL[:maxSQLLength]
+	}
+	ssbd.sampleSQL = sampleSQL
 	ssbd.execCount++
 
 	// latency
@@ -465,7 +467,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	}
 
 	// other
-	ssbd.sumAffectedRows += sei.AffectedRows
+	ssbd.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssbd.sumMem += sei.MemMax
 	if sei.MemMax > ssbd.maxMem {
 		ssbd.maxMem = sei.MemMax
@@ -482,12 +484,33 @@ func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
+	// Use "," to separate table names and index names to support FIND_IN_SET.
+	var buffer bytes.Buffer
+	for i, value := range ssbd.tables {
+		buffer.WriteString(value.DB)
+		buffer.WriteString(".")
+		buffer.WriteString(value.Table)
+		if i < len(ssbd.tables)-1 {
+			buffer.WriteString(",")
+		}
+	}
+	tableNames := buffer.String()
+
+	buffer.Reset()
+	for i, value := range ssbd.indexNames {
+		buffer.WriteString(value)
+		if i < len(ssbd.indexNames)-1 {
+			buffer.WriteString(",")
+		}
+	}
+	indexNames := buffer.String()
+
 	return types.MakeDatums(
-		ssbd.schemaName,
+		ssbd.stmtType,
 		ssbd.digest,
 		ssbd.normalizedSQL,
-		convertEmptyToNil(ssbd.tableIDs),
-		convertEmptyToNil(ssbd.indexNames),
+		convertEmptyToNil(tableNames),
+		convertEmptyToNil(indexNames),
 		convertEmptyToNil(ssbd.sampleUser),
 		ssbd.execCount,
 		int64(ssbd.sumLatency),
@@ -571,7 +594,7 @@ func formatBackoffTypes(backoffMap map[fmt.Stringer]int) interface{} {
 			return "FORMAT ERROR"
 		}
 		if index < len(backoffArray)-1 {
-			buffer.WriteString(", ")
+			buffer.WriteString(",")
 		}
 	}
 	return buffer.String()

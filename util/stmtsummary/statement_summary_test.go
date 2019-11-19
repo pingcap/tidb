@@ -55,18 +55,22 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	}{
 		BackoffTypes: make([]fmt.Stringer, 0),
 	}
+	tables := make([]stmtctx.TableEntry, 0, 2)
+	tables = append(tables, stmtctx.TableEntry{"db1", "tb1"})
+	tables = append(tables, stmtctx.TableEntry{"db2", "tb2"})
+	indexes := make([]string, 0, 1)
+	indexes = append(indexes, "a")
+
 	// first statement
 	stmtExecInfo1 := &StmtExecInfo{
 		SchemaName:     "schema_name",
 		OriginalSQL:    "original_sql1",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
-		User:           "user",
+		User:           "user1",
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		TableIDs:       "1,2",
-		IndexNames:     "1,2",
 		CopTasks: &stmtctx.CopTasksDetails{
 			NumCopTasks:       10,
 			AvgProcessTime:    1000,
@@ -100,21 +104,27 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          2,
 			},
 		},
-		MemMax:       10000,
-		AffectedRows: 100,
-		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		StmtCtx: &stmtctx.StatementContext{
+			StmtType:   "Select",
+			Tables:     tables,
+			IndexNames: indexes,
+		},
+		MemMax:    10000,
+		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
+	stmtExecInfo1.StmtCtx.AddAffectedRows(1000)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
 	}
 	expectedSummary := stmtSummaryByDigest{
 		schemaName:           stmtExecInfo1.SchemaName,
+		stmtType:             stmtExecInfo1.StmtCtx.StmtType,
 		digest:               stmtExecInfo1.Digest,
 		normalizedSQL:        stmtExecInfo1.NormalizedSQL,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
-		tableIDs:             stmtExecInfo1.TableIDs,
-		indexNames:           stmtExecInfo1.IndexNames,
+		tables:               stmtExecInfo1.StmtCtx.Tables,
+		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
@@ -164,7 +174,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		backoffTypes:         make(map[fmt.Stringer]int),
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
-		sumAffectedRows:      stmtExecInfo1.AffectedRows,
+		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
 		firstSeen:            stmtExecInfo1.StartTime,
 		lastSeen:             stmtExecInfo1.StartTime,
 	}
@@ -181,12 +191,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		OriginalSQL:    "original_sql2",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
-		User:           "user",
+		User:           "user2",
 		TotalLatency:   20000,
 		ParseLatency:   200,
 		CompileLatency: 2000,
-		TableIDs:       "1,2",
-		IndexNames:     "1,2",
 		CopTasks: &stmtctx.CopTasksDetails{
 			NumCopTasks:       20,
 			AvgProcessTime:    2000,
@@ -220,11 +228,18 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          10,
 			},
 		},
-		MemMax:       20000,
-		AffectedRows: 200,
-		StartTime:    time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
+		StmtCtx: &stmtctx.StatementContext{
+			StmtType:   "Select",
+			Tables:     tables,
+			IndexNames: indexes,
+		},
+		MemMax:    20000,
+		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 	}
+	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
 	expectedSummary.execCount++
+	expectedSummary.sampleSQL = stmtExecInfo2.OriginalSQL
+	expectedSummary.sampleUser = stmtExecInfo2.User
 	expectedSummary.sumLatency += stmtExecInfo2.TotalLatency
 	expectedSummary.maxLatency = stmtExecInfo2.TotalLatency
 	expectedSummary.sumParseLatency += stmtExecInfo2.ParseLatency
@@ -271,7 +286,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummary.backoffTypes[tikv.BoTxnLock] = 1
 	expectedSummary.sumMem += stmtExecInfo2.MemMax
 	expectedSummary.maxMem = stmtExecInfo2.MemMax
-	expectedSummary.sumAffectedRows += stmtExecInfo2.AffectedRows
+	expectedSummary.sumAffectedRows += stmtExecInfo2.StmtCtx.AffectedRows()
 	expectedSummary.lastSeen = stmtExecInfo2.StartTime
 
 	s.ssMap.AddStatement(stmtExecInfo2)
@@ -286,12 +301,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		OriginalSQL:    "original_sql3",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
-		User:           "user",
+		User:           "user3",
 		TotalLatency:   1000,
 		ParseLatency:   50,
 		CompileLatency: 500,
-		TableIDs:       "1,2",
-		IndexNames:     "1,2",
 		CopTasks: &stmtctx.CopTasksDetails{
 			NumCopTasks:       2,
 			AvgProcessTime:    100,
@@ -325,11 +338,18 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				TxnRetry:          1,
 			},
 		},
-		MemMax:       200,
-		AffectedRows: 20,
-		StartTime:    time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
+		StmtCtx: &stmtctx.StatementContext{
+			StmtType:   "Select",
+			Tables:     tables,
+			IndexNames: indexes,
+		},
+		MemMax:    200,
+		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
+	stmtExecInfo3.StmtCtx.AddAffectedRows(10000)
 	expectedSummary.execCount++
+	expectedSummary.sampleUser = stmtExecInfo3.User
+	expectedSummary.sampleSQL = stmtExecInfo3.OriginalSQL
 	expectedSummary.sumLatency += stmtExecInfo3.TotalLatency
 	expectedSummary.minLatency = stmtExecInfo3.TotalLatency
 	expectedSummary.sumParseLatency += stmtExecInfo3.ParseLatency
@@ -354,7 +374,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummary.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummary.backoffTypes[tikv.BoTxnLock] = 2
 	expectedSummary.sumMem += stmtExecInfo3.MemMax
-	expectedSummary.sumAffectedRows += stmtExecInfo3.AffectedRows
+	expectedSummary.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
 	expectedSummary.firstSeen = stmtExecInfo3.StartTime
 
 	s.ssMap.AddStatement(stmtExecInfo3)
@@ -390,11 +410,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 func matchStmtSummaryByDigest(first *stmtSummaryByDigest, second *stmtSummaryByDigest) bool {
 	if first.schemaName != second.schemaName ||
+		strings.ToLower(first.stmtType) != strings.ToLower(second.stmtType) ||
 		first.digest != second.digest ||
 		first.normalizedSQL != second.normalizedSQL ||
 		first.sampleSQL != second.sampleSQL ||
-		first.tableIDs != second.tableIDs ||
-		first.indexNames != second.indexNames ||
 		first.sampleUser != second.sampleUser ||
 		first.execCount != second.execCount ||
 		first.sumLatency != second.sumLatency ||
@@ -448,6 +467,23 @@ func matchStmtSummaryByDigest(first *stmtSummaryByDigest, second *stmtSummaryByD
 		first.lastSeen != second.lastSeen {
 		return false
 	}
+	if len(first.tables) != len(second.tables) {
+		return false
+	}
+	for i := 0; i < len(first.tables); i++ {
+		if first.tables[i].DB != second.tables[i].DB ||
+			first.tables[i].Table != second.tables[i].Table {
+			return false
+		}
+	}
+	if len(first.indexNames) != len(second.indexNames) {
+		return false
+	}
+	for i := 0; i < len(first.indexNames); i++ {
+		if first.indexNames[i] != second.indexNames[i] {
+			return false
+		}
+	}
 	if len(first.backoffTypes) != len(second.backoffTypes) {
 		return false
 	}
@@ -480,7 +516,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 		BackoffTypes: make([]fmt.Stringer, 0),
 	}
 	mu.BackoffTypes = append(mu.BackoffTypes, tikv.BoTxnLock)
-	return &StmtExecInfo{
+	tables := make([]stmtctx.TableEntry, 0, 2)
+	tables = append(tables, stmtctx.TableEntry{"db1", "tb1"})
+	tables = append(tables, stmtctx.TableEntry{"db2", "tb2"})
+	indexes := make([]string, 0, 1)
+	indexes = append(indexes, "a")
+	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
 		OriginalSQL:    "original_sql1",
 		NormalizedSQL:  "normalized_sql",
@@ -489,8 +530,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		TableIDs:       "1,2",
-		IndexNames:     "1,2",
 		CopTasks: &stmtctx.CopTasksDetails{
 			NumCopTasks:       10,
 			AvgProcessTime:    1000,
@@ -524,10 +563,16 @@ func generateAnyExecInfo() *StmtExecInfo {
 				TxnRetry:          2,
 			},
 		},
-		MemMax:       10000,
-		AffectedRows: 100,
-		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		StmtCtx: &stmtctx.StatementContext{
+			StmtType:   "Select",
+			Tables:     tables,
+			IndexNames: indexes,
+		},
+		MemMax:    10000,
+		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 	}
+	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
+	return stmtExecInfo
 }
 
 // Test stmtSummaryByDigest.ToDatum
@@ -541,8 +586,8 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
 	backoffTypes := make(map[fmt.Stringer]int)
 	backoffTypes[tikv.BoTxnLock] = 1
-	match(c, datums[0], stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
-		stmtExecInfo1.TableIDs, stmtExecInfo1.IndexNames, stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
+	match(c, datums[0], "select", stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
 		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.AvgProcessTime),
@@ -562,7 +607,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.AffectedRows,
+		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.StmtCtx.AffectedRows(),
 		t, t, stmtExecInfo1.OriginalSQL)
 }
 
@@ -707,6 +752,7 @@ func (s *testStmtSummarySuite) TestGetMoreThenOnceSelect(c *C) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.OriginalSQL = "insert 1"
 	stmtExecInfo1.NormalizedSQL = "insert ?"
+	stmtExecInfo1.StmtCtx.StmtType = "insert"
 	s.ssMap.AddStatement(stmtExecInfo1)
 	schemas, sqls := s.ssMap.GetMoreThanOnceSelect()
 	c.Assert(len(schemas), Equals, 0)
@@ -714,6 +760,7 @@ func (s *testStmtSummarySuite) TestGetMoreThenOnceSelect(c *C) {
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
+	stmtExecInfo1.StmtCtx.StmtType = "select"
 	s.ssMap.AddStatement(stmtExecInfo1)
 	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
 	c.Assert(len(schemas), Equals, 0)
@@ -733,5 +780,5 @@ func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdRPC:1")
 
 	backoffMap[tikv.BoTxnLock] = 2
-	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2, pdRPC:1")
+	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2,pdRPC:1")
 }

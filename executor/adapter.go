@@ -859,14 +859,6 @@ func (a *ExecStmt) SummaryStmt() {
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
 
-	var tableIDs, indexNames string
-	if len(stmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",", -1)
-	}
-	if len(stmtCtx.IndexNames) > 0 {
-		indexNames = strings.Replace(fmt.Sprintf("%v", stmtCtx.IndexNames), " ", ",", -1)
-	}
-
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
@@ -884,12 +876,10 @@ func (a *ExecStmt) SummaryStmt() {
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,
 		CompileLatency: sessVars.DurationCompile,
-		TableIDs:       tableIDs,
-		IndexNames:     indexNames,
+		StmtCtx:        stmtCtx,
 		CopTasks:       copTaskInfo,
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
-		AffectedRows:   stmtCtx.AffectedRows(),
 		StartTime:      sessVars.StartTime,
 	})
 }
