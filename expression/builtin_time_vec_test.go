@@ -128,9 +128,24 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.UnixTimestamp: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.SubDate: {},
-	ast.AddDate: {},
-	ast.SubTime: {},
+	ast.SubDate:          {},
+	ast.AddDate:          {},
+	ast.SubTime: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {
+				Tp:      mysql.TypeString,
+				Flen:    types.UnspecifiedLength,
+				Decimal: types.UnspecifiedLength,
+				Flag:    mysql.BinaryFlag,
+			}},
+			geners: []dataGenerator{
+				&timeStrGener{},
+				&timeStrGener{},
+			},
+		},
+	},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
 		// arg1 has BinaryFlag here.
@@ -150,6 +165,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.Week: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
 	},
 	ast.Month: {
