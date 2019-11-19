@@ -730,8 +730,11 @@ func (b *builtinLastDaySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		if times[i].InvalidZero() {
-			return handleInvalidTimeError(b.ctx,
-				types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String()))
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
 		tm := times[i].Time
 		year, month := tm.Year(), tm.Month()
