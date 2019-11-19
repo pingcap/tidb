@@ -15,7 +15,6 @@ package timeutil
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,13 +40,6 @@ var locCa *locCache
 
 // systemTZ is current TiDB's system timezone name.
 var systemTZ string
-var zoneSources = []string{
-	"/usr/share/zoneinfo/",
-	"/usr/share/lib/zoneinfo/",
-	"/usr/lib/locale/TZ/",
-	// this is for macOS
-	"/var/db/timezone/zoneinfo/",
-}
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
 // Talked with Golang team about whether they can have some forms of cache policy available for programmer,
@@ -60,7 +52,7 @@ type locCache struct {
 }
 
 // InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
-// It is exported because we need to use it during bootstap stage. And it should be only used at that stage.
+// It is exported because we need to use it during bootstrap stage. And it should be only used at that stage.
 func InferSystemTZ() string {
 	// consult $TZ to find the time zone to use.
 	// no $TZ means use the system default /etc/localtime.
@@ -79,10 +71,9 @@ func InferSystemTZ() string {
 		}
 		logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
-		for _, source := range zoneSources {
-			if _, err := os.Stat(source + tz); err == nil {
-				return tz
-			}
+		_, err := time.LoadLocation(tz)
+		if err == nil {
+			return tz
 		}
 	}
 	return "UTC"
