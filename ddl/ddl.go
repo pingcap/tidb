@@ -544,7 +544,7 @@ func (d *ddl) GetID() string {
 func checkJobMaxInterval(job *model.Job) time.Duration {
 	// The job of adding index takes more time to process.
 	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		return 3 * time.Second
 	}
 	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
@@ -559,7 +559,7 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 		return
 	}
 
-	if jobTp == model.ActionAddIndex {
+	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
 		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
 	} else {
 		asyncNotify(d.workers[generalWorker].ddlJobCh)
