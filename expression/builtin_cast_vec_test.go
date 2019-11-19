@@ -82,6 +82,10 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 				&jsonTimeGener{},
 			}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETJson},
+			geners: []dataGenerator{
+				&decimalJSONGener{nullRation: 0.1},
+			}},
 	},
 }
 
@@ -123,6 +127,27 @@ func (g *datetimeJSONGener) gen() interface{} {
 		Fsp:  3,
 	}
 	return json.CreateBinary(d.String())
+}
+
+type decimalJSONGener struct {
+	nullRation float64
+}
+
+func (g *decimalJSONGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+
+	var f float64
+	if rand.Float64() < 0.5 {
+		f = rand.Float64() * 100000
+	} else {
+		f = -rand.Float64() * 100000
+	}
+	if err := (&types.MyDecimal{}).FromFloat64(f); err != nil {
+		panic(err)
+	}
+	return json.CreateBinary(f)
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCastEvalOneVec(c *C) {
