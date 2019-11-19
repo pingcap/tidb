@@ -15,10 +15,12 @@ package expression
 
 import (
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -1416,11 +1418,50 @@ func (b *builtinUTCDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinWeekWithoutModeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	ds := buf.Times()
+
+	mode := 0
+	modeStr, ok := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	if ok && modeStr != "" {
+		mode, err = strconv.Atoi(modeStr)
+		if err != nil {
+			return handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
+		}
+	}
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		date := ds[i]
+		if date.IsZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		week := date.Time.Week(mode)
+		i64s[i] = int64(week)
+	}
+	return nil
 }
 
 func (b *builtinUnixTimestampDecSig) vectorized() bool {
