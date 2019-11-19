@@ -268,24 +268,25 @@ func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.Isolat
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	return mvcc.getValue(key, startTS, isoLevel)
+	// TODO: Update the nil here to support point-get for non-block reading on the large transaction.
+	return mvcc.getValue(key, startTS, isoLevel, nil)
 }
 
-func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
 	})
 	defer iter.Release()
 
-	return getValue(iter, key, startTS, isoLevel)
+	return getValue(iter, key, startTS, isoLevel, resolvedLocks)
 }
 
-func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
 	dec1 := lockDecoder{expectKey: key}
 	ok, err := dec1.Decode(iter)
 	if ok && isoLevel == kvrpcpb.IsolationLevel_SI {
-		startTS, err = dec1.lock.check(startTS, key)
+		startTS, err = dec1.lock.check(startTS, key, resolvedLocks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -322,7 +323,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 
 	pairs := make([]Pair, 0, len(ks))
 	for _, k := range ks {
-		v, err := mvcc.getValue(k, startTS, isoLevel)
+		v, err := mvcc.getValue(k, startTS, isoLevel, nil)
 		if v == nil && err == nil {
 			continue
 		}
@@ -336,7 +337,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 }
 
 // Scan implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLock []uint64) []Pair {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
@@ -350,7 +351,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	ok := true
 	var pairs []Pair
 	for len(pairs) < limit && ok {
-		value, err := getValue(iter, currKey, startTS, isoLevel)
+		value, err := getValue(iter, currKey, startTS, isoLevel, resolvedLock)
 		if err != nil {
 			pairs = append(pairs, Pair{
 				Key: currKey,
@@ -376,7 +377,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 }
 
 // ReverseScan implements the MVCCStore interface. The search range is [startKey, endKey).
-func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
@@ -394,9 +395,10 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 	// TODO: return error.
 	terror.Log(errors.Trace(err))
 	helper := reverseScanHelper{
-		startTS:  startTS,
-		isoLevel: isoLevel,
-		currKey:  currKey,
+		startTS:       startTS,
+		isoLevel:      isoLevel,
+		currKey:       currKey,
+		resolvedLocks: resolvedLocks,
 	}
 
 	for succ && len(helper.pairs) < limit {
@@ -434,17 +436,18 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 }
 
 type reverseScanHelper struct {
-	startTS  uint64
-	isoLevel kvrpcpb.IsolationLevel
-	currKey  []byte
-	entry    mvccEntry
-	pairs    []Pair
+	startTS       uint64
+	isoLevel      kvrpcpb.IsolationLevel
+	resolvedLocks []uint64
+	currKey       []byte
+	entry         mvccEntry
+	pairs         []Pair
 }
 
 func (helper *reverseScanHelper) finishEntry() {
 	reverse(helper.entry.values)
 	helper.entry.key = NewMvccKey(helper.currKey)
-	val, err := helper.entry.Get(helper.startTS, helper.isoLevel)
+	val, err := helper.entry.Get(helper.startTS, helper.isoLevel, helper.resolvedLocks)
 	if len(val) != 0 || err != nil {
 		helper.pairs = append(helper.pairs, Pair{
 			Key:   helper.currKey,
@@ -609,7 +612,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		if m.GetOp() == kvrpcpb.Op_Insert {
-			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
+			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
 				anyError = true
