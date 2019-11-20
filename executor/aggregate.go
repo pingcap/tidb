@@ -1005,7 +1005,7 @@ type vecGroupChecker struct {
 	groupRowsIndex       []int
 	groupRowsNum         int
 	curGroupID           int
-	previousLastGroupKey []byte
+	previousLastGroupKey string
 	firstGroupKey        []byte
 	lastGroupKey         []byte
 	firstRowDatums       []types.Datum
@@ -1079,7 +1079,7 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 		return false, err
 	}
 
-	if e.previousLastGroupKey == nil {
+	if len(e.previousLastGroupKey) == 0 {
 		flag = false
 	} else {
 		groupKey0 := string(e.previousLastGroupKey)
@@ -1090,7 +1090,7 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 			flag = false
 		}
 	}
-	e.previousLastGroupKey = e.lastGroupKey
+	e.previousLastGroupKey = string(e.lastGroupKey)
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
@@ -1258,9 +1258,6 @@ func (e *vecGroupChecker) reset() {
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]
-	}
-	if e.previousLastGroupKey != nil {
-		e.previousLastGroupKey = e.previousLastGroupKey[:0]
 	}
 	if e.firstGroupKey != nil {
 		e.firstGroupKey = e.firstGroupKey[:0]
