@@ -3,6 +3,7 @@ package metric_table
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,15 +14,13 @@ import (
 
 const promReadTimeout = time.Second * 10
 
-func queryMetric(promAddr string, def metricTableDef, queryRange v1.Range) (pmodel.Value, error) {
-	promClient, err := api.NewClient(api.Config{
-		Address: fmt.Sprintf("http://%s", promAddr),
-	})
+func queryMetric(addr string, def metricTableDef, queryRange v1.Range) (pmodel.Value, error) {
+	queryClient, err := newQueryClient(addr)
 	if err != nil {
 		return nil, err
 	}
 
-	promQLAPI := v1.NewAPI(promClient)
+	promQLAPI := v1.NewAPI(queryClient)
 	ctx, cancel := context.WithTimeout(context.Background(), promReadTimeout)
 	defer cancel()
 
@@ -49,5 +48,28 @@ func queryRangePromQL(ctx context.Context, api v1.API, promQL string, queryRange
 }
 
 func getMetricAddr() string {
-	return "127.0.0.1:9090"
+	return "127.0.0.1:2379"
+}
+
+type queryClient struct {
+	api.Client
+}
+
+func newQueryClient(addr string) (api.Client, error) {
+	promClient, err := api.NewClient(api.Config{
+		Address: fmt.Sprintf("http://%s", addr),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &queryClient{
+		promClient,
+	}, nil
+}
+
+// URL implement the api.Client interface.
+// This is use to convert prometheus api path to PD API path.
+func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
+	ep = strings.Replace(ep, "api/v1", "pd/api/v1/metric", 1)
+	return c.Client.URL(ep, args)
 }

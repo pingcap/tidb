@@ -68,7 +68,7 @@ func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Colum
 	}
 
 	metricAddr := getMetricAddr()
-	// TODO:
+	// TODO: Get query range from plan instead of use default range.
 	queryRange := getDefaultQueryRange()
 	queryValue, err := queryMetric(metricAddr, tblDef, queryRange)
 	if err != nil {
