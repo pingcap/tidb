@@ -1422,6 +1422,30 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 		"a int(11) NO MUL <nil> ]\n"+
 		"[b int(11) NO  <nil> "))
 
+	// for describing table
+	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),YES,MUL,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 add primary key idx(a)")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,PRI,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 drop primary key")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,MUL,<nil>,`))
+	s.tk.MustExec("create table test_add_pk2(a int, b int, index idx(a))")
+	s.tk.MustExec("alter table test_add_pk2 add primary key idx(a, b)")
+	s.tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
+		"a int(11) NO PRI <nil> ]\n"+
+		"[b int(11) NO PRI <nil> "))
+	s.tk.MustQuery("show create table test_add_pk2").Check(testutil.RowsWithSep("|", ""+
+		"test_add_pk2 CREATE TABLE `test_add_pk2` (\n"+
+		"  `a` int(11) NOT NULL,\n"+
+		"  `b` int(11) NOT NULL,\n"+
+		"  KEY `idx` (`a`),\n"+
+		"  PRIMARY KEY (`a`,`b`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("alter table test_add_pk2 drop primary key")
+	s.tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
+		"a int(11) NO MUL <nil> ]\n"+
+		"[b int(11) NO  <nil> "))
+
 	// Check if the primary key exists before checking the table's pkIsHandle.
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
 
