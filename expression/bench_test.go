@@ -1015,6 +1015,23 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					AuthUsername: "tidb",
 				}
 			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+				}
+			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -1216,6 +1233,23 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					CurrentUser:  true,
 					AuthHostname: "localhost",
 					AuthUsername: "tidb",
+				}
+			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
