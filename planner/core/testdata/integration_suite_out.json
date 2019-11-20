@@ -84,23 +84,23 @@
       {
         "SQL": "explain select * from t",
         "Result": [
-          "Union_8 20005.00 root ",
+          "Union_8 10005.00 root ",
           "├─TableReader_10 10000.00 root data:TableScan_9",
           "│ └─TableScan_9 10000.00 cop[tikv] table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "├─TableReader_12 5.00 root data:TableScan_11",
-          "│ └─TableScan_11 5.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
-          "└─TableReader_14 10000.00 root data:TableScan_13",
-          "  └─TableScan_13 10000.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12 1.00 root data:TableScan_11",
+          "│ └─TableScan_11 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "└─TableReader_14 4.00 root data:TableScan_13",
+          "  └─TableScan_13 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
         ]
       },
       {
         "SQL": "select * from t",
         "Result": [
-          "11 1",
-          "12 2",
-          "13 3",
-          "14 4",
-          "15 5"
+          "15 5",
+          "21 1",
+          "22 2",
+          "23 3",
+          "24 4"
         ]
       },
       {
@@ -112,22 +112,22 @@
           "  │ └─TableReader_26 3.00 root data:Limit_25",
           "  │   └─Limit_25 3.00 cop[tikv] offset:0, count:3",
           "  │     └─TableScan_24 3.00 cop[tikv] table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  ├─Limit_29 3.00 root offset:0, count:3",
-          "  │ └─TableReader_34 3.00 root data:Limit_33",
-          "  │   └─Limit_33 3.00 cop[tikv] offset:0, count:3",
-          "  │     └─TableScan_32 3.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  ├─Limit_29 1.00 root offset:0, count:3",
+          "  │ └─TableReader_34 1.00 root data:Limit_33",
+          "  │   └─Limit_33 1.00 cop[tikv] offset:0, count:3",
+          "  │     └─TableScan_32 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
           "  └─Limit_37 3.00 root offset:0, count:3",
           "    └─TableReader_42 3.00 root data:Limit_41",
           "      └─Limit_41 3.00 cop[tikv] offset:0, count:3",
-          "        └─TableScan_40 3.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "        └─TableScan_40 3.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
         ]
       },
       {
         "SQL": "select * from t limit 3",
         "Result": [
-          "11 1",
-          "12 2",
-          "13 3"
+          "15 5",
+          "21 1",
+          "22 2"
         ]
       }
     ]
