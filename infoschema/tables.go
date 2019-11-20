@@ -2444,7 +2444,8 @@ func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (t *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (it *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
 	return 0, 0, table.ErrUnsupportedOp
 }
 
@@ -2565,6 +2566,7 @@ func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
 func (vt *VirtualTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
 	return 0, 0, table.ErrUnsupportedOp
 }

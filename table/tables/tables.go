@@ -456,21 +456,20 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	if !hasRecordID {
 		stmtCtx := ctx.GetSessionVars().StmtCtx
-		if stmtCtx.MaxRowId > stmtCtx.BaseRowId {
-			stmtCtx.BaseRowId += 1
-			recordID = stmtCtx.BaseRowId
+		rows := stmtCtx.RecordRows()
+		if rows > 1 {
+			if stmtCtx.MaxRowID >= stmtCtx.BaseRowID {
+				stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = t.AllocHandleIDs(ctx, rows)
+				if err != nil {
+					return 0, err
+				}
+			}
+			stmtCtx.BaseRowID += 1
+			recordID = stmtCtx.BaseRowID
 		} else {
-			rows := stmtCtx.RecordRows()
-			if rows > 1 {
-				stmtCtx.BaseRowId, stmtCtx.MaxRowId, err = t.AllocHandleIDs(ctx, rows)
-				if err != nil {
-					return 0, err
-				}
-			} else {
-				recordID, err = t.AllocHandle(ctx)
-				if err != nil {
-					return 0, err
-				}
+			recordID, err = t.AllocHandle(ctx)
+			if err != nil {
+				return 0, err
 			}
 		}
 	}

@@ -118,8 +118,8 @@ type StatementContext struct {
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
 
-	BaseRowId int64
-	MaxRowId int64
+	BaseRowID int64
+	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone         *time.Location
@@ -431,8 +431,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.execDetails = execdetails.ExecDetails{}
 	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
 	sc.mu.Unlock()
-	sc.MaxRowId = 0
-	sc.BaseRowId = 0
+	sc.MaxRowID = 0
+	sc.BaseRowID = 0
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 }
