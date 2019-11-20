@@ -664,6 +664,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin reload expr_pushdown_blacklist", true, "ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST"},
 		{"admin plugins disable audit, whitelist", true, "ADMIN PLUGINS DISABLE audit, whitelist"},
 		{"admin plugins enable audit, whitelist", true, "ADMIN PLUGINS ENABLE audit, whitelist"},
+		{"admin flush bindings", true, "ADMIN FLUSH BINDINGS"},
+		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
+		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},

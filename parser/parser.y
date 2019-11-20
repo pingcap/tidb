@@ -298,6 +298,7 @@ import (
 	btree		"BTREE"
 	byteType	"BYTE"
 	cascaded	"CASCADED"
+	capture		"CAPTURE"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
 	cipher		"CIPHER"
@@ -340,6 +341,7 @@ import (
 	enum 		"ENUM"
 	event		"EVENT"
 	events		"EVENTS"
+	evolve		"EVOLVE"
 	escape 		"ESCAPE"
 	exchange	"EXCHANGE"
 	exclusive       "EXCLUSIVE"
@@ -4525,9 +4527,9 @@ Identifier:
 identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CAPTURE" |"CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "CURRENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
-| "DYNAMIC" | "ENCRYPTION" | "END" | "ENFORCED" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FOLLOWING" | "FORMAT" | "FULL" |"GLOBAL"
+| "DYNAMIC" | "ENCRYPTION" | "END" | "ENFORCED" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EVOLVE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FOLLOWING" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "INSERT_METHOD" | "LESS" | "LOCAL" | "LAST" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REBUILD" | "REDUNDANT" | "REORGANIZE"
 | "ROLE" |"ROLLBACK" | "SESSION" | "SIGNED" | "SHUTDOWN" | "SNAPSHOT" | "START" | "STATUS" | "OPEN"| "SUBPARTITIONS" | "SUBPARTITION" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken
 | "TIMESTAMP" %prec lowerThanStringLitToken | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNBOUNDED" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
@@ -7853,6 +7855,24 @@ AdminStmt:
 			CreateStmt: $5.(*ast.CreateTableStmt),
 		}
 	}
+|	"ADMIN" "FLUSH" "BINDINGS"
+ 	{
+ 		$$ = &ast.AdminStmt{
+ 			Tp: ast.AdminFlushBindings,
+ 		}
+ 	}
+|	"ADMIN" "CAPTURE" "BINDINGS"
+ 	{
+ 		$$ = &ast.AdminStmt{
+ 			Tp: ast.AdminCaptureBindings,
+ 		}
+ 	}
+|	"ADMIN" "EVOLVE" "BINDINGS"
+ 	{
+ 		$$ = &ast.AdminStmt{
+ 			Tp: ast.AdminEvolveBindings,
+ 		}
+ 	}
 
 AdminShowSlow:
 	"RECENT" NUM
