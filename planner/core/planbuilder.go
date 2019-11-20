@@ -1932,14 +1932,27 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	if err != nil {
 		return err
 	}
+	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.IsGenerated() {
-			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
+			generatedColumns[tCol.Name.L] = struct{}{}
 		}
 	}
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
+		defaultExpr, isDefaultExpr := extractDefaultExpr(assign.Expr)
+		if isDefaultExpr {
+			defaultExpr.Name = assign.Column
+		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
+			if isDefaultExpr {
+				continue
+			}
+			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
+		}
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
