@@ -838,6 +838,10 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		if result.IsNull(i) {
 			continue
 		}
+		if args[i] <= 0 {
+			result.SetNull(i, true)
+			continue
+		}
 		t := oracle.GetTimeFromTS(uint64(args[i]))
 		r := types.Time{
 			Time: types.FromGoTime(t),
