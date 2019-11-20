@@ -455,9 +455,23 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.AllocHandle(ctx)
-		if err != nil {
-			return 0, err
+		stmtCtx := ctx.GetSessionVars().StmtCtx
+		if stmtCtx.MaxRowId > stmtCtx.BaseRowId {
+			stmtCtx.BaseRowId += 1
+			recordID = stmtCtx.BaseRowId
+		} else {
+			rows := stmtCtx.RecordRows()
+			if rows > 1 {
+				stmtCtx.BaseRowId, stmtCtx.MaxRowId, err = t.AllocHandleIDs(ctx, rows)
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				recordID, err = t.AllocHandle(ctx)
+				if err != nil {
+					return 0, err
+				}
+			}
 		}
 	}
 
@@ -971,6 +985,35 @@ func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 		rowID |= *txnCtx.Shard
 	}
 	return rowID, nil
+}
+
+// AllocHandle implements table.Table AllocHandle interface.
+func (t *tableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	base, rowID, err := t.Allocator(ctx).Alloc(t.tableID, n)
+	if err != nil {
+		return 0, 0, err
+	}
+	if t.meta.ShardRowIDBits > 0 {
+		// Use max record ShardRowIDBits to check overflow.
+		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits) {
+			// If overflow, the rowID may be duplicated. For examples,
+			// t.meta.ShardRowIDBits = 4
+			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
+			// shard = 01000000000000000000000000000000000000000000000000000000000000000
+			// will be duplicated with:
+			// rowID = 0100111111111111111111111111111111111111111111111111111111111111
+			// shard = 0010000000000000000000000000000000000000000000000000000000000000
+			return 0, 0, autoid.ErrAutoincReadFailed
+		}
+		txnCtx := ctx.GetSessionVars().TxnCtx
+		if txnCtx.Shard == nil {
+			shard := t.calcShard(txnCtx.StartTS)
+			txnCtx.Shard = &shard
+		}
+		rowID |= *txnCtx.Shard
+		base |= *txnCtx.Shard
+	}
+	return base, rowID, nil
 }
 
 // OverflowShardBits checks whether the rowID overflow `1<<(64-shardRowIDBits-1) -1`.
