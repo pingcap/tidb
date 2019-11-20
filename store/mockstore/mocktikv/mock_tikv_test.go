@@ -51,6 +51,9 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
+// PutMutations is exported for testing.
+var PutMutations func(kvpairs ...string) []*kvrpcpb.Mutation = putMutations
+
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
@@ -134,7 +137,7 @@ func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64,
 }
 
 func (s *testMockTiKVSuite) mustRangeScanOK(c *C, start, end string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.Scan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI)
+	pairs := s.store.Scan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
@@ -148,13 +151,18 @@ func (s *testMockTiKVSuite) mustReverseScanOK(c *C, end string, limit int, ts ui
 }
 
 func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.ReverseScan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI)
+	pairs := s.store.ReverseScan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
 		c.Assert(pairs[i].Key, BytesEquals, []byte(expect[i*2]))
 		c.Assert(string(pairs[i].Value), Equals, expect[i*2+1])
 	}
+}
+
+func MustPrewriteOK(c *C, store MVCCStore, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
+	s := testMockTiKVSuite{store}
+	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, ttl)
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
@@ -431,6 +439,23 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 		lock("s1", "p1", 5),
 		lock("s2", "p2", 10),
 	})
+}
+
+func (s *testMockTiKVSuite) TestScanWithResolvedLock(c *C) {
+	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
+	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p1", 5)
+
+	pairs := s.store.Scan([]byte("p1"), nil, 3, 10, kvrpcpb.IsolationLevel_SI, nil)
+	lock, ok := errors.Cause(pairs[0].Err).(*ErrLocked)
+	c.Assert(ok, IsTrue)
+	_, ok = errors.Cause(pairs[1].Err).(*ErrLocked)
+	c.Assert(ok, IsTrue)
+
+	// Mock the request after resolving lock.
+	pairs = s.store.Scan([]byte("p1"), nil, 3, 10, kvrpcpb.IsolationLevel_SI, []uint64{lock.StartTS})
+	for _, pair := range pairs {
+		c.Assert(pair.Err, IsNil)
+	}
 }
 
 func (s *testMockTiKVSuite) TestCommitConflict(c *C) {
