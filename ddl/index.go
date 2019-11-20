@@ -215,7 +215,9 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	col := indexInfo.Columns[0]
 
 	if indexInfo.Primary {
-		tblInfo.Columns[col.Offset].Flag |= mysql.PriKeyFlag
+		for _, col := range indexInfo.Columns {
+			tblInfo.Columns[col.Offset].Flag |= mysql.PriKeyFlag
+		}
 		return
 	}
 	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
@@ -229,7 +231,9 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	col := indexInfo.Columns[0]
 
 	if indexInfo.Primary {
-		tblInfo.Columns[col.Offset].Flag &= ^mysql.PriKeyFlag
+		for _, col := range indexInfo.Columns {
+			tblInfo.Columns[col.Offset].Flag &= ^mysql.PriKeyFlag
+		}
 	} else if indexInfo.Unique && len(indexInfo.Columns) == 1 {
 		tblInfo.Columns[col.Offset].Flag &= ^mysql.UniqueKeyFlag
 	} else {
