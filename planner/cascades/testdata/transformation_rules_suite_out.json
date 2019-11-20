@@ -5,11 +5,11 @@
       {
         "SQL": "select a, b from (select a, b from t as t1 order by a) as t2 where t2.b > 10",
         "Result": [
-          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
-          "    Projection_5 input:[Group#1], Column#13, Column#14",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
-          "    Sort_3 input:[Group#2], Column#13:asc",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#0 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Projection_5 input:[Group#1], Column#1, Column#2",
+          "Group#1 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Sort_3 input:[Group#2], Column#1:asc",
+          "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#3], Column#1, Column#2",
           "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableGather_7 input:[Group#4]",
@@ -22,11 +22,11 @@
       {
         "SQL": "select a, b from (select a, b from t as t1 order by a) as t2 where t2.a > 10",
         "Result": [
-          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
-          "    Projection_5 input:[Group#1], Column#13, Column#14",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
-          "    Sort_3 input:[Group#2], Column#13:asc",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#0 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Projection_5 input:[Group#1], Column#1, Column#2",
+          "Group#1 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Sort_3 input:[Group#2], Column#1:asc",
+          "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#3], Column#1, Column#2",
           "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableGather_7 input:[Group#4]",
@@ -37,9 +37,9 @@
       {
         "SQL": "select a, b from (select a, b, a+b as a_b from t as t1) as t2 where a_b > 10 and b = 1",
         "Result": [
-          "Group#0 Schema:[Column#16,Column#17], UniqueKey:[Column#16]",
-          "    Projection_4 input:[Group#1], Column#13, Column#14",
-          "Group#1 Schema:[Column#13,Column#14,Column#15], UniqueKey:[Column#13]",
+          "Group#0 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Projection_4 input:[Group#1], Column#1, Column#2",
+          "Group#1 Schema:[Column#1,Column#2,Column#13], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#2], Column#1, Column#2, plus(Column#1, Column#2)",
           "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableGather_6 input:[Group#3]",
@@ -52,11 +52,11 @@
       {
         "SQL": "select a, @i:=@i+1 as ii from (select a, @i:=0 from t as t1) as t2 where @i < 10",
         "Result": [
-          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
-          "    Projection_4 input:[Group#1], Column#13, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#0 Schema:[Column#1,Column#14], UniqueKey:[Column#1]",
+          "    Projection_4 input:[Group#1], Column#1, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
+          "Group#1 Schema:[Column#1,Column#13], UniqueKey:[Column#1]",
           "    Selection_3 input:[Group#2], lt(cast(getvar(\"i\")), 10)",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#2 Schema:[Column#1,Column#13], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#3], Column#1, setvar(\"i\", \"0\")",
           "Group#3 Schema:[Column#1], UniqueKey:[Column#1]",
           "    TableGather_6 input:[Group#4]",
@@ -67,11 +67,11 @@
       {
         "SQL": "select a, @i:=@i+1 as ii from (select a, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
         "Result": [
-          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
-          "    Projection_4 input:[Group#1], Column#13, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#0 Schema:[Column#1,Column#14], UniqueKey:[Column#1]",
+          "    Projection_4 input:[Group#1], Column#1, setvar(\"i\", cast(plus(cast(getvar(\"i\")), 1)))",
+          "Group#1 Schema:[Column#1,Column#13], UniqueKey:[Column#1]",
           "    Selection_8 input:[Group#2], lt(cast(getvar(\"i\")), 10)",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "Group#2 Schema:[Column#1,Column#13], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#3], Column#1, setvar(\"i\", \"0\")",
           "Group#3 Schema:[Column#1], UniqueKey:[Column#1]",
           "    TableGather_6 input:[Group#4]",
@@ -82,7 +82,7 @@
       {
         "SQL": "select a, max(b) from t group by a having a > 1",
         "Result": [
-          "Group#0 Schema:[Column#14,Column#15], UniqueKey:[Column#14,Column#14]",
+          "Group#0 Schema:[Column#1,Column#13], UniqueKey:[Column#1,Column#1]",
           "    Projection_3 input:[Group#1], Column#1, Column#13",
           "Group#1 Schema:[Column#13,Column#1], UniqueKey:[Column#1,Column#1]",
           "    Aggregation_2 input:[Group#2], group by:Column#1, funcs:max(Column#2), firstrow(Column#1)",
@@ -95,9 +95,9 @@
       {
         "SQL": "select a, avg(b) from t group by a having a > 1 and max(b) > 10",
         "Result": [
-          "Group#0 Schema:[Column#19,Column#20], UniqueKey:[Column#19,Column#19]",
-          "    Projection_5 input:[Group#1], Column#15, Column#16",
-          "Group#1 Schema:[Column#15,Column#16,Column#18], UniqueKey:[Column#15,Column#15]",
+          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15,Column#15]",
+          "    Projection_5 input:[Group#1], Column#1, Column#13",
+          "Group#1 Schema:[Column#1,Column#13,Column#14], UniqueKey:[Column#1,Column#1]",
           "    Projection_3 input:[Group#2], Column#1, Column#13, Column#14",
           "Group#2 Schema:[Column#13,Column#14,Column#1], UniqueKey:[Column#1,Column#1]",
           "    Selection_10 input:[Group#3], gt(Column#14, 10)",
@@ -108,6 +108,90 @@
           "Group#5 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableScan_12 table:t, pk col:Column#1, cond:[gt(Column#1, 1)]"
         ]
+      },
+      {
+        "SQL": "select t1.a, t1.b, t2.b from t t1, t t2 where t1.a = t2.a and t2.b = t1.b and t1.a > 10 and t2.b > 10 and t1.a > t2.b",
+        "Result": [
+          "Group#0 Schema:[Column#1,Column#2,Column#14]",
+          "    Projection_5 input:[Group#1], Column#1, Column#2, Column#14",
+          "Group#1 Schema:[Column#1,Column#2,Column#13,Column#14]",
+          "    Join_3 input:[Group#2,Group#3], inner join, equal:[eq(Column#1, Column#13) eq(Column#2, Column#14)], other cond:gt(Column#1, Column#14)",
+          "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_7 input:[Group#4]",
+          "Group#4 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    Selection_14 input:[Group#5], gt(Column#1, Column#2), gt(Column#2, 10)",
+          "Group#5 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_13 table:t1, pk col:Column#1, cond:[gt(Column#1, 10)]",
+          "Group#3 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "    TableGather_9 input:[Group#6]",
+          "Group#6 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "    Selection_17 input:[Group#7], gt(Column#13, Column#14), gt(Column#14, 10)",
+          "Group#7 Schema:[Column#13,Column#14], UniqueKey:[Column#13]",
+          "    TableScan_16 table:t2, pk col:Column#13, cond:[gt(Column#13, 10)]"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
+        "Result": [
+          "Group#0 Schema:[Column#1,Column#2]",
+          "    Projection_5 input:[Group#1], Column#1, Column#2",
+          "Group#1 Schema:[Column#1,Column#2,Column#13]",
+          "    TableDual_10 rowcount:0"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestAggPushDownGather",
+    "Cases": [
+      {
+        "SQL": "select a, sum(b) from t group by a",
+        "Result": [
+          "Group#0 Schema:[Column#1,Column#13], UniqueKey:[Column#1,Column#1]",
+          "    Projection_3 input:[Group#1], Column#1, Column#13",
+          "Group#1 Schema:[Column#13,Column#1], UniqueKey:[Column#1,Column#1]",
+          "    Aggregation_2 input:[Group#2], group by:Column#1, funcs:sum(Column#2), firstrow(Column#1)",
+          "    Aggregation_7 input:[Group#3], group by:Column#16, funcs:sum(Column#14), firstrow(Column#16)",
+          "Group#2 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableGather_5 input:[Group#4]",
+          "Group#4 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_4 table:t, pk col:Column#1",
+          "Group#3 Schema:[Column#14,Column#16]",
+          "    TableGather_5 input:[Group#5]",
+          "Group#5 Schema:[Column#14,Column#16]",
+          "    Aggregation_6 input:[Group#4], group by:Column#1, funcs:sum(Column#2)"
+        ]
+      },
+      {
+        "SQL": "select a, sum(b) from t group by a+c, a",
+        "Result": [
+          "Group#0 Schema:[Column#1,Column#13], UniqueKey:[Column#1]",
+          "    Projection_3 input:[Group#1], Column#1, Column#13",
+          "Group#1 Schema:[Column#13,Column#1], UniqueKey:[Column#1]",
+          "    Aggregation_2 input:[Group#2], group by:Column#1, plus(Column#1, Column#3), funcs:sum(Column#2), firstrow(Column#1)",
+          "    Aggregation_7 input:[Group#3], group by:Column#16, Column#17, funcs:sum(Column#14), firstrow(Column#17)",
+          "Group#2 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    TableGather_5 input:[Group#4]",
+          "Group#4 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    TableScan_4 table:t, pk col:Column#1",
+          "Group#3 Schema:[Column#14,Column#16,Column#17]",
+          "    TableGather_5 input:[Group#5]",
+          "Group#5 Schema:[Column#14,Column#16,Column#17]",
+          "    Aggregation_6 input:[Group#4], group by:Column#1, plus(Column#1, Column#3), funcs:sum(Column#2)"
+        ]
+      },
+      {
+        "SQL": "select a, sum(b) from t group by sin(a)+sin(c)",
+        "Result": [
+          "Group#0 Schema:[Column#1,Column#13], UniqueKey:[Column#1]",
+          "    Projection_3 input:[Group#1], Column#1, Column#13",
+          "Group#1 Schema:[Column#13,Column#1], UniqueKey:[Column#1]",
+          "    Aggregation_2 input:[Group#2], group by:plus(sin(cast(Column#1)), sin(cast(Column#3))), funcs:sum(Column#2), firstrow(Column#1)",
+          "Group#2 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    TableGather_5 input:[Group#3]",
+          "Group#3 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
+          "    TableScan_4 table:t, pk col:Column#1"
+        ]
       }
     ]
   },
@@ -117,11 +201,11 @@
       {
         "SQL": "select b from t order by a limit 2",
         "Result": [
-          "Group#0 Schema:[Column#15]",
-          "    Projection_5 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
-          "    TopN_8 input:[Group#2], Column#14:asc, offset:0, count:2",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
+          "Group#0 Schema:[Column#13]",
+          "    Projection_5 input:[Group#1], Column#2",
+          "Group#1 Schema:[Column#2,Column#1], UniqueKey:[Column#1]",
+          "    TopN_8 input:[Group#2], Column#1:asc, offset:0, count:2",
+          "Group#2 Schema:[Column#2,Column#1], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#3], Column#2, Column#1",
           "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableGather_7 input:[Group#4]",
@@ -132,11 +216,11 @@
       {
         "SQL": "select a+b from t order by a limit 1 offset 2",
         "Result": [
-          "Group#0 Schema:[Column#15]",
+          "Group#0 Schema:[Column#14]",
           "    Projection_5 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
-          "    TopN_8 input:[Group#2], Column#14:asc, offset:2, count:1",
-          "Group#2 Schema:[Column#13,Column#14], UniqueKey:[Column#14]",
+          "Group#1 Schema:[Column#13,Column#1], UniqueKey:[Column#1]",
+          "    TopN_8 input:[Group#2], Column#1:asc, offset:2, count:1",
+          "Group#2 Schema:[Column#13,Column#1], UniqueKey:[Column#1]",
           "    Projection_2 input:[Group#3], plus(Column#1, Column#2), Column#1",
           "Group#3 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableGather_7 input:[Group#4]",
