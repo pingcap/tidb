@@ -211,6 +211,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.UnixTimestamp: {
 		{retEvalType: types.ETInt},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.UTCTime: {
 		{retEvalType: types.ETDuration},
@@ -229,9 +230,6 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.FromDays: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt}},
-	},
-	ast.UnixTimestamp: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.FromUnixTime: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
