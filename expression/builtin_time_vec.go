@@ -227,9 +227,9 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	ds := buf1.Times()
+	result.MergeNulls(buf, buf1)
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) || buf1.IsNull(i) {
-			i64s[i] = 0
+		if result.isNull(i) {
 			continue
 		}
 		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
