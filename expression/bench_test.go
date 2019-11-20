@@ -406,19 +406,6 @@ func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
 }
 
-// realStrGener is used to generate real number strings.
-type realStrGener struct {
-	rangeRealGener
-}
-
-func (g *realStrGener) gen() interface{} {
-	val := g.rangeRealGener.gen()
-	if val == nil {
-		return nil
-	}
-	return fmt.Sprintf("%v", val)
-}
-
 // ipv6StrGener is used to generate ipv6 strings.
 type ipv6StrGener struct {
 }
@@ -706,6 +693,8 @@ type vecExprBenchCase struct {
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	// This field is optional.
 	geners []dataGenerator
+	// aesModeAttr information, needed by encryption functions
+	aesModes string
 	// constants are used to generate constant data for children[i].
 	constants []*Constant
 }
@@ -1015,10 +1004,8 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				c.Assert(err, IsNil)
-			}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			c.Assert(err, IsNil)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
 					Username:     "tidb",
@@ -1026,6 +1013,23 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					CurrentUser:  true,
 					AuthHostname: "localhost",
 					AuthUsername: "tidb",
+				}
+			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
@@ -1218,11 +1222,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				if err != nil {
-					panic(err)
-				}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			if err != nil {
+				panic(err)
 			}
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1231,6 +1233,23 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					CurrentUser:  true,
 					AuthHostname: "localhost",
 					AuthUsername: "tidb",
+				}
+			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
