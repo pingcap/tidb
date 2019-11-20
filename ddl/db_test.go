@@ -2010,6 +2010,10 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 func (s *testDBSuite6) TestRepairTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table t if exists")
+	s.tk.MustExec("drop table other_table if exists")
+	s.tk.MustExec("drop table origin if exists")
+
 	// Test repair table when TiDB is not in repair mode.
 	s.tk.MustExec("CREATE TABLE t (a int primary key, b varchar(10));")
 	err := domain.GetDomain(s.s).Reload()
@@ -2121,6 +2125,7 @@ func turnRepairModeAndInit(on bool) {
 func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table origin if exists")
 
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
