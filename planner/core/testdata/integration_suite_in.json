@@ -29,10 +29,10 @@
   {
     "name": "TestPartitionTableStats",
     "cases": [
-      "explain select * from t",
-      "select * from t",
-      "explain select * from t limit 3",
-      "select * from t limit 3"
+      "explain select * from t order by a",
+      "select * from t order by a",
+      "explain select * from t order by a limit 3",
+      "select * from t order by a limit 3"
     ]
   }
 ]
