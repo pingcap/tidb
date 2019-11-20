@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = SerialSuites(&testIsolationSuite{})
+var _ = Suite(&testIsolationSuite{})
 
 type testIsolationSuite struct {
 	cluster   *mocktikv.Cluster

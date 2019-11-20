@@ -1030,8 +1030,8 @@ LOOP:
 	}
 
 	// Test index range with lower/upper boundary and random inner cases
-	step := len(keys) / 20
-	for i := 0; i <= 20; i++ {
+	step := len(keys) / 10
+	for i := 0; i <= 10; i++ {
 		index := i * step
 		if index > len(keys)-3 {
 			index = len(keys) - 3
