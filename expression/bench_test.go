@@ -201,9 +201,9 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 }
 
 func getRandomTime() types.MysqlTime {
-	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
-		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
-
+	//return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
+	//	rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	return types.FromDate(1987, 4, 12, 2, 35, 41, 809654)
 }
 
 // dataGenerator is used to generate data for test.
