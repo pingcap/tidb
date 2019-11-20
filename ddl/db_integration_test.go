@@ -1914,3 +1914,20 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 	tk.MustExec("drop table test.t_parser_issue_284")
 	tk.MustExec("drop table test.t_parser_issue_284_2")
 }
+
+func (s *testIntegrationSuite3) TestForeignKeyOnUpdateOnDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_foreign_key_on_update")
+	tk.MustExec("use test_foreign_key_on_update")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("create table t3 (a int, b int)")
+	tk.MustExec("create table t4 (a int, b int)")
+	tk.MustExec("alter table t1 add constraint fk_a foreign key (b) references t (a) on update restrict")
+	tk.MustExec("alter table t2 add constraint fk_a foreign key (a) references t (a) on update set null")
+	tk.MustExec("alter table t3 add constraint fk_a foreign key (a) references t (a) on update cascade on delete set null")
+	tk.MustExec("alter table t4 add constraint fk_a foreign key (a) references t (a) on update restrict on delete set null")
+	tk.MustExec("create table t5 (a int, b int, foreign key (b) references t (a) on update restrict)")
+	tk.MustExec("create table t6 (a int, b int, foreign key (b) references t (a) on update restrict on delete restrict)")
+}
