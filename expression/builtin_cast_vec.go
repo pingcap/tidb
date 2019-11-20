@@ -109,7 +109,7 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 		}
 		if !hasUnsignedFlag0 && !hasUnsignedFlag1 {
 			rs[i] = float64(i64s[i])
-		} else if b.inUnion && i64s[i] < 0 {
+		} else if b.inUnion && !hasUnsignedFlag1 && i64s[i] < 0 {
 			rs[i] = 0
 		} else {
 			// recall that, int to float is different from uint to float
