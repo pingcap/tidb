@@ -137,7 +137,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
-			Flen:    0,
+			Flen:    mysql.MaxFieldVarCharLength,
 			Decimal: types.UnspecifiedLength,
 		}
 	case types.ETDatetime:
