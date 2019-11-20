@@ -1487,6 +1487,9 @@ const (
 	AdminReloadOptRuleBlacklist
 	AdminPluginDisable
 	AdminPluginEnable
+	AdminFlushBindings
+	AdminCaptureBindings
+	AdminEvolveBindings
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -1687,6 +1690,12 @@ func (n *AdminStmt) Restore(ctx *RestoreCtx) error {
 			}
 			ctx.WritePlain(v)
 		}
+	case AdminFlushBindings:
+		ctx.WriteKeyWord("FLUSH BINDINGS")
+	case AdminCaptureBindings:
+		ctx.WriteKeyWord("CAPTURE BINDINGS")
+	case AdminEvolveBindings:
+		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
