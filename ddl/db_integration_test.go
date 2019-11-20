@@ -628,7 +628,7 @@ func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a varchar(20) charset utf8)")
 	tk.MustExec("insert into t1 values (?)", "t1_value")
-
+	tk.MustExec("alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN")
 	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
 
@@ -638,34 +638,14 @@ func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
 
-	rs, err := tk.Exec("alter table t modify column a varchar(20) charset utf8")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8", mysql.ErrUnknown)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4", mysql.ErrUnknown)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8 collate utf8_bin", mysql.ErrUnknown)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci", mysql.ErrUnknown)
 
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8 collate utf8_bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin", mysql.ErrUnknownCollation)
+	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin", mysql.ErrConflictingDeclarations)
+	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin", mysql.ErrCollationCharsetMismatch)
 }
 
 func (s *testIntegrationSuite10) TestChangingTableCharset(c *C) {
