@@ -828,7 +828,7 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
-		return handleInvalidTimeError(b.ctx, err)
+		return err
 	}
 	args := buf.Int64s()
 	result.ResizeTime(n, false)
@@ -845,7 +845,6 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 			Fsp:  types.MaxFsp,
 		}
 		if err := r.ConvertTimeZone(time.Local, b.ctx.GetSessionVars().Location()); err != nil {
-			result.SetNull(i, true)
 			return err
 		}
 		times[i] = r
