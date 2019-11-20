@@ -1405,6 +1405,9 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 
+	// Check if the primary key exists before checking the table's pkIsHandle.
+	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
+
 	// for the limit of name
 	validName := strings.Repeat("a", mysql.MaxIndexIdentifierLen)
 	invalidName := strings.Repeat("b", mysql.MaxIndexIdentifierLen+1)
