@@ -56,13 +56,20 @@ type visitInfo struct {
 	err       error
 }
 
+type indexNestedLoopJoinTables struct {
+	inljTables  []hintTableInfo
+	inlhjTables []hintTableInfo
+	inlmjTables []hintTableInfo
+}
+
 type tableHintInfo struct {
-	indexNestedLoopJoinTables []hintTableInfo
-	sortMergeJoinTables       []hintTableInfo
-	hashJoinTables            []hintTableInfo
-	indexHintList             []indexHintInfo
-	flashTables               []hintTableInfo
-	aggHints                  aggHintInfo
+	indexNestedLoopJoinTables
+	sortMergeJoinTables []hintTableInfo
+	hashJoinTables      []hintTableInfo
+	indexHintList       []indexHintInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
+	aggHints            aggHintInfo
 }
 
 type hintTableInfo struct {
@@ -108,11 +115,23 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.flashTables)
+	return info.matchTableName(tableNames, info.tiflashTables)
+}
+
+func (info *tableHintInfo) ifPreferTiKV(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.tikvTables)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -1913,14 +1932,27 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	if err != nil {
 		return err
 	}
+	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.IsGenerated() {
-			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
+			generatedColumns[tCol.Name.L] = struct{}{}
 		}
 	}
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
+		defaultExpr, isDefaultExpr := extractDefaultExpr(assign.Expr)
+		if isDefaultExpr {
+			defaultExpr.Name = assign.Column
+		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
+			if isDefaultExpr {
+				continue
+			}
+			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
+		}
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
