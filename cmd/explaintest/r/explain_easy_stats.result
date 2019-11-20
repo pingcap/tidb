@@ -14,9 +14,9 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
-Projection_11	1600.00	root	Column#1, Column#2, Column#3, Column#4, Concurrency:4
-└─HashLeftJoin_12	1600.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#19, Column#11)], Concurrency:1
-  ├─Projection_13	2000.00	root	Column#1, Column#2, Column#3, Column#4, cast(Column#1), Concurrency:4
+Projection_11	1600.00	root	Column#1, Column#2, Column#3, Column#4
+└─HashLeftJoin_12	1600.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#19, Column#11)]
+  ├─Projection_13	2000.00	root	Column#1, Column#2, Column#3, Column#4, cast(Column#1)
   │ └─TableReader_15	2000.00	root	data:TableScan_14
   │   └─TableScan_14	2000.00	cop[tikv]	table:t3, range:[-inf,+inf], keep order:false
   └─StreamAgg_27	1.00	root	funcs:sum(Column#22)
@@ -47,7 +47,7 @@ IndexReader_6	0.00	root	index:IndexScan_5
 └─IndexScan_5	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-HashLeftJoin_22	2481.25	root	left outer join, inner:TableReader_36, equal:[eq(Column#2, Column#4)], Concurrency:1
+HashLeftJoin_22	2481.25	root	left outer join, inner:TableReader_36, equal:[eq(Column#2, Column#4)]
 ├─TableReader_33	1998.00	root	data:TableScan_32
 │ └─TableScan_32	1998.00	cop[tikv]	table:t1, range:(1,+inf], keep order:false
 └─TableReader_36	1985.00	root	data:Selection_35
@@ -65,11 +65,11 @@ Delete_4	N/A	root	N/A
   └─TableScan_10	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
-Projection_11	1985.00	root	cast(Column#9), Concurrency:4
-└─HashLeftJoin_21	1985.00	root	inner join, inner:HashAgg_25, equal:[eq(Column#1, Column#5)], Concurrency:1
+Projection_11	1985.00	root	cast(Column#9)
+└─HashLeftJoin_21	1985.00	root	inner join, inner:HashAgg_25, equal:[eq(Column#1, Column#5)]
   ├─TableReader_34	1999.00	root	data:TableScan_33
   │ └─TableScan_33	1999.00	cop[tikv]	table:a, range:[-inf,+inf], keep order:false
-  └─HashAgg_25	1985.00	root	group by:Column#5, funcs:count(Column#5), firstrow(Column#5), PartialConcurrency:1, FinalConcurrency:1
+  └─HashAgg_25	1985.00	root	group by:Column#5, funcs:count(Column#5), firstrow(Column#5)
     └─TableReader_32	1985.00	root	data:Selection_31
       └─Selection_31	1985.00	cop[tikv]	not(isnull(Column#5))
         └─TableScan_30	1985.00	cop[tikv]	table:b, range:[-inf,+inf], keep order:false
@@ -92,11 +92,11 @@ TableReader_7	0.50	root	data:Selection_6
   └─TableScan_5	1.00	cop[tikv]	table:t1, range:[1,1], keep order:false
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
-Projection_9	1985.00	root	Column#1, Concurrency:4
-└─HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(Column#1, Column#5)], Concurrency:1
+Projection_9	1985.00	root	Column#1
+└─HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(Column#1, Column#5)]
   ├─TableReader_32	1999.00	root	data:TableScan_31
   │ └─TableScan_31	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
-  └─HashAgg_23	1985.00	root	group by:Column#5, funcs:firstrow(Column#5), PartialConcurrency:1, FinalConcurrency:1
+  └─HashAgg_23	1985.00	root	group by:Column#5, funcs:firstrow(Column#5)
     └─TableReader_30	1985.00	root	data:Selection_29
       └─Selection_29	1985.00	cop[tikv]	not(isnull(Column#5))
         └─TableScan_28	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
@@ -105,11 +105,11 @@ id	count	task	operator info
 MemTableScan_4	10000.00	root	
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	count	task	operator info
-Projection_12	1999.00	root	eq(Column#2, Column#5), Concurrency:4
-└─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Projection_43, Concurrency:1
+Projection_12	1999.00	root	eq(Column#2, Column#5)
+└─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Projection_43
   ├─TableReader_16	1999.00	root	data:TableScan_15
   │ └─TableScan_15	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
-  └─Projection_43	1.00	root	Column#4, Column#5, Concurrency:4
+  └─Projection_43	1.00	root	Column#4, Column#5
     └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
       ├─Limit_41	1.00	cop[tikv]	offset:0, count:1
       │ └─IndexScan_39	1.25	cop[tikv]	table:t2, index:c1, range: decided by [eq(Column#1, Column#4)], keep order:true
@@ -123,8 +123,8 @@ Limit_10	1.00	root	offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
-Projection_6	1999.00	root	Column#8, Concurrency:4
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14, Concurrency:1
+Projection_6	1999.00	root	Column#8
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
   ├─TableReader_9	1999.00	root	data:TableScan_8
   │ └─TableScan_8	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
   └─TableReader_14	0.00	root	data:Selection_13

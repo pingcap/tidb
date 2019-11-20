@@ -6,7 +6,7 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	count	task	operator info
-HashLeftJoin_8	8000.00	root	CARTESIAN semi join, inner:TableReader_12, other cond:eq(Column#1, plus(Column#2, Column#5)), Concurrency:1
+HashLeftJoin_8	8000.00	root	CARTESIAN semi join, inner:TableReader_12, other cond:eq(Column#1, plus(Column#2, Column#5))
 ├─TableReader_10	10000.00	root	data:TableScan_9
 │ └─TableScan_9	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 └─TableReader_12	10000.00	root	data:TableScan_11
@@ -17,12 +17,12 @@ insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
 analyze table t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 id	count	task	operator info
-Projection_11	5.00	root	Column#15, Concurrency:4
-└─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13), Concurrency:1
+Projection_11	5.00	root	Column#15
+└─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_22	1.00	root	funcs:count(1)
-    └─IndexMergeJoin_29	0.50	root	inner join, inner:TableReader_27, outer key:Column#5, inner key:Column#9, Concurrency:4
+    └─IndexMergeJoin_29	0.50	root	inner join, inner:TableReader_27, outer key:Column#5, inner key:Column#9
       ├─IndexReader_35	1.00	root	index:IndexScan_34
       │ └─IndexScan_34	1.00	cop[tikv]	table:s, index:b, c, d, range: decided by [eq(Column#6, 1) eq(Column#7, 1) eq(Column#8, Column#1)], keep order:false
       └─TableReader_27	1.00	root	data:TableScan_26
@@ -31,14 +31,14 @@ drop table if exists t;
 create table t(a int, b int, c int);
 explain select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
 id	count	task	operator info
-Projection_11	7992.00	root	Column#1, Concurrency:4
-└─HashLeftJoin_12	7992.00	root	inner join, inner:Selection_17, equal:[eq(Column#2, Column#6) eq(Column#3, Column#6) eq(Column#1, Column#9)], Concurrency:1
+Projection_11	7992.00	root	Column#1
+└─HashLeftJoin_12	7992.00	root	inner join, inner:Selection_17, equal:[eq(Column#2, Column#6) eq(Column#3, Column#6) eq(Column#1, Column#9)]
   ├─TableReader_16	9970.03	root	data:Selection_15
   │ └─Selection_15	9970.03	cop[tikv]	not(isnull(Column#1)), not(isnull(Column#2)), not(isnull(Column#3))
   │   └─TableScan_14	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─Selection_17	6393.60	root	not(isnull(Column#9))
-    └─HashAgg_23	7992.00	root	group by:Column#14, funcs:max(Column#12), firstrow(Column#14), PartialConcurrency:1, FinalConcurrency:1
+    └─HashAgg_23	7992.00	root	group by:Column#14, funcs:max(Column#12), firstrow(Column#14)
       └─TableReader_24	7992.00	root	data:HashAgg_18
-        └─HashAgg_18	7992.00	cop[tikv]	group by:Column#6, funcs:max(Column#5), PartialConcurrency:1, FinalConcurrency:1
+        └─HashAgg_18	7992.00	cop[tikv]	group by:Column#6, funcs:max(Column#5)
           └─Selection_22	9990.00	cop[tikv]	not(isnull(Column#6))
             └─TableScan_21	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

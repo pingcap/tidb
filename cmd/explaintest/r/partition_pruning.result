@@ -4010,10 +4010,10 @@ create table t1 (s1 int);
 explain select 1 from t1 union all select 2;
 id	count	task	operator info
 Union_8	10001.00	root	
-├─Projection_9	10000.00	root	1, Concurrency:4
+├─Projection_9	10000.00	root	1
 │ └─TableReader_11	10000.00	root	data:TableScan_10
 │   └─TableScan_10	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Projection_12	1.00	root	2, Concurrency:4
+└─Projection_12	1.00	root	2
   └─TableDual_13	1.00	root	rows:1
 drop table t1;
 create table t1 (a int)

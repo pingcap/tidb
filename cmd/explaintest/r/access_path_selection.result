@@ -25,7 +25,7 @@ IndexReader_11	1104.45	root	index:Selection_10
   └─IndexScan_9	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
 id	count	task	operator info
-Projection_6	3333.33	root	Column#1, Column#2, Concurrency:4
+Projection_6	3333.33	root	Column#1, Column#2
 └─TableReader_13	3333.33	root	data:Selection_12
   └─Selection_12	3333.33	cop[tikv]	gt(Column#1, 10)
     └─TableScan_11	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
