@@ -245,7 +245,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows)})
+		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows), ""})
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -326,6 +326,8 @@ type RuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
+	// executor concurrency information
+	concurrency string
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -410,6 +412,16 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
+// SetConcurrencyInfo sets the concurrency infomation.
+func (e *RuntimeStats) SetConcurrencyInfo(concurrencyInfo string) {
+	var val atomic.Value
+	val.Store(concurrencyInfo)
+	e.concurrency = val.Load().(string)
+}
+
 func (e *RuntimeStats) String() string {
+	if len(e.concurrency) > 0 {
+		return fmt.Sprintf("time:%v, loops:%d, rows:%d, %s", time.Duration(e.consume), e.loop, e.rows, e.concurrency)
+	}
 	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }

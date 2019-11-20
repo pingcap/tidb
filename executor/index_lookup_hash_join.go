@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"sync"
@@ -295,6 +296,12 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
+
+	concurrency := len(e.joiners)
+	if e.runtimeStats != nil && concurrency > 0 {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
+	}
 	return e.baseExecutor.Close()
 }
 

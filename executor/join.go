@@ -127,6 +127,11 @@ func (e *HashJoinExec) Close() error {
 		terror.Call(e.rowContainer.Close)
 	}
 
+	concurrency := len(e.joiners)
+	if e.runtimeStats != nil && concurrency > 0 {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
+	}
 	err := e.baseExecutor.Close()
 	return err
 }
