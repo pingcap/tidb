@@ -191,7 +191,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
-func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
+func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlSchemaState int32, ddlQuery string) {
 	if client == nil {
 		return
 	}
@@ -199,9 +199,10 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 	ddlQuery = AddSpecialComment(ddlQuery)
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{
-			Tp:       binlog.BinlogType_Prewrite,
-			DdlJobId: jobID,
-			DdlQuery: []byte(ddlQuery),
+			Tp:             binlog.BinlogType_Prewrite,
+			DdlJobId:       jobID,
+			DdlSchemaState: ddlSchemaState,
+			DdlQuery:       []byte(ddlQuery),
 		},
 		Client: client,
 	}
