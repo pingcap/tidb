@@ -14,12 +14,16 @@
 package core_test
 
 import (
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testPlanNormalize{})
@@ -27,6 +31,8 @@ var _ = Suite(&testPlanNormalize{})
 type testPlanNormalize struct {
 	store kv.Storage
 	dom   *domain.Domain
+
+	testData testutil.TestData
 }
 
 func (s *testPlanNormalize) SetUpSuite(c *C) {
@@ -35,9 +41,13 @@ func (s *testPlanNormalize) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
+
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_normalized_suite")
+	c.Assert(err, IsNil)
 }
 
 func (s *testPlanNormalize) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
@@ -49,38 +59,37 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
-	normalizedtCases := []struct {
-		sql        string
-		normalized string
-	}{
-		{
-			sql:        "select * from t1;",
-			normalized: "0\t32_5\t0\tdata:TableScan_4\n" + "1\t10_4\t1\ttable:t1, range:[?,?], keep order:false\n",
-		},
-		{
-			sql:        "select * from t1 where a<1",
-			normalized: "0\t32_6\t0\tdata:TableScan_5\n" + "1\t10_5\t1\ttable:t1, range:[?,?], keep order:false\n",
-		},
-		{
-			sql:        "select * from t1 where a>1",
-			normalized: "0\t32_6\t0\tdata:TableScan_5\n" + "1\t10_5\t1\ttable:t1, range:[?,?], keep order:false\n",
-		},
-		{
-			sql:        "select * from t1 where a=1",
-			normalized: "0\t37_1\t0\ttable:t1, handle:?\n",
-		},
-		{
-			sql: "select * from t1 where b=1",
-			normalized: "0\t31_10\t0\t\n" +
-				"1\t13_8\t1\ttable:t1, index:b, range:[?,?], keep order:false\n" +
-				"1\t10_9\t1\ttable:t1, keep order:false\n",
-		},
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
 	}
-
-	for _, testCase := range normalizedtCases {
-		testNormalized(tk, c, testCase.sql, testCase.normalized)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		tk.Se.GetSessionVars().PlanID = 0
+		tk.MustExec(tt)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(core.Plan)
+		c.Assert(ok, IsTrue)
+		normalized, _ := core.NormalizePlan(p)
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = normalizedPlanRows
+		})
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
 	}
+}
 
+func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
 	normalizedDigestCases := []struct {
 		sql1   string
 		sql2   string
@@ -147,17 +156,6 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	}
 }
 
-func testNormalized(tk *testkit.TestKit, c *C, sql, normalize string) {
-	tk.Se.GetSessionVars().PlanID = 0
-	tk.MustQuery(sql)
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	physicalPlan, ok := info.Plan.(core.PhysicalPlan)
-	c.Assert(ok, IsTrue)
-	normalized1, _ := core.NormalizePlan(physicalPlan)
-	c.Assert(normalized1, Equals, normalize, Commentf("sql: %v\n", sql))
-}
-
 func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bool) {
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql1)
@@ -180,5 +178,16 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
 		c.Assert(digest1 != digest2, IsTrue, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
+	}
+}
+
+func getPlanRows(planStr string) []string {
+	return strings.Split(planStr, "\n")
+}
+
+func compareStringSlice(c *C, ss1, ss2 []string) {
+	c.Assert(len(ss1), Equals, len(ss2))
+	for i, s := range ss1 {
+		c.Assert(s, Equals, ss2[i])
 	}
 }

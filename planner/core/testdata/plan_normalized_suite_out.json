@@ -1,0 +1,149 @@
+[
+  {
+    "Name": "TestNormalizedPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t1;",
+        "Plan": [
+          "\tTableReader_5\troot\tdata:TableScan_4",
+          "\t└─TableScan_4\tcop \ttable:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a<1;",
+        "Plan": [
+          "\tTableReader_6\troot\tdata:TableScan_5",
+          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a>1",
+        "Plan": [
+          "\tTableReader_6\troot\tdata:TableScan_5",
+          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=1",
+        "Plan": [
+          "\tPoint_Get_1\troot\ttable:t1, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where b=1",
+        "Plan": [
+          "\tIndexLookUp_10\troot\t",
+          "\t├─IndexScan_8 \tcop \ttable:t1, index:b, range:[?,?], keep order:false",
+          "\t└─TableScan_9 \tcop \ttable:t1, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
+        "Plan": [
+          "\tProjection_4   \troot\tplus(Column#1, ?), plus(Column#2, ?)",
+          "\t└─IndexReader_6\troot\tindex:IndexScan_5",
+          "\t  └─IndexScan_5\tcop \ttable:t1, index:b, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          "\tMergeJoin_7      \troot\tinner join, left key:Column#1, right key:Column#4",
+          "\t├─TableReader_11 \troot\tdata:Selection_10",
+          "\t│ └─Selection_10 \tcop \tgt(Column#3, ?)",
+          "\t│   └─TableScan_9\tcop \ttable:t1, range:[?,?], keep order:true",
+          "\t└─TableReader_13 \troot\tdata:TableScan_12",
+          "\t  └─TableScan_12 \tcop \ttable:t2, range:[?,?], keep order:true"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          "\tIndexJoin_10      \troot\tinner join, inner:TableReader_9, outer key:Column#1, inner key:Column#4",
+          "\t├─TableReader_19  \troot\tdata:Selection_18",
+          "\t│ └─Selection_18  \tcop \tgt(Column#3, ?)",
+          "\t│   └─TableScan_17\tcop \ttable:t1, range:[?,?], keep order:false",
+          "\t└─TableReader_9   \troot\tdata:TableScan_8",
+          "\t  └─TableScan_8   \tcop \ttable:t2, range: decided by [Column#1], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          "\tHashRightJoin_18  \troot\tinner join, inner:TableReader_21, equal:eq(Column#1, Column#4)",
+          "\t├─TableReader_21  \troot\tdata:Selection_20",
+          "\t│ └─Selection_20  \tcop \tgt(Column#3, ?)",
+          "\t│   └─TableScan_19\tcop \ttable:t1, range:[?,?], keep order:false",
+          "\t└─TableReader_23  \troot\tdata:TableScan_22",
+          "\t  └─TableScan_22  \tcop \ttable:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          "\tHashRightJoin_18  \troot\tinner join, inner:TableReader_21, equal:eq(Column#1, Column#4)",
+          "\t├─TableReader_21  \troot\tdata:Selection_20",
+          "\t│ └─Selection_20  \tcop \tgt(Column#3, ?)",
+          "\t│   └─TableScan_19\tcop \ttable:t1, range:[?,?], keep order:false",
+          "\t└─TableReader_23  \troot\tdata:TableScan_22",
+          "\t  └─TableScan_22  \tcop \ttable:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          "\tIndexJoin_10      \troot\tinner join, inner:TableReader_9, outer key:Column#1, inner key:Column#4",
+          "\t├─TableReader_19  \troot\tdata:Selection_18",
+          "\t│ └─Selection_18  \tcop \tgt(Column#3, ?)",
+          "\t│   └─TableScan_17\tcop \ttable:t1, range:[?,?], keep order:false",
+          "\t└─TableReader_9   \troot\tdata:TableScan_8",
+          "\t  └─TableScan_8   \tcop \ttable:t2, range: decided by [Column#1], keep order:false"
+        ]
+      },
+      {
+        "SQL": "insert into t1 values (1,1,1)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
+        "Plan": [
+          "\tTableReader_9  \troot\tdata:Selection_8",
+          "\t└─Selection_8  \tcop \tne(Column#5, ?)",
+          "\t  └─TableScan_7\tcop \ttable:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t1 set a=a+1",
+        "Plan": [
+          "\tTableReader_6\troot\tdata:TableScan_5",
+          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t1 set a=a+1 where a>0",
+        "Plan": [
+          "\tTableReader_7\troot\tdata:TableScan_6",
+          "\t└─TableScan_6\tcop \ttable:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t1",
+        "Plan": [
+          "\tTableReader_6\troot\tdata:TableScan_5",
+          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t1 where a>0 and b=1 and c!=2",
+        "Plan": [
+          "\tIndexLookUp_12  \troot\t",
+          "\t├─IndexScan_9   \tcop \ttable:t1, index:b, range:[?,?], keep order:false",
+          "\t└─Selection_11  \tcop \tne(Column#3, ?)",
+          "\t  └─TableScan_10\tcop \ttable:t1, keep order:false"
+        ]
+      }
+    ]
+  }
+]

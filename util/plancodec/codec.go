@@ -55,6 +55,17 @@ func DecodePlan(planString string) (string, error) {
 	return pd.decode(planString)
 }
 
+// DecodePlan use to decode the string to plan tree.
+func DecodeNormalizedPlan(planString string) (string, error) {
+	if len(planString) == 0 {
+		return "", nil
+	}
+	pd := decoderPool.Get().(*planDecoder)
+	defer decoderPool.Put(pd)
+	pd.buf.Reset()
+	return pd.buildPlanTree(planString)
+}
+
 type planDecoder struct {
 	buf       bytes.Buffer
 	depths    []int
@@ -72,8 +83,11 @@ func (pd *planDecoder) decode(planString string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return pd.buildPlanTree(str)
+}
 
-	nodes := strings.Split(str, lineBreakerStr)
+func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
+	nodes := strings.Split(planString, lineBreakerStr)
 	if len(pd.depths) < len(nodes) {
 		pd.depths = make([]int, 0, len(nodes))
 		pd.planInfos = make([]*planInfo, 0, len(nodes))
