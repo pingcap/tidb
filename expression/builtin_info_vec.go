@@ -264,7 +264,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	i64s := result.Int64s()
 	for i := range i64s {
 		// Return value of BENCHMARK() is always 0.
-		// even if buf.IsNull
+		// even if args[1].IsNull(i)
 		i64s[i] = 0
 	}
 
