@@ -14,13 +14,12 @@
 package implementation
 
 import (
-	"math"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
+	"math"
 )
 
 // TableDualImpl implementation of PhysicalTableDual.
@@ -69,14 +68,14 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	return impl.cost
 }
 
-// ScaleCostLimit implement Implementation interface.
+// ScaleCostLimit implements Implementation interface.
 func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
-	if costLimit == math.MaxFloat64 {
-		return costLimit
-	}
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	if math.MaxFloat64/copIterWorkers < costLimit {
+		return costLimit
+	}
 	return costLimit * copIterWorkers
 }
 
