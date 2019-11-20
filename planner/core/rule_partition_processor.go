@@ -90,7 +90,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr() *tables.PartitionExpr
+	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column) (*tables.PartitionExpr, error)
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -102,8 +102,12 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	var partitionExprs []expression.Expression
 	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {
-		partitionExprs = table.PartitionExpr().Ranges
-		col = table.PartitionExpr().Column
+		pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols)
+		if err != nil {
+			return nil, err
+		}
+		partitionExprs = pExpr.Ranges
+		col = pExpr.Column
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
@@ -115,7 +119,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
+		pruned, err := s.canBePruned(ds.context(), col, expr.Clone(), ds.allConds)
 		if err != nil {
 			return nil, err
 		}
