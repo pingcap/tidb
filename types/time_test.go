@@ -1100,11 +1100,59 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	for _, t := range tests {
 		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
 		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s", t.input))
+			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
+			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
 		}
 	}
+
+	// Issue #13605: "Invalid time format" caused by time zone issue
+	// Some regions like Los Angeles use daylight saving time, see https://en.wikipedia.org/wiki/Daylight_saving_time
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	rawLocal := time.Local
+	time.Local = losAngelesTz // Hack Local timezone
+
+	tests = []struct {
+		tz             *time.Location
+		input          types.MysqlTime
+		expectRetError bool
+	}{{
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
+		expectRetError: true,
+	}, {
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		expectRetError: false,
+	},
+	}
+
+	for _, t := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
+		if t.expectRetError {
+			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+		} else {
+			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+		}
+	}
+
+	time.Local = rawLocal
 }
 
 func (s *testTimeSuite) TestExtractDurationValue(c *C) {
