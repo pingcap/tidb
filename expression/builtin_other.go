@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -248,7 +247,6 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	fmt.Printf("count=%v, threshold=%v\n", count, b.threshold)
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
