@@ -67,7 +67,7 @@ const (
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
-	// inRepairTable is set when visiting repair table statement
+	// inRepairTable is set when visiting a repair table statement.
 	inRepairTable
 )
 
@@ -130,7 +130,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
 	case *ast.RepairTableStmt:
-		// RepairTable should be consist of create table and rename table's logic
+		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
 	default:
@@ -532,7 +532,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 		return
 	}
 
-	// Check rename action like rename statement does.
+	// Check rename action as the rename statement does.
 	oldTable := stmt.Table.Name.String()
 	newTable := stmt.CreateStmt.Table.Name.String()
 	p.checkRenameTable(oldTable, newTable)
@@ -790,7 +790,7 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 		}
 	}
 	if found {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Schema.L)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
 	}
 }
 
@@ -805,7 +805,7 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		}
 	}
 	if dbInfo == nil {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(tn.Schema.L)
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
 		return
 	}
 	var repairTable *model.TableInfo
@@ -816,7 +816,7 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 		}
 	}
 	if repairTable == nil {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
 		return
 	}
 	p.ctx.SetValue(domainutil.RepairedTable, repairTable)

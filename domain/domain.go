@@ -208,7 +208,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 				continue
 			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
-			// Check the whether the table is in repair mode.
+			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.FetchRepairedTableList(di, tbl) {
 				continue
 			}

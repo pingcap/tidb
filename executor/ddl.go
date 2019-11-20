@@ -460,11 +460,9 @@ func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
 }
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
-	return err
+	return domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
 }
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
-	return err
+	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
 }

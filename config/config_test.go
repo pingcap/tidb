@@ -179,6 +179,7 @@ alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
+repair-mode = false
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -215,6 +216,7 @@ max-sql-length=1024
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.EnableBatchDML, Equals, true)
+	c.Assert(conf.RepairMode, Equals, false)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

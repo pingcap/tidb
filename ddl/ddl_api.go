@@ -3945,7 +3945,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
 		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
 	}
-	// Cause ddl is passed nil here, it is necessary to specify the table.id and partition.id manually.
+	// Cause DDL is passed nil here, it is necessary to specify the table.id and partition.id manually.
 	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
@@ -3954,7 +3954,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
 	newTableInfo.ID = oldTableInfo.ID
-	// If any old partitionInfo has lost, that means the partition id lost too, so did the data, repair failed.
+	// If any old partitionInfo has lost, that means the partition ID lost too, so did the data, repair failed.
 	if newTableInfo.Partition != nil {
 		for i, new := range newTableInfo.Partition.Definitions {
 			found := false
@@ -3974,7 +3974,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		}
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
-	// If any old indexInfo has lost, that means the index id lost too, so did the data, repair failed.
+	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
 	for i, new := range newTableInfo.Indices {
 		found := false
 		for _, old := range oldTableInfo.Indices {
@@ -3988,7 +3988,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 			return ErrRepairTableFail.GenWithStackByArgs("Some old index id has lost")
 		}
 	}
-	// If any old columnInfo has lost, that means the old column id lost too, repair failed.
+	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, new := range newTableInfo.Columns {
 		found := false
 		for _, old := range oldTableInfo.Columns {
