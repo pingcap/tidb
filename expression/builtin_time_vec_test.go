@@ -92,11 +92,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 	ast.MicroSecond: {
-<<<<<<< HEAD
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
-=======
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
->>>>>>> git_origin/exp
 	},
 	ast.Now: {
 		{retEvalType: types.ETDatetime},
@@ -282,12 +278,6 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		// {retEvalType: types.ETDatetime},
 		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
 		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
-	},
-	ast.Extract: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dataTimeUnitStrGener{}, nil}},	
-	},
-	ast.Extract: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dataTimeUnitStrGener{}, nil}},	
 	},
 	ast.Extract: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dataTimeUnitStrGener{}, nil}},	
