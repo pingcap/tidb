@@ -60,7 +60,7 @@ const (
 	rulePushAggDownGather
 	ruleTransformLimitToTopN
 	// ruleUnsupported is used for recording the number of rules.
-	// It should always be the last ruleID.
+	// It should always be the last TransformationID.
 	ruleUnsupported
 )
 
