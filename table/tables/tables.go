@@ -458,7 +458,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		stmtCtx := ctx.GetSessionVars().StmtCtx
 		rows := stmtCtx.RecordRows()
 		if rows > 1 {
-			if stmtCtx.MaxRowID >= stmtCtx.BaseRowID {
+			if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
 				stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = t.AllocHandleIDs(ctx, rows)
 				if err != nil {
 					return 0, err
