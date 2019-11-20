@@ -5,99 +5,105 @@
       {
         "SQL": "select * from t1;",
         "Plan": [
-          "\tTableReader_5\troot\tdata:TableScan_4",
-          "\t└─TableScan_4\tcop \ttable:t1, range:[?,?], keep order:false"
+          " TableReader_5 root data:TableScan_4",
+          " └─TableScan_4 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a<1;",
         "Plan": [
-          "\tTableReader_6\troot\tdata:TableScan_5",
-          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+          " TableReader_6 root data:TableScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a>1",
         "Plan": [
-          "\tTableReader_6\troot\tdata:TableScan_5",
-          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+          " TableReader_6 root data:TableScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a=1",
         "Plan": [
-          "\tPoint_Get_1\troot\ttable:t1, handle:?"
+          " Point_Get_1 root table:t1, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3)",
+        "Plan": [
+          " Batch_Point_Get_1 root table:t1"
         ]
       },
       {
         "SQL": "select * from t1 where b=1",
         "Plan": [
-          "\tIndexLookUp_10\troot\t",
-          "\t├─IndexScan_8 \tcop \ttable:t1, index:b, range:[?,?], keep order:false",
-          "\t└─TableScan_9 \tcop \ttable:t1, keep order:false"
+          " IndexLookUp_10 root ",
+          " ├─IndexScan_8  cop  table:t1, index:b, range:[?,?], keep order:false",
+          " └─TableScan_9  cop  table:t1, keep order:false"
         ]
       },
       {
         "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
         "Plan": [
-          "\tProjection_4   \troot\tplus(Column#1, ?), plus(Column#2, ?)",
-          "\t└─IndexReader_6\troot\tindex:IndexScan_5",
-          "\t  └─IndexScan_5\tcop \ttable:t1, index:b, range:[?,?], keep order:false"
+          " Projection_4    root plus(Column#1, ?), plus(Column#2, ?)",
+          " └─IndexReader_6 root index:IndexScan_5",
+          "   └─IndexScan_5 cop  table:t1, index:b, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          "\tMergeJoin_7      \troot\tinner join, left key:Column#1, right key:Column#4",
-          "\t├─TableReader_11 \troot\tdata:Selection_10",
-          "\t│ └─Selection_10 \tcop \tgt(Column#3, ?)",
-          "\t│   └─TableScan_9\tcop \ttable:t1, range:[?,?], keep order:true",
-          "\t└─TableReader_13 \troot\tdata:TableScan_12",
-          "\t  └─TableScan_12 \tcop \ttable:t2, range:[?,?], keep order:true"
+          " MergeJoin_7       root inner join, left key:Column#1, right key:Column#4",
+          " ├─TableReader_11  root data:Selection_10",
+          " │ └─Selection_10  cop  gt(Column#3, ?)",
+          " │   └─TableScan_9 cop  table:t1, range:[?,?], keep order:true",
+          " └─TableReader_13  root data:TableScan_12",
+          "   └─TableScan_12  cop  table:t2, range:[?,?], keep order:true"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          "\tIndexJoin_10      \troot\tinner join, inner:TableReader_9, outer key:Column#1, inner key:Column#4",
-          "\t├─TableReader_19  \troot\tdata:Selection_18",
-          "\t│ └─Selection_18  \tcop \tgt(Column#3, ?)",
-          "\t│   └─TableScan_17\tcop \ttable:t1, range:[?,?], keep order:false",
-          "\t└─TableReader_9   \troot\tdata:TableScan_8",
-          "\t  └─TableScan_8   \tcop \ttable:t2, range: decided by [Column#1], keep order:false"
+          " IndexJoin_10       root inner join, inner:TableReader_9, outer key:Column#1, inner key:Column#4",
+          " ├─TableReader_19   root data:Selection_18",
+          " │ └─Selection_18   cop  gt(Column#3, ?)",
+          " │   └─TableScan_17 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_9    root data:TableScan_8",
+          "   └─TableScan_8    cop  table:t2, range: decided by [Column#1], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          "\tHashRightJoin_18  \troot\tinner join, inner:TableReader_21, equal:eq(Column#1, Column#4)",
-          "\t├─TableReader_21  \troot\tdata:Selection_20",
-          "\t│ └─Selection_20  \tcop \tgt(Column#3, ?)",
-          "\t│   └─TableScan_19\tcop \ttable:t1, range:[?,?], keep order:false",
-          "\t└─TableReader_23  \troot\tdata:TableScan_22",
-          "\t  └─TableScan_22  \tcop \ttable:t2, range:[?,?], keep order:false"
+          " HashRightJoin_18   root inner join, inner:TableReader_21, equal:eq(Column#1, Column#4)",
+          " ├─TableReader_21   root data:Selection_20",
+          " │ └─Selection_20   cop  gt(Column#3, ?)",
+          " │   └─TableScan_19 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_23   root data:TableScan_22",
+          "   └─TableScan_22   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          "\tHashRightJoin_18  \troot\tinner join, inner:TableReader_21, equal:eq(Column#1, Column#4)",
-          "\t├─TableReader_21  \troot\tdata:Selection_20",
-          "\t│ └─Selection_20  \tcop \tgt(Column#3, ?)",
-          "\t│   └─TableScan_19\tcop \ttable:t1, range:[?,?], keep order:false",
-          "\t└─TableReader_23  \troot\tdata:TableScan_22",
-          "\t  └─TableScan_22  \tcop \ttable:t2, range:[?,?], keep order:false"
+          " HashRightJoin_18   root inner join, inner:TableReader_21, equal:eq(Column#1, Column#4)",
+          " ├─TableReader_21   root data:Selection_20",
+          " │ └─Selection_20   cop  gt(Column#3, ?)",
+          " │   └─TableScan_19 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_23   root data:TableScan_22",
+          "   └─TableScan_22   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          "\tIndexJoin_10      \troot\tinner join, inner:TableReader_9, outer key:Column#1, inner key:Column#4",
-          "\t├─TableReader_19  \troot\tdata:Selection_18",
-          "\t│ └─Selection_18  \tcop \tgt(Column#3, ?)",
-          "\t│   └─TableScan_17\tcop \ttable:t1, range:[?,?], keep order:false",
-          "\t└─TableReader_9   \troot\tdata:TableScan_8",
-          "\t  └─TableScan_8   \tcop \ttable:t2, range: decided by [Column#1], keep order:false"
+          " IndexJoin_10       root inner join, inner:TableReader_9, outer key:Column#1, inner key:Column#4",
+          " ├─TableReader_19   root data:Selection_18",
+          " │ └─Selection_18   cop  gt(Column#3, ?)",
+          " │   └─TableScan_17 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_9    root data:TableScan_8",
+          "   └─TableScan_8    cop  table:t2, range: decided by [Column#1], keep order:false"
         ]
       },
       {
@@ -109,39 +115,39 @@
       {
         "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
         "Plan": [
-          "\tTableReader_9  \troot\tdata:Selection_8",
-          "\t└─Selection_8  \tcop \tne(Column#5, ?)",
-          "\t  └─TableScan_7\tcop \ttable:t2, range:[?,?], keep order:false"
+          " TableReader_9   root data:Selection_8",
+          " └─Selection_8   cop  ne(Column#5, ?)",
+          "   └─TableScan_7 cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1",
         "Plan": [
-          "\tTableReader_6\troot\tdata:TableScan_5",
-          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+          " TableReader_6 root data:TableScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1 where a>0",
         "Plan": [
-          "\tTableReader_7\troot\tdata:TableScan_6",
-          "\t└─TableScan_6\tcop \ttable:t1, range:[?,?], keep order:false"
+          " TableReader_7 root data:TableScan_6",
+          " └─TableScan_6 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1",
         "Plan": [
-          "\tTableReader_6\troot\tdata:TableScan_5",
-          "\t└─TableScan_5\tcop \ttable:t1, range:[?,?], keep order:false"
+          " TableReader_6 root data:TableScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1 where a>0 and b=1 and c!=2",
         "Plan": [
-          "\tIndexLookUp_12  \troot\t",
-          "\t├─IndexScan_9   \tcop \ttable:t1, index:b, range:[?,?], keep order:false",
-          "\t└─Selection_11  \tcop \tne(Column#3, ?)",
-          "\t  └─TableScan_10\tcop \ttable:t1, keep order:false"
+          " IndexLookUp_12   root ",
+          " ├─IndexScan_9    cop  table:t1, index:b, range:[?,?], keep order:false",
+          " └─Selection_11   cop  ne(Column#3, ?)",
+          "   └─TableScan_10 cop  table:t1, keep order:false"
         ]
       }
     ]

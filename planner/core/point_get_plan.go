@@ -83,7 +83,6 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 // ExplainInfo returns operator information to be explained.
 func (p *PointGetPlan) ExplainInfo() string {
 	return p.explainInfo(false)
-
 }
 
 // ExplainInfo returns operator information to be explained.

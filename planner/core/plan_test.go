@@ -182,6 +182,7 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 }
 
 func getPlanRows(planStr string) []string {
+	planStr = strings.Replace(planStr, "\t", " ", -1)
 	return strings.Split(planStr, "\n")
 }
 

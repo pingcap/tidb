@@ -6,6 +6,7 @@
 			"select * from t1 where a<1;",
 			"select * from t1 where a>1",
 			"select * from t1 where a=1",
+			"select * from t1 where a in (1,2,3)",
 			"select * from t1 where b=1",
 			"select a+1,b+2 from t1 use index(b) where b=3",
 			"SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
