@@ -620,7 +620,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
-			result.SetNull(i, true)
+			result.AppendNull()
 			continue
 		}
 		exprI := expr.GetString(i)
