@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"math/rand"
 	"runtime"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
