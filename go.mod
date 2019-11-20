@@ -55,7 +55,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20191118062231-d32e257db9f2
 	github.com/pingcap/pd v2.1.12+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
-	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
+	github.com/pingcap/tipb v0.0.0-20191120045257-1b9900292ab6
 	github.com/prometheus/client_golang v0.8.0
 	github.com/prometheus/client_model v0.0.0-20171117100541-99fa1f4be8e5
 	github.com/prometheus/common v0.0.0-20180426121432-d811d2e9bf89 // indirect
@@ -85,3 +85,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/tipb => github.com/zimulala/tipb v0.0.0-20191125100138-f92a93462a91
