@@ -45,7 +45,7 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 			constants: []*Constant{
 				nil,
 				nil, nil, nil, nil,
-				&Constant{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
+				{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
 				//&Constant{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeInt24)},
 				//&Constant{Value: types.NewDatum(3), RetType: types.NewFieldType(mysql.TypeInt24)},
 				//&Constant{Value: types.NewDatum(4), RetType: types.NewFieldType(mysql.TypeInt24)},
