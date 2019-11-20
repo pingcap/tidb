@@ -234,7 +234,7 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
-	tk.MustExec("insert into t values(11,1),(12,2),(13,3),(14,4),(15,5)")
+	tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
 	tk.MustExec("analyze table t")
 
 	var input []string
