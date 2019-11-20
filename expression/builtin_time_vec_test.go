@@ -51,7 +51,6 @@ func (g *unitStrGener) gen() interface{} {
 	return units[n]
 }
 
-
 type dateTimeUnitStrGener struct{}
 
 func (g *dateTimeUnitStrGener) gen() interface{} {
