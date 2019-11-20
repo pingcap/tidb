@@ -334,9 +334,15 @@ const (
 	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
 	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
 
+	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
+	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
+
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
+
+	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
+	TiDBStoreLimit = "tidb_store_limit"
 )
 
 // Default TiDB system variable values.
@@ -413,7 +419,9 @@ const (
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
 	DefTiDBUsePlanBaselines            = true
+	DefTiDBEvolvePlanBaselines         = false
 	DefInnodbLockWaitTimeout           = 50 // 50s
+	DefTiDBStoreLimit                  = 0
 )
 
 // Process global variables.
