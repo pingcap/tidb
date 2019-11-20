@@ -1405,6 +1405,14 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 
+	// for describing table
+	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),YES,MUL,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 add primary key idx(a)")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,PRI,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 drop primary key")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,MUL,<nil>,`))
+
 	// Check if the primary key exists before checking the table's pkIsHandle.
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
 
