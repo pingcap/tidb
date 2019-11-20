@@ -53,23 +53,6 @@ func (s *testSQLSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSQLSuite) TestInsertSleepOverMaxTxnTime(c *C) {
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime"), IsNil)
-	}()
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "drop table if exists test.t")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "create table test.t(a int)")
-	c.Assert(err, IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`), IsNil)
-	start := time.Now()
-	_, err = se.Execute(context.Background(), "insert into test.t (a) select sleep(3)")
-	c.Assert(err, IsNil)
-	c.Assert(time.Since(start) < time.Second*5, IsTrue)
-}
-
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)

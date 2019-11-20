@@ -64,6 +64,10 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 		&ImplTopN{},
 		&ImplTopNAsLimit{},
 	},
+	memo.OperandJoin: {
+		&ImplHashJoinBuildLeft{},
+		&ImplHashJoinBuildRight{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -253,8 +257,14 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
-	// TODO: Implement TiKVHashAgg
-	return impl.NewTiDBHashAggImpl(hashAgg), nil
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBHashAggImpl(hashAgg), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVHashAggImpl(hashAgg), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
+	}
 }
 
 // ImplLimit is the implementation rule which implements LogicalLimit
@@ -333,4 +343,67 @@ func (r *ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.Ph
 		Count:  lt.Count,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), newProp)
 	return impl.NewLimitImpl(physicalLimit), nil
+}
+
+func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) memo.Implementation {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	chReqProps := make([]*property.PhysicalProperty, 2)
+	chReqProps[0] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	chReqProps[1] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	stats := expr.Group.Prop.Stats
+	if prop.ExpectedCnt < stats.RowCount {
+		expCntScale := prop.ExpectedCnt / stats.RowCount
+		chReqProps[1-innerIdx].ExpectedCnt = expr.Children[1-innerIdx].Prop.Stats.RowCount * expCntScale
+	}
+	hashJoin := plannercore.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	hashJoin.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewHashJoinImpl(hashJoin)
+}
+
+// ImplHashJoinBuildLeft implements LogicalJoin to PhysicalHashJoin which uses the left child to build hash table.
+type ImplHashJoinBuildLeft struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		return false
+	default:
+		return prop.IsEmpty()
+	}
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.InnerJoin:
+		return getImplForHashJoin(expr, reqProp, 0, false), nil
+	default:
+		// TODO: deal with other join type.
+		return nil, nil
+	}
+}
+
+// ImplHashJoinBuildRight implements LogicalJoin to PhysicalHashJoin which uses the right child to build hash table.
+type ImplHashJoinBuildRight struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashJoinBuildRight) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.InnerJoin:
+		return getImplForHashJoin(expr, reqProp, 1, false), nil
+	default:
+		// TODO: deal with other join type.
+		return nil, nil
+	}
 }

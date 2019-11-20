@@ -231,8 +231,26 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 	return
 }
 
+// resolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.
+func resolveIndicesForVirtualColumn(result []*expression.Column, schema *expression.Schema) error {
+	for _, col := range result {
+		if col.VirtualExpr != nil {
+			newExpr, err := col.VirtualExpr.ResolveIndices(schema)
+			if err != nil {
+				return err
+			}
+			col.VirtualExpr = newExpr
+		}
+	}
+	return nil
+}
+
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableReader) ResolveIndices() error {
+	err := resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
+	if err != nil {
+		return err
+	}
 	return p.tablePlan.ResolveIndices()
 }
 
@@ -258,6 +276,10 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
+	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	if err != nil {
+		return err
+	}
 	err = p.tablePlan.ResolveIndices()
 	if err != nil {
 		return err
