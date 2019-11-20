@@ -2182,6 +2182,25 @@ func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 	c.Assert(repairTable.Meta().Partition.Definitions[1].ID, Equals, originTableInfo.Partition.Definitions[1].ID)
 	c.Assert(repairTable.Meta().Partition.Definitions[2].ID, Equals, originTableInfo.Partition.Definitions[2].ID)
 	c.Assert(repairTable.Meta().Partition.Definitions[3].ID, Equals, originTableInfo.Partition.Definitions[4].ID)
+
+	// Test hash partition.
+	s.tk.MustExec("drop table if exists origin")
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.origin"})
+	s.tk.MustExec("create table origin (a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	// Make sure the table schema is latest.
+	err = domain.GetDomain(s.s).Reload()
+	c.Assert(err, IsNil)
+
+	// Partition num should be exactly same with old one, other wise will cause semantic problem.
+
+	originTableInfo = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
+	s.tk.MustExec("admin repair table origin create table origin (a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	repairTable = testGetTableByName(c, s.s, "test", "origin")
+	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
+	c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 30)
+	c.Assert(repairTable.Meta().Partition.Definitions[0].ID, Equals, originTableInfo.Partition.Definitions[0].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[1].ID, Equals, originTableInfo.Partition.Definitions[1].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[29].ID, Equals, originTableInfo.Partition.Definitions[29].ID)
 }
 
 func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {

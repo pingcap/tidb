@@ -126,7 +126,7 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 			return errors.Trace(err)
 		}
 	} else {
-		genIDs = make([]int64, len(s.Partition.Definitions), len(s.Partition.Definitions))
+		genIDs = make([]int64, pi.Num, pi.Num)
 	}
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
