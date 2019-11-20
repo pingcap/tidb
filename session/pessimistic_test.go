@@ -444,6 +444,7 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert tk values (1, 1)")
+	tk.MustExec("create table tk1 (c1 int, c2 int)")
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("begin pessimistic")
@@ -464,6 +465,16 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 	tk2.MustExec("insert tk values (4, 4)")
 	tk1.MustExec("delete from tk")
 	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(4))
+	tk2.MustExec("insert tk values (5, 5)")
+	tk1.MustExec("insert into tk1 select * from tk")
+	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
+	tk2.MustExec("insert tk values (6, 6)")
+	tk1.MustExec("replace into tk1 select * from tk")
+	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(2))
+	tk2.MustExec("insert tk values (7, 7)")
+	// This test is used to test when the selectPlan is a PointGetPlan, and we didn't update its forUpdateTS.
+	tk1.MustExec("insert into tk1 select * from tk where c1 = 7")
+	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
 	tk1.MustExec("commit")
 }
 

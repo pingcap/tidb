@@ -119,7 +119,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
+		pruned, err := s.canBePruned(ds.context(), col, expr.Clone(), ds.allConds)
 		if err != nil {
 			return nil, err
 		}
