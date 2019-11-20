@@ -67,7 +67,8 @@ type tableHintInfo struct {
 	sortMergeJoinTables []hintTableInfo
 	hashJoinTables      []hintTableInfo
 	indexHintList       []indexHintInfo
-	flashTables         []hintTableInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
 	aggHints            aggHintInfo
 }
 
@@ -126,7 +127,11 @@ func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.flashTables)
+	return info.matchTableName(tableNames, info.tiflashTables)
+}
+
+func (info *tableHintInfo) ifPreferTiKV(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.tikvTables)
 }
 
 // matchTableName checks whether the hint hit the need.
