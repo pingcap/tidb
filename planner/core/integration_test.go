@@ -210,3 +210,27 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	_, err = tk.Exec("create table bit_col_t (a bit(65))")
 	c.Assert(err, NotNil)
 }
+
+func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
+	tk.MustExec("insert into t values(11,1),(12,2),(13,3),(14,4),(15,5)")
+	tk.MustExec("analyze table t")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
