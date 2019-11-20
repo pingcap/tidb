@@ -172,10 +172,6 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	if p.Concurrency > 0 {
-		return string(expression.ExplainExpressionList(p.Exprs)) +
-			fmt.Sprintf(", Concurrency:%d", p.Concurrency)
-	}
 	return string(expression.ExplainExpressionList(p.Exprs))
 }
 
@@ -238,9 +234,6 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 		fmt.Fprintf(buffer, ", other cond:%s",
 			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
-	if p.Concurrency > 0 {
-		fmt.Fprintf(buffer, ", Concurrency:%d", p.Concurrency)
-	}
 	return buffer.String()
 }
 
@@ -276,20 +269,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 		fmt.Fprintf(buffer, ", other cond:%s",
 			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
-	if p.Concurrency > 0 {
-		fmt.Fprintf(buffer, ", Concurrency:%d", p.Concurrency)
-	}
 	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalHashAgg) ExplainInfo() string {
-	if p.PartialConcurrency > 0 && p.FinalConcurrency > 0 {
-		return p.basePhysicalAgg.ExplainInfo() + fmt.Sprintf(
-			", PartialConcurrency:%d, FinalConcurrency:%d",
-			p.PartialConcurrency, p.FinalConcurrency)
-	}
-	return p.basePhysicalAgg.ExplainInfo()
 }
 
 // ExplainInfo implements Plan interface.

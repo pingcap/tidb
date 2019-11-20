@@ -88,7 +88,6 @@ func (p PhysicalProjection) Init(ctx sessionctx.Context, stats *property.StatsIn
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
-	p.Concurrency = ctx.GetSessionVars().ProjectionConcurrency
 	return &p
 }
 
@@ -284,7 +283,6 @@ func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
-	p.Concurrency = uint(ctx.GetSessionVars().HashJoinConcurrency)
 	return &p
 }
 
@@ -303,11 +301,7 @@ func (base basePhysicalAgg) Init(ctx sessionctx.Context, stats *property.StatsIn
 }
 
 func (base basePhysicalAgg) initForHash(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
-	p := &PhysicalHashAgg{
-		base,
-		ctx.GetSessionVars().HashAggPartialConcurrency,
-		ctx.GetSessionVars().HashAggFinalConcurrency,
-	}
+	p := &PhysicalHashAgg{base}
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
@@ -410,7 +404,6 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexJoin, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
-	p.Concurrency = ctx.GetSessionVars().IndexLookupJoinConcurrency
 	return &p
 }
 
@@ -429,7 +422,6 @@ func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJo
 	p.tp = plancodec.TypeIndexHashJoin
 	p.id = ctx.GetSessionVars().PlanID
 	p.ctx = ctx
-	p.Concurrency = ctx.GetSessionVars().HashJoinConcurrency
 	return &p
 }
 

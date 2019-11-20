@@ -243,8 +243,6 @@ type PhysicalProjection struct {
 	Exprs                []expression.Expression
 	CalculateNoDelay     bool
 	AvoidColumnEvaluator bool
-	// Concurrency is the number of concurrent projection worker.
-	Concurrency int64
 }
 
 // PhysicalTopN is the physical operator of topN.
@@ -299,8 +297,6 @@ type PhysicalIndexJoin struct {
 	outerSchema *expression.Schema
 	innerTask   task
 
-	// Concurrency is the number of concurrent index lookup join inner worker.
-	Concurrency int
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
@@ -403,11 +399,6 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
-
-	// PartialConcurrency is the number of concurrent hash aggregation partial worker.
-	PartialConcurrency int
-	// FinalConcurrency is the number of concurrent hash aggregation final worker.
-	FinalConcurrency int
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
