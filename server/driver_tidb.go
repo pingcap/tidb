@@ -382,6 +382,7 @@ func (trs *tidbResultSet) Close() error {
 	}
 	err := trs.recordSet.Close()
 	trs.recordSet = nil
+	trs.rows = nil
 	return err
 }
 
