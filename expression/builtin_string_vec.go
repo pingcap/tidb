@@ -522,11 +522,71 @@ func (b *builtinQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinInsertBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	pos, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(pos)
+	if err := b.args[1].VecEvalInt(b.ctx, input, pos); err != nil {
+		return err
+	}
+	length, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(length)
+	if err := b.args[2].VecEvalInt(b.ctx, input, length); err != nil {
+		return err
+	}
+	newstr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(newstr)
+	if err := b.args[3].VecEvalString(b.ctx, input, newstr); err != nil {
+		return err
+	}
+	posIs := pos.Int64s()
+	lengthIs := length.Int64s()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if str.IsNull(i) || pos.IsNull(i) || length.IsNull(i) || newstr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		strI := str.GetString(i)
+		strLength := int64(len(strI))
+		posI := posIs[i]
+		if posI < 1 || posI > strLength {
+			result.AppendString(strI)
+			continue
+		}
+		lengthI := lengthIs[i]
+		if lengthI > strLength-posI+1 || lengthI < 0 {
+			lengthI = strLength - posI + 1
+		}
+		newstrI := newstr.GetString(i)
+		if uint64(strLength-lengthI+int64(len(newstrI))) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strI[0:posI-1] + newstrI + strI[posI+lengthI-1:])
+	}
+	return nil
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
@@ -739,11 +799,72 @@ func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinLpadBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals LPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
 func (b *builtinLpadBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+		return err
+	}
+	lenBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lenBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, lenBuf); err != nil {
+		return err
+	}
+	padBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(padBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, padBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := lenBuf.Int64s()
+	lenBuf.MergeNulls(strBuf)
+	for i := 0; i < n; i++ {
+		if lenBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		targetLength := int(i64s[i])
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+
+		if padBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := strBuf.GetString(i)
+		strLength := len(str)
+		padStr := padBuf.GetString(i)
+		padLength := len(padStr)
+		if targetLength < 0 || targetLength > b.tp.Flen || (strLength < targetLength && padLength == 0) {
+			result.AppendNull()
+			continue
+		}
+		if tailLen := targetLength - strLength; tailLen > 0 {
+			repeatCount := tailLen/padLength + 1
+			str = strings.Repeat(padStr, repeatCount)[:tailLen] + str
+		}
+		result.AppendString(str[:targetLength])
+	}
+	return nil
 }
 
 func (b *builtinLpadSig) vectorized() bool {
@@ -2138,91 +2259,11 @@ func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinFormatSig) vectorized() bool {
-	return true
+	return false
 }
 
-// vecEvalNumDecArgsForFormat evaluates first 2 arguments, i.e, x and d, for function `format`.
-func vecEvalNumDecArgsForFormat(b *baseBuiltinFunc, input *chunk.Chunk) ([]string, []string, []bool, error) {
-	n := input.NumRows()
-	isDecimal := b.args[0].GetType().EvalType() == types.ETDecimal
-	var buf0 *chunk.Column
-	buf0, err := b.bufAllocator.get(b.args[0].GetType().EvalType(), n)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer b.bufAllocator.put(buf0)
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return nil, nil, nil, err
-	}
-
-	xStrBuf := make([]string, n)
-	if isDecimal {
-		if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
-			return nil, nil, nil, err
-		}
-		buf1.MergeNulls(buf0)
-		d64s := buf0.Decimals()
-		for i := 0; i < n; i++ {
-			if buf1.IsNull(i) {
-				continue
-			}
-			xStrBuf[i] = d64s[i].String()
-		}
-	} else {
-		if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
-			return nil, nil, nil, err
-		}
-		buf1.MergeNulls(buf0)
-		f64s := buf0.Float64s()
-		for i := 0; i < n; i++ {
-			if buf1.IsNull(i) {
-				continue
-			}
-			xStrBuf[i] = fmt.Sprintf(strconv.FormatFloat(f64s[i], 'f', -1, 64))
-		}
-	}
-
-	d64s := buf1.Int64s()
-	isNulls := make([]bool, n)
-	dStrBuf := make([]string, n)
-	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) {
-			isNulls[i] = true
-			continue
-		}
-		isNulls[i] = false
-		dStrBuf[i] = strconv.FormatInt(d64s[i], 10)
-	}
-	return xStrBuf, dStrBuf, isNulls, nil
-}
-
-// evalString evals FORMAT(X,D).
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	xStrBuf, dStrBuf, isNulls, err := vecEvalNumDecArgsForFormat(&b.baseBuiltinFunc, input)
-	if err != nil {
-		return err
-	}
-	n := input.NumRows()
-	result.ReserveString(n)
-	var formatString string
-	for i := 0; i < n; i++ {
-		if isNulls[i] {
-			result.AppendNull()
-			continue
-		}
-		formatString, err = mysql.GetLocaleFormatFunction("en_US")(xStrBuf[i], dStrBuf[i])
-		if err != nil {
-			return err
-		}
-		result.AppendString(formatString)
-	}
-	return nil
+	return errors.Errorf("not implemented")
 }
 
 func (b *builtinRightBinarySig) vectorized() bool {
