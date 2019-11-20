@@ -586,7 +586,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
 	backoffTypes := make(map[fmt.Stringer]int)
 	backoffTypes[tikv.BoTxnLock] = 1
-	match(c, datums[0], "select", stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	match(c, datums[0], "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),

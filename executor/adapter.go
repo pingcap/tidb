@@ -868,7 +868,7 @@ func (a *ExecStmt) SummaryStmt() {
 	}
 
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:     sessVars.CurrentDB,
+		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    a.Text,
 		NormalizedSQL:  normalizedSQL,
 		Digest:         digest,

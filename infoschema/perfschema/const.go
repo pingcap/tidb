@@ -386,6 +386,7 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 // events_statements_summary_by_digest, same as MySQL.
 const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
 	"STMT_TYPE VARCHAR(64) NOT NULL," +
+	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
 	"DIGEST VARCHAR(64) NOT NULL," +
 	"DIGEST_TEXT LONGTEXT NOT NULL," +
 	"TABLE_NAMES TEXT DEFAULT NULL," +
