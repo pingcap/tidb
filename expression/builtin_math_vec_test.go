@@ -119,6 +119,12 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 	ast.CRC32: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
+	ast.Conv: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
+		},
+	},
 }
 
 var vecBuiltinMathCases1 = map[string][]vecExprBenchCase{
