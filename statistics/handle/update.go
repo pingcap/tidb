@@ -230,7 +230,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.StatsCache.Load().(StatsCache)[id]
+	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -373,7 +373,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.Tp == statistics.PkType {
 			err = h.DumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.StatsCache.Load().(StatsCache)[fb.PhysicalID]
+			t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
 			if ok {
 				err = h.DumpFeedbackForIndex(fb, t)
 			}
@@ -452,7 +452,8 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 			newTblStats.Columns[fb.Hist.ID] = &newCol
 		}
-		h.UpdateTableStats([]*statistics.Table{newTblStats}, nil)
+		oldCache := h.statsCache.Load().(statsCache)
+		h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
 	}
 }
 
@@ -483,7 +484,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	h.UpdateTableStats(tbls, nil)
+	oldCache := h.statsCache.Load().(statsCache)
+	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -871,7 +873,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return
 	}
@@ -912,7 +914,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return nil
 	}
