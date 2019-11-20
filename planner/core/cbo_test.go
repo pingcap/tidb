@@ -213,7 +213,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg_9 2.00 root group by:Column#6, funcs:count(Column#5)",
+		"HashAgg_9 2.00 root group by:Column#5, funcs:count(Column#4)",
 		"└─TableReader_10 2.00 root data:HashAgg_5",
 		"  └─HashAgg_5 2.00 cop[tikv] group by:Column#1, funcs:count(1)",
 		"    └─TableScan_8 8.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
@@ -668,7 +668,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
-			"Projection_11 10.00 root Column#15",
+			"Projection_11 10.00 root Column#14",
 			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
@@ -1006,6 +1006,7 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
+<<<<<<< HEAD
 	var input, output [][]string
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
@@ -1023,4 +1024,24 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 			}
 		}
 	}
+=======
+	tk.MustQuery("desc select * from t").Check(testkit.Rows(
+		"TableReader_7 10000.00 root data:TableScan_6",
+		"└─TableScan_6 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("desc select /*+ read_from_storage(tikv[t]) */ * from t").Check(testkit.Rows(
+		"TableReader_5 10000.00 root data:TableScan_4",
+		"└─TableScan_4 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
+		"TableReader_6 2.00 root data:TableScan_5",
+		"└─TableScan_5 2.00 cop[tikv] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo",
+	))
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
+		"TableReader_7 2.00 root data:Selection_6",
+		"└─Selection_6 2.00 cop[tiflash] or(eq(Column#1, 1), eq(Column#1, 2))",
+		"  └─TableScan_5 2.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+>>>>>>> master
 }

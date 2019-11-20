@@ -9,13 +9,13 @@ explain select * from t where a < 50 or b < 50;
 id	count	task	operator info
 IndexMerge_11	98.00	root	
 ├─TableScan_8	49.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, range:[-inf,50), keep order:false
-├─IndexScan_9	49.00	cop[tikv]	table:t, b->#2,a->#1, index:b, range:[-inf,50), keep order:false
+├─IndexScan_9	49.00	cop[tikv]	table:t, mapping:b->#2,a->#1, index:b, range:[-inf,50), keep order:false
 └─TableScan_10	98.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, keep order:false
 explain select * from t where (a < 50 or b < 50) and f > 100;
 id	count	task	operator info
 IndexMerge_12	98.00	root	
 ├─TableScan_8	49.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, range:[-inf,50), keep order:false
-├─IndexScan_9	49.00	cop[tikv]	table:t, b->#2,a->#1, index:b, range:[-inf,50), keep order:false
+├─IndexScan_9	49.00	cop[tikv]	table:t, mapping:b->#2,a->#1, index:b, range:[-inf,50), keep order:false
 └─Selection_11	98.00	cop[tikv]	gt(Column#6, 100)
   └─TableScan_10	98.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, keep order:false
 explain select * from t where a < 50 or b < 5000000;
@@ -26,8 +26,8 @@ TableReader_7	4000000.00	root	data:Selection_6
 explain select * from t where b < 50 or c < 50;
 id	count	task	operator info
 IndexMerge_11	98.00	root	
-├─IndexScan_8	49.00	cop[tikv]	table:t, b->#2,a->#1, index:b, range:[-inf,50), keep order:false
-├─IndexScan_9	49.00	cop[tikv]	table:t, c->#3,a->#1, index:c, range:[-inf,50), keep order:false
+├─IndexScan_8	49.00	cop[tikv]	table:t, mapping:b->#2,a->#1, index:b, range:[-inf,50), keep order:false
+├─IndexScan_9	49.00	cop[tikv]	table:t, mapping:c->#3,a->#1, index:c, range:[-inf,50), keep order:false
 └─TableScan_10	98.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, keep order:false
 explain select * from t where b < 50 or c < 5000000;
 id	count	task	operator info
@@ -38,14 +38,14 @@ explain select * from t where a < 50 or b < 50 or c < 50;
 id	count	task	operator info
 IndexMerge_12	147.00	root	
 ├─TableScan_8	49.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, range:[-inf,50), keep order:false
-├─IndexScan_9	49.00	cop[tikv]	table:t, b->#2,a->#1, index:b, range:[-inf,50), keep order:false
-├─IndexScan_10	49.00	cop[tikv]	table:t, c->#3,a->#1, index:c, range:[-inf,50), keep order:false
+├─IndexScan_9	49.00	cop[tikv]	table:t, mapping:b->#2,a->#1, index:b, range:[-inf,50), keep order:false
+├─IndexScan_10	49.00	cop[tikv]	table:t, mapping:c->#3,a->#1, index:c, range:[-inf,50), keep order:false
 └─TableScan_11	147.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, keep order:false
 explain select * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 id	count	task	operator info
 IndexMerge_17	0.00	root	
 ├─TableScan_13	9.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, range:[-inf,10), keep order:false
-├─IndexScan_14	9.00	cop[tikv]	table:t, d->#4,a->#1, index:d, range:[-inf,10), keep order:false
+├─IndexScan_14	9.00	cop[tikv]	table:t, mapping:d->#4,a->#1, index:d, range:[-inf,10), keep order:false
 └─Selection_16	0.00	cop[tikv]	lt(Column#6, 10), or(lt(Column#2, 10000), lt(Column#3, 10000))
   └─TableScan_15	18.00	cop[tikv]	table:t, mapping:a->#1,b->#2,c->#3,d->#4,e->#5,f->#6, keep order:false
 explain format="dot" select * from t where (a < 50 or b < 50) and f > 100;

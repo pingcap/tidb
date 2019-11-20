@@ -10,7 +10,7 @@ EXPLAIN SELECT name, id FROM person WHERE city = 'Beijing';
 id	count	task	operator info
 Projection_4	10.00	root	Column#2, Column#1
 └─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:person, city->#4,id->#1, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
+  ├─IndexScan_8	10.00	cop[tikv]	table:person, mapping:city->#4,id->#1, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
   └─TableScan_9	10.00	cop[tikv]	table:person, mapping:id->#1,name->#2,city->#4, keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `sgc`;
 CREATE TABLE `sgc` (
@@ -25,21 +25,21 @@ KEY `idx_a_b` (`a`,`b`)
 EXPLAIN SELECT a FROM sgc where a < 3;
 id	count	task	operator info
 IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop[tikv]	table:sgc, a->#3, index:a, range:[-inf,3), keep order:false, stats:pseudo
+└─IndexScan_5	3323.33	cop[tikv]	table:sgc, mapping:a->#3, index:a, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b FROM sgc where a < 3;
 id	count	task	operator info
 IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop[tikv]	table:sgc, a->#3,b->#4, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+└─IndexScan_5	3323.33	cop[tikv]	table:sgc, mapping:a->#3,b->#4, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where b < 3;
 id	count	task	operator info
 IndexReader_13	3323.33	root	index:Selection_12
 └─Selection_12	3323.33	cop[tikv]	lt(Column#4, 3)
-  └─IndexScan_11	10000.00	cop[tikv]	table:sgc, a->#3,b->#4, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+  └─IndexScan_11	10000.00	cop[tikv]	table:sgc, mapping:a->#3,b->#4, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where a < 3 and b < 3;
 id	count	task	operator info
 IndexReader_11	1104.45	root	index:Selection_10
 └─Selection_10	1104.45	cop[tikv]	lt(Column#4, 3)
-  └─IndexScan_9	3323.33	cop[tikv]	table:sgc, a->#3,b->#4, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+  └─IndexScan_9	3323.33	cop[tikv]	table:sgc, mapping:a->#3,b->#4, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 DROP TABLE IF EXISTS sgc1,
 sgc2;
 CREATE TABLE `sgc1` (
@@ -74,7 +74,7 @@ id	count	task	operator info
 IndexJoin_26	5.00	root	inner join, inner:IndexLookUp_25, outer key:Column#8, inner key:Column#3
 ├─IndexLookUp_25	5.00	root	
 │ ├─Selection_24	5.00	cop[tikv]	not(isnull(Column#3))
-│ │ └─IndexScan_22	5.00	cop[tikv]	table:sgc1, a->#3,_tidb_rowid->#22, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
+│ │ └─IndexScan_22	5.00	cop[tikv]	table:sgc1, mapping:a->#3,_tidb_rowid->#14, index:a, range: decided by [eq(Column#3, Column#8)], keep order:false
 │ └─TableScan_23	5.00	cop[tikv]	table:sgc1, mapping:j1->#1,j2->#2,a->#3,b->#4, keep order:false
 └─TableReader_38	1.00	root	data:Selection_37
   └─Selection_37	1.00	cop[tikv]	not(isnull(Column#8))
@@ -141,23 +141,23 @@ INSERT INTO t1 (a) VALUES (0);
 EXPLAIN SELECT b FROM t1 WHERE b=1;
 id	count	task	operator info
 IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t1, b->#2, index:b, range:[1,1], keep order:false, stats:pseudo
+└─IndexScan_5	10.00	cop[tikv]	table:t1, mapping:b->#2, index:b, range:[1,1], keep order:false, stats:pseudo
 EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
 id	count	task	operator info
 Projection_4	10.00	root	Column#2, Column#3, Column#4
 └─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:t1, b->#2,_tidb_rowid->#9, index:b, range:[1,1], keep order:false, stats:pseudo
+  ├─IndexScan_8	10.00	cop[tikv]	table:t1, mapping:b->#2,_tidb_rowid->#6, index:b, range:[1,1], keep order:false, stats:pseudo
   └─TableScan_9	10.00	cop[tikv]	table:t1, mapping:b->#2,c->#3,d->#4,a->#1, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b=1;
 id	count	task	operator info
 IndexLookUp_10	10.00	root	
-├─IndexScan_8	10.00	cop[tikv]	table:t1, b->#2,_tidb_rowid->#10, index:b, range:[1,1], keep order:false, stats:pseudo
+├─IndexScan_8	10.00	cop[tikv]	table:t1, mapping:b->#2,_tidb_rowid->#6, index:b, range:[1,1], keep order:false, stats:pseudo
 └─TableScan_9	10.00	cop[tikv]	table:t1, mapping:a->#1,b->#2,c->#3,d->#4, keep order:false, stats:pseudo
 EXPLAIN SELECT c FROM t1 WHERE c=2 AND d=3;
 id	count	task	operator info
 Projection_4	0.10	root	Column#3
 └─IndexReader_6	0.10	root	index:IndexScan_5
-  └─IndexScan_5	0.10	cop[tikv]	table:t1, c->#3,d->#4, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo
+  └─IndexScan_5	0.10	cop[tikv]	table:t1, mapping:c->#3,d->#4, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -170,5 +170,5 @@ EXPLAIN SELECT name FROM person where city_no=1;
 id	count	task	operator info
 Projection_4	10.00	root	Column#2
 └─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:person, city_no->#4,_tidb_rowid->#6, index:city_no, range:[1,1], keep order:false, stats:pseudo
+  ├─IndexScan_8	10.00	cop[tikv]	table:person, mapping:city_no->#4,_tidb_rowid->#5, index:city_no, range:[1,1], keep order:false, stats:pseudo
   └─TableScan_9	10.00	cop[tikv]	table:person, mapping:name->#2,city_no->#4,address_info->#3, keep order:false, stats:pseudo
