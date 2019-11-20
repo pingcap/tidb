@@ -445,6 +445,20 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		fc := funcs[ast.Round]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
+		switch f.(type) {
+		case *builtinRoundWithFracIntSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracInt)
+		case *builtinRoundWithFracDecSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracDec)
+		case *builtinRoundWithFracRealSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracReal)
+		case *builtinRoundIntSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundInt)
+		case *builtinRoundDecSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundDec)
+		case *builtinRoundRealSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundReal)
+		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])

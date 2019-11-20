@@ -849,7 +849,7 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime
 		var err error
-		expr.Val, err = codec.EncodeMySQLTime(nil, d, mysql.TypeUnspecified, nil)
+		expr.Val, err = codec.EncodeMySQLTime(nil, d.GetMysqlTime(), mysql.TypeUnspecified, nil)
 		c.Assert(err, IsNil)
 		expr.FieldType = ToPBFieldType(newDateFieldType())
 	default:

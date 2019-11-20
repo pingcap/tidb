@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -196,9 +197,6 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	for i := 0; i < 60; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -207,6 +205,10 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	// construct 5 regions split by {12, 24, 36, 48}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
 	manipulateCluster(cluster, splitKeys)
+
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
 
 	var pkCol *model.ColumnInfo
 	var colsInfo []*model.ColumnInfo
@@ -241,14 +243,33 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
 		vals = append(vals, make([]string, 0))
-		c.Assert(len(mockExec.Collectors[i].Samples), Equals, 20)
-		for j := 0; j < 20; j++ {
-			s, err := mockExec.Collectors[i].Samples[j].Value.ToString()
+		samples := mockExec.Collectors[i].Samples
+		c.Assert(len(samples), Equals, 20)
+		for j := 1; j < 20; j++ {
+			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
 			c.Assert(err, IsNil)
-			vals[i] = append(vals[i], s)
+			c.Assert(cmp, Greater, 0)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
+}
+
+func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
+	for i := 0; i < len(hg.Buckets); i++ {
+		lower, upper := hg.GetLower(i), hg.GetUpper(i)
+		cmp, err := upper.CompareDatum(sc, lower)
+		if cmp < 0 || err != nil {
+			return false, err
+		}
+		if i == 0 {
+			continue
+		}
+		previousUpper := hg.GetUpper(i - 1)
+		cmp, err = lower.CompareDatum(sc, previousUpper)
+		if cmp <= 0 || err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
@@ -291,24 +312,22 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:43 Count:20\n"+
-		"column:1 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:2 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:3 ndv:1 totColSize:72\n"+
-		"num: 20 lower_bound: char upper_bound: char repeats: 18\n"+
-		"index:1 ndv:20\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1")
+	c.Assert(tbl.Count, Equals, int64(20))
+	for _, col := range tbl.Columns {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &col.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
+	for _, idx := range tbl.Indices {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	// Should not panic.
+	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
@@ -393,26 +412,6 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 }
 
 type testFastAnalyze struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	cluster *mocktikv.Cluster
-}
-
-func (s *testFastAnalyze) SetUpSuite(c *C) {
-	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	session.DisableStats4Test()
-	session.SetSchemaLease(0)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testFastAnalyze) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
 }
 
 type regionProperityClient struct {
