@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 )
@@ -92,7 +93,7 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	},
 	ast.Benchmark: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			geners: []dataGenerator{&rangeInt64Gener{10, 11}, nil}},
+			constants: []*Constant{{Value: types.NewIntDatum(10), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
 	},
 }
 
