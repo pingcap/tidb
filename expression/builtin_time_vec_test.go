@@ -116,6 +116,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimeToSec: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
 	},
+	ast.SecToTime: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}},
+	},
 	ast.TimestampAdd: {
 		{
 			retEvalType:   types.ETString,
