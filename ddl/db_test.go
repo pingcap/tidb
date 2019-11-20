@@ -2145,21 +2145,101 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	s.tk.MustExec("drop table t")
 
-	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
-	c.Assert(err, NotNil)
+	s.tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", mysql.ErrUnknownCharacterSet)
 
-	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	c.Assert(err, IsNil)
-	result := s.tk.MustQuery("show create table collateTest")
-	got := result.Rows()[0][1]
-	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	s.tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	expects := "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	s.tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
+
+	s.tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", mysql.ErrCollationCharsetMismatch)
+	s.tk.MustGetErrCode("CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8", mysql.ErrConflictingDeclarations)
+
+	s.tk.MustExec("CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci")
+	expects = "CREATE TABLE `collateTest4` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+	s.tk.MustQuery("show create table collateTest4").Check(testkit.Rows(expects))
 
 	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
 	s.tk.MustExec("use test2")
 	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
+<<<<<<< HEAD
 	result = s.tk.MustQuery("show create table dbCollateTest")
 	got = result.Rows()[0][1]
 	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+=======
+	expects = "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
+	s.tk.MustQuery("show create table dbCollateTest").Check(testkit.Rows(expects))
+
+	// test for enum column
+	s.tk.MustExec("use test")
+	failSQL := "create table t_enum (a enum('e','e'));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('e','E'));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc'));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
+	// test for set column
+	failSQL = "create table t_enum (a set('e','e'));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E'));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc'));"
+	s.tk.MustGetErrCode(failSQL, tmysql.ErrDuplicatedValueInType)
+	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+}
+
+func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
+	s.tk = testkit.NewTestKitWithInit(c, s.store)
+	s.tk.MustExec("create table t_set (a int, b set('e') default '');")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` set('e') DEFAULT ''\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,C,c');")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('a','b','c','d') DEFAULT 'a,c'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// It's for failure cases.
+	// The type of default value is string.
+	s.tk.MustExec("drop table t_set")
+	failedSQL := "create table t_set (a set('1', '4', '10') default '3');"
+	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
+	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
+	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	// The type of default value is int.
+	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
+	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+	failedSQL = "create table t_set (a set('1', '4', '10') default 8);"
+	s.tk.MustGetErrCode(failedSQL, tmysql.ErrInvalidDefault)
+
+	// The type of default value is int.
+	// It's for successful cases
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 2);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '4'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 3);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '1,4'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("drop table t_set")
+	s.tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 15);")
+	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
+		"  `a` set('1','4','10','21') DEFAULT '1,4,10,21'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("insert into t_set value()")
+	s.tk.MustQuery("select * from t_set").Check(testkit.Rows("1,4,10,21"))
+>>>>>>> b75c389... ddl: resolve table charset option from collation option (#13506)
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {

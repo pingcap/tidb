@@ -1144,7 +1144,11 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	tableCharset, tableCollate := findTableOptionCharsetAndCollate(s.Options)
+	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
+	if err != nil {
+		return nil, err
+	}
+
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, schema.Charset, schema.Collate)
 	if err != nil {
@@ -1160,6 +1164,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo.Collate = tableCollate
+	tbInfo.Charset = tableCharset
 
 	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
@@ -1174,9 +1180,15 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err)
 			}
 
+<<<<<<< HEAD
 			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
 				return errors.Trace(err)
 			}
+=======
+	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+>>>>>>> b75c389... ddl: resolve table charset option from collation option (#13506)
 
 			if err = checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
 				return errors.Trace(err)
@@ -1312,32 +1324,6 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, 
 	return
 }
 
-func findTableOptionCharsetAndCollate(options []*ast.TableOption) (tableCharset, tableCollate string) {
-	var findCnt int
-	for i := len(options) - 1; i >= 0; i-- {
-		op := options[i]
-		if len(tableCharset) == 0 && op.Tp == ast.TableOptionCharset {
-			// find the last one.
-			tableCharset = op.StrValue
-			findCnt++
-			if findCnt == 2 {
-				break
-			}
-			continue
-		}
-		if len(tableCollate) == 0 && op.Tp == ast.TableOptionCollate {
-			// find the last one.
-			tableCollate = op.StrValue
-			findCnt++
-			if findCnt == 2 {
-				break
-			}
-			continue
-		}
-	}
-	return tableCharset, tableCollate
-}
-
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1346,10 +1332,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
-		case ast.TableOptionCharset:
-			tbInfo.Charset = op.StrValue
-		case ast.TableOptionCollate:
-			tbInfo.Collate = op.StrValue
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
@@ -1390,17 +1372,27 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
-	charsets := make([]string, 0, len(options))
-	collates := make([]string, 0, len(options))
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			charsets = append(charsets, opt.StrValue)
+			info, err := charset.GetCharsetDesc(opt.StrValue)
+			if err != nil {
+				return "", "", err
+			}
+			if len(chs) == 0 {
+				chs = info.Name
+			} else if chs != info.Name {
+				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
+			}
+			if len(coll) == 0 {
+				coll = info.DefaultCollation
+			}
 		case ast.TableOptionCollate:
+<<<<<<< HEAD
 			collates = append(collates, opt.StrValue)
 		}
 	}
@@ -1419,12 +1411,19 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		for i := range collates {
 			if collates[i] == "" {
 				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
+=======
+			info, err := charset.GetCollationByName(opt.StrValue)
+			if err != nil {
+				return "", "", err
+>>>>>>> b75c389... ddl: resolve table charset option from collation option (#13506)
 			}
-			if len(ca) != 0 && !charset.ValidCharsetAndCollation(ca, collates[i]) {
-				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(collates[i], ca)
+			if len(chs) == 0 {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
+			coll = info.Name
 		}
-		co = collates[len(collates)-1]
 	}
 	return
 }
