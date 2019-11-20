@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -286,22 +287,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
 	}
-	baseJoin := basePhysicalJoin{
-		LeftConditions:  p.LeftConditions,
-		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
-		LeftJoinKeys:    p.LeftJoinKeys,
-		RightJoinKeys:   p.RightJoinKeys,
-		JoinType:        p.JoinType,
-		DefaultValues:   p.DefaultValues,
-		InnerChildIdx:   innerIdx,
-	}
-	hashJoin := PhysicalHashJoin{
-		basePhysicalJoin: baseJoin,
-		EqualConditions:  p.EqualConditions,
-		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
-		UseOuterToBuild:  useOuterToBuild,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
+	hashJoin := NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
 }
@@ -399,12 +385,27 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if hasPrefixCol {
 			continue
 		}
+
+		// keyOff2KeyOffOrderByIdx is map the join keys offsets to [0, len(joinKeys)) ordered by the
+		// join key position in inner index.
+		keyOff2KeyOffOrderByIdx := make([]int, len(join.OuterJoinKeys))
+		keyOffMapList := make([]int, len(join.KeyOff2IdxOff))
+		copy(keyOffMapList, join.KeyOff2IdxOff)
+		keyOffMap := make(map[int]int)
+		for i, idxOff := range keyOffMapList {
+			keyOffMap[idxOff] = i
+		}
+		sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+		for keyOff, idxOff := range keyOffMapList {
+			keyOff2KeyOffOrderByIdx[keyOffMap[idxOff]] = keyOff
+		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
 		compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
-		for i := range join.OuterJoinKeys {
-			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+
+		for i := range join.KeyOff2IdxOff {
+			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
 				isOuterKeysPrefix = false
 			}
 			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
@@ -413,7 +414,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
 		for i := 0; canKeepOuterOrder && i < len(prop.Items); i++ {
-			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[i]) {
+			if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
 				canKeepOuterOrder = false
 			}
 		}
@@ -422,11 +423,12 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		// `isOuterKeysPrefix` to be true.
 		if canKeepOuterOrder || isOuterKeysPrefix {
 			indexMergeJoin := PhysicalIndexMergeJoin{
-				PhysicalIndexJoin: *join,
-				NeedOuterSort:     !isOuterKeysPrefix,
-				CompareFuncs:      compareFuncs,
-				OuterCompareFuncs: outerCompareFuncs,
-				Desc:              !prop.IsEmpty() && prop.Items[0].Desc,
+				PhysicalIndexJoin:       *join,
+				KeyOff2KeyOffOrderByIdx: keyOff2KeyOffOrderByIdx,
+				NeedOuterSort:           !isOuterKeysPrefix,
+				CompareFuncs:            compareFuncs,
+				OuterCompareFuncs:       outerCompareFuncs,
+				Desc:                    !prop.IsEmpty() && prop.Items[0].Desc,
 			}.Init(p.ctx)
 			indexMergeJoins = append(indexMergeJoins, indexMergeJoin)
 		}
