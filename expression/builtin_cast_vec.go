@@ -817,10 +817,10 @@ func (b *builtinCastStringAsIntSig) vectorized() bool {
 
 func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ResizeInt64(n, false)
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalInt(b.ctx, input, result)
 	}
+	result.ResizeInt64(n, false)
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -832,6 +832,8 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	result.MergeNulls(buf)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	i64s := result.Int64s()
+	isUnsigned := mysql.HasUnsignedFlag(b.tp.Flag)
+	unionUnsigned := isUnsigned && b.inUnion
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -844,23 +846,24 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		isNegative := len(val) > 1 && val[0] == '-'
 		if !isNegative {
 			ures, err = types.StrToUint(sc, val)
-			if err == nil && !mysql.HasUnsignedFlag(b.tp.Flag) && ures > uint64(math.MaxInt64) {
+			if !isUnsigned && err == nil && ures > uint64(math.MaxInt64) {
 				sc.AppendWarning(types.ErrCastAsSignedOverflow)
 			}
 			res = int64(ures)
-		} else if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
+		} else if unionUnsigned {
 			res = 0
 		} else {
 			res, err = types.StrToInt(sc, val)
-			if err == nil && mysql.HasUnsignedFlag(b.tp.Flag) {
+			if err == nil && isUnsigned {
+				// If overflow, don't append this warnings
 				sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
 			}
 		}
 		res, err = b.handleOverflow(res, val, err, isNegative)
-		i64s[i] = res
 		if err != nil {
 			return err
 		}
+		i64s[i] = res
 	}
 	return nil
 }
