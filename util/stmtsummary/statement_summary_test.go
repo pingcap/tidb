@@ -55,11 +55,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	}{
 		BackoffTypes: make([]fmt.Stringer, 0),
 	}
-	tables := make([]stmtctx.TableEntry, 0, 2)
-	tables = append(tables, stmtctx.TableEntry{"db1", "tb1"})
-	tables = append(tables, stmtctx.TableEntry{"db2", "tb2"})
-	indexes := make([]string, 0, 1)
-	indexes = append(indexes, "a")
+	tables := []stmtctx.TableEntry{{"db1", "tb1"}, {"db2", "tb2"}}
+	indexes := []string{"a"}
 
 	// first statement
 	stmtExecInfo1 := &StmtExecInfo{
@@ -513,14 +510,10 @@ func generateAnyExecInfo() *StmtExecInfo {
 		sync.Mutex
 		BackoffTypes []fmt.Stringer
 	}{
-		BackoffTypes: make([]fmt.Stringer, 0),
+		BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
 	}
-	mu.BackoffTypes = append(mu.BackoffTypes, tikv.BoTxnLock)
-	tables := make([]stmtctx.TableEntry, 0, 2)
-	tables = append(tables, stmtctx.TableEntry{"db1", "tb1"})
-	tables = append(tables, stmtctx.TableEntry{"db2", "tb2"})
-	indexes := make([]string, 0, 1)
-	indexes = append(indexes, "a")
+	tables := []stmtctx.TableEntry{{"db1", "tb1"}, {"db2", "tb2"}}
+	indexes := []string{"a"}
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
 		OriginalSQL:    "original_sql1",
@@ -584,8 +577,6 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	datums := s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 1)
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
-	backoffTypes := make(map[fmt.Stringer]int)
-	backoffTypes[tikv.BoTxnLock] = 1
 	match(c, datums[0], "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
