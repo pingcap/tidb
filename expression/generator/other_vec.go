@@ -132,19 +132,40 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	{{- end }}
 	var compareResult int
+	args := b.args
 
-	for j := 1; j < len(b.args); j++ {
-		if err := b.args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
+	{{- if $InputInt }}
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		for i := 0; i < n; i++ {
+			arg0 := args0[i]
+			if isUnsigned, ok := b.hashSet[arg0]; ok {
+				if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
+					r64s[i] = 1
+				}
+				if arg0 >= 0 {
+					r64s[i] = 1
+				}
+			}
+		}
+	}
+	{{- end }}
+
+	for j := 1; j < len(args); j++ {
+		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
 			return err
 		}
 		{{- if $InputInt }}
-			isUnsigned := mysql.HasUnsignedFlag(b.args[j].GetType().Flag)
+			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().Flag)
 		{{- end }}
 		{{- if $InputFixed }}
 			args1 := buf1.{{.Input.TypeNameInColumn}}s()
 			buf1.MergeNulls(buf0)
 		{{- end }}
 		for i := 0; i < n; i++ {
+			if r64s[i] != 0 {
+				continue
+			}
 {{- /* if is null */}}
 			if buf1.IsNull(i) {{- if not $InputFixed -}} || buf0.IsNull(i) {{- end -}} {
 				hasNull[i] = true
