@@ -66,7 +66,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	// encode offsets.
 	if !col.isFixed() {
 		numOffsetBytes := (col.length + 1) * 8
-		offsetBytes := c.i64SliceToBytes(col.offsets)
+		offsetBytes := i64SliceToBytes(col.offsets)
 		buffer = append(buffer, offsetBytes[:numOffsetBytes]...)
 	}
 
@@ -75,7 +75,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	return buffer
 }
 
-func (c *Codec) i64SliceToBytes(i64s []int64) (b []byte) {
+func i64SliceToBytes(i64s []int64) (b []byte) {
 	if len(i64s) == 0 {
 		return nil
 	}
@@ -105,7 +105,9 @@ func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
 	return buffer
 }
 
+// decodeColumn decodes a Column from a byte slice, return the remained unused bytes.
 func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained []byte) {
+	// Todo(Shenghui Wu): Optimize all data is null.
 	// decode length.
 	col.length = int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
@@ -117,7 +119,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
+		col.nullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
 		c.setAllNotNull(col)
@@ -128,7 +130,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = append(col.offsets[:0], c.bytesToI64Slice(buffer[:numOffsetBytes])...)
+		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes:numOffsetBytes])
 		buffer = buffer[numOffsetBytes:]
 		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
@@ -136,7 +138,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	}
 
 	// decode data.
-	col.data = append(col.data[:0], buffer[:numDataBytes]...)
+	col.data = buffer[:numDataBytes:numDataBytes]
 	return buffer[numDataBytes:]
 }
 
@@ -152,7 +154,7 @@ func (c *Codec) setAllNotNull(col *Column) {
 	}
 }
 
-func (c *Codec) bytesToI64Slice(b []byte) (i64s []int64) {
+func bytesToI64Slice(b []byte) (i64s []int64) {
 	if len(b) == 0 {
 		return nil
 	}
@@ -174,7 +176,7 @@ func getFixedLen(colType *types.FieldType) int {
 		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeYear, mysql.TypeDuration:
 		return 8
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 16
+		return sizeTime
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
@@ -186,4 +188,126 @@ func init() {
 	for i := 0; i < 128; i++ {
 		allNotNullBitmap[i] = 0xFF
 	}
+}
+
+// Decoder decodes the data returned from the coprocessor and stores the result in Chunk.
+// How Decoder works:
+// 1. Initialization phase: Decode a whole input byte slice to Decoder.intermChk(intermediate chunk) using Codec.Decode.
+//    intermChk is introduced to simplify the implementation of decode phase. This phase uses pointer operations with
+//    less CPU and memory cost.
+// 2. Decode phase:
+//    2.1 Set the number of rows to be decoded to a value that is a multiple of 8 and greater than
+//        `chk.RequiredRows() - chk.NumRows()`. This reduces the overhead of copying the srcCol.nullBitMap into
+//        destCol.nullBitMap.
+//    2.2 Append srcCol.offsets to destCol.offsets when the elements is of var-length type. And further adjust the
+//        offsets according to descCol.offsets[destCol.length]-srcCol.offsets[0].
+//    2.3 Append srcCol.nullBitMap to destCol.nullBitMap.
+// 3. Go to step 1 when the input byte slice is consumed.
+type Decoder struct {
+	intermChk    *Chunk
+	codec        *Codec
+	remainedRows int
+}
+
+// NewDecoder creates a new Decoder object for decode a Chunk.
+func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
+	return &Decoder{intermChk: chk, codec: NewCodec(colTypes), remainedRows: 0}
+}
+
+// Decode decodes multiple rows of Decoder.intermChk and stores the result in chk.
+func (c *Decoder) Decode(chk *Chunk) {
+	requiredRows := chk.RequiredRows() - chk.NumRows()
+	// Set the requiredRows to a multiple of 8.
+	requiredRows = (requiredRows + 7) >> 3 << 3
+	if requiredRows > c.remainedRows {
+		requiredRows = c.remainedRows
+	}
+	for i := 0; i < chk.NumCols(); i++ {
+		c.decodeColumn(chk, i, requiredRows)
+	}
+	c.remainedRows -= requiredRows
+}
+
+// Reset decodes data and store the result in Decoder.intermChk. This decode phase uses pointer operations with less
+// CPU and memory costs.
+func (c *Decoder) Reset(data []byte) {
+	c.codec.DecodeToChunk(data, c.intermChk)
+	c.remainedRows = c.intermChk.NumRows()
+}
+
+// IsFinished indicates whether Decoder.intermChk has been dried up.
+func (c *Decoder) IsFinished() bool {
+	return c.remainedRows == 0
+}
+
+// RemainedRows indicates Decoder.intermChk has remained rows.
+func (c *Decoder) RemainedRows() int {
+	return c.remainedRows
+}
+
+// ReuseIntermChk swaps `Decoder.intermChk` with `chk` directly when `Decoder.intermChk.NumRows()` is no less
+// than `chk.requiredRows * factor` where `factor` is 0.8 now. This can avoid the overhead of appending the
+// data from `Decoder.intermChk` to `chk`. Moreover, the column.offsets needs to be further adjusted
+// according to column.offset[0].
+func (c *Decoder) ReuseIntermChk(chk *Chunk) {
+	for i, col := range c.intermChk.columns {
+		col.length = c.remainedRows
+		elemLen := getFixedLen(c.codec.colTypes[i])
+		if elemLen == varElemLen {
+			// For var-length types, we need to adjust the offsets before reuse.
+			if deltaOffset := col.offsets[0]; deltaOffset != 0 {
+				for j := 0; j < len(col.offsets); j++ {
+					col.offsets[j] -= deltaOffset
+				}
+			}
+		}
+	}
+	chk.SwapColumns(c.intermChk)
+	c.remainedRows = 0
+}
+
+func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
+	elemLen := getFixedLen(c.codec.colTypes[ordinal])
+	numDataBytes := int64(elemLen * requiredRows)
+	srcCol := c.intermChk.columns[ordinal]
+	destCol := chk.columns[ordinal]
+
+	if elemLen == varElemLen {
+		// For var-length types, we need to adjust the offsets after appending to destCol.
+		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
+		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
+		destCol.offsets = append(destCol.offsets, srcCol.offsets[1:requiredRows+1]...)
+		for i := destCol.length + 1; i <= destCol.length+requiredRows; i++ {
+			destCol.offsets[i] = destCol.offsets[i] + deltaOffset
+		}
+		srcCol.offsets = srcCol.offsets[requiredRows:]
+	}
+
+	numNullBitmapBytes := (requiredRows + 7) >> 3
+	if destCol.length%8 == 0 {
+		destCol.nullBitmap = append(destCol.nullBitmap, srcCol.nullBitmap[:numNullBitmapBytes]...)
+	} else {
+		destCol.appendMultiSameNullBitmap(false, requiredRows)
+		bitMapLen := len(destCol.nullBitmap)
+		// bitOffset indicates the number of valid bits in destCol.nullBitmap's last byte.
+		bitOffset := destCol.length % 8
+		startIdx := (destCol.length - 1) >> 3
+		for i := 0; i < numNullBitmapBytes; i++ {
+			destCol.nullBitmap[startIdx+i] |= srcCol.nullBitmap[i] << bitOffset
+			// The high order 8-bitOffset bits in `srcCol.nullBitmap[i]` should be appended to the low order of the next slot.
+			if startIdx+i+1 < bitMapLen {
+				destCol.nullBitmap[startIdx+i+1] |= srcCol.nullBitmap[i] >> (8 - bitOffset)
+			}
+		}
+	}
+	// Set all the redundant bits in the last slot of destCol.nullBitmap to 0.
+	numRedundantBits := uint(len(destCol.nullBitmap)*8 - destCol.length - requiredRows)
+	bitMask := byte(1<<(8-numRedundantBits)) - 1
+	destCol.nullBitmap[len(destCol.nullBitmap)-1] &= bitMask
+
+	srcCol.nullBitmap = srcCol.nullBitmap[numNullBitmapBytes:]
+	destCol.length += requiredRows
+
+	destCol.data = append(destCol.data, srcCol.data[:numDataBytes]...)
+	srcCol.data = srcCol.data[numDataBytes:]
 }

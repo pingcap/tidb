@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
@@ -78,7 +79,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -140,7 +141,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid view state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -176,7 +177,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
-		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -289,14 +290,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid recover table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, nil
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure
 // `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce uint32 = 0
+var mockRecoverTableCommitErrOnce uint32
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -352,7 +353,7 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+		return nil, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
 	return tblInfo, nil
@@ -676,6 +677,62 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	return ver, nil
 }
 
+func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaInfo ast.TiFlashReplicaSpec
+	if err := job.DecodeArgs(&replicaInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          replicaInfo.Count,
+			LocationLabels: replicaInfo.Labels,
+		}
+	} else {
+		tblInfo.TiFlashReplica = nil
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var available bool
+	if err := job.DecodeArgs(&available); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.TiFlashReplica == nil || (tblInfo.TiFlashReplica.Available == available) {
+		return ver, nil
+	}
+
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.Available = available
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// d.infoHandle maybe nil in some test.
 	if d.infoHandle == nil || !d.infoHandle.IsValid() {
@@ -780,7 +837,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	err = checkPartitionNameUnique(tblInfo, partInfo)
+	err = checkAddPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

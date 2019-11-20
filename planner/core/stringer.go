@@ -93,9 +93,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
-		for i := range x.LeftKeys {
-			l := x.LeftKeys[i].String()
-			r := x.RightKeys[i].String()
+		for i := range x.LeftJoinKeys {
+			l := x.LeftJoinKeys[i].String()
+			r := x.RightJoinKeys[i].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -113,8 +113,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Show:
+	case *LogicalShow, *PhysicalShow:
 		str = "Show"
+	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+		str = "ShowDDLJobs"
 	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
@@ -186,6 +188,30 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "IndexJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *PhysicalIndexMergeJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexMergeJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *PhysicalIndexHashJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexHashJoin{" + strings.Join(children, "->") + "}"
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]

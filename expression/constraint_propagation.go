@@ -256,17 +256,10 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	// Make sure col1 and col2 are the same column.
 	// Can't use col1.Equal(ctx, col2) here, because they are not generated in one
 	// expression and their UniqueID are not the same.
-	if col1.ColName.L != col2.ColName.L {
-		return
-	}
-	if col1.OrigColName.L != "" &&
-		col2.OrigColName.L != "" &&
-		col1.OrigColName.L != col2.OrigColName.L {
-		return
-	}
-	if col1.OrigTblName.L != "" &&
-		col2.OrigTblName.L != "" &&
-		col1.OrigColName.L != col2.OrigColName.L {
+	// NOTE: We can use this way to compare this two column since this method is only called for partition pruning,
+	//       where all columns come from the same DataSource.
+	//       If we want to use this method in more places. We need to first change the comparing way.
+	if col1.ID != col2.ID {
 		return
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
@@ -306,7 +299,8 @@ func negOP(cmp string) string {
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
 var monotoneIncFuncs = map[string]struct{}{
-	ast.ToDays: {},
+	ast.ToDays:        {},
+	ast.UnixTimestamp: {},
 }
 
 // compareConstant compares two expressions. c1 and c2 should be constant with the same type.

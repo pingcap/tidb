@@ -16,8 +16,7 @@ package gcworker
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -30,15 +29,18 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/config"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -188,6 +190,36 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
+func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
+	spkv := s.store.GetSafePointKV()
+	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
+	c.Assert(err, IsNil)
+	now := time.Now()
+	sp := s.gcWorker.calSafePointByMinStartTS(now)
+	c.Assert(sp.Second(), Equals, now.Second())
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
+	c.Assert(err, IsNil)
+	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
+	c.Assert(sp, Equals, zeroTime)
+
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
+	c.Assert(err, IsNil)
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
+	c.Assert(err, IsNil)
+	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	c.Assert(sp, Equals, zeroTime)
+
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
+		strconv.FormatUint(variable.GoTimeToTS(now), 10))
+	c.Assert(err, IsNil)
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
+		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
+	c.Assert(err, IsNil)
+	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))
+	c.Assert(sp.Second(), Equals, now.Add(-20*time.Second).Second())
+}
+
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	now, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
@@ -278,19 +310,6 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(*lifeTime, Equals, gcMinLifeTime)
 
-	// Check gc life time small than config.max-txn-use-time
-	s.oracle.AddOffset(time.Minute * 40)
-	config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse = 20*60 - 10 // 20min - 10s
-	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
-	c.Assert(err, IsNil)
-	ok, _, err = s.gcWorker.prepare()
-	c.Assert(err, IsNil)
-	c.Assert(ok, IsTrue)
-	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
-	c.Assert(err, IsNil)
-	c.Assert(*lifeTime, Equals, 20*time.Minute)
-
-	// check the tikv_gc_life_time more than config.max-txn-use-time situation.
 	s.oracle.AddOffset(time.Minute * 40)
 	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
 	c.Assert(err, IsNil)
@@ -470,8 +489,10 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	sendReqCh := make(chan SentReq, 20)
 
 	// The request sent to the specified key and store wil fail.
-	var failKey []byte = nil
-	var failStore *metapb.Store = nil
+	var (
+		failKey   []byte
+		failStore *metapb.Store
+	)
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
 		resp := &tikvrpc.Response{
@@ -576,8 +597,10 @@ Loop:
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
 			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
-			c.Assert(sentReq[i].req.UnsafeDestroyRange().GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+			c.Assert(kv.Key(sentReq[i].req.UnsafeDestroyRange().GetStartKey()), DeepEquals,
+				sortedRanges[rangeIndex].StartKey)
+			c.Assert(kv.Key(sentReq[i].req.UnsafeDestroyRange().GetEndKey()), DeepEquals,
+				sortedRanges[rangeIndex].EndKey)
 		}
 	}
 }

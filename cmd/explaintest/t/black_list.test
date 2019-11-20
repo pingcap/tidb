@@ -16,6 +16,18 @@ admin reload opt_rule_blacklist;
 
 explain select * from t where a < 1;
 
+insert into mysql.expr_pushdown_blacklist values('<');
+
+admin reload expr_pushdown_blacklist;
+
+explain select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist where name='<';
+
+admin reload expr_pushdown_blacklist;
+
+explain select * from t where a < 1;
+
 insert into mysql.expr_pushdown_blacklist values('lt');
 
 admin reload expr_pushdown_blacklist;
@@ -25,3 +37,5 @@ explain select * from t where a < 1;
 delete from mysql.expr_pushdown_blacklist where name='lt';
 
 admin reload expr_pushdown_blacklist;
+
+explain select * from t where a < 1;

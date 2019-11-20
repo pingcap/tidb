@@ -16,6 +16,7 @@ package types
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -193,10 +194,12 @@ const (
 
 // FromGoTime translates time.Time to mysql time internal representation.
 func FromGoTime(t gotime.Time) MysqlTime {
+	// Plus 500 nanosecond for rounding of the millisecond part.
+	t = t.Add(500 * gotime.Nanosecond)
+
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
-	// Nanosecond plus 500 then divided 1000 means rounding to microseconds.
-	microsecond := (t.Nanosecond() + 500) / 1000
+	microsecond := t.Nanosecond() / 1000
 	return FromDate(year, int(month), day, hour, minute, second, microsecond)
 }
 
@@ -289,8 +292,17 @@ const dateFormat = "%Y%m%d"
 // 2012-12-12T10:10:10 -> 20121212101010
 // 2012-12-12T10:10:10.123456 -> 20121212101010.123456
 func (t Time) ToNumber() *MyDecimal {
+	dec := new(MyDecimal)
+	t.FillNumber(dec)
+	return dec
+}
+
+// FillNumber is the same as ToNumber,
+// but reuses input decimal instead of allocating one.
+func (t Time) FillNumber(dec *MyDecimal) {
 	if t.IsZero() {
-		return &MyDecimal{}
+		dec.FromInt(0)
+		return
 	}
 
 	// Fix issue #1046
@@ -311,12 +323,9 @@ func (t Time) ToNumber() *MyDecimal {
 		s1 := fmt.Sprintf("%s.%06d", s, t.Time.Microsecond())
 		s = s1[:len(s)+int(t.Fsp)+1]
 	}
-
 	// We skip checking error here because time formatted string can be parsed certainly.
-	dec := new(MyDecimal)
 	err = dec.FromString([]byte(s))
 	terror.Log(errors.Trace(err))
-	return dec
 }
 
 // Convert converts t with type tp.
@@ -1169,6 +1178,9 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
 	}
 
+	if terror.ErrorEqual(err, io.EOF) {
+		err = ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
+	}
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}
@@ -1343,6 +1355,10 @@ func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Tim
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
 func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
+	// MySQL compatibility: 0.0 should not be converted to null, see #11203
+	if len(str) >= 3 && str[:3] == "0.0" {
+		return Time{Time: ZeroTime, Type: tp}, nil
+	}
 	return parseTime(sc, str, tp, fsp, true)
 }
 
@@ -1383,6 +1399,10 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
+	// MySQL compatibility: 0 should not be converted to null, see #11203
+	if num == 0 {
+		return Time{Time: ZeroTime, Type: tp}, nil
+	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
@@ -1513,7 +1533,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
 	}
 
-	if _, err := t.GoTime(gotime.Local); err != nil {
+	if _, err := t.GoTime(sc.TimeZone); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2187,6 +2207,11 @@ func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) boo
 		return true
 	}
 
+	if len(date) == 0 {
+		ctx[token] = 0
+		return true
+	}
+
 	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
 		return false
@@ -2304,20 +2329,13 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			isDuration, isDate = false, false
 			break
 		}
-		var durationTokens bool
-		var dateTokens bool
 		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
-			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
-				durationTokens = true
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f':
+				isDuration = true
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
-				dateTokens = true
+				isDate = true
 			}
-		}
-		if durationTokens {
-			isDuration = true
-		} else if dateTokens {
-			isDate = true
 		}
 		if isDuration && isDate {
 			break
@@ -2481,25 +2499,6 @@ var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 
 // numericRegex: it was for any numeric characters
 var numericRegex = regexp.MustCompile("[0-9]+")
-
-// parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
-// It returns the parsed int, and remain data after parse.
-func parseTwoNumeric(input string) (int, string) {
-	if len(input) > 1 && input[0] == '0' {
-		return 0, input[1:]
-	}
-	matched := twoDigitRegex.FindAllString(input, -1)
-	if len(matched) == 0 {
-		return 0, input
-	}
-
-	str := matched[0]
-	v, err := strconv.ParseInt(str, 10, 64)
-	if err != nil {
-		return 0, input
-	}
-	return int(v), input[len(str):]
-}
 
 func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input) // 0..31

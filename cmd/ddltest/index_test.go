@@ -86,9 +86,9 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 }
 
 func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
-	gc_worker, err := gcworker.NewMockGCWorker(s.store.(tikv.Storage))
+	gcWorker, err := gcworker.NewMockGCWorker(s.store.(tikv.Storage))
 	c.Assert(err, IsNil)
-	err = gc_worker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
+	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
 	c.Assert(err, IsNil)
 
 	ctx := s.ctx

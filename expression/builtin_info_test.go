@@ -26,11 +26,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Database]
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
@@ -56,7 +54,6 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.LastFoundRows = 2
@@ -70,7 +67,6 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUser(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
@@ -85,7 +81,6 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
@@ -100,7 +95,6 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ActiveRoles = make([]*auth.RoleIdentity, 0, 10)
@@ -117,7 +111,6 @@ func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
@@ -132,7 +125,6 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
@@ -143,8 +135,6 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		LoopCount  int
 		Expression interface{}
@@ -181,7 +171,6 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
@@ -189,7 +178,6 @@ func (s *testEvaluatorSuite) TestCharset(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCoercibility(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Coercibility]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
@@ -197,7 +185,6 @@ func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCollation(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Collation]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
@@ -205,7 +192,6 @@ func (s *testEvaluatorSuite) TestCollation(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRowCount(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.PrevAffectedRows = 10
@@ -213,7 +199,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f, NotNil)
-	sig, ok := f.(*vecRowConverter).builtinFunc.(*builtinRowCountSig)
+	sig, ok := f.(*builtinRowCountSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(sig, NotNil)
 	intResult, isNull, err := sig.evalInt(chunk.Row{})
@@ -225,7 +211,6 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 
 // TestTiDBVersion for tidb_server().
 func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
-	defer testleak.AfterTest(c)()
 	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)
 	c.Assert(err, IsNil)
 	v, err := f.Eval(chunk.Row{})
@@ -234,8 +219,6 @@ func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
-	defer testleak.AfterTest(c)()
-
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
 		insertID uint64

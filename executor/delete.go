@@ -16,7 +16,7 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -46,12 +46,12 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleIndex int, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
-	if handleIsExtra(handleCol) {
+	if isExtraHandle {
 		end--
 	}
-	handle := row[handleCol.Index].GetInt64()
+	handle := row[handleIndex].GetInt64()
 	err := e.removeRow(e.ctx, tbl, handle, row[:end])
 	if err != nil {
 		return err
@@ -62,19 +62,19 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column,
 
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
-		id        int64
-		tbl       table.Table
-		handleCol *expression.Column
-		rowCount  int
+		tbl           table.Table
+		isExtrahandle bool
+		handleIndex   int
+		rowCount      int
 	)
-	for i, t := range e.tblID2Table {
-		id, tbl = i, t
-		handleCol = e.children[0].Schema().TblID2Handle[id][0]
-		break
+	for _, info := range e.tblColPosInfos {
+		tbl = e.tblID2Table[info.TblID]
+		handleIndex = info.HandleOrdinal
+		isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal])
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
@@ -102,7 +102,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 
 			datumRow := chunkRow.GetDatumRow(fields)
-			err = e.deleteOneRow(tbl, handleCol, datumRow)
+			err = e.deleteOneRow(tbl, handleIndex, isExtrahandle, datumRow)
 			if err != nil {
 				return err
 			}

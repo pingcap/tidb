@@ -17,10 +17,12 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -39,6 +41,8 @@ var (
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
+	_ LogicalPlan = &TableGather{}
+	_ LogicalPlan = &TableScan{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
@@ -93,12 +97,21 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsIndexInner = 1 << iota
-	preferRightAsIndexInner
+	preferLeftAsINLJInner uint = 1 << iota
+	preferRightAsINLJInner
+	preferLeftAsINLHJInner
+	preferRightAsINLHJInner
+	preferLeftAsINLMJInner
+	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
 	preferHashAgg
 	preferStreamAgg
+)
+
+const (
+	preferTiKV = 1 << iota
+	preferTiFlash
 )
 
 // LogicalJoin is the logical join plan.
@@ -133,6 +146,10 @@ type LogicalJoin struct {
 	// redundantSchema contains columns which are eliminated in join.
 	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
 	redundantSchema *expression.Schema
+	redundantNames  types.NameSlice
+
+	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	equalCondOutCnt float64
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
@@ -248,11 +265,31 @@ type LogicalAggregation struct {
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
-	// preferAggType stores preferred aggregation algorithm type.
-	preferAggType uint
+	// aggHints stores aggregation hint information.
+	aggHints aggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
+}
+
+// CopyAggHints copies the aggHints from another LogicalAggregation.
+func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
+	// TODO: Copy the hint may make the un-applicable hint throw the
+	// same warning message more than once. We'd better add a flag for
+	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
+	// partialAgg (in cascades planner) should share the same hint, instead
+	// of a copy.
+	la.aggHints = agg.aggHints
+}
+
+// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
+// this method would collect them at first. If the GroupByItems have been changed,
+// we should explicitly collect GroupByColumns before this method.
+func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
+	if la.groupByCols == nil {
+		la.collectGroupByColumns()
+	}
+	return la.groupByCols
 }
 
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -313,10 +350,6 @@ type LogicalTableDual struct {
 	logicalSchemaProducer
 
 	RowCount int
-	// placeHolder indicates if this dual plan is a place holder in query optimization
-	// for data sources like `Show`, if true, the dual plan would be substituted by
-	// `Show` in the final plan.
-	placeHolder bool
 }
 
 // LogicalUnionScan is only used in non read-only txn.
@@ -324,6 +357,8 @@ type LogicalUnionScan struct {
 	baseLogicalPlan
 
 	conditions []expression.Expression
+
+	handleCol *expression.Column
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -364,15 +399,35 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
+	//preferStoreType means the DataSource is enforced to which storage.
+	preferStoreType int
+}
+
+// TableGather is a leaf logical operator of TiDB layer to gather
+// tuples from TiKV regions.
+type TableGather struct {
+	logicalSchemaProducer
+	Source *DataSource
+}
+
+// TableScan is the logical table scan operator for TiKV.
+type TableScan struct {
+	logicalSchemaProducer
+	Source      *DataSource
+	Handle      *expression.Column
+	AccessConds expression.CNFExprs
+	Ranges      []*ranger.Range
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type accessPath struct {
-	index      *model.IndexInfo
-	idxCols    []*expression.Column
-	idxColLens []int
-	ranges     []*ranger.Range
+	index          *model.IndexInfo
+	fullIdxCols    []*expression.Column
+	fullIdxColLens []int
+	idxCols        []*expression.Column
+	idxColLens     []int
+	ranges         []*ranger.Range
 	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
 	// countAfterIndex is the row count after we apply filters on index and before we apply the table filters.
@@ -383,6 +438,7 @@ type accessPath struct {
 	tableFilters    []expression.Expression
 	// isTablePath indicates whether this path is table path.
 	isTablePath bool
+	storeType   kv.StoreType
 	// forced means this path is generated by `use/force index()`.
 	forced bool
 	// partialIndexPaths store all index access paths.
@@ -390,9 +446,41 @@ type accessPath struct {
 	partialIndexPaths []*accessPath
 }
 
+// getTablePath finds the TablePath from a group of accessPaths.
+func getTablePath(paths []*accessPath) *accessPath {
+	for _, path := range paths {
+		if path.isTablePath {
+			return path
+		}
+	}
+	return nil
+}
+
+func (ds *DataSource) buildTableGather() LogicalPlan {
+	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts.SetSchema(ds.Schema())
+	tg := TableGather{Source: ds}.Init(ds.ctx, ds.blockOffset)
+	tg.SetSchema(ds.Schema())
+	tg.SetChildren(ts)
+	return tg
+}
+
+// Convert2Gathers builds logical TableGather and IndexGather(to be implemented) from DataSource.
+func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
+	tg := ds.buildTableGather()
+	gathers = append(gathers, tg)
+	for _, path := range ds.possibleAccessPaths {
+		if !path.isTablePath {
+			// TODO: add IndexGather
+		}
+	}
+	return gathers
+}
+
 // deriveTablePathStats will fulfill the information that the accessPath need.
 // And it will check whether the primary key is covered only by point query.
-func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.Expression) (bool, error) {
+// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
@@ -460,7 +548,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.countAfterAccess < ds.stats.RowCount {
+	if path.countAfterAccess < ds.stats.RowCount && !isIm {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	// Check whether the primary key is covered by point query.
@@ -474,37 +562,19 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.
 	return noIntervalRange, err
 }
 
-func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
-	}
-
-	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
-	}
-
-	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
-			break
-		}
-	}
-
-	return ds.handleCol
-}
-
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
 // conds is the conditions used to generate the DetachRangeResult for path.
-func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.Expression) (bool, error) {
+// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.index)
+	path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
 	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
-		handleCol := ds.getHandleCol()
+		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
 			path.idxCols = append(path.idxCols, handleCol)
 			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
@@ -547,10 +617,10 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 			}
 		}
 	}
-	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
+	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.countAfterAccess < ds.stats.RowCount {
+	if path.countAfterAccess < ds.stats.RowCount && !isIm {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
@@ -559,7 +629,11 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath, conds []expression.
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
+		if isIm {
+			path.countAfterIndex = path.countAfterAccess * selectivity
+		} else {
+			path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
+		}
 	}
 	// Check whether there's only point query.
 	noIntervalRanges := true
@@ -649,6 +723,12 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	if !ds.tableInfo.PKIsHandle {
+		// If the PKIsHandle is false, return the ExtraHandleColumn.
+		for i, col := range ds.Columns {
+			if col.ID == model.ExtraHandleID {
+				return ds.schema.Columns[i]
+			}
+		}
 		return nil
 	}
 	for i, col := range ds.Columns {
@@ -657,6 +737,26 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 		}
 	}
 	return nil
+}
+
+func (ds *DataSource) getHandleCol() *expression.Column {
+	if ds.handleCol != nil {
+		return ds.handleCol
+	}
+
+	if !ds.tableInfo.PKIsHandle {
+		ds.handleCol = ds.newExtraHandleSchemaCol()
+		return ds.handleCol
+	}
+
+	for i, col := range ds.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			ds.handleCol = ds.schema.Columns[i]
+			break
+		}
+	}
+
+	return ds.handleCol
 }
 
 // TableInfo returns the *TableInfo of data source.
@@ -710,7 +810,8 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock ast.SelectLockType
+	Lock         ast.SelectLockType
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // WindowFrame represents a window function frame.
@@ -775,4 +876,33 @@ func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expr
 		}
 	}
 	return resultCorCols[:length]
+}
+
+// ShowContents stores the contents for the `SHOW` statement.
+type ShowContents struct {
+	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName      string
+	Table       *ast.TableName  // Used for showing columns.
+	Column      *ast.ColumnName // Used for `desc table column`.
+	IndexName   model.CIStr
+	Flag        int                  // Some flag parsed from sql, such as FULL.
+	User        *auth.UserIdentity   // Used for show grants.
+	Roles       []*auth.RoleIdentity // Used for show grants.
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`.
+
+	GlobalScope bool // Used by show variables.
+}
+
+// LogicalShow represents a show plan.
+type LogicalShow struct {
+	logicalSchemaProducer
+	ShowContents
+}
+
+// LogicalShowDDLJobs is for showing DDL job list.
+type LogicalShowDDLJobs struct {
+	logicalSchemaProducer
+
+	JobNumber int64
 }

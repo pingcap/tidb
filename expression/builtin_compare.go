@@ -437,14 +437,19 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	switch tp {
 	case types.ETInt:
 		sig = &builtinGreatestIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
 		sig = &builtinGreatestRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestReal)
 	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 	case types.ETDatetime:
 		sig = &builtinGreatestTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
 	return sig, nil
 }
@@ -631,14 +636,19 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	switch tp {
 	case types.ETInt:
 		sig = &builtinLeastIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
 		sig = &builtinLeastRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastReal)
 	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
 	case types.ETDatetime:
 		sig = &builtinLeastTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
 	return sig, nil
 }
@@ -838,8 +848,10 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IntervalInt)
 	} else {
 		sig = &builtinIntervalRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
 	}
 	return sig, nil
 }
@@ -1100,6 +1112,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 		Value:        dt,
 		RetType:      targetFieldType,
 		DeferredExpr: con.DeferredExpr,
+		ParamMarker:  con.ParamMarker,
 	}, false
 }
 
@@ -1140,6 +1153,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			Value:        intDatum,
 			RetType:      &targetFieldType,
 			DeferredExpr: con.DeferredExpr,
+			ParamMarker:  con.ParamMarker,
 		}, false
 	}
 	switch op {
@@ -1154,7 +1168,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.NullEQ, opcode.EQ:
-		switch con.RetType.EvalType() {
+		switch con.GetType().EvalType() {
 		// An integer value equal or NULL-safe equal to a float value which contains
 		// non-zero decimal digits is definitely false.
 		// e.g.,
@@ -1181,6 +1195,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 				Value:        intDatum,
 				RetType:      &targetFieldType,
 				DeferredExpr: con.DeferredExpr,
+				ParamMarker:  con.ParamMarker,
 			}, false
 		}
 	}
@@ -1201,7 +1216,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
-		if isExceptional && arg1.RetType.EvalType() == types.ETInt {
+		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
 			//			inf:  01111111 & 1 == 1
@@ -1220,7 +1235,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
-		if isExceptional && arg0.RetType.EvalType() == types.ETInt {
+		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
 			} else {

@@ -21,7 +21,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite1) TestAggregation(c *C) {
+type testSuiteAgg struct {
+	*baseTestSuite
+}
+
+func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
@@ -343,7 +347,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION std_samp does not exist")
+	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
 	_, err = tk.Exec("select variance(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
@@ -353,7 +357,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 }
 
-func (s *testSuite1) TestAggPrune(c *C) {
+func (s *testSuiteAgg) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -377,7 +381,7 @@ func (s *testSuite1) TestAggPrune(c *C) {
 	tk.MustQuery("SELECT a, MIN(b), MAX(b) FROM t GROUP BY a").Check(testkit.Rows("1 11 11", "3 <nil> <nil>"))
 }
 
-func (s *testSuite1) TestGroupConcatAggr(c *C) {
+func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	// issue #5411
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -410,7 +414,7 @@ func (s *testSuite1) TestGroupConcatAggr(c *C) {
 	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
 }
 
-func (s *testSuite) TestSelectDistinct(c *C) {
+func (s *testSuiteAgg) TestSelectDistinct(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_distinct_test")
@@ -422,7 +426,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 }
 
-func (s *testSuite1) TestAggPushDown(c *C) {
+func (s *testSuiteAgg) TestAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -450,7 +454,7 @@ func (s *testSuite1) TestAggPushDown(c *C) {
 	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a order by a").Check(testkit.Rows("1 2", "2 1"))
 }
 
-func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
+func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -562,7 +566,7 @@ func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite1) TestHaving(c *C) {
+func (s *testSuiteAgg) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
@@ -587,7 +591,7 @@ func (s *testSuite1) TestHaving(c *C) {
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite1) TestAggEliminator(c *C) {
+func (s *testSuiteAgg) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t(a int primary key, b int)")
@@ -600,7 +604,7 @@ func (s *testSuite1) TestAggEliminator(c *C) {
 	tk.MustQuery("select group_concat(b, b) from t group by a").Sort().Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
-func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
+func (s *testSuiteAgg) TestMaxMinFloatScalaFunc(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec(`DROP TABLE IF EXISTS T;`)
@@ -610,7 +614,7 @@ func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
 	tk.MustQuery(`SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
 }
 
-func (s *testSuite1) TestBuildProjBelowAgg(c *C) {
+func (s *testSuiteAgg) TestBuildProjBelowAgg(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
@@ -622,33 +626,33 @@ func (s *testSuite1) TestBuildProjBelowAgg(c *C) {
 		"4 3 18 7,7,7 8"))
 }
 
-func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
+func (s *testSuiteAgg) TestInjectProjBelowTopN(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
 	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
 	tk.MustQuery("explain select * from t order by i + 1").Check(testkit.Rows(
-		"Projection_8 10000.00 root test.t.i",
-		"└─Sort_4 10000.00 root col_1:asc",
-		"  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)",
+		"Projection_8 10000.00 root Column#1",
+		"└─Sort_4 10000.00 root Column#3:asc",
+		"  └─Projection_9 10000.00 root Column#1, plus(Column#1, 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("select * from t order by i + 1 ")
 	rs.Check(testkit.Rows(
 		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
 	tk.MustQuery("explain select * from t order by i + 1 limit 2").Check(testkit.Rows(
-		"Projection_15 2.00 root test.t.i",
-		"└─TopN_7 2.00 root col_1:asc, offset:0, count:2",
-		"  └─Projection_16 2.00 root test.t.i, plus(test.t.i, 1)",
+		"Projection_15 2.00 root Column#1",
+		"└─TopN_7 2.00 root Column#3:asc, offset:0, count:2",
+		"  └─Projection_16 2.00 root Column#1, plus(Column#1, 1)",
 		"    └─TableReader_12 2.00 root data:TopN_11",
-		"      └─TopN_11 2.00 cop plus(test.t.i, 1):asc, offset:0, count:2",
-		"        └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TopN_11 2.00 cop[tikv] plus(Column#1, 1):asc, offset:0, count:2",
+		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
 	rs.Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))
 }
 
-func (s *testSuite1) TestFirstRowEnum(c *C) {
+func (s *testSuiteAgg) TestFirstRowEnum(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -659,7 +663,7 @@ func (s *testSuite1) TestFirstRowEnum(c *C) {
 	))
 }
 
-func (s *testSuite1) TestAggJSON(c *C) {
+func (s *testSuiteAgg) TestAggJSON(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
@@ -708,7 +712,7 @@ func (s *testSuite1) TestAggJSON(c *C) {
 	))
 }
 
-func (s *testSuite1) TestIssue10099(c *C) {
+func (s *testSuiteAgg) TestIssue10099(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b char(10))")
@@ -716,7 +720,7 @@ func (s *testSuite1) TestIssue10099(c *C) {
 	tk.MustQuery("select count(distinct a, b) from t").Check(testkit.Rows("2"))
 }
 
-func (s *testSuite1) TestIssue10098(c *C) {
+func (s *testSuiteAgg) TestIssue10098(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec("create table t(a char(10), b char(10))")
@@ -724,13 +728,57 @@ func (s *testSuite1) TestIssue10098(c *C) {
 	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
 }
 
-func (s *testSuite1) TestIssue10608(c *C) {
+func (s *testSuiteAgg) TestIssue10608(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t, s;`)
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(100292, 508931), (120002, 508932)")
 	tk.MustExec("insert into t values(508931), (508932)")
-	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 
+}
+
+func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
+		tk.MustExec(`admin reload opt_rule_blacklist;`)
+	}()
+	tk.MustExec(`drop table if exists test;`)
+	tk.MustExec("create table test (a int);")
+	tk.MustExec("insert into test value(1);")
+	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
+
+	// make sure the plan is Apply -> Apply -> Apply -> HashAgg, and the count of Apply is equal to HashAggFinalConcurrency-1.
+	tk.MustQuery("explain select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("" +
+		"Projection_28 1.00 root Column#3, Column#6, Column#9, Column#12]\n" +
+		"[└─Apply_30 1.00 root CARTESIAN left outer join, inner:Projection_65]\n" +
+		"[  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:Projection_54]\n" +
+		"[  │ ├─Apply_34 1.00 root CARTESIAN left outer join, inner:Projection_43]\n" +
+		"[  │ │ ├─HashAgg_39 1.00 root funcs:sum(Column#22), firstrow(Column#23)]\n" +
+		"[  │ │ │ └─TableReader_40 1.00 root data:HashAgg_35]\n" +
+		"[  │ │ │   └─HashAgg_35 1.00 cop[tikv] funcs:sum(Column#1), firstrow(Column#1)]\n" +
+		"[  │ │ │     └─TableScan_38 10000.00 cop[tikv] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
+		"[  │ │ └─Projection_43 1.00 root NULL]\n" +
+		"[  │ │   └─Limit_44 1.00 root offset:0, count:1]\n" +
+		"[  │ │     └─TableReader_50 1.00 root data:Limit_49]\n" +
+		"[  │ │       └─Limit_49 1.00 cop[tikv] offset:0, count:1]\n" +
+		"[  │ │         └─Selection_48 1.00 cop[tikv] eq(Column#1, Column#4)]\n" +
+		"[  │ │           └─TableScan_47 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
+		"[  │ └─Projection_54 1.00 root NULL]\n" +
+		"[  │   └─Limit_55 1.00 root offset:0, count:1]\n" +
+		"[  │     └─TableReader_61 1.00 root data:Limit_60]\n" +
+		"[  │       └─Limit_60 1.00 cop[tikv] offset:0, count:1]\n" +
+		"[  │         └─Selection_59 1.00 cop[tikv] eq(Column#1, Column#7)]\n" +
+		"[  │           └─TableScan_58 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
+		"[  └─Projection_65 1.00 root NULL]\n" +
+		"[    └─Limit_66 1.00 root offset:0, count:1]\n" +
+		"[      └─TableReader_72 1.00 root data:Limit_71]\n" +
+		"[        └─Limit_71 1.00 cop[tikv] offset:0, count:1]\n" +
+		"[          └─Selection_70 1.00 cop[tikv] eq(Column#1, Column#10)]\n" +
+		"[            └─TableScan_69 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo"))
 }

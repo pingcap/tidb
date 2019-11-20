@@ -623,7 +623,8 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
-		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
+		// we always use the first follower when follower read is enabled
+		rpcCtx, *err = e.cache.GetTiKVRPCContext(bo, loc.Region, e.ctx.GetSessionVars().GetReplicaRead(), 0)
 		if *err != nil {
 			return
 		}
@@ -924,6 +925,9 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if err != nil {
 		return 0, err
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
@@ -942,10 +946,14 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	defer e.wg.Done()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
-	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
 	if *err != nil {
 		return
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
+
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		if task.SampSize == 0 {
@@ -1094,7 +1102,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
 		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 		// Scale the total column size.
-		collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		if len(collector.Samples) > 0 {
+			collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		}
 		if i < hasPKInfo {
 			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {
@@ -1202,7 +1212,7 @@ type analyzeIndexIncrementalExec struct {
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
-	values, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
+	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}

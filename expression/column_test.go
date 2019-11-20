@@ -14,17 +14,17 @@
 package expression
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testEvaluatorSuite) TestColumn(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
 	c.Assert(col.Equal(nil, col), IsTrue)
@@ -34,7 +34,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 
 	marshal, err := col.MarshalJSON()
 	c.Assert(err, IsNil)
-	c.Assert(marshal, DeepEquals, []byte{0x22, 0x22})
+	c.Assert(marshal, DeepEquals, []byte{0x22, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x22})
 
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
@@ -43,7 +43,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	c.Assert(corCol.Equal(nil, corCol), IsTrue)
 	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
-	c.Assert(corCol.ConstItem(), IsTrue)
+	c.Assert(corCol.ConstItem(), IsFalse)
 	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
 	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 
@@ -95,8 +95,6 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col1 := &Column{
 		UniqueID: 12,
 	}
@@ -109,8 +107,6 @@ func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
 		cols = append(cols, &Column{UniqueID: int64(i)})
@@ -123,42 +119,137 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
-	defer testleak.AfterTest(c)()
-
-	col0, col1 := &Column{ColName: model.NewCIStr("col0")}, &Column{ColName: model.NewCIStr("col1")}
+	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
-	colInfo := &model.ColumnInfo{Name: model.NewCIStr("col1")}
+	colInfo := &model.ColumnInfo{ID: 0}
 	res := ColInfo2Col(cols, colInfo)
 	c.Assert(res.Equal(nil, col1), IsTrue)
 
-	colInfo.Name = model.NewCIStr("col2")
+	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
 	c.Assert(res, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
-	defer testleak.AfterTest(c)()
-
-	col0 := &Column{ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
+	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
-	resCols, lengths := IndexInfo2Cols(cols, indexInfo)
+	colInfos := []*model.ColumnInfo{colInfo0}
+	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
-	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
+	colInfos = []*model.ColumnInfo{colInfo1}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 0)
 	c.Assert(len(lengths), Equals, 0)
 
 	cols = []*Column{col0, col1}
-	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
+	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 	c.Assert(resCols[1].Equal(nil, col1), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestColHybird(c *C) {
+	ctx := mock.NewContext()
+
+	// bit
+	ft := types.NewFieldType(mysql.TypeBit)
+	col := &Column{RetType: ft, Index: 0}
+	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	for i := 0; i < 1024; i++ {
+		num, err := types.ParseBitStr(fmt.Sprintf("0b%b", i))
+		c.Assert(err, IsNil)
+		input.AppendBytes(0, num)
+	}
+	result, err := newBuffer(types.ETInt, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
+
+	it := chunk.NewIterator4Chunk(input)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalInt(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetInt64(i))
+	}
+
+	// use a container which has the different field type with bit
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalInt(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetInt64(i))
+	}
+
+	// enum
+	ft = types.NewFieldType(mysql.TypeEnum)
+	col.RetType = ft
+	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	for i := 0; i < 1024; i++ {
+		input.AppendEnum(0, types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
+	}
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
+
+	it = chunk.NewIterator4Chunk(input)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalString(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetString(i))
+	}
+
+	// set
+	ft = types.NewFieldType(mysql.TypeSet)
+	col.RetType = ft
+	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	for i := 0; i < 1024; i++ {
+		input.AppendSet(0, types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
+	}
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
+
+	it = chunk.NewIterator4Chunk(input)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalString(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetString(i))
+	}
+}
+
+func (s *testEvaluatorSuite) TestPadCharToFullLength(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.PadCharToFullLength = true
+
+	ft := types.NewFieldType(mysql.TypeString)
+	ft.Flen = 10
+	col := &Column{RetType: ft, Index: 0}
+	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	for i := 0; i < 1024; i++ {
+		input.AppendString(0, "xy")
+	}
+	result, err := newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
+
+	it := chunk.NewIterator4Chunk(input)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalString(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(len(v), Equals, ft.Flen)
+		c.Assert(v, Equals, result.GetString(i))
+	}
 }

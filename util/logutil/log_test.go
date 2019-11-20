@@ -73,7 +73,7 @@ func (s *testLogSuite) TestStringToLogLevel(c *C) {
 
 // TestLogging assure log format and log redirection works.
 func (s *testLogSuite) TestLogging(c *C) {
-	conf := NewLogConfig("warn", DefaultLogFormat, "", NewFileLogConfig(true, 0), false)
+	conf := NewLogConfig("warn", DefaultLogFormat, "", NewFileLogConfig(0), false)
 	conf.File.Filename = "log_file"
 	c.Assert(InitLogger(conf), IsNil)
 
@@ -97,8 +97,7 @@ func (s *testLogSuite) TestLogging(c *C) {
 
 func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 	fileName := "slow_query"
-	conf := NewLogConfig("info", DefaultLogFormat, fileName, NewFileLogConfig(true, DefaultLogMaxSize), false)
-	c.Assert(conf.File.LogRotate, IsTrue)
+	conf := NewLogConfig("info", DefaultLogFormat, fileName, NewFileLogConfig(DefaultLogMaxSize), false)
 	c.Assert(conf.File.MaxSize, Equals, DefaultLogMaxSize)
 	err := InitLogger(conf)
 	c.Assert(err, IsNil)
@@ -234,6 +233,8 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, patter
 			break
 		}
 		c.Assert(str, Matches, pattern)
+		c.Assert(strings.Contains(str, "stack"), IsFalse)
+		c.Assert(strings.Contains(str, "errorVerbose"), IsFalse)
 	}
 	c.Assert(err, Equals, io.EOF)
 }

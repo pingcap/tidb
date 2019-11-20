@@ -61,9 +61,9 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 	for {
-		saveSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint, t+10)
+		saveSafePoint(s.store.GetSafePointKV(), t+10)
 		cachedTime := time.Now()
-		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint)
+		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV())
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break
@@ -113,7 +113,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	s.waitUntilErrorPlugIn(txn4.startTS)
 
-	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()}, 0)
 	_, batchgeterr := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(batchgeterr, NotNil)
 	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)

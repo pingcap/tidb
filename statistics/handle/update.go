@@ -355,7 +355,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	return errors.Trace(err)
 }
 
@@ -483,7 +483,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if len(rows) == 0 || err != nil {
 		return errors.Trace(err)
 	}
@@ -564,12 +564,17 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 
 func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.mu.Lock()
-	h.mu.ctx.GetSessionVars().BatchDelete = true
-	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	h.mu.ctx.GetSessionVars().BatchDelete = false
-	h.mu.Unlock()
-	return errors.Trace(err)
+	defer h.mu.Unlock()
+	hasData := true
+	for hasData {
+		sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d limit 10000", tableID, histID, isIndex)
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		hasData = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	}
+	return nil
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
@@ -651,7 +656,7 @@ const (
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
 		variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -749,7 +754,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -766,11 +771,11 @@ func formatBuckets(hg *statistics.Histogram, lowBkt, highBkt, idxCols int) strin
 		return hg.BucketToString(lowBkt, idxCols)
 	}
 	if lowBkt+1 == highBkt {
-		return fmt.Sprintf("%s, %s", hg.BucketToString(lowBkt, 0), hg.BucketToString(highBkt, 0))
+		return fmt.Sprintf("%s, %s", hg.BucketToString(lowBkt, idxCols), hg.BucketToString(highBkt, idxCols))
 	}
 	// do not care the middle buckets
-	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.BucketToString(lowBkt, 0),
-		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.BucketToString(highBkt, 0))
+	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.BucketToString(lowBkt, idxCols),
+		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.BucketToString(highBkt, idxCols))
 }
 
 func colRangeToStr(c *statistics.Column, ran *ranger.Range, actual int64, factor float64) string {
@@ -929,7 +934,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
+		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	q.Expected = int64(expected)

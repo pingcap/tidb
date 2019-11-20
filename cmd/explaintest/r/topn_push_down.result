@@ -167,23 +167,18 @@ te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	count	task	operator info
-Projection_13	0.00	root	test.te.expect_time
-└─Limit_19	0.00	root	offset:0, count:5
-  └─IndexJoin_92	0.00	root	left outer join, inner:IndexReader_91, outer key:test.tr.id, inner key:test.p.relate_id
-    ├─TopN_95	0.00	root	test.te.expect_time:asc, offset:0, count:5
-    │ └─IndexJoin_36	0.00	root	inner join, inner:IndexLookUp_35, outer key:test.tr.id, inner key:test.te.trade_id
-    │   ├─IndexLookUp_74	0.00	root	
-    │   │ ├─Selection_72	0.00	cop	eq(test.tr.business_type, 18), in(test.tr.trade_type, 1)
-    │   │ │ └─IndexScan_70	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
-    │   │ └─Selection_73	0.00	cop	eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
-    │   │   └─TableScan_71	0.00	cop	table:tr, keep order:false, stats:pseudo
-    │   └─IndexLookUp_35	0.25	root	
-    │     ├─IndexScan_32	10.00	cop	table:te, index:trade_id, range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
-    │     └─Selection_34	0.25	cop	ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
-    │       └─TableScan_33	10.00	cop	table:te, keep order:false, stats:pseudo
-    └─IndexReader_91	9.99	root	index:Selection_90
-      └─Selection_90	9.99	cop	not(isnull(test.p.relate_id))
-        └─IndexScan_89	10.00	cop	table:p, index:relate_id, range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
+Projection_12	0.00	root	Column#47
+└─TopN_15	0.00	root	Column#47:asc, offset:0, count:5
+  └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:Column#1, inner key:Column#41
+    ├─IndexLookUp_67	0.00	root	
+    │ ├─Selection_65	0.00	cop[tikv]	eq(Column#4, 18), eq(Column#5, 1)
+    │ │ └─IndexScan_63	10.00	cop[tikv]	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │ └─Selection_66	0.00	cop[tikv]	eq(Column#21, 32314), eq(Column#3, 2)
+    │   └─TableScan_64	0.00	cop[tikv]	table:tr, keep order:false, stats:pseudo
+    └─IndexLookUp_23	0.03	root	
+      ├─IndexScan_20	1.25	cop[tikv]	table:te, index:trade_id, range: decided by [eq(Column#41, Column#1)], keep order:false, stats:pseudo
+      └─Selection_22	0.03	cop[tikv]	ge(Column#47, 2018-04-23 00:00:00.000000), le(Column#47, 2018-04-23 23:59:59.000000)
+        └─TableScan_21	1.25	cop[tikv]	table:te, keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	count	task	operator info
 Projection_6	1.00	root	1
@@ -194,79 +189,79 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	count	task	operator info
-Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t2.a)]
+Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(Column#1, Column#4)]
 ├─TableReader_18	9990.00	root	data:Selection_17
-│ └─Selection_17	9990.00	cop	not(isnull(test.t1.a))
-│   └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Selection_19	0.80	root	not(isnull(test.t2.a))
+│ └─Selection_17	9990.00	cop[tikv]	not(isnull(Column#1))
+│   └─TableScan_16	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_19	0.80	root	not(isnull(Column#4))
   └─Limit_20	1.00	root	offset:0, count:1
     └─TableReader_26	1.00	root	data:Limit_25
-      └─Limit_25	1.00	cop	offset:0, count:1
-        └─Selection_24	1.00	cop	gt(test.t2.b, test.t1.b)
-          └─TableScan_23	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─Limit_25	1.00	cop[tikv]	offset:0, count:1
+        └─Selection_24	1.00	cop[tikv]	gt(Column#5, Column#2)
+          └─TableScan_23	1.25	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	count	task	operator info
-Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, test.x.a)]
+Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(Column#1, Column#4)]
 ├─TableReader_20	9990.00	root	data:Selection_19
-│ └─Selection_19	9990.00	cop	not(isnull(test.t1.a))
-│   └─TableScan_18	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Selection_21	0.80	root	not(isnull(test.x.a))
-  └─Projection_22	1.00	root	test.t2.a, test.t1.b
+│ └─Selection_19	9990.00	cop[tikv]	not(isnull(Column#1))
+│   └─TableScan_18	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_21	0.80	root	not(isnull(Column#4))
+  └─Projection_22	1.00	root	Column#4, Column#2
     └─Limit_23	1.00	root	offset:0, count:1
       └─TableReader_29	1.00	root	data:Limit_28
-        └─Limit_28	1.00	cop	offset:0, count:1
-          └─Selection_27	1.00	cop	gt(test.t2.b, test.t1.b)
-            └─TableScan_26	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+        └─Limit_28	1.00	cop[tikv]	offset:0, count:1
+          └─Selection_27	1.00	cop[tikv]	gt(Column#5, Column#2)
+            └─TableScan_26	1.25	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int not null, index idx(a));
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
-└─IndexJoin_15	5.00	root	inner join, inner:IndexReader_14, outer key:test.t1.a, inner key:test.t2.a
-  ├─TableReader_17	4.00	root	data:TableScan_16
-  │ └─TableScan_16	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─IndexReader_14	10.00	root	index:IndexScan_13
-    └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+└─IndexJoin_15	5.00	root	inner join, inner:IndexReader_14, outer key:Column#1, inner key:Column#3
+  ├─TableReader_23	4.00	root	data:TableScan_22
+  │ └─TableScan_22	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─IndexReader_14	1.25	root	index:IndexScan_13
+    └─IndexScan_13	1.25	cop[tikv]	table:t2, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
-└─Selection_13	5.00	root	isnull(test.t2.a)
-  └─IndexJoin_17	5.00	root	left outer join, inner:IndexReader_16, outer key:test.t1.a, inner key:test.t2.a
-    ├─TableReader_19	4.00	root	data:TableScan_18
-    │ └─TableScan_18	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-    └─IndexReader_16	10.00	root	index:IndexScan_15
-      └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+└─Selection_13	5.00	root	isnull(Column#3)
+  └─IndexJoin_17	5.00	root	left outer join, inner:IndexReader_16, outer key:Column#1, inner key:Column#3
+    ├─TableReader_25	4.00	root	data:TableScan_24
+    │ └─TableScan_24	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─IndexReader_16	1.25	root	index:IndexScan_15
+      └─IndexScan_15	1.25	cop[tikv]	table:t2, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
-└─MergeJoin_12	5.00	root	inner join, left key:test.t1.a, right key:test.t2.a
+└─MergeJoin_12	5.00	root	inner join, left key:Column#1, right key:Column#3
   ├─IndexReader_15	4.00	root	index:IndexScan_14
-  │ └─IndexScan_14	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  │ └─IndexScan_14	4.00	cop[tikv]	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
   └─IndexReader_17	4.00	root	index:IndexScan_16
-    └─IndexScan_16	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    └─IndexScan_16	4.00	cop[tikv]	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
-└─Selection_13	5.00	root	isnull(test.t2.a)
-  └─MergeJoin_14	5.00	root	left outer join, left key:test.t1.a, right key:test.t2.a
+└─Selection_13	5.00	root	isnull(Column#3)
+  └─MergeJoin_14	5.00	root	left outer join, left key:Column#1, right key:Column#3
     ├─IndexReader_17	4.00	root	index:IndexScan_16
-    │ └─IndexScan_16	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    │ └─IndexScan_16	4.00	cop[tikv]	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
     └─IndexReader_19	4.00	root	index:IndexScan_18
-      └─IndexScan_18	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+      └─IndexScan_18	4.00	cop[tikv]	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
-└─HashLeftJoin_19	5.00	root	inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t2.a)]
-  ├─TableReader_22	4.00	root	data:TableScan_21
-  │ └─TableScan_21	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_24	10000.00	root	data:TableScan_23
-    └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+└─HashLeftJoin_31	5.00	root	inner join, inner:TableReader_38, equal:[eq(Column#1, Column#3)]
+  ├─TableReader_34	4.00	root	data:TableScan_33
+  │ └─TableScan_33	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_38	10000.00	root	data:TableScan_37
+    └─TableScan_37	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
-└─Selection_13	5.00	root	isnull(test.t2.a)
-  └─HashLeftJoin_18	5.00	root	left outer join, inner:TableReader_22, equal:[eq(test.t1.a, test.t2.a)]
-    ├─TableReader_20	4.00	root	data:TableScan_19
-    │ └─TableScan_19	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-    └─TableReader_22	10000.00	root	data:TableScan_21
-      └─TableScan_21	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_13	5.00	root	isnull(Column#3)
+  └─HashLeftJoin_25	5.00	root	left outer join, inner:TableReader_27 (REVERSED), equal:[eq(Column#1, Column#3)]
+    ├─TableReader_27	4.00	root	data:TableScan_26
+    │ └─TableScan_26	4.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_31	10000.00	root	data:TableScan_30
+      └─TableScan_30	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

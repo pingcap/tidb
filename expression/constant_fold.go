@@ -149,13 +149,14 @@ func foldConstant(expr Expression) (Expression, bool) {
 		allConstArg := true
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
-			foldedArg, isDeferred := foldConstant(args[i])
-			x.GetArgs()[i] = foldedArg
-			con, conOK := foldedArg.(*Constant)
-			argIsConst[i] = conOK
-			allConstArg = allConstArg && conOK
-			hasNullArg = hasNullArg || (conOK && con.Value.IsNull())
-			isDeferredConst = isDeferredConst || isDeferred
+			switch x := args[i].(type) {
+			case *Constant:
+				isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil
+				argIsConst[i] = true
+				hasNullArg = hasNullArg || x.Value.IsNull()
+			default:
+				allConstArg = false
+			}
 		}
 		if !allConstArg {
 			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
@@ -201,7 +202,14 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 		return &Constant{Value: value, RetType: x.RetType}, false
 	case *Constant:
-		if x.DeferredExpr != nil {
+		if x.ParamMarker != nil {
+			return &Constant{
+				Value:        x.ParamMarker.GetUserVar(),
+				RetType:      x.RetType,
+				DeferredExpr: x.DeferredExpr,
+				ParamMarker:  x.ParamMarker,
+			}, true
+		} else if x.DeferredExpr != nil {
 			value, err := x.DeferredExpr.Eval(chunk.Row{})
 			if err != nil {
 				logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))

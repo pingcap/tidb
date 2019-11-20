@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -187,7 +188,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindMeta
+	var bindRecords []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		bindRecords = handle.GetAllBindRecord()
@@ -195,23 +196,25 @@ func (e *ShowExec) fetchShowBind() error {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
 	for _, bindData := range bindRecords {
-		e.appendRow([]interface{}{
-			bindData.OriginalSQL,
-			bindData.BindSQL,
-			bindData.Db,
-			bindData.Status,
-			bindData.CreateTime,
-			bindData.UpdateTime,
-			bindData.Charset,
-			bindData.Collation,
-		})
+		for _, hint := range bindData.Bindings {
+			e.appendRow([]interface{}{
+				bindData.OriginalSQL,
+				hint.BindSQL,
+				bindData.Db,
+				hint.Status,
+				hint.CreateTime,
+				hint.UpdateTime,
+				hint.Charset,
+				hint.Collation,
+			})
+		}
 	}
 	return nil
 }
 
 func (e *ShowExec) fetchShowEngines() error {
 	sql := `SELECT * FROM information_schema.engines`
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -342,7 +345,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -382,16 +385,17 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is)
+		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
 		}
 		viewSchema := viewLogicalPlan.Schema()
+		viewOutputNames := viewLogicalPlan.OutputNames()
 		for _, col := range cols {
-			viewColumn := viewSchema.FindColumnByName(col.Name.L)
-			if viewColumn != nil {
-				col.FieldType = *viewColumn.GetType()
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col.FieldType = *viewSchema.Columns[idx].GetType()
 			}
 		}
 	}
@@ -499,6 +503,10 @@ func (e *ShowExec) fetchShowIndex() error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
+			nullVal := "YES"
+			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+				nullVal = ""
+			}
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
@@ -509,7 +517,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				0,                      // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
-				"YES",                  // Null
+				nullVal,                // Null
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
@@ -663,8 +671,16 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset || col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
+			if col.Charset != tblCharset {
+				fmt.Fprintf(&buf, " CHARACTER SET %s", col.Charset)
+			}
+			if col.Collate != tblCollate {
+				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+			} else {
+				defcol, err := charset.GetDefaultCollation(col.Charset)
+				if err == nil && defcol != col.Collate {
+					fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+				}
 			}
 		}
 		if col.IsGenerated() {
@@ -963,7 +979,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
 		mysql.SystemDB, mysql.UserTable, userName, hostName)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1090,6 +1106,9 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	}
 
 	for _, n := range nodes {
+		if n.State == node.Offline {
+			continue
+		}
 		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
 	}
 
@@ -1288,5 +1307,10 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		} else {
 			e.result.AppendInt64(6, 0)
 		}
+
+		e.result.AppendInt64(7, regions[i].writtenBytes)
+		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendInt64(9, regions[i].approximateSize)
+		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
 }

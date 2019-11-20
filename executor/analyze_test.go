@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -106,6 +107,16 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
+func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
+	tk.MustExec("analyze table t")
+}
+
 func (s *testSuite1) TestAnalyzeRestrict(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -168,7 +179,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
-func (s *testSuite1) TestAnalyzeFastSample(c *C) {
+func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := mockstore.NewMockTikvStore(
@@ -186,9 +197,6 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	for i := 0; i < 60; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -197,6 +205,10 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	// construct 5 regions split by {12, 24, 36, 48}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
 	manipulateCluster(cluster, splitKeys)
+
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
 
 	var pkCol *model.ColumnInfo
 	var colsInfo []*model.ColumnInfo
@@ -231,17 +243,36 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
 		vals = append(vals, make([]string, 0))
-		c.Assert(len(mockExec.Collectors[i].Samples), Equals, 20)
-		for j := 0; j < 20; j++ {
-			s, err := mockExec.Collectors[i].Samples[j].Value.ToString()
+		samples := mockExec.Collectors[i].Samples
+		c.Assert(len(samples), Equals, 20)
+		for j := 1; j < 20; j++ {
+			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
 			c.Assert(err, IsNil)
-			vals[i] = append(vals[i], s)
+			c.Assert(cmp, Greater, 0)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
 }
 
-func (s *testSuite1) TestFastAnalyze(c *C) {
+func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
+	for i := 0; i < len(hg.Buckets); i++ {
+		lower, upper := hg.GetLower(i), hg.GetUpper(i)
+		cmp, err := upper.CompareDatum(sc, lower)
+		if cmp < 0 || err != nil {
+			return false, err
+		}
+		if i == 0 {
+			continue
+		}
+		previousUpper := hg.GetUpper(i - 1)
+		cmp, err = lower.CompareDatum(sc, previousUpper)
+		if cmp <= 0 || err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := mockstore.NewMockTikvStore(
@@ -261,6 +292,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	// Should not panic.
+	tk.MustExec("analyze table t")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
@@ -279,35 +312,33 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:43 Count:20\n"+
-		"column:1 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:2 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:3 ndv:1 totColSize:72\n"+
-		"num: 20 lower_bound: char upper_bound: char repeats: 18\n"+
-		"index:1 ndv:20\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1")
+	c.Assert(tbl.Count, Equals, int64(20))
+	for _, col := range tbl.Columns {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &col.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
+	for _, idx := range tbl.Indices {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	// Should not panic.
+	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
 		"IndexReader_6 4.00 root index:IndexScan_5",
-		"└─IndexScan_5 4.00 cop table:t1, index:a, b, range:[1,1], keep order:false"))
+		"└─IndexScan_5 4.00 cop[tikv] table:t1, index:a, b, range:[1,1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
 		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+		"└─IndexScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
+		"└─IndexScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
@@ -381,43 +412,14 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 }
 
 type testFastAnalyze struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	cluster *mocktikv.Cluster
-	cli     *regionProperityClient
-}
-
-func (s *testFastAnalyze) SetUpSuite(c *C) {
-	cli := &regionProperityClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-	s.cli = cli
-
-	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(s.cluster),
-	)
-	c.Assert(err, IsNil)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testFastAnalyze) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
 }
 
 type regionProperityClient struct {
 	tikv.Client
 	mu struct {
 		sync.Mutex
-		regionID uint64
-		count    int64
+		failedOnce bool
+		count      int64
 	}
 }
 
@@ -427,42 +429,53 @@ func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, re
 		defer c.mu.Unlock()
 		c.mu.count++
 		// Mock failure once.
-		if req.DebugGetRegionProperties().RegionId == c.mu.regionID {
-			c.mu.regionID = 0
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
 			return &tikvrpc.Response{}, nil
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-func (c *regionProperityClient) setFailRegion(regionID uint64) {
-	c.mu.Lock()
-	c.mu.regionID = regionID
-	c.mu.Unlock()
-}
-
 func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.MustNewMVCCStore()
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
+	)
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key)")
-	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tk.MustExec("drop table if exists retry_row_count")
+	tk.MustExec("create table retry_row_count(a int primary key)")
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
-	// construct 6 regions split by {6, 12, 18, 24, 30}
-	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
-	regionIDs := manipulateCluster(s.cluster, splitKeys)
+	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	for i := 0; i < 30; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
-	s.cli.setFailRegion(regionIDs[4])
-	tk.MustExec("analyze table t")
+	cluster.SplitTable(mvccStore, tid, 6)
+	// Flush the region cache first.
+	tk.MustQuery("select * from retry_row_count")
+	tk.MustExec("analyze table retry_row_count")
 	// 4 regions will be sampled, and it will retry the last failed region.
-	c.Assert(s.cli.mu.count, Equals, int64(5))
-	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()[0]
+	c.Assert(cli.mu.count, Equals, int64(5))
+	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "retry_row_count"`).Rows()[0]
 	c.Assert(row[5], Equals, "30")
 }
 

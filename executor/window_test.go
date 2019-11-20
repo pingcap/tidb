@@ -18,8 +18,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite4) TestWindowFunctions(c *C) {
+func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	var result *testkit.Result
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
@@ -28,7 +29,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 		tk.MustExec("set @@tidb_enable_window_function = 0")
 	}()
 	tk.MustExec("insert into t values (1,2,3),(4,3,2),(2,3,4)")
-	result := tk.MustQuery("select count(a) over () from t")
+	result = tk.MustQuery("select count(a) over () from t")
 	result.Check(testkit.Rows("3", "3", "3"))
 	result = tk.MustQuery("select sum(a) over () + count(a) over () from t")
 	result.Check(testkit.Rows("10", "10", "10"))
@@ -160,10 +161,43 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 		),
 	)
 
+	tk.MustExec("CREATE TABLE td_dec (id DECIMAL(10,2), sex CHAR(1));")
+	tk.MustExec("insert into td_dec value (2.0, 'F'), (NULL, 'F'), (1.0, 'F')")
+	tk.MustQuery("SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id);").Check(
+		testkit.Rows("<nil> <nil>", "1.00 <nil>", "2.00 <nil>"),
+	)
+
 	result = tk.MustQuery("select sum(a) over w, sum(b) over w from t window w as (order by a)")
 	result.Check(testkit.Rows("2 3", "2 3", "6 6", "6 6"))
 	result = tk.MustQuery("select row_number() over w, sum(b) over w from t window w as (order by a)")
 	result.Check(testkit.Rows("1 3", "2 3", "3 6", "4 6"))
 	result = tk.MustQuery("select row_number() over w, sum(b) over w from t window w as (rows between 1 preceding and 1 following)")
 	result.Check(testkit.Rows("1 3", "2 4", "3 5", "4 3"))
+
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	result = tk.MustQuery("select a, row_number() over (partition by a) from t")
+	result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
+}
+
+func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
+	// see https://github.com/pingcap/tidb/issues/11614
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (2,1),(2,2),(2,3)")
+
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	result := tk.MustQuery("select a, b, rank() over (partition by a order by b) from t")
+	result.Check(testkit.Rows("2 1 1", "2 2 2", "2 3 3"))
+	result = tk.MustQuery("select a, b, PERCENT_RANK() over (partition by a order by b) from t")
+	result.Check(testkit.Rows("2 1 0", "2 2 0.5", "2 3 1"))
+	result = tk.MustQuery("select a, b, CUME_DIST() over (partition by a order by b) from t")
+	result.Check(testkit.Rows("2 1 0.3333333333333333", "2 2 0.6666666666666666", "2 3 1"))
+
+	// see https://github.com/pingcap/tidb/issues/12415
+	result = tk.MustQuery("select b, first_value(b) over (order by b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
+	result = tk.MustQuery("select b, first_value(b) over (order by b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
 }

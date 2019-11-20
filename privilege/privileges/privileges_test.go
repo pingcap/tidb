@@ -131,6 +131,24 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'tester'@'localhost';`)
+	mustExec(c, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	mustExec(c, rootSe, `create database test2`)
+	mustExec(c, rootSe, `create table test2.t(id int, v int, primary key(id))`)
+	mustExec(c, rootSe, `insert into test2.t(id, v) values(1, 1)`)
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `use test;`)
+	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
@@ -241,6 +259,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+
+	// All privileges with grant option
+	mustExec(c, se, `GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost' WITH GRANT OPTION`)
+
+	// Revoke grant option
+	mustExec(c, se, `REVOKE GRANT OPTION ON *.* FROM 'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
@@ -474,6 +506,14 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "CREATE USER 'usesuper'")
 	mustExec(c, se, "CREATE USER 'usenobody'")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	//without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
+	c.Assert(e, NotNil)
+	//with grant option
+	se = newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "use mysql")
 	// low privileged user
@@ -503,6 +543,24 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, "CREATE USER 'hasgrant'")
+	mustExec(c, se, "CREATE USER 'withoutgrant'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant'")
+	mustExec(c, se, "GRANT ALL ON mysql.* TO 'withoutgrant'")
+	// Without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	c.Assert(e, NotNil)
+	// With grant option
+	se = newSession(c, s.store, s.dbName)
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+}
+
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
@@ -520,7 +578,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tcd1, tcd2`)
-	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2 WITH GRANT OPTION`)
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -563,7 +621,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// high privileged user
 	mustExec(c, se, "CREATE USER 'asuper'")
 	mustExec(c, se, "CREATE USER 'anobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper' WITH GRANT OPTION")
 	mustExec(c, se, "CREATE DATABASE atest")
 	mustExec(c, se, "use atest")
 	mustExec(c, se, "CREATE TABLE t1 (a int)")
@@ -603,6 +661,12 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -657,18 +721,19 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustExec("create user superadmin")
 	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
 
 	var buf bytes.Buffer
 	var res bytes.Buffer
 	buf.WriteString("select ")
 	i := 0
-	for _, priv := range mysql.Priv2UserCol {
+	for _, priv := range mysql.AllGlobalPrivs {
 		if i != 0 {
 			buf.WriteString(", ")
 			res.WriteString(" ")
 		}
-		buf.WriteString(priv)
+		buf.WriteString(mysql.Priv2UserCol[priv])
 		res.WriteString("Y")
 		i++
 	}

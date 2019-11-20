@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"math"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,11 +25,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -41,12 +43,40 @@ func init() {
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
-var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
+var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
+var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
 	Data   *binlog.Binlog
 	Client *pumpcli.PumpsClient
+}
+
+// BinlogStatus is the status of binlog
+type BinlogStatus int
+
+const (
+	//BinlogStatusUnknown stands for unknown binlog status
+	BinlogStatusUnknown BinlogStatus = iota
+	//BinlogStatusOn stands for the binlog is enabled
+	BinlogStatusOn
+	//BinlogStatusOff stands for the binlog is disabled
+	BinlogStatusOff
+	//BinlogStatusSkipping stands for the binlog status
+	BinlogStatusSkipping
+)
+
+// String implements String function in fmt.Stringer
+func (s BinlogStatus) String() string {
+	switch s {
+	case BinlogStatusOn:
+		return "On"
+	case BinlogStatusOff:
+		return "Off"
+	case BinlogStatusSkipping:
+		return "Skipping"
+	}
+	return "Unknown"
 }
 
 // GetPumpsClient gets the pumps client instance.
@@ -78,6 +108,9 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 
 var skipBinlog uint32
 var ignoreError uint32
+var statusListener = func(_ BinlogStatus) error {
+	return nil
+}
 
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
@@ -95,6 +128,24 @@ func SetIgnoreError(on bool) {
 	}
 }
 
+// GetStatus gets the status of binlog
+func GetStatus() BinlogStatus {
+	conf := config.GetGlobalConfig()
+	if !conf.Binlog.Enable {
+		return BinlogStatusOff
+	}
+	skip := atomic.LoadUint32(&skipBinlog)
+	if skip > 0 {
+		return BinlogStatusSkipping
+	}
+	return BinlogStatusOn
+}
+
+// RegisterStatusListener registers a listener function to watch binlog status
+func RegisterStatusListener(listener func(BinlogStatus) error) {
+	statusListener = listener
+}
+
 // WriteBinlog writes a binlog to Pump.
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	skip := atomic.LoadUint32(&skipBinlog)
@@ -110,12 +161,21 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
-		logutil.BgLogger().Error("write binlog failed", zap.Error(err))
+		logutil.BgLogger().Error("write binlog failed",
+			zap.String("binlog_type", info.Data.Tp.String()),
+			zap.Uint64("binlog_start_ts", uint64(info.Data.StartTs)),
+			zap.Uint64("binlog_commit_ts", uint64(info.Data.CommitTs)),
+			zap.Error(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
 			logutil.BgLogger().Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
-			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
+			swapped := atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
+			if swapped && skip == 0 {
+				if err := statusListener(BinlogStatusSkipping); err != nil {
+					logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
+				}
+			}
 			return nil
 		}
 
@@ -131,17 +191,18 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
-func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
+func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlSchemaState int32, ddlQuery string) {
 	if client == nil {
 		return
 	}
 
-	ddlQuery = addSpecialComment(ddlQuery)
+	ddlQuery = AddSpecialComment(ddlQuery)
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{
-			Tp:       binlog.BinlogType_Prewrite,
-			DdlJobId: jobID,
-			DdlQuery: []byte(ddlQuery),
+			Tp:             binlog.BinlogType_Prewrite,
+			DdlJobId:       jobID,
+			DdlSchemaState: ddlSchemaState,
+			DdlQuery:       []byte(ddlQuery),
 		},
 		Client: client,
 	}
@@ -150,15 +211,52 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 
 const specialPrefix = `/*!90000 `
 
-func addSpecialComment(ddlQuery string) string {
+// AddSpecialComment uses to add comment for table option in DDL query.
+// Export for testing.
+func AddSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
 		return ddlQuery
 	}
-	loc := shardPat.FindStringIndex(strings.ToUpper(ddlQuery))
-	if loc == nil {
-		return ddlQuery
+	return addSpecialCommentByRegexps(ddlQuery, shardPat, preSplitPat)
+}
+
+// addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
+func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string {
+	upperQuery := strings.ToUpper(ddlQuery)
+	var specialComments []string
+	minIdx := math.MaxInt64
+	for i := 0; i < len(regs); {
+		reg := regs[i]
+		loc := reg.FindStringIndex(upperQuery)
+		if len(loc) < 2 {
+			i++
+			continue
+		}
+		specialComments = append(specialComments, ddlQuery[loc[0]:loc[1]])
+		if loc[0] < minIdx {
+			minIdx = loc[0]
+		}
+		ddlQuery = ddlQuery[:loc[0]] + ddlQuery[loc[1]:]
+		upperQuery = upperQuery[:loc[0]] + upperQuery[loc[1]:]
 	}
-	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
+	if minIdx != math.MaxInt64 {
+		query := ddlQuery[:minIdx] + specialPrefix
+		for _, comment := range specialComments {
+			if query[len(query)-1] != ' ' {
+				query += " "
+			}
+			query += comment
+		}
+		if query[len(query)-1] != ' ' {
+			query += " "
+		}
+		query += "*/"
+		if len(ddlQuery[minIdx:]) > 0 {
+			return query + " " + ddlQuery[minIdx:]
+		}
+		return query
+	}
+	return ddlQuery
 }
 
 // MockPumpsClient creates a PumpsClient, used for test.

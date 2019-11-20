@@ -30,11 +30,11 @@ type partialResult4CumeDist struct {
 }
 
 func (r *cumeDist) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Rank{})
+	return PartialResult(&partialResult4CumeDist{})
 }
 
 func (r *cumeDist) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4Rank)(pr)
+	p := (*partialResult4CumeDist)(pr)
 	p.curIdx = 0
 	p.lastRank = 0
 	p.rows = p.rows[:0]

@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -168,10 +169,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
@@ -180,12 +182,15 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		param.InExecute = false
 	}
 	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(ctx, e.ctx, stmt, e.is)
+	e.ctx.GetSessionVars().PlanID = 0
+	e.ctx.GetSessionVars().PlanColumnID = 0
+	destBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
+	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
-		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
@@ -193,7 +198,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.name != "" {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
-	return vars.AddPreparedStmt(e.ID, prepared)
+
+	preparedObj := &plannercore.CachedPrepareStmt{
+		PreparedAst: prepared,
+		VisitInfos:  destBuilder.GetVisitInfo(),
+	}
+	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 
 // ExecuteExec represents an EXECUTE executor.
@@ -210,6 +220,7 @@ type ExecuteExec struct {
 	plan          plannercore.Plan
 	id            uint32
 	lowerPriority bool
+	outputNames   []*types.FieldName
 }
 
 // Next implements the Executor Next interface.
@@ -220,7 +231,7 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build(b *executorBuilder) error {
-	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
+	ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
 		return err
 	}
@@ -255,10 +266,16 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !ok {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
+	preparedPointer := vars.PreparedStmts[id]
+	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
-			vars, id, vars.PreparedStmts[id].SchemaVersion,
+			vars, id, prepared.SchemaVersion,
 		))
 	}
 	vars.RemovePreparedStmt(id)
@@ -266,26 +283,36 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
+	ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+	startTime := time.Now()
+	defer func() {
+		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, err
 	}
 	execStmt.BinaryArgs = args
 	is := GetInfoSchema(sctx)
-	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
+	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
 
 	stmt := &ExecStmt{
-		InfoSchema: is,
-		Plan:       execPlan,
-		StmtNode:   execStmt,
-		Ctx:        sctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		OutputNames: names,
 	}
-	if prepared, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		stmt.Text = prepared.Stmt.Text()
+	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
@@ -299,8 +326,12 @@ func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 			return nil, plannercore.ErrStmtNotFound
 		}
 	}
-	if prepared, ok := vars.PreparedStmts[execID]; ok {
-		return prepared.Stmt, nil
+	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		return preparedObj.PreparedAst.Stmt, nil
 	}
 	return nil, plannercore.ErrStmtNotFound
 }

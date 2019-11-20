@@ -55,26 +55,36 @@ func (e *SQLBindExec) dropSQLBind() error {
 		OriginalSQL: e.normdOrigSQL,
 		Db:          e.ctx.GetSessionVars().CurrentDB,
 	}
+	if e.bindSQL != "" {
+		bindInfo := bindinfo.Binding{
+			BindSQL:   e.bindSQL,
+			Charset:   e.charset,
+			Collation: e.collation,
+		}
+		record.Bindings = append(record.Bindings, bindInfo)
+	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		handle.DropBindRecord(record)
-		return nil
+		return handle.DropBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(record)
+	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 }
 
 func (e *SQLBindExec) createSQLBind() error {
+	bindInfo := bindinfo.Binding{
+		BindSQL:   e.bindSQL,
+		Charset:   e.charset,
+		Collation: e.collation,
+		Status:    bindinfo.Using,
+	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
-		BindSQL:     e.bindSQL,
 		Db:          e.ctx.GetSessionVars().CurrentDB,
-		Charset:     e.charset,
-		Collation:   e.collation,
-		Status:      bindinfo.Using,
+		Bindings:    []bindinfo.Binding{bindInfo},
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.AddBindRecord(record)
+		return handle.AddBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(record)
+	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(e.ctx, GetInfoSchema(e.ctx), record)
 }

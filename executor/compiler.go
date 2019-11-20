@@ -15,14 +15,10 @@ package executor
 
 import (
 	"context"
-	"strings"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
@@ -52,23 +48,10 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	return c.compile(ctx, stmtNode, false)
-}
-
-// SkipBindCompile compiles an ast.StmtNode to a physical plan without SQL bind.
-func (c *Compiler) SkipBindCompile(ctx context.Context, node ast.StmtNode) (*ExecStmt, error) {
-	return c.compile(ctx, node, true)
-}
-
-func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind bool) (*ExecStmt, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	if !skipBind {
-		stmtNode = addHint(c.Ctx, stmtNode)
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
@@ -76,7 +59,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +74,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
+		OutputNames:   names,
 	}, nil
 }
 
@@ -372,51 +356,4 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	return is
-}
-
-func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
-	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil { //when the domain is initializing, the bind will be nil.
-		return stmtNode
-	}
-	switch x := stmtNode.(type) {
-	case *ast.ExplainStmt:
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt:
-			normalizeExplainSQL := parser.Normalize(x.Text())
-			idx := strings.Index(normalizeExplainSQL, "select")
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestHash(normalizeSQL)
-			x.Stmt = addHintForSelect(hash, normalizeSQL, ctx, x.Stmt)
-		}
-		return x
-	case *ast.SelectStmt:
-		normalizeSQL, hash := parser.NormalizeDigest(x.Text())
-		return addHintForSelect(hash, normalizeSQL, ctx, x)
-	default:
-		return stmtNode
-	}
-}
-
-func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
-	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
-	if bindRecord != nil {
-		if bindRecord.Status == bindinfo.Invalid {
-			return stmt
-		}
-		if bindRecord.Status == bindinfo.Using {
-			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
-			return bindinfo.BindHint(stmt, bindRecord.Ast)
-		}
-	}
-	globalHandle := domain.GetDomain(ctx).BindHandle()
-	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, ctx.GetSessionVars().CurrentDB)
-	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
-	}
-	if bindRecord != nil {
-		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
-		return bindinfo.BindHint(stmt, bindRecord.Ast)
-	}
-	return stmt
 }

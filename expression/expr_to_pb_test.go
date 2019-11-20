@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -29,6 +30,14 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+func init() {
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		panic(errors.Errorf("enable global failpoint `%s` failed: %v", fpname, err))
+	}
+}
 
 type dataGen4Expr2PbTest struct {
 }
@@ -318,7 +327,7 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	jsons[ast.Plus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":200,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 	jsons[ast.Minus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":204,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 	jsons[ast.Mul] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":208,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
-	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":31,\"collate\":63,\"charset\":\"binary\"}}"
+	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 
 	pbExprs := ExpressionsToPBList(sc, arithmeticalFuncs, client)
 	for i, pbExpr := range pbExprs {
@@ -412,14 +421,40 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 	}
 
 	pbExprs := ExpressionsToPBList(sc, bitwiseFuncs, client)
-	for _, pbExpr := range pbExprs {
+	jsons := []string{
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":3118,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":3119,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
+		"null",
+		"null",
+		"null",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":3121,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
+	}
+	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
-		c.Assert(string(js), Equals, "null")
+		c.Assert(string(js), Equals, jsons[i])
 	}
 }
 
-func (s *testEvaluatorSuite) TestPushDownSwitcher(c *C) {
+func (s *testEvaluatorSerialSuites) TestPanicIfPbCodeUnspecified(c *C) {
+	dg := new(dataGen4Expr2PbTest)
+	args := []Expression{dg.genColumn(mysql.TypeLong, 1), dg.genColumn(mysql.TypeLong, 2)}
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.And,
+		types.NewFieldType(mysql.TypeUnspecified),
+		args...,
+	)
+	c.Assert(err, IsNil)
+	fn := fc.(*ScalarFunction)
+	fn.Function.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	c.Assert(fn.Function.PbCode(), Equals, tipb.ScalarFuncSig_Unspecified)
+
+	pc := PbConverter{client: new(mock.Client), sc: new(stmtctx.StatementContext)}
+	c.Assert(func() { pc.ExprToPB(fn) }, PanicMatches, "unspecified PbCode: .*")
+}
+
+func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	var funcs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -432,7 +467,7 @@ func (s *testEvaluatorSuite) TestPushDownSwitcher(c *C) {
 	}{
 		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
 		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNot, true},
+		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
 	}
 	var enabled []string
 	for i, funcName := range cases {
@@ -595,7 +630,7 @@ func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
 	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},\"desc\":true}")
 }
 
-func (s *testEvaluatorSuite) TestImplicitArgs(c *C) {
+func (s *testEvaluatorSerialSuites) TestImplicitArgs(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)

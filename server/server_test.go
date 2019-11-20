@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -376,6 +377,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.AllowAllFiles = true
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err1, IsNil)
@@ -423,11 +425,12 @@ func runTestLoadData(c *C, server *Server) {
 
 		// specify faileds and lines
 		dbt.mustExec("delete from test")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
 		dbt.Assert(err, IsNil)
 		lastID, err = rs.LastInsertId()
 		dbt.Assert(err, IsNil)
-		dbt.Assert(lastID, Equals, int64(7))
+		dbt.Assert(lastID, Equals, int64(6))
 		affectedRows, err = rs.RowsAffected()
 		dbt.Assert(err, IsNil)
 		dbt.Assert(affectedRows, Equals, int64(4))
@@ -462,11 +465,12 @@ func runTestLoadData(c *C, server *Server) {
 			_, err = fp.WriteString(fmt.Sprintf("xxx row%d_col1	- row%d_col2\n", i, i))
 			dbt.Assert(err, IsNil)
 		}
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
 		dbt.Assert(err, IsNil)
 		lastID, err = rs.LastInsertId()
 		dbt.Assert(err, IsNil)
-		dbt.Assert(lastID, Equals, int64(11))
+		dbt.Assert(lastID, Equals, int64(10))
 		affectedRows, err = rs.RowsAffected()
 		dbt.Assert(err, IsNil)
 		dbt.Assert(affectedRows, Equals, int64(799))
@@ -474,10 +478,12 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 
 		// don't support lines terminated is ""
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
 		dbt.Assert(err, NotNil)
 
 		// infile doesn't exist
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
 		dbt.Assert(err, NotNil)
 	})
@@ -503,6 +509,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -548,6 +555,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -601,6 +609,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -645,6 +654,7 @@ func runTestLoadData(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
 		dbt.Assert(err1, IsNil)
 		var (
@@ -669,11 +679,64 @@ func runTestLoadData(c *C, server *Server) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
 	server.capability |= tmysql.ClientLocalFiles
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test OPTIONALLY
+	_, err = fp.WriteString(
+		`1,2` + "\n" +
+			`3,4` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 3)
+		dbt.Check(b, Equals, 4)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		// fail error processing test
+		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"), IsNil)
+		_, err1 = dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		mysqlErr, ok := err1.(*mysql.MySQLError)
+		dbt.Assert(ok, IsTrue)
+		dbt.Assert(mysqlErr.Message, Equals, "mock commit one task error")
+		dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"), IsNil)
+
+		dbt.mustExec("drop table if exists pn")
+	})
 }
 
 func runTestConcurrentUpdate(c *C) {
@@ -727,21 +790,21 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
 		// Make tests stable. Some times the error may be the ErrInfoSchemaChanged.
-		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table test (c int);")
-		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop table unknown_table;")
-		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
@@ -777,29 +840,6 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 		}
 	}
 	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
-}
-
-func runTestShowProcessList(c *C) {
-	runTests(c, nil, func(dbt *DBTest) {
-		fullSQL := "show                                                                                        full processlist"
-		simpSQL := "show                                                                                        processlist"
-		rows := dbt.mustQuery(fullSQL)
-		c.Assert(rows.Next(), IsTrue)
-		var outA, outB, outC, outD, outE, outF, outG, outH, outI string
-		err := rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
-		c.Assert(err, IsNil)
-		c.Assert(outE, Equals, "Query")
-		c.Assert(outF, Equals, "0")
-		c.Assert(outG, Equals, "2")
-		c.Assert(outH, Equals, fullSQL)
-		rows = dbt.mustQuery(simpSQL)
-		err = rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
-		c.Assert(err, IsNil)
-		c.Assert(outE, Equals, "Query")
-		c.Assert(outF, Equals, "0")
-		c.Assert(outG, Equals, "2")
-		c.Assert(outH, Equals, simpSQL[:100])
-	})
 }
 
 func runTestAuth(c *C) {

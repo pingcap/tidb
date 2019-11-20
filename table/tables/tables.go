@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -327,8 +328,8 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err = bs.SaveTo(txn); err != nil {
 		return err
 	}
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h, nil)
-	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h, newData)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -379,18 +380,24 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		}
 	}
 	for _, idx := range t.WritableIndices() {
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
-			newVs, err := idx.FetchValues(newData, nil)
-			if err != nil {
-				return err
-			}
-			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn); err != nil {
-				return err
-			}
+			untouched = false
 			break
+		}
+		// If txn is auto commit and index is untouched, no need to write index value.
+		if untouched && !ctx.GetSessionVars().InTxn() {
+			continue
+		}
+		newVs, err := idx.FetchValues(newData, nil)
+		if err != nil {
+			return err
+		}
+		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -410,10 +417,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
 func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
-	if ctx.GetSessionVars().LightningMode {
-		return ctx.Txn(true)
-	}
-
 	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
 	if bs == nil {
 		txn, err := ctx.Txn(true)
@@ -525,15 +528,11 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	txn.SetAssertion(key, kv.None)
 
-	if !sessVars.LightningMode {
-		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
-			return 0, err
-		}
+	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+		return 0, err
 	}
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
-	if !ctx.GetSessionVars().LightningMode {
-		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID, r)
-	}
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
 		binlogRow = row
@@ -593,7 +592,7 @@ func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	} else {
 		ctx = context.Background()
 	}
-	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
 			return recordID, err
@@ -603,23 +602,23 @@ func (t *tableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
-		var err2 error
-		indexVals, err2 = v.FetchValues(r, indexVals)
-		if err2 != nil {
-			return 0, err2
+		indexVals, err = v.FetchValues(r, indexVals)
+		if err != nil {
+			return 0, err
 		}
-		var dupKeyErr error
+		var dupErr error
 		if !skipCheck && v.Meta().Unique {
-			entryKey, err1 := t.genIndexKeyStr(indexVals)
-			if err1 != nil {
-				return 0, err1
+			entryKey, err := t.genIndexKeyStr(indexVals)
+			if err != nil {
+				return 0, err
 			}
-			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
-			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
+			existErrInfo := kv.NewExistErrInfo(v.Meta().Name.String(), entryKey)
+			txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
+			dupErr = existErrInfo.Err()
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupKeyErr
+				return dupHandle, dupErr
 			}
 			return 0, err
 		}
@@ -695,11 +694,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 
 // Row implements table.Table Row interface.
 func (t *tableCommon) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
-	r, err := t.RowWithCols(ctx, h, t.Cols())
-	if err != nil {
-		return nil, err
-	}
-	return r, nil
+	return t.RowWithCols(ctx, h, t.Cols())
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -713,7 +708,7 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		return err
 	}
 
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h, nil)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -834,8 +829,12 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	if _, err := idx.Create(ctx, rm, vals, h, table.WithAssertion(txn)); err != nil {
+func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
+	opts := []table.CreateIdxOptFunc{table.WithAssertion(txn)}
+	if untouched {
+		opts = append(opts, table.IndexIsUntouched)
+	}
+	if _, err := idx.Create(ctx, rm, vals, h, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -844,7 +843,7 @@ func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 				return err
 			}
 
-			return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, idx.Meta().Name)
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
 		}
 		return err
 	}
@@ -948,7 +947,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
+	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -1106,12 +1105,12 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	}
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
-	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
-	txn.SetOption(kv.PresumeKeyNotExistsError, e)
+	existErrInfo := kv.NewExistErrInfo("PRIMARY", strconv.Itoa(int(recordID)))
+	txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
-		return e
+		return existErrInfo.Err()
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
 	}

@@ -50,11 +50,9 @@ func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}})
 	intColResult := `column:1 ndv:16 totColSize:0
 num: 30 lower_bound: 0 upper_bound: 2 repeats: 10
-num: 10 lower_bound: 3 upper_bound: 5 repeats: 10
-num: 20 lower_bound: 6 upper_bound: 8 repeats: 10
-num: 20 lower_bound: 9 upper_bound: 11 repeats: 0
-num: 10 lower_bound: 12 upper_bound: 14 repeats: 0
-num: 20 lower_bound: 24 upper_bound: 26 repeats: 10
+num: 11 lower_bound: 6 upper_bound: 8 repeats: 0
+num: 30 lower_bound: 9 upper_bound: 11 repeats: 0
+num: 1 lower_bound: 12 upper_bound: 14 repeats: 0
 num: 30 lower_bound: 27 upper_bound: 29 repeats: 0`
 
 	stringCol := &Column{}
@@ -85,9 +83,9 @@ num: 30 lower_bound: 27 upper_bound: 29 repeats: 0`
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}})
 	stringColResult := `column:2 ndv:9 totColSize:0
 num: 60 lower_bound: a upper_bound: aaaabbbb repeats: 0
-num: 60 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 20
-num: 60 lower_bound: kkkkk upper_bound: ooooo repeats: 20
-num: 60 lower_bound: oooooo upper_bound: sssss repeats: 20
+num: 52 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 0
+num: 54 lower_bound: kkkkk upper_bound: ooooo repeats: 0
+num: 60 lower_bound: oooooo upper_bound: sssss repeats: 0
 num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 
 	newColl := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
@@ -129,4 +127,15 @@ func (s *testStatisticsSuite) TestTruncateHistogram(c *C) {
 	c.Assert(HistogramEqual(hist, newHist, true), IsTrue)
 	newHist = hist.TruncateHistogram(0)
 	c.Assert(newHist.Len(), Equals, 0)
+}
+
+func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
+	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
+	c.Assert(err, IsNil)
+	// Append invalid flag.
+	bytes = append(bytes, 20)
+	datum := types.NewDatum(bytes)
+	res, err := ValueToString(&datum, 3)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, "(1, 0.5, \x14)")
 }

@@ -322,7 +322,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
+		matched, isNull, err := e.joiner.tryToMatchInners(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, err
 		}

@@ -35,41 +35,73 @@ import (
 //
 // NOTE: We only protect concurrent access to "bytesConsumed" and "children",
 // that is to say:
-// 1. Only "BytesConsumed()", "Consume()", "AttachTo()" and "Detach" are thread-safe.
+// 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
 	mu struct {
 		sync.Mutex
 		children []*Tracker // The children memory trackers
 	}
+	actionMu struct {
+		sync.Mutex
+		actionOnExceed ActionOnExceed
+	}
 
-	label          fmt.Stringer // Label of this "Tracker".
-	bytesConsumed  int64        // Consumed bytes.
-	bytesLimit     int64        // Negative value means no limit.
-	maxConsumed    int64        // max number of bytes consumed during execution.
-	actionOnExceed ActionOnExceed
-	parent         *Tracker // The parent memory tracker.
+	label         fmt.Stringer // Label of this "Tracker".
+	bytesConsumed int64        // Consumed bytes.
+	bytesLimit    int64        // bytesLimit <= 0 means no limit.
+	maxConsumed   int64        // max number of bytes consumed during execution.
+	parent        *Tracker     // The parent memory tracker.
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
-//	2. "bytesLimit < 0" means no limit.
+//	2. "bytesLimit <= 0" means no limit.
 func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
-	return &Tracker{
-		label:          label,
-		bytesLimit:     bytesLimit,
-		actionOnExceed: &LogOnExceed{},
+	t := &Tracker{
+		label:      label,
+		bytesLimit: bytesLimit,
 	}
+	t.actionMu.actionOnExceed = &LogOnExceed{}
+	return t
 }
 
-// SetActionOnExceed sets the action when memory usage is out of memory quota.
+// CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
+// Only used in test.
+func (t *Tracker) CheckBytesLimit(val int64) bool {
+	return t.bytesLimit == val
+}
+
+// SetBytesLimit sets the bytes limit for this tracker.
+// "bytesLimit <= 0" means no limit.
+func (t *Tracker) SetBytesLimit(bytesLimit int64) {
+	t.bytesLimit = bytesLimit
+}
+
+// SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
-	t.actionOnExceed = a
+	t.actionMu.Lock()
+	t.actionMu.actionOnExceed = a
+	t.actionMu.Unlock()
+}
+
+// FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
+// and set the original action as its fallback.
+func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	a.SetFallback(t.actionMu.actionOnExceed)
+	t.actionMu.actionOnExceed = a
 }
 
 // SetLabel sets the label of a Tracker.
 func (t *Tracker) SetLabel(label fmt.Stringer) {
 	t.label = label
+}
+
+// Label gets the label of a Tracker.
+func (t *Tracker) Label() fmt.Stringer {
+	return t.label
 }
 
 // AttachTo attaches this memory tracker as a child to another Tracker. If it
@@ -131,7 +163,8 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 }
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
-// which means this is a memory release operation.
+// which means this is a memory release operation. When memory usage of a tracker
+// exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
@@ -149,7 +182,11 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 	if rootExceed != nil {
-		rootExceed.actionOnExceed.Action(rootExceed)
+		rootExceed.actionMu.Lock()
+		defer rootExceed.actionMu.Unlock()
+		if rootExceed.actionMu.actionOnExceed != nil {
+			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
+		}
 	}
 }
 

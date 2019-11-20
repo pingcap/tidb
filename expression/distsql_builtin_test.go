@@ -42,6 +42,10 @@ func (s *testEvalSuite) allocColID() int64 {
 	return s.colID
 }
 
+func (s *testEvalSuite) TearDownTest(c *C) {
+	s.colID = 0
+}
+
 func (s *testEvalSuite) TestPBToExpr(c *C) {
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
@@ -845,7 +849,7 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime
 		var err error
-		expr.Val, err = codec.EncodeMySQLTime(nil, d, mysql.TypeUnspecified, nil)
+		expr.Val, err = codec.EncodeMySQLTime(nil, d.GetMysqlTime(), mysql.TypeUnspecified, nil)
 		c.Assert(err, IsNil)
 		expr.FieldType = ToPBFieldType(newDateFieldType())
 	default:
@@ -949,6 +953,46 @@ func newDecimalFieldType() *types.FieldType {
 func newJSONFieldType() *types.FieldType {
 	return &types.FieldType{
 		Tp:      mysql.TypeJSON,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newFloatFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeFloat,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBinaryLiteralFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBit,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBlobFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBlob,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newEnumFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeEnum,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
 		Charset: charset.CharsetBin,

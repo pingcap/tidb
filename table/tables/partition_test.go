@@ -18,11 +18,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -262,20 +265,22 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr() *tables.PartitionExpr
+		PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 	}
-	pe := tbl.(partitionExpr).PartitionExpr()
-	c.Assert(pe.Column.TblName.L, Equals, "t1")
-	c.Assert(pe.Column.ColName.L, Equals, "id")
+	ctx := mock.NewContext()
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
+	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
+	c.Assert(err, IsNil)
+	c.Assert(pe.Column.ID, Equals, int64(1))
 
 	ranges := []string{
-		"or(lt(t1.id, 4), isnull(t1.id))",
-		"and(lt(t1.id, 7), ge(t1.id, 4))",
-		"and(1, ge(t1.id, 7))",
+		"or(lt(Column#1, 4), isnull(Column#1))",
+		"and(lt(Column#1, 7), ge(Column#1, 4))",
+		"and(1, ge(Column#1, 7))",
 	}
 	upperBounds := []string{
-		"lt(t1.id, 4)",
-		"lt(t1.id, 7)",
+		"lt(Column#1, 4)",
+		"lt(Column#1, 7)",
 		"1",
 	}
 	for i, expr := range pe.Ranges {

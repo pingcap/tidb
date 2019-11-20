@@ -35,20 +35,14 @@ import (
 
 // EncodeHandle encodes handle in data.
 func EncodeHandle(h int64) []byte {
-	buf := &bytes.Buffer{}
-	err := binary.Write(buf, binary.BigEndian, h)
-	if err != nil {
-		panic(err)
-	}
-	return buf.Bytes()
+	var data [8]byte
+	binary.BigEndian.PutUint64(data[:], uint64(h))
+	return data[:]
 }
 
 // DecodeHandle decodes handle in data.
 func DecodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, err
+	return int64(binary.BigEndian.Uint64(data)), nil
 }
 
 // indexIter is for KV store index iterator.
@@ -204,32 +198,59 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		fn(&opt)
 	}
 	ss := opt.AssertionProto
-	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
-	skipCheck := sctx.GetSessionVars().LightningMode || sctx.GetSessionVars().StmtCtx.BatchCheck
-	key, distinct, err := c.GenIndexKey(sctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	vars := sctx.GetSessionVars()
+	writeBufs := vars.GetWriteStmtBufs()
+	skipCheck := vars.StmtCtx.BatchCheck
+	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
-		return 0, err
-	}
-	// save the key buffer to reuse.
-	writeBufs.IndexKeyBuf = key
-	if !distinct {
-		// non-unique index doesn't need store value, write a '0' to reduce space
-		err = rm.Set(key, []byte{'0'})
-		if ss != nil {
-			ss.SetAssertion(key, kv.None)
-		}
-		return 0, err
-	}
-
-	if skipCheck {
-		err = rm.Set(key, EncodeHandle(h))
-		if ss != nil {
-			ss.SetAssertion(key, kv.None)
-		}
 		return 0, err
 	}
 
 	ctx := opt.Ctx
+	if opt.Untouched {
+		txn, err1 := sctx.Txn(true)
+		if err1 != nil {
+			return 0, err1
+		}
+		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
+		// should not overwrite the key with un-commit flag.
+		// So if the key exists, just do nothing and return.
+		_, err = txn.GetMemBuffer().Get(ctx, key)
+		if err == nil {
+			return 0, nil
+		}
+	}
+
+	// save the key buffer to reuse.
+	writeBufs.IndexKeyBuf = key
+	if !distinct {
+		// non-unique index doesn't need store value, write a '0' to reduce space
+		value := []byte{'0'}
+		if opt.Untouched {
+			value[0] = kv.UnCommitIndexKVFlag
+		}
+		err = rm.Set(key, value)
+		if ss != nil {
+			ss.SetAssertion(key, kv.None)
+		}
+		return 0, err
+	}
+
+	if skipCheck || opt.Untouched {
+		value := EncodeHandle(h)
+		// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+		// then should also write the untouched index key/value to mem-buffer to make sure the data
+		// is consistent with the index in txn mem-buffer.
+		if opt.Untouched {
+			value = append(value, kv.UnCommitIndexKVFlag)
+		}
+		err = rm.Set(key, value)
+		if ss != nil {
+			ss.SetAssertion(key, kv.None)
+		}
+		return 0, err
+	}
+
 	if ctx != nil {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("index.Create", opentracing.ChildOf(span.Context()))
@@ -243,7 +264,8 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	var value []byte
 	value, err = rm.Get(ctx, key)
 	if kv.IsErrNotFound(err) {
-		err = rm.Set(key, EncodeHandle(h))
+		v := EncodeHandle(h)
+		err = rm.Set(key, v)
 		if ss != nil {
 			ss.SetAssertion(key, kv.NotExist)
 		}

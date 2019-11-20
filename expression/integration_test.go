@@ -41,16 +41,20 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = Suite(&testIntegrationSuite2{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
+}
+
+type testIntegrationSuite2 struct {
+	testIntegrationSuite
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -65,7 +69,6 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
@@ -74,7 +77,6 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -240,7 +242,7 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
 }
 
-func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	ctx := context.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -422,6 +424,17 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float)")
+	tk.MustExec("insert into t values(1000000)")
+	rs, err = tk.Exec("select exp(a) from t")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(err, NotNil)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'exp(Column#1)'")
+	c.Assert(rs.Close(), IsNil)
 
 	// for conv
 	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
@@ -557,7 +570,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
 
-func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -976,7 +989,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 }
 
-func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestEncryptionBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1141,7 +1154,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	originSQLMode := s.ctx.GetSessionVars().StrictSQLMode
 	s.ctx.GetSessionVars().StrictSQLMode = true
 	defer func() {
@@ -1269,8 +1282,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for quarter
 	result = tk.MustQuery(`select quarter("2012-00-20"), quarter("2012-01-21"), quarter("2012-03-22"), quarter("2012-05-23"), quarter("2012-08-24"), quarter("2012-09-25"), quarter("2012-11-26"), quarter("2012-12-27");`)
 	result.Check(testkit.Rows("0 1 1 2 3 3 4 4"))
-	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("0000-00-00"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
+	result.Check(testkit.Rows("0 0 0 0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for from_days
 	result = tk.MustQuery(`select from_days(0), from_days(-199), from_days(1111), from_days(120), from_days(1), from_days(1111111), from_days(9999999), from_days(22222);`)
@@ -1621,6 +1642,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result = tk.MustQuery(`SELECT DATE_FORMAT('0', '%W %M %e %Y %r %y'), DATE_FORMAT('0.0', '%W %M %e %Y %r %y'), DATE_FORMAT(0, 0);`)
+	result.Check(testkit.Rows("<nil> <nil> 0"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|invalid time format: '0'",
+		"Warning|1292|invalid time format: '0.0'"))
+	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// for yearweek
 	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)
@@ -2036,6 +2067,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
 	result.Check(testkit.Rows("<nil>"))
+
+	// fix issue 10308
+	result = tk.MustQuery("select time(\"- -\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '- -'"))
+	result = tk.MustQuery("select time(\"---1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '---1'"))
+	result = tk.MustQuery("select time(\"-- --1\");")
+	result.Check(testkit.Rows("00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -2076,6 +2118,12 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for unaryPlus
 	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
+	// for unaryMinus
+	tk.MustExec("drop table if exists f")
+	tk.MustExec("create table f(a decimal(65,0))")
+	tk.MustExec("insert into f value (-17000000000000000000)")
+	result = tk.MustQuery("select a from f")
+	result.Check(testkit.Rows("-17000000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
@@ -2118,7 +2166,7 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2196,11 +2244,15 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 
 	tk.MustExec(`create table tb5(a float(64));`)
 	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
-	err := tk.QueryToErr(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
-	msg := strings.Split(err.Error(), " ")
-	last := msg[len(msg)-1]
-	c.Assert(last, Equals, "bigint")
+	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
+
+	tk.MustExec(`create table tb5(a double(64));`)
+	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
+	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
+	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
+	result.Check(testkit.Rows("9223372036854775807", "9223372036854775807"))
+	tk.MustExec(`drop table tb5`)
 
 	// test builtinCastIntAsDecimalSig
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
@@ -2216,6 +2268,36 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (select * from tb5 where a = b);`)
 	result = tk.MustQuery(`select * from tb5;`)
 	result.Check(testkit.Rows("13835058000000000000 13835058000000000000", "13835058000000000000 13835058000000000000"))
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastRealAsIntSig
+	tk.MustExec(`create table tb5(a double, b float);`)
+	tk.MustExec(`insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);`)
+	tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=0;`).Check(testkit.Rows())
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	_ = tk.MustQuery(`select * from tb5 where cast(b as unsigned int)=0;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	tk.MustExec(`drop table tb5;`)
+	tk.MustExec(`create table tb5(a double, b bigint unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=b;`)
+	// TODO `obtained string = "[18446744073709552000 18446744073709551615]`
+	// result.Check(testkit.Rows("18446744073709551616 18446744073709551615"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustExec(`drop table tb5;`)
+
+	// test builtinCastJSONAsIntSig
+	tk.MustExec(`create table tb5(a json, b bigint unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as unsigned int)=b;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 1.844674407370955e+20 overflows bigint"))
+	_ = tk.MustQuery(`select * from tb5 where cast(b as unsigned int)=0;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustExec(`drop table tb5;`)
+	tk.MustExec(`create table tb5(a json, b bigint unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values ('92233720368547758080', 18446744073709551615);`)
+	_ = tk.MustQuery(`select * from tb5 where cast(a as signed int)=b;`)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1690 constant 9.223372036854776e+19 overflows bigint"))
 	tk.MustExec(`drop table tb5;`)
 
 	// test builtinCastIntAsStringSig
@@ -2484,7 +2566,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("99999.99"))
 	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
 	result.Check(testkit.Rows("111111.00"))
-	_, err = tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
 	c.Assert(err, NotNil)
 
 	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,
@@ -2737,6 +2819,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
 	c.Assert(err, NotNil)
+
+	result = tk.MustQuery(`select 1 / '2007' div 1;`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
@@ -2977,7 +3062,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(Column#1 + Column#2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3015,7 +3100,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(Column#1 - Column#2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3035,6 +3120,12 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rs.Close(), IsNil)
 	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
 	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
+	tk.MustExec(`create table tb5(a int(10));`)
+	tk.MustExec(`insert into tb5 (a) values (10);`)
+	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
+	c.Assert(e, NotNil)
+	c.Assert(e.Error(), Equals, `other error: [types:1690]BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`)
+	tk.MustExec(`drop table tb5`)
 
 	// for multiply
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
@@ -3288,9 +3379,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 10000.00 root eq(test.t.a, test.t.a)",
+		"Projection_3 10000.00 root eq(Column#1, Column#1)",
 		"└─TableReader_5 10000.00 root data:TableScan_4",
-		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableScan_4 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	// for interval
@@ -3478,18 +3569,18 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(Column#1)"))
 
 	_, err := tk.Exec("insert into d select group_concat(a) from t")
 	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, terror.ErrCode(mysql.ErrCutValueGroupConcat))
 
 	tk.Exec("set sql_mode=''")
 	tk.MustExec("insert into d select group_concat(a) from t")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(Column#2)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
-func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
+func (s *testIntegrationSuite2) TestOtherBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3675,6 +3766,39 @@ func (s *testIntegrationSuite) TestJSONBuiltin(c *C) {
 	tk.MustExec("CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`))")
 	_, err := tk.Exec("UPDATE `test`.`my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');")
 	c.Assert(err, NotNil)
+
+	r := tk.MustQuery("select json_valid(null);")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery(`select json_valid("null");`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid(0);")
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid("0");`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid("hello");`)
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid('"hello"');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid('{"a":1}');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid('{}');")
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid('[]');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid('2019-8-19');")
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid('"2019-8-19"');`)
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
@@ -4052,23 +4176,23 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 	}{
 		{
 			exprStr: "a = 1 or a = 1 or a = 1",
-			result:  "[eq(test.t.a, 1)]",
+			result:  "[eq(Column#1, 1)]",
 		},
 		{
 			exprStr: "a = 1 or a = 1 or (a = 1 and b = 1)",
-			result:  "[eq(test.t.a, 1)]",
+			result:  "[eq(Column#1, 1)]",
 		},
 		{
 			exprStr: "(a = 1 and a = 1) or a = 1 or b = 1",
-			result:  "[or(or(and(eq(test.t.a, 1), eq(test.t.a, 1)), eq(test.t.a, 1)), eq(test.t.b, 1))]",
+			result:  "[or(or(and(eq(Column#1, 1), eq(Column#1, 1)), eq(Column#1, 1)), eq(Column#2, 1))]",
 		},
 		{
 			exprStr: "(a = 1 and b = 2) or (a = 1 and b = 3) or (a = 1 and b = 4)",
-			result:  "[eq(test.t.a, 1) or(eq(test.t.b, 2), or(eq(test.t.b, 3), eq(test.t.b, 4)))]",
+			result:  "[eq(Column#1, 1) or(eq(Column#2, 2), or(eq(Column#2, 3), eq(Column#2, 4)))]",
 		},
 		{
 			exprStr: "(a = 1 and b = 1 and c = 1) or (a = 1 and b = 1) or (a = 1 and b = 1 and c > 2 and c < 3)",
-			result:  "[eq(test.t.a, 1) eq(test.t.b, 1)]",
+			result:  "[eq(Column#1, 1) eq(Column#2, 1)]",
 		},
 	}
 
@@ -4083,12 +4207,12 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
@@ -4109,6 +4233,42 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 		ret = 1
 	}
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
+}
+
+func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustQuery("select tidb_decode_plan('')").Check(testkit.Rows(""))
+	tk.MustQuery("select tidb_decode_plan('7APIMAk1XzEzCTAJMQlmdW5jczpjb3VudCgxKQoxCTE3XzE0CTAJMAlpbm5lciBqb2luLCBp" +
+		"AQyQOlRhYmxlUmVhZGVyXzIxLCBlcXVhbDpbZXEoQ29sdW1uIzEsIA0KCDkpIBkXADIVFywxMCldCjIJMzJfMTgFZXhkYXRhOlNlbGVjdGlvbl" +
+		"8xNwozCTFfMTcJMQkwCWx0HVlATlVMTCksIG5vdChpc251bGwVHAApUhcAUDIpKQo0CTEwXzE2CTEJMTAwMDAJdAHB2Dp0MSwgcmFuZ2U6Wy1p" +
+		"bmYsK2luZl0sIGtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkbwoFtgAyAZcEMAk6tgAEMjAFtgQyMDq2AAg5LCBmtgAAMFa3AAA5FbcAO" +
+		"T63AAAyzrcA')").Check(testkit.Rows("" +
+		"\tStreamAgg_13        \troot\t1    \tfuncs:count(1)\n" +
+		"\t└─HashLeftJoin_14   \troot\t0    \tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
+		"\t  ├─TableReader_18  \troot\t0    \tdata:Selection_17\n" +
+		"\t  │ └─Selection_17  \tcop \t0    \tlt(Column#1, NULL), not(isnull(Column#1)), not(isnull(Column#2))\n" +
+		"\t  │   └─TableScan_16\tcop \t10000\ttable:t1, range:[-inf,+inf], keep order:false, stats:pseudo\n" +
+		"\t  └─TableReader_21  \troot\t0    \tdata:Selection_20\n" +
+		"\t    └─Selection_20  \tcop \t0    \tlt(Column#9, NULL), not(isnull(Column#10)), not(isnull(Column#9))\n" +
+		"\t      └─TableScan_19\tcop \t10000\ttable:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
+}
+
+func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	result := tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
+	result.Check(testkit.Rows("tableID=43, _tidb_rowid=42451"))
+
+	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
+	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7"))
+
+	// Test invalid record/index key.
+	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
+	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(warns, HasLen, 1)
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
@@ -4200,7 +4360,7 @@ func (s *testIntegrationSuite) TestForeignKeyVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1105 variable 'foreign_key_checks' does not yet support value: 1"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: 1"))
 }
 
 func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
@@ -4583,8 +4743,8 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
 	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
 		"TableReader_43 10.00 root data:Selection_42",
-		"└─Selection_42 10.00 cop eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableScan_41 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Selection_42 10.00 cop[tikv] eq(Column#2, 2019-04-29 11:56:12)",
+		"  └─TableScan_41 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }
@@ -4857,6 +5017,12 @@ func (s *testIntegrationSuite) TestIssue11594(c *C) {
 	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
 }
 
+func (s *testIntegrationSuite) TestDefEnableVectorizedEvaluation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	tk.MustQuery(`select @@tidb_enable_vectorized_expression`).Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4902,4 +5068,82 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE)`).Check(testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR)`).Check(testkit.Rows("2007-03-31 00:08:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
+}
+
+func (s *testIntegrationSuite) TestIssue12301(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (d decimal(19, 0), i bigint(11))")
+	tk.MustExec("insert into t values (123456789012, 123456789012)")
+	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
+}
+
+func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// current db is empty
+	_, err := tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	// current db is not empty
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.xxx does not exist")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
+
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT timestampliteral(rand())")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.timestampliteral does not exist")
+
+}
+
+func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk (a int,b varchar(20))")
+	for i := 0; i < 200; i++ {
+		if i%5 == 0 {
+			tk.MustExec(fmt.Sprintf("insert chk values (NULL,NULL)"))
+			continue
+		}
+		tk.MustExec(fmt.Sprintf("insert chk values (%d,'%s')", i, strconv.Itoa(i)))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.MustExec("set tidb_init_chunk_size = 2")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+	}()
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	req := rs.NewChunk()
+	var count int
+	for {
+		err = rs.Next(context.TODO(), req)
+		c.Assert(err, IsNil)
+		numRows := req.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			if count%5 == 0 {
+				c.Assert(req.GetRow(i).IsNull(0), Equals, true)
+				c.Assert(req.GetRow(i).IsNull(1), Equals, true)
+			} else {
+				c.Assert(req.GetRow(i).IsNull(0), Equals, false)
+				c.Assert(req.GetRow(i).IsNull(1), Equals, false)
+				c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
+				c.Assert(req.GetRow(i).GetString(1), Equals, strconv.Itoa(count))
+			}
+			count++
+		}
+	}
+	c.Assert(count, Equals, 200)
+	rs.Close()
 }

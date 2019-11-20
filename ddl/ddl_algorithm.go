@@ -25,27 +25,27 @@ import (
 // because we never block the DML but costs some time to backfill the index data)
 // See https://dev.mysql.com/doc/refman/8.0/en/alter-table.html#alter-table-performance.
 type AlterAlgorithm struct {
-	supported []ast.AlterAlgorithm
+	supported []ast.AlgorithmType
 	// If the alter algorithm is not given, the defAlgorithm will be used.
-	defAlgorithm ast.AlterAlgorithm
+	defAlgorithm ast.AlgorithmType
 }
 
 var (
 	instantAlgorithm = &AlterAlgorithm{
-		supported:    []ast.AlterAlgorithm{ast.AlterAlgorithmInstant},
-		defAlgorithm: ast.AlterAlgorithmInstant,
+		supported:    []ast.AlgorithmType{ast.AlgorithmTypeInstant},
+		defAlgorithm: ast.AlgorithmTypeInstant,
 	}
 
 	inplaceAlgorithm = &AlterAlgorithm{
-		supported:    []ast.AlterAlgorithm{ast.AlterAlgorithmInplace},
-		defAlgorithm: ast.AlterAlgorithmInplace,
+		supported:    []ast.AlgorithmType{ast.AlgorithmTypeInplace},
+		defAlgorithm: ast.AlgorithmTypeInplace,
 	}
 
-	defaultAlgorithm = ast.AlterAlgorithmInstant
+	defaultAlgorithm = ast.AlgorithmTypeInstant
 )
 
-func getProperAlgorithm(specify ast.AlterAlgorithm, algorithm *AlterAlgorithm) (ast.AlterAlgorithm, error) {
-	if specify == ast.AlterAlgorithmDefault {
+func getProperAlgorithm(specify ast.AlgorithmType, algorithm *AlterAlgorithm) (ast.AlgorithmType, error) {
+	if specify == ast.AlgorithmTypeDefault {
 		return algorithm.defAlgorithm, nil
 	}
 
@@ -61,7 +61,7 @@ func getProperAlgorithm(specify ast.AlterAlgorithm, algorithm *AlterAlgorithm) (
 // ResolveAlterAlgorithm resolves the algorithm of the alterSpec.
 // If specify algorithm is not supported by the alter action, errAlterOperationNotSupported will be returned.
 // If specify is the ast.AlterAlgorithmDefault, then the default algorithm of the alter action will be returned.
-func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlterAlgorithm) (ast.AlterAlgorithm, error) {
+func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlgorithmType) (ast.AlgorithmType, error) {
 	switch alterSpec.Tp {
 	// For now, TiDB only support inplace algorithm and instant algorithm.
 	case ast.AlterTableAddConstraint:

@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/storeutil"
 	"google.golang.org/grpc"
 )
 
@@ -42,14 +44,38 @@ type testRegionRequestSuite struct {
 	mvccStore           mocktikv.MVCCStore
 }
 
+type testStoreLimitSuite struct {
+	cluster             *mocktikv.Cluster
+	storeIDs            []uint64
+	peerIDs             []uint64
+	regionID            uint64
+	leaderPeer          uint64
+	cache               *RegionCache
+	bo                  *Backoffer
+	regionRequestSender *RegionRequestSender
+	mvccStore           mocktikv.MVCCStore
+}
+
 var _ = Suite(&testRegionRequestSuite{})
+var _ = Suite(&testStoreLimitSuite{})
 
 func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(context.Background(), 1)
+	s.bo = NewNoopBackoff(context.Background())
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
+}
+
+func (s *testStoreLimitSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster()
+	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	s.cache = NewRegionCache(pdCli)
+	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
@@ -57,6 +83,26 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 
 func (s *testRegionRequestSuite) TearDownTest(c *C) {
 	s.cache.Close()
+}
+
+func (s *testStoreLimitSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
+func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{}, kvrpcpb.Context{})
+	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	oldStoreLimit := storeutil.StoreLimit.Load()
+	storeutil.StoreLimit.Store(500)
+	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount.Store(500)
+	// cause there is only one region in this cluster, regionID maps this leader.
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
+	c.Assert(err, NotNil)
+	c.Assert(resp, IsNil)
+	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
+	storeutil.StoreLimit.Store(oldStoreLimit)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -131,7 +177,12 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	c.Assert(ctx, NotNil)
+	req.ReplicaRead = true
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
@@ -236,6 +287,12 @@ func (s *mockTikvGrpcServer) KvPessimisticLock(context.Context, *kvrpcpb.Pessimi
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) KVPessimisticRollback(context.Context, *kvrpcpb.PessimisticRollbackRequest) (*kvrpcpb.PessimisticRollbackResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) KvCheckTxnStatus(ctx context.Context, in *kvrpcpb.CheckTxnStatusRequest) (*kvrpcpb.CheckTxnStatusResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) KvTxnHeartBeat(ctx context.Context, in *kvrpcpb.TxnHeartBeatRequest) (*kvrpcpb.TxnHeartBeatResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) KvGC(context.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {

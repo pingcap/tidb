@@ -16,6 +16,7 @@ package expression
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -26,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = check.Suite(&testUtilSuite{})
@@ -120,7 +121,7 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinNameConstJSONSig{}, &builtinLogicAndSig{}, &builtinLogicOrSig{}, &builtinLogicXorSig{}, &builtinRealIsTrueSig{},
 		&builtinDecimalIsTrueSig{}, &builtinIntIsTrueSig{}, &builtinRealIsFalseSig{}, &builtinDecimalIsFalseSig{}, &builtinIntIsFalseSig{},
 		&builtinUnaryMinusIntSig{}, &builtinDecimalIsNullSig{}, &builtinDurationIsNullSig{}, &builtinIntIsNullSig{}, &builtinRealIsNullSig{},
-		&builtinStringIsNullSig{}, &builtinTimeIsNullSig{}, &builtinUnaryNotSig{}, &builtinSleepSig{}, &builtinInIntSig{},
+		&builtinStringIsNullSig{}, &builtinTimeIsNullSig{}, &builtinUnaryNotRealSig{}, &builtinUnaryNotDecimalSig{}, &builtinUnaryNotIntSig{}, &builtinSleepSig{}, &builtinInIntSig{},
 		&builtinInStringSig{}, &builtinInDecimalSig{}, &builtinInRealSig{}, &builtinInTimeSig{}, &builtinInDurationSig{},
 		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetVarSig{}, &builtinGetVarSig{}, &builtinLockSig{},
 		&builtinReleaseLockSig{}, &builtinValuesIntSig{}, &builtinValuesRealSig{}, &builtinValuesDecimalSig{}, &builtinValuesStringSig{},
@@ -195,6 +196,14 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
 	num, _, _ = GetUint64FromConstant(con)
 	c.Assert(num, check.Equals, uint64(1))
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewUintDatum(100),
+	}
+	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(100))
 }
 
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
@@ -246,7 +255,6 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &One.Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
@@ -272,7 +280,6 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
@@ -285,7 +292,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
-	ret := PushDownNot(ctx, notFunc, false)
+	ret := PushDownNot(ctx, notFunc)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 }
@@ -313,6 +320,48 @@ func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
 	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
 	c.Assert(len(filtered), check.Equals, 1)
 	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
+}
+
+func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
+	ctx := mock.NewContext()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		if eTypes[i] == types.ETDecimal {
+			ft.Flen = 0
+		}
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		bufs := make([][]byte, 1024)
+		for j := 0; j < 1024; j++ {
+			bufs[j] = bufs[j][:0]
+		}
+		var err error
+		err = VecEval(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		if bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft); err != nil {
+			c.Fatal(err)
+		}
+
+		var buf []byte
+		for j := 0; j < input.NumRows(); j++ {
+			d, err := colExpr.Eval(input.GetRow(j))
+			if err != nil {
+				c.Fatal(err)
+			}
+			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			if err != nil {
+				c.Fatal(err)
+			}
+			c.Assert(string(bufs[j]), check.Equals, string(buf))
+		}
+	}
 }
 
 func isLogicOrFunction(e Expression) bool {
@@ -385,7 +434,25 @@ type MockExpr struct {
 	i   interface{}
 }
 
-func (m *MockExpr) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
 
@@ -444,3 +511,4 @@ func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
+func (m *MockExpr) Vectorized() bool                                  { return false }

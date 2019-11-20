@@ -51,6 +51,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TIDBMemQuotaNestedLoopApply, "1024", false},
+		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
 		err := variable.SetSessionSystemVar(v, t.key, types.NewDatum(t.value))
@@ -156,9 +157,11 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # User: root@192.168.0.1
 # Conn_ID: 1
 # Query_time: 1
+# Parse_time: 0.00000001
+# Compile_time: 0.00000001
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
-# Index_ids: [1,2]
+# Index_names: [t1:a,t2:b]
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:pseudo
@@ -166,10 +169,27 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
 # Mem_max: 2333
+# Prepared: true
+# Has_more_results: true
 # Succ: true
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, copTasks, memMax, true, sql)
+	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
+		TxnTS:          txnTS,
+		SQL:            sql,
+		Digest:         digest,
+		TimeTotal:      costTime,
+		TimeParse:      time.Duration(10),
+		TimeCompile:    time.Duration(10),
+		IndexNames:     "[t1:a,t2:b]",
+		StatsInfos:     statsInfos,
+		CopTasks:       copTasks,
+		ExecDetail:     execDetail,
+		MemMax:         memMax,
+		Prepared:       true,
+		HasMoreResults: true,
+		Succ:           true,
+	})
 	c.Assert(logString, Equals, resultString)
 }

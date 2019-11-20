@@ -16,8 +16,6 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,35 +33,36 @@ func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPla
 	return lp, err
 }
 
-func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
-	failpoint.Inject("enableGetUsedListErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr"))
-		}
-	})
-
+func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
+	tmpSchema := expression.NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
-	for _, col := range usedCols {
-		idx := schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, errors.Errorf("Can't find column %s from schema %s.", col, schema)
-		}
-		used[idx] = true
+	for i, col := range schema.Columns {
+		used[i] = tmpSchema.Contains(col)
 	}
-	return used, nil
+	return used
 }
 
-// exprHasSetVar checks if the expression has SetVar function.
-func exprHasSetVar(expr expression.Expression) bool {
+// exprsHasSideEffects checks if any of the expressions has side effects.
+func exprsHasSideEffects(exprs []expression.Expression) bool {
+	for _, expr := range exprs {
+		if exprHasSetVarOrSleep(expr) {
+			return true
+		}
+	}
+	return false
+}
+
+// exprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
+func exprHasSetVarOrSleep(expr expression.Expression) bool {
 	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
 	if !isScalaFunc {
 		return false
 	}
-	if scalaFunc.FuncName.L == ast.SetVar {
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
 		return true
 	}
 	for _, arg := range scalaFunc.GetArgs() {
-		if exprHasSetVar(arg) {
+		if exprHasSetVarOrSleep(arg) {
 			return true
 		}
 	}
@@ -71,24 +70,15 @@ func exprHasSetVar(expr expression.Expression) bool {
 }
 
 // PruneColumns implements LogicalPlan interface.
-// If any expression has SetVar functions, we do not prune it.
+// If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
-	used, err := getUsedList(parentUsedCols, p.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.schema)
 
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !exprHasSetVar(p.Exprs[i]) {
+		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
-		}
-	}
-	// Prune TblID2Handle since that handle column may be pruned.
-	for k, cols := range p.schema.TblID2Handle {
-		if p.schema.ColumnIndex(cols[0]) == -1 {
-			delete(p.schema.TblID2Handle, k)
 		}
 	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
@@ -106,10 +96,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) err
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := la.children[0]
-	used, err := getUsedList(parentUsedCols, la.Schema())
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, la.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -129,7 +116,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		}
 		la.AggFuncs = []*aggregation.AggFuncDesc{one}
 		col := &expression.Column{
-			ColName:  model.NewCIStr("dummy_agg"),
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 		}
@@ -155,12 +141,14 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 }
 
 // PruneColumns implements LogicalPlan interface.
+// If any expression can view as a constant in execution stage, such as correlated column, constant,
+// we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := ls.children[0]
 	for i := len(ls.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
 		if len(cols) == 0 {
-			if !ls.ByItems[i].Expr.ConstItem() {
+			if expression.IsMutableEffectsExpr(ls.ByItems[i].Expr) {
 				continue
 			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
@@ -175,14 +163,14 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, p.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.schema)
 
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
+		if hasBeenUsed {
+			break
+		}
 	}
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
@@ -206,36 +194,26 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
-	for _, col := range p.Schema().TblID2Handle {
-		parentUsedCols = append(parentUsedCols, col[0])
-	}
+	parentUsedCols = append(parentUsedCols, p.handleCol)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, ds.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, ds.schema)
 
 	var (
 		handleCol     *expression.Column
 		handleColInfo *model.ColumnInfo
 	)
+	if ds.handleCol != nil {
+		handleCol = ds.handleCol
+		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
+	}
 	for i := len(used) - 1; i >= 0; i-- {
-		if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(ds.Columns[i].Flag) {
-			handleCol = ds.schema.Columns[i]
-			handleColInfo = ds.Columns[i]
-		}
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
-		}
-	}
-	for k, cols := range ds.schema.TblID2Handle {
-		if ds.schema.ColumnIndex(cols[0]) == -1 {
-			delete(ds.schema.TblID2Handle, k)
 		}
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
@@ -248,31 +226,19 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
+	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
+		ds.handleCol = nil
+	}
 	return nil
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, p.Schema())
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-		}
-	}
-	for k, cols := range p.schema.TblID2Handle {
-		for i := len(cols) - 1; i >= 0; i-- {
-			if p.schema.ColumnIndex(cols[i]) == -1 {
-				cols = append(cols[:i], cols[i+1:]...)
-			}
-		}
-		if len(cols) == 0 {
-			delete(p.schema.TblID2Handle, k)
-		} else {
-			p.schema.TblID2Handle[k] = cols
 		}
 	}
 	return nil
@@ -361,11 +327,11 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate {
+	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
-	for _, cols := range p.children[0].Schema().TblID2Handle {
+	for _, cols := range p.tblID2Handle {
 		parentUsedCols = append(parentUsedCols, cols...)
 	}
 	return p.children[0].PruneColumns(parentUsedCols)

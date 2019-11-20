@@ -39,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ *uint32, _ uint64, _ int64, _ ...Key) error {
 	return nil
 }
 
@@ -229,3 +229,6 @@ func (s *mockSnapshot) Iter(k Key, upperBound Key) (Iterator, error) {
 func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
+
+func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
+func (s *mockSnapshot) DelOption(opt Option)                  {}

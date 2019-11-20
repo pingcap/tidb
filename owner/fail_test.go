@@ -18,15 +18,16 @@ import (
 	"math"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
+	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
@@ -40,20 +41,12 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	ln net.Listener
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
-	c.Assert(err, IsNil)
-	s.ln = ln
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	if s.ln != nil {
-		err := s.ln.Close()
-		c.Assert(err, IsNil)
-	}
 }
 
 var (
@@ -63,7 +56,24 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	defer testleak.AfterTest(c)()
+	ln, err := net.Listen("unix", "new_session:12379")
+	c.Assert(err, IsNil)
+	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
+	var stop sync.WaitGroup
+	stop.Add(1)
+	go func() {
+		if err = srv.Serve(ln); err != nil {
+			c.Errorf("can't serve gRPC requests %v", err)
+		}
+		stop.Done()
+	}()
+
+	leakFunc := testleak.AfterTest(c)
+	defer func() {
+		srv.Stop()
+		stop.Wait()
+		leakFunc()
+	}()
 
 	func() {
 		cli, err := clientv3.New(clientv3.Config{

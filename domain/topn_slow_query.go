@@ -213,17 +213,17 @@ func (q *topNSlowQueries) Close() {
 
 // SlowQueryInfo is a struct to record slow query info.
 type SlowQueryInfo struct {
-	SQL      string
-	Start    time.Time
-	Duration time.Duration
-	Detail   execdetails.ExecDetails
-	ConnID   uint64
-	TxnTS    uint64
-	User     string
-	DB       string
-	TableIDs string
-	IndexIDs string
-	Digest   string
-	Internal bool
-	Succ     bool
+	SQL        string
+	Start      time.Time
+	Duration   time.Duration
+	Detail     execdetails.ExecDetails
+	ConnID     uint64
+	TxnTS      uint64
+	User       string
+	DB         string
+	TableIDs   string
+	IndexNames string
+	Digest     string
+	Internal   bool
+	Succ       bool
 }

@@ -17,8 +17,58 @@ import (
 	"container/list"
 	"fmt"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 )
+
+// EngineType is determined by whether it's above or below `Gather`s.
+// Plan will choose the different engine to be implemented/executed on according to its EngineType.
+// Different engine may support different operators with different cost, so we should design
+// different transformation and implementation rules for each engine.
+type EngineType uint
+
+const (
+	// EngineTiDB stands for groups which is above `Gather`s and will be executed in TiDB layer.
+	EngineTiDB EngineType = 1 << iota
+	// EngineTiKV stands for groups which is below `Gather`s and will be executed in TiKV layer.
+	EngineTiKV
+	// EngineTiFlash stands for groups which is below `Gather`s and will be executed in TiFlash layer.
+	EngineTiFlash
+)
+
+// EngineTypeSet is the bit set of EngineTypes.
+type EngineTypeSet uint
+
+const (
+	// EngineTiDBOnly is the EngineTypeSet for EngineTiDB only.
+	EngineTiDBOnly = EngineTypeSet(EngineTiDB)
+	// EngineTiKVOnly is the EngineTypeSet for EngineTiKV only.
+	EngineTiKVOnly = EngineTypeSet(EngineTiKV)
+	// EngineTiFlashOnly is the EngineTypeSet for EngineTiFlash only.
+	EngineTiFlashOnly = EngineTypeSet(EngineTiFlash)
+	// EngineTiKVOrTiFlash is the EngineTypeSet for (EngineTiKV | EngineTiFlash).
+	EngineTiKVOrTiFlash = EngineTypeSet(EngineTiKV | EngineTiFlash)
+	// EngineAll is the EngineTypeSet for all of the EngineTypes.
+	EngineAll = EngineTypeSet(EngineTiDB | EngineTiKV | EngineTiFlash)
+)
+
+// Contains checks whether the EngineTypeSet contains the EngineType.
+func (e EngineTypeSet) Contains(tp EngineType) bool {
+	return uint(e)&uint(tp) != 0
+}
+
+// String implements fmt.Stringer interface.
+func (e EngineType) String() string {
+	switch e {
+	case EngineTiDB:
+		return "EngineTiDB"
+	case EngineTiKV:
+		return "EngineTiKV"
+	case EngineTiFlash:
+		return "EngineTiFlash"
+	}
+	return "UnknownEngineType"
+}
 
 // Group is short for expression Group, which is used to store all the
 // logically equivalent expressions. It's a set of GroupExpr.
@@ -33,17 +83,28 @@ type Group struct {
 
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
+
+	EngineType EngineType
 }
 
-// NewGroup creates a new Group.
-func NewGroup(e *GroupExpr) *Group {
+// NewGroupWithSchema creates a new Group with given schema.
+func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
+	prop := &property.LogicalProperty{Schema: s}
 	g := &Group{
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string]*list.Element),
 		FirstExpr:    make(map[Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
+		Prop:         prop,
+		EngineType:   EngineTiDB,
 	}
 	g.Insert(e)
+	return g
+}
+
+// SetEngineType sets the engine type of the group.
+func (g *Group) SetEngineType(e EngineType) *Group {
+	g.EngineType = e
 	return g
 }
 
@@ -57,7 +118,7 @@ func (g *Group) FingerPrint() string {
 
 // Insert a nonexistent Group expression.
 func (g *Group) Insert(e *GroupExpr) bool {
-	if g.Exists(e) {
+	if e == nil || g.Exists(e) {
 		return false
 	}
 
@@ -83,21 +144,31 @@ func (g *Group) Delete(e *GroupExpr) {
 		return // Can not find the target GroupExpr.
 	}
 
+	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
+	if g.FirstExpr[operand] == equiv {
+		// The target GroupExpr is the first Element of the same Operand.
+		// We need to change the FirstExpr to the next Expr, or delete the FirstExpr.
+		nextElem := equiv.Next()
+		if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
+			g.FirstExpr[operand] = nextElem
+		} else {
+			// There is no more GroupExpr of the Operand, so we should
+			// delete the FirstExpr of this Operand.
+			delete(g.FirstExpr, operand)
+		}
+	}
+
 	g.Equivalents.Remove(equiv)
 	delete(g.Fingerprints, fingerprint)
 	e.Group = nil
+}
 
-	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
-	if g.FirstExpr[operand] != equiv {
-		return // The target GroupExpr is not the first Element of the same Operand.
-	}
-
-	nextElem := equiv.Next()
-	if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
-		g.FirstExpr[operand] = nextElem
-		return // The first Element of the same Operand has been changed.
-	}
-	delete(g.FirstExpr, operand)
+// DeleteAll deletes all of the GroupExprs in the Group.
+func (g *Group) DeleteAll() {
+	g.Equivalents = list.New()
+	g.Fingerprints = make(map[string]*list.Element)
+	g.FirstExpr = make(map[Operand]*list.Element)
+	g.SelfFingerprint = ""
 }
 
 // Exists checks whether a Group expression existed in a Group.

@@ -85,6 +85,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.flag |= inCreateOrDropTable
@@ -115,7 +116,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		p.checkBindGrammar(node)
+		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+	case *ast.DropBindingStmt:
+		if node.HintedSel != nil {
+			p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		}
 	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
@@ -127,9 +132,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, p.err != nil
 }
 
-func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
-	originSQL := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
+	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
+	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
 
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
@@ -527,7 +532,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey:
+				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
 				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if p.err != nil {
 					return
@@ -614,7 +619,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
-		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
+		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
 		for _, str := range colDef.Tp.Elems {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
@@ -628,13 +633,20 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
+	case mysql.TypeBit:
+		if tp.Flen <= 0 {
+			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
+		}
+		if tp.Flen > mysql.MaxBitDisplayWidth {
+			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
+		}
 	default:
 		// TODO: Add more types.
 	}
 	return nil
 }
 
-// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether default value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
@@ -734,6 +746,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.User.Hostname = currentUser.Hostname
 			node.User.AuthUsername = currentUser.AuthUsername
 			node.User.AuthHostname = currentUser.AuthHostname
+		}
+	}
+}
+
+func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
+	for _, val := range node.Constraints {
+		if val.Refer != nil && val.Refer.Table.Schema.String() == "" {
+			val.Refer.Table.Schema = node.Table.Schema
 		}
 	}
 }

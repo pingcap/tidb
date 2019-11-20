@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
@@ -272,19 +271,13 @@ func (c *SampleCollector) ExtractTopN(numTop uint32) {
 	helper := newTopNHelper(values, numTop)
 	cms := c.CMSketch
 	cms.topN = make(map[uint64][]*TopNMeta)
-	dataCnts := make([]dataCnt, 0, len(helper.counter))
-	for key, cnt := range helper.counter {
-		if cnt >= helper.lastVal {
-			dataCnts = append(dataCnts, dataCnt{hack.Slice(string(key)), cnt})
-		}
-	}
-	// Sort them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
+	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
-	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
-	for _, dc := range dataCnts {
-		h1, h2 := murmur3.Sum128(dc.data)
+	for i := uint32(0); i < helper.actualNumTop; i++ {
+		data := helper.sorted[i].data
+		h1, h2 := murmur3.Sum128(data)
 		realCnt := cms.queryHashValue(h1, h2)
 		cms.subValue(h1, h2, realCnt)
-		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dc.data, realCnt})
+		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, data, realCnt})
 	}
 }

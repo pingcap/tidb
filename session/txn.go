@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -150,7 +149,6 @@ type dirtyTableOperation struct {
 	kind   int
 	tid    int64
 	handle int64
-	row    []types.Datum
 }
 
 var hasMockAutoIDRetry = int64(0)
@@ -335,7 +333,10 @@ func keyNeedToLock(k, v []byte) bool {
 		// only need to delete row key.
 		return k[10] == 'r'
 	}
-	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	if tablecodec.IsUntouchedIndexKValue(k, v) {
+		return false
+	}
+	isNonUniqueIndex := len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
 }
@@ -365,30 +366,30 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dt.AddRow(op.handle, op.row)
+		dt.AddRow(op.handle)
 	case table.DirtyTableDeleteRow:
 		dt.DeleteRow(op.handle)
-	case table.DirtyTableTruncate:
-		dt.TruncateTable()
 	}
+}
+
+type txnFailFuture struct{}
+
+func (txnFailFuture) Wait() (uint64, error) {
+	return 0, errors.New("mock get timestamp fail")
 }
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
-
-	mockFail bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
-	if tf.mockFail {
-		return nil, errors.New("mock get timestamp fail")
-	}
-
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
+	} else if _, ok := tf.future.(txnFailFuture); ok {
+		return nil, err
 	}
 
 	// It would retry get timestamp.
@@ -410,9 +411,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		tsFuture = oracleStore.GetTimestampAsync(ctx)
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
-	if x := ctx.Value("mockGetTSFail"); x != nil {
-		ret.mockFail = true
-	}
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+		ret.future = txnFailFuture{}
+	})
 	return ret
 }
 
@@ -462,7 +463,9 @@ func (s *session) StmtCommit() error {
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
-	s.txn.ConfirmAssertions(false)
+	if s.txn.Valid() {
+		s.txn.ConfirmAssertions(false)
+	}
 	return
 }
 
@@ -475,6 +478,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
-	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }

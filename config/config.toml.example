@@ -31,15 +31,21 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Only print a log when out of memory quota.
-# Valid options: ["log", "cancel"]
-oom-action = "log"
-
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
 
+# Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
+oom-use-tmp-storage = true
+
+# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
+
 # Enable coprocessor streaming.
 enable-streaming = false
+
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
@@ -63,6 +69,11 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
+# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
+# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+alter-primary-key = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -70,8 +81,11 @@ level = "info"
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamp in output
-disable-timestamp = false
+# Enable automatic timestamps in log output, if not set, it will be defaulted to true.
+# enable-timestamp = true
+
+# Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
+# enable-error-stack = false
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
@@ -79,11 +93,15 @@ slow-query-file = "tidb-slow.log"
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
+# record-plan-in-slow-log is used to enable record query plan in slow log.
+# 0 is disable. 1 is enable.
+record-plan-in-slow-log = 1
+
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
 
 # Maximum query length recorded in log.
-query-log-max-len = 2048
+query-log-max-len = 4096
 
 # File logging.
 [log.file]
@@ -98,9 +116,6 @@ max-days = 0
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
-
-# Rotate log by day
-log-rotate = true
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
@@ -128,14 +143,16 @@ report-status = true
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
+## API for prometheus: http://${status-host}:${status_port}/metrics
+## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
-# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+# Prometheus client push interval in second, set \"0\" to disable push to pushgateway.
 metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
@@ -163,7 +180,7 @@ stats-lease = "3s"
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
-# Probability to use the query feedback to update stats, 0 or 1 for always false/true.
+# Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
@@ -252,7 +269,7 @@ local-agent-host-port = ""
 
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
-grpc-connection-count = 16
+grpc-connection-count = 4
 
 # After a duration of this time in seconds if the client doesn't see any activity it pings
 # the server to see if the transport is still alive.
@@ -265,11 +282,6 @@ grpc-keepalive-timeout = 3
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
-# The max time a Txn may use (in seconds) from its startTS to commitTS.
-# We use it to guarantee GC worker will not influence any active txn. Please make sure that this
-# value is less than gc_life_time - 10s.
-max-txn-time-use = 590
-
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -279,10 +291,22 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-rpc = true
+
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
+
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = true
+enabled = false
 capacity = 2048000
 
 [binlog]
@@ -304,14 +328,14 @@ strategy = "range"
 
 [pessimistic-txn]
 # enable pessimistic transaction.
-enable = false
-
-# start pessimistic transaction by default.
-default = false
+enable = true
 
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "120s".
-ttl = "40s"
+[stmt-summary]
+# max number of statements kept in memory.
+max-stmt-count = 100
+
+# max length of displayed normalized sql and sample sql.
+max-sql-length = 4096

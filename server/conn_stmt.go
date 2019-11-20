@@ -44,6 +44,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -177,12 +178,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		err = parseExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
 		stmt.Reset()
 		if err != nil {
-			return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
+			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
-		return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
+		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
 		return cc.writeOK()
@@ -197,10 +198,17 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if err != nil {
 			return err
 		}
+		if cl, ok := rs.(fetchNotifier); ok {
+			cl.OnFetchReturned()
+		}
 		// explicitly flush columnInfo to client.
 		return cc.flush()
 	}
-	return cc.writeResultset(ctx, rs, true, 0, 0)
+	err = cc.writeResultset(ctx, rs, true, 0, 0)
+	if err != nil {
+		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+	}
+	return nil
 }
 
 // maxFetchSize constants
@@ -209,6 +217,7 @@ const (
 )
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
+	cc.ctx.GetSessionVars().StartTime = time.Now()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -217,8 +226,8 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
-			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
+		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
 	sql := ""
 	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
@@ -227,11 +236,15 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
 	if rs == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
-			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs")
+		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	return cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	if err != nil {
+		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+	}
+	return nil
 }
 
 func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
@@ -588,6 +601,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()
+	stmt.StoreResultSet(nil)
 	return cc.writeOK()
 }
 
@@ -616,8 +630,17 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
-	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
-		return prepared.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+	if sv == nil {
+		return ""
 	}
-	return fmt.Sprintf("prepared statement not found, ID: %d", stmtID)
+	preparedPointer, ok := sv.PreparedStmts[stmtID]
+	if !ok {
+		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	preparedAst := preparedObj.PreparedAst
+	return preparedAst.Stmt.Text() + sv.PreparedParams.String()
 }

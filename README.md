@@ -10,8 +10,7 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
-- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
-- Community [**Slack Channel**](https://pingcap.com/tidbslack/)
+- [**Slack Channel**](https://pingcap.com/tidbslack/)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
@@ -28,7 +27,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 - __MySQL Compatible Syntax__
 
-    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://www.pingcap.com/docs/sql/mysql-compatibility/).
+    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://pingcap.com/docs/v3.0/reference/mysql-compatibility/).
 
 - __Distributed Transactions with Strong Consistency__
 
@@ -62,6 +61,11 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
 
+## Getting Help
+
+- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
+- [**User Group (Chinese)**](https://asktug.com)
+
 ## Documentation
 
 + [English](https://pingcap.com/docs)
@@ -72,7 +76,8 @@ Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which include
 ![architecture](./docs/architecture.png)
 
 ## Contributing
-Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](CONTRIBUTING.md)
+Contributions are welcomed and greatly appreciated. See
+[CONTRIBUTING.md](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md)
 for details on submitting patches and the contribution workflow.
 
 ## License

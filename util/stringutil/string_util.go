@@ -188,8 +188,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	return
 }
 
-const caseDiff = 'a' - 'A'
-
 // NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func matchByteCI(a, b byte) bool {
 	return a == b
@@ -252,17 +250,17 @@ func Copy(src string) string {
 	return string(hack.Slice(src))
 }
 
-// stringerFunc defines string func implement fmt.Stringer.
-type stringerFunc func() string
+// StringerFunc defines string func implement fmt.Stringer.
+type StringerFunc func() string
 
 // String implements fmt.Stringer
-func (l stringerFunc) String() string {
+func (l StringerFunc) String() string {
 	return l()
 }
 
 // MemoizeStr returns memoized version of stringFunc.
 func MemoizeStr(l func() string) fmt.Stringer {
-	return stringerFunc(func() string {
+	return StringerFunc(func() string {
 		return l()
 	})
 }

@@ -49,7 +49,11 @@ type CommitDetails struct {
 	PrewriteTime      time.Duration
 	CommitTime        time.Duration
 	LocalLatchTime    time.Duration
-	TotalBackoffTime  time.Duration
+	CommitBackoffTime int64
+	Mu                struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
 	ResolveLockTime   int64
 	WriteKeys         int
 	WriteSize         int
@@ -70,6 +74,28 @@ const (
 	TotalKeysStr = "Total_keys"
 	// ProcessKeysStr means the total processed keys.
 	ProcessKeysStr = "Process_keys"
+	// PreWriteTimeStr means the time of pre-write.
+	PreWriteTimeStr = "Prewrite_time"
+	// CommitTimeStr means the time of commit.
+	CommitTimeStr = "Commit_time"
+	// GetCommitTSTimeStr means the time of getting commit ts.
+	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// CommitBackoffTimeStr means the time of commit backoff.
+	CommitBackoffTimeStr = "Commit_backoff_time"
+	// BackoffTypesStr means the backoff type.
+	BackoffTypesStr = "Backoff_types"
+	// ResolveLockTimeStr means the time of resolving lock.
+	ResolveLockTimeStr = "Resolve_lock_time"
+	// LocalLatchWaitTimeStr means the time of waiting in local latch.
+	LocalLatchWaitTimeStr = "Local_latch_wait_time"
+	// WriteKeysStr means the count of keys in the transaction.
+	WriteKeysStr = "Write_keys"
+	// WriteSizeStr means the key/value size in the transaction.
+	WriteSizeStr = "Write_size"
+	// PrewriteRegionStr means the count of region when pre-write.
+	PrewriteRegionStr = "Prewrite_region"
+	// TxnRetryStr means the count of transaction retry.
+	TxnRetryStr = "Txn_retry"
 )
 
 // String implements the fmt.Stringer interface.
@@ -96,36 +122,42 @@ func (d ExecDetails) String() string {
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
 		if commitDetails.PrewriteTime > 0 {
-			parts = append(parts, fmt.Sprintf("Prewrite_time: %v", commitDetails.PrewriteTime.Seconds()))
+			parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.CommitTime > 0 {
-			parts = append(parts, fmt.Sprintf("Commit_time: %v", commitDetails.CommitTime.Seconds()))
+			parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.GetCommitTsTime > 0 {
-			parts = append(parts, fmt.Sprintf("Get_commit_ts_time: %v", commitDetails.GetCommitTsTime.Seconds()))
+			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
 		}
-		if commitDetails.TotalBackoffTime > 0 {
-			parts = append(parts, fmt.Sprintf("Total_backoff_time: %v", commitDetails.TotalBackoffTime.Seconds()))
+		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		if commitBackoffTime > 0 {
+			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
+		commitDetails.Mu.Lock()
+		if len(commitDetails.Mu.BackoffTypes) > 0 {
+			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
+		}
+		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
-			parts = append(parts, fmt.Sprintf("Resolve_lock_time: %v", time.Duration(resolveLockTime).Seconds()))
+			parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.LocalLatchTime > 0 {
-			parts = append(parts, fmt.Sprintf("Local_latch_wait_time: %v", commitDetails.LocalLatchTime.Seconds()))
+			parts = append(parts, LocalLatchWaitTimeStr+": "+strconv.FormatFloat(commitDetails.LocalLatchTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.WriteKeys > 0 {
-			parts = append(parts, fmt.Sprintf("Write_keys: %d", commitDetails.WriteKeys))
+			parts = append(parts, WriteKeysStr+": "+strconv.FormatInt(int64(commitDetails.WriteKeys), 10))
 		}
 		if commitDetails.WriteSize > 0 {
-			parts = append(parts, fmt.Sprintf("Write_size: %d", commitDetails.WriteSize))
+			parts = append(parts, WriteSizeStr+": "+strconv.FormatInt(int64(commitDetails.WriteSize), 10))
 		}
 		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
 		if prewriteRegionNum > 0 {
-			parts = append(parts, fmt.Sprintf("Prewrite_region: %d", prewriteRegionNum))
+			parts = append(parts, PrewriteRegionStr+": "+strconv.FormatInt(int64(prewriteRegionNum), 10))
 		}
 		if commitDetails.TxnRetry > 0 {
-			parts = append(parts, fmt.Sprintf("Txn_retry: %d", commitDetails.TxnRetry))
+			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -163,9 +195,15 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitDetails.GetCommitTsTime > 0 {
 			fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
 		}
-		if commitDetails.TotalBackoffTime > 0 {
-			fields = append(fields, zap.String("total_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.TotalBackoffTime.Seconds(), 'f', -1, 64)+"s")))
+		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		if commitBackoffTime > 0 {
+			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
+		commitDetails.Mu.Lock()
+		if len(commitDetails.Mu.BackoffTypes) > 0 {
+			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
+		}
+		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
 			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
@@ -237,11 +275,47 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
 }
 
+// ReaderRuntimeStats collects stats for TableReader, IndexReader and IndexLookupReader
+type ReaderRuntimeStats struct {
+	sync.Mutex
+
+	copRespTime []time.Duration
+}
+
+// recordOneCopTask record once cop response time to update maxcopRespTime
+func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration) {
+	rrs.Lock()
+	defer rrs.Unlock()
+	rrs.copRespTime = append(rrs.copRespTime, t)
+}
+
+func (rrs *ReaderRuntimeStats) String() string {
+	size := len(rrs.copRespTime)
+	if size == 0 {
+		return ""
+	}
+	if size == 1 {
+		return fmt.Sprintf("rpc time:%v", rrs.copRespTime[0])
+	}
+	sort.Slice(rrs.copRespTime, func(i, j int) bool {
+		return rrs.copRespTime[i] < rrs.copRespTime[j]
+	})
+	vMax, vMin := rrs.copRespTime[size-1], rrs.copRespTime[0]
+	vP80, vP95 := rrs.copRespTime[size*4/5], rrs.copRespTime[size*19/20]
+	sum := 0.0
+	for _, t := range rrs.copRespTime {
+		sum += float64(t)
+	}
+	vAvg := time.Duration(sum / float64(size))
+	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95)
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu        sync.Mutex
-	rootStats map[string]*RuntimeStats
-	copStats  map[string]*CopRuntimeStats
+	mu          sync.Mutex
+	rootStats   map[string]*RuntimeStats
+	copStats    map[string]*CopRuntimeStats
+	readerStats map[string]*ReaderRuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -257,7 +331,7 @@ type RuntimeStats struct {
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
 	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]*CopRuntimeStats)}
+		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
 }
 
 // GetRootStats gets execStat for a executor.
@@ -290,6 +364,12 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 	copStats.RecordOneCopTask(address, summary)
 }
 
+// RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration) {
+	readerStats := e.GetReaderStats(planID)
+	readerStats.recordOneCopTask(copRespTime)
+}
+
 // ExistsRootStats checks if the planID exists in the rootStats collection.
 func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 	e.mu.Lock()
@@ -304,6 +384,18 @@ func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
 	defer e.mu.Unlock()
 	_, exists := e.copStats[planID]
 	return exists
+}
+
+// GetReaderStats gets the ReaderRuntimeStats specified by planID.
+func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	stats, exists := e.readerStats[planID]
+	if !exists {
+		stats = &ReaderRuntimeStats{copRespTime: make([]time.Duration, 0, 20)}
+		e.readerStats[planID] = stats
+	}
+	return stats
 }
 
 // Record records executor's execution.

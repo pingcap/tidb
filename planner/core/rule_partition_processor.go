@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -61,7 +62,10 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
-				us := LogicalUnionScan{conditions: p.conditions}.Init(ua.ctx)
+				us := LogicalUnionScan{
+					conditions: p.conditions,
+					handleCol:  p.handleCol,
+				}.Init(ua.ctx, ua.blockOffset)
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -87,7 +91,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr() *tables.PartitionExpr
+	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -99,20 +103,49 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	var partitionExprs []expression.Expression
 	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {
-		partitionExprs = table.PartitionExpr().Ranges
-		col = table.PartitionExpr().Column
+		pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
+		if err != nil {
+			return nil, err
+		}
+		partitionExprs = pExpr.Ranges
+		col = pExpr.Column
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
 	partitionDefs := ds.table.Meta().Partition.Definitions
 
+	filterConds := ds.allConds
+	// do preSolve with filter exprs for situations like
+	// where c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 and c3 = c1 - 10
+	// no need to do partition pruning work for "alwaysFalse" filter results
+	if len(partitionExprs) > 3 {
+		sctx := ds.SCtx()
+		filterConds = expression.PropagateConstant(sctx, filterConds)
+		filterConds = solver.Solve(sctx, filterConds)
+		alwaysFalse := false
+		if len(filterConds) == 1 {
+			// Constant false.
+			if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
+				ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+				if err == nil && ret == false {
+					alwaysFalse = true
+				}
+			}
+		}
+		if alwaysFalse {
+			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+			tableDual.schema = ds.Schema()
+			return tableDual, nil
+		}
+	}
+
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.SCtx(), col, expr, ds.allConds)
+		pruned, err := s.canBePruned(ds.SCtx(), col, expr, filterConds)
 		if err != nil {
 			return nil, err
 		}
@@ -128,9 +161,14 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 		// Not a deep copy.
 		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), TypeTableScan, &newDataSource)
+		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 		newDataSource.isPartition = true
 		newDataSource.physicalTableID = pi.Definitions[i].ID
+		newDataSource.possibleAccessPaths = make([]*accessPath, len(ds.possibleAccessPaths))
+		for i := range ds.possibleAccessPaths {
+			newPath := *ds.possibleAccessPaths[i]
+			newDataSource.possibleAccessPaths[i] = &newPath
+		}
 		// There are many expression nodes in the plan tree use the original datasource
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.
@@ -140,7 +178,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 		tableDual.schema = ds.Schema()
 		return tableDual, nil
 	}
@@ -148,7 +186,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.Init(ds.SCtx())
+	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
@@ -167,7 +205,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 
 	if len(conds) == 1 {
 		// Constant false.
-		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
+		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
 			if err == nil && ret == false {
 				return true, nil

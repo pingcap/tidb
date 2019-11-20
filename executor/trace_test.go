@@ -40,11 +40,28 @@ func (s *testSuite1) TestTraceExec(c *C) {
 	// +---------------------------+-----------------+------------+
 	rows = tk.MustQuery("trace format='row' select * from trace where id = 0;").Rows()
 	c.Assert(len(rows) > 1, IsTrue)
+	c.Assert(rowsOrdered(rows), IsTrue)
 
 	rows = tk.MustQuery("trace format='row' delete from trace where id = 0").Rows()
 	c.Assert(len(rows) > 1, IsTrue)
+	c.Assert(rowsOrdered(rows), IsTrue)
 
 	tk.MustExec("trace format='log' insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows = tk.MustQuery("trace format='log' select * from trace where id = 0;").Rows()
 	c.Assert(len(rows), GreaterEqual, 1)
+}
+
+func rowsOrdered(rows [][]interface{}) bool {
+	for idx := range rows {
+		if _, ok := rows[idx][1].(string); !ok {
+			return false
+		}
+		if idx == 0 {
+			continue
+		}
+		if rows[idx-1][1].(string) > rows[idx][1].(string) {
+			return false
+		}
+	}
+	return true
 }

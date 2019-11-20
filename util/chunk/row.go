@@ -28,6 +28,11 @@ type Row struct {
 	idx int
 }
 
+// Chunk returns the Chunk which the row belongs to.
+func (r Row) Chunk() *Chunk {
+	return r.c
+}
+
 // IsEmpty returns true if the Row is empty.
 func (r Row) IsEmpty() bool {
 	return r == Row{}
@@ -74,7 +79,6 @@ func (r Row) GetBytes(colIdx int) []byte {
 }
 
 // GetTime returns the Time value with the colIdx.
-// TODO: use Time structure directly.
 func (r Row) GetTime(colIdx int) types.Time {
 	return r.c.columns[colIdx].GetTime(r.idx)
 }
@@ -200,7 +204,19 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	return d
 }
 
+// GetRaw returns the underlying raw bytes with the colIdx.
+func (r Row) GetRaw(colIdx int) []byte {
+	return r.c.columns[colIdx].GetRaw(r.idx)
+}
+
 // IsNull returns if the datum in the chunk.Row is null.
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].IsNull(r.idx)
+}
+
+// CopyConstruct creates a new row and copies this row's data into it.
+func (r Row) CopyConstruct() Row {
+	newChk := renewWithCapacity(r.c, 1, 1)
+	newChk.AppendRow(r)
+	return newChk.GetRow(0)
 }

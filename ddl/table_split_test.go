@@ -14,7 +14,6 @@
 package ddl_test
 
 import (
-	"bytes"
 	"context"
 	"sync/atomic"
 	"time"
@@ -37,13 +36,15 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
-	session.SetSchemaLease(0)
+	session.SetSchemaLease(100 * time.Millisecond)
 	session.DisableStats4Test()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
+	// Synced split table region.
+	tk.MustExec("set global tidb_scatter_region = 1")
 	tk.MustExec(`create table t_part (a int key) partition by range(a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20)
@@ -73,17 +74,10 @@ func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	regionStartKey := tablecodec.EncodeTablePrefix(id)
 	var loc *tikv.KeyLocation
 	var err error
-	for i := 0; i < 10; i++ {
-		cache := store.GetRegionCache()
-		loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
-		c.Assert(err, IsNil)
-
-		// Region cache may be out of date, so we need to drop this expired region and load it again.
-		cache.InvalidateCachedRegion(loc.Region)
-		if bytes.Equal(loc.StartKey, []byte(regionStartKey)) {
-			return
-		}
-		time.Sleep(3 * time.Millisecond)
-	}
-	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
+	cache := store.GetRegionCache()
+	loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
+	c.Assert(err, IsNil)
+	// Region cache may be out of date, so we need to drop this expired region and load it again.
+	cache.InvalidateCachedRegion(loc.Region)
+	c.Assert([]byte(loc.StartKey), BytesEquals, []byte(regionStartKey))
 }

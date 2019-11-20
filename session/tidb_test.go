@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -79,7 +80,7 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	wg.Add(count)
 	for i := 0; i < count; i++ {
 		go func(se *session) {
-			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			_, _, err := se.ExecRestrictedSQL("select * from mysql.user limit 1")
 			c.Assert(err, IsNil)
 			wg.Done()
 		}(se)
@@ -166,5 +167,32 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
+	}
+}
+
+func (s *testMainSuite) TestKeysNeedLock(c *C) {
+	rowKey := tablecodec.EncodeRowKeyWithHandle(1, 1)
+	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	uniqueValue := make([]byte, 8)
+	uniqueUntouched := append(uniqueValue, '1')
+	nonUniqueVal := []byte{'0'}
+	nonUniqueUntouched := []byte{'1'}
+	var deleteVal []byte
+	rowVal := []byte{'a', 'b', 'c'}
+	tests := []struct {
+		key  []byte
+		val  []byte
+		need bool
+	}{
+		{rowKey, rowVal, true},
+		{rowKey, deleteVal, true},
+		{indexKey, nonUniqueVal, false},
+		{indexKey, nonUniqueUntouched, false},
+		{indexKey, uniqueValue, true},
+		{indexKey, uniqueUntouched, false},
+		{indexKey, deleteVal, false},
+	}
+	for _, tt := range tests {
+		c.Assert(keyNeedToLock(tt.key, tt.val), Equals, tt.need)
 	}
 }

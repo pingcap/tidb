@@ -1,0 +1,50 @@
+[
+  {
+    "name": "TestPKIsHandleRangeScan",
+    "cases": [
+      "select b from t where a > 1",
+      "select b from t where a > 1 and a < 3",
+      "select b from t where a > 1 and b < 6",
+      "select a from t where a * 3 + 1 > 9 and a < 5",
+      // Test TiDBSelection Implementation.
+      "select a from t group by a having sum(b) > 4"
+    ]
+  },
+  {
+    "name": "TestSort",
+    "cases": [
+      "select a from t order by a",
+      "select b from t order by b",
+      "select b from t order by a+b",
+      "select b from t order by b, a+b, a"
+    ]
+  },
+  {
+    "name": "TestAggregation",
+    "cases": [
+      "select sum(a) from t",
+      "select max(a), min(b) from t",
+      "select b, avg(a) from t group by b order by b",
+      "select b, sum(a) from t group by b order by b",
+      "select b, avg(a) from t group by b having sum(a) > 1 order by b",
+      "select max(a+b) from t",
+      "select sum(a) from t group by a, a+b order by a"
+    ]
+  },
+  {
+    "name": "TestSimplePlans",
+    "cases": [
+      "select a from t limit 2",
+      "select a from t limit 1 offset 2",
+      "select b from t order by b limit 3",
+      "select a from t order by a limit 1 offset 2"
+    ]
+  },
+  {
+    "name": "TestJoin",
+    "cases": [
+      "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
+      "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200"
+    ]
+  }
+]

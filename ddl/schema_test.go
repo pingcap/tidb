@@ -125,7 +125,11 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 func (s *testSchemaSuite) TestSchema(c *C) {
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
@@ -186,12 +190,20 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d1.Stop()
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease*4)
+	d2 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease*4),
+	)
 	defer d2.Stop()
 	ctx := testNewContext(d2)
 
@@ -240,7 +252,11 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d1.Stop()
 
 	testCheckOwner(c, d1, true)

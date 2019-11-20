@@ -100,6 +100,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 func (l *List) Add(chk *Chunk) {
 	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
+		// TODO: return error here.
 		panic("chunk appended to List should have at least 1 row")
 	}
 	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {

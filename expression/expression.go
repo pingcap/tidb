@@ -16,10 +16,13 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -40,8 +43,29 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
-	// VecEval evaluates this expression in a vectorized manner.
-	VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	// Vectorized returns if this expression supports vectorized evaluation.
+	Vectorized() bool
+
+	// VecEvalInt evaluates this expression in a vectorized manner.
+	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalReal evaluates this expression in a vectorized manner.
+	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalString evaluates this expression in a vectorized manner.
+	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalDecimal evaluates this expression in a vectorized manner.
+	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalTime evaluates this expression in a vectorized manner.
+	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalDuration evaluates this expression in a vectorized manner.
+	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalJSON evaluates this expression in a vectorized manner.
+	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // Expression represents all scalar expression in SQL.
@@ -87,6 +111,7 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// A constant item can be eval() when build a plan.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no subqueries that refers any tables.
@@ -123,6 +148,13 @@ func (e CNFExprs) Clone() CNFExprs {
 	for _, expr := range e {
 		cnf = append(cnf, expr.Clone())
 	}
+	return cnf
+}
+
+// Shallow makes a shallow copy of itself.
+func (e CNFExprs) Shallow() CNFExprs {
+	cnf := make(CNFExprs, 0, len(e))
+	cnf = append(cnf, e...)
 	return cnf
 }
 
@@ -179,6 +211,237 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 	return true, false, nil
 }
 
+var (
+	defaultChunkSize = 1024
+	selPool          = sync.Pool{
+		New: func() interface{} {
+			return make([]int, defaultChunkSize)
+		},
+	}
+	zeroPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int8, defaultChunkSize)
+		},
+	}
+)
+
+func allocSelSlice(n int) []int {
+	if n > defaultChunkSize {
+		return make([]int, n)
+	}
+	return selPool.Get().([]int)
+}
+
+func deallocateSelSlice(sel []int) {
+	if cap(sel) <= defaultChunkSize {
+		selPool.Put(sel)
+	}
+}
+
+func allocZeroSlice(n int) []int8 {
+	if n > defaultChunkSize {
+		return make([]int8, n)
+	}
+	return zeroPool.Get().([]int8)
+}
+
+func deallocateZeroSlice(isZero []int8) {
+	if cap(isZero) <= defaultChunkSize {
+		zeroPool.Put(isZero)
+	}
+}
+
+// VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
+func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the input.Sel().
+	// The caller will handle the input.Sel() and selected slices.
+	defer input.SetSel(input.Sel())
+	input.SetSel(nil)
+
+	n := input.NumRows()
+	selected = selected[:0]
+	nulls = nulls[:0]
+	for i := 0; i < n; i++ {
+		selected = append(selected, false)
+		nulls = append(nulls, false)
+	}
+
+	sel := allocSelSlice(n)
+	defer deallocateSelSlice(sel)
+	sel = sel[:0]
+	for i := 0; i < n; i++ {
+		sel = append(sel, i)
+	}
+	input.SetSel(sel)
+
+	// In isZero slice, -1 means Null, 0 means zero, 1 means not zero
+	isZero := allocZeroSlice(n)
+	defer deallocateZeroSlice(isZero)
+	for _, expr := range exprList {
+		eType := expr.GetType().EvalType()
+		buf, err := globalColumnAllocator.get(eType, n)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if err := VecEval(ctx, expr, input, buf); err != nil {
+			return nil, nil, err
+		}
+
+		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		j := 0
+		isEQCondFromIn := IsEQCondFromIn(expr)
+		for i := range sel {
+			if isZero[i] == -1 {
+				if eType != types.ETInt && !isEQCondFromIn {
+					continue
+				}
+				// In this case, we set this row to null and let it pass this filter.
+				// The null flag may be set to false later by other expressions in some cases.
+				nulls[sel[i]] = true
+				sel[j] = sel[i]
+				j++
+				continue
+			}
+
+			if isZero[i] == 0 {
+				continue
+			}
+			sel[j] = sel[i] // this row passes this filter
+			j++
+		}
+		sel = sel[:j]
+		input.SetSel(sel)
+		globalColumnAllocator.put(buf)
+	}
+
+	for _, i := range sel {
+		if !nulls[i] {
+			selected[i] = true
+		}
+	}
+
+	return selected, nulls, nil
+}
+
+func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+	var err error
+	switch eType {
+	case types.ETInt:
+		i64s := buf.Int64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if i64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETReal:
+		f64s := buf.Float64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if types.RoundFloat(f64s[i]) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDuration:
+		d64s := buf.GoDurations()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if d64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		t64s := buf.Times()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if t64s[i].IsZero() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETString:
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
+				err = err1
+				if iVal == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDecimal:
+		d64s := buf.Decimals()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				v, err1 := d64s[i].ToFloat64()
+				err = err1
+				if types.RoundFloat(v) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETJson:
+		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+	}
+	return errors.Trace(err)
+}
+
+// VecEval evaluates this expr according to its type.
+func VecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	switch expr.GetType().EvalType() {
+	case types.ETInt:
+		err = expr.VecEvalInt(ctx, input, result)
+	case types.ETReal:
+		err = expr.VecEvalReal(ctx, input, result)
+	case types.ETDuration:
+		err = expr.VecEvalDuration(ctx, input, result)
+	case types.ETDatetime, types.ETTimestamp:
+		err = expr.VecEvalTime(ctx, input, result)
+	case types.ETString:
+		err = expr.VecEvalString(ctx, input, result)
+	case types.ETJson:
+		err = expr.VecEvalJSON(ctx, input, result)
+	case types.ETDecimal:
+		err = expr.VecEvalDecimal(ctx, input, result)
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+	}
+	return
+}
+
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
 func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
@@ -232,8 +495,10 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 // Assignment represents a set assignment in Update, such as
 // Update t set c1 = hex(12), c2 = c3 where c2 = 1
 type Assignment struct {
-	Col  *Column
-	Expr Expression
+	Col *Column
+	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
+	ColName model.CIStr
+	Expr    Expression
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
@@ -282,7 +547,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -296,14 +561,9 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	return expr
 }
 
-// TableInfo2Schema converts table info to schema with empty DBName.
-func TableInfo2Schema(ctx sessionctx.Context, tbl *model.TableInfo) *Schema {
-	return TableInfo2SchemaWithDBName(ctx, model.CIStr{}, tbl)
-}
-
-// TableInfo2SchemaWithDBName converts table info to schema.
-func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) *Schema {
-	cols := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
+// TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
+func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName) {
+	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -342,20 +602,24 @@ func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl 
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
-	return schema
+	return schema, names
 }
 
-// ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
-func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
+// ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
 	columns := make([]*Column, 0, len(colInfos))
+	names := make([]*types.FieldName, 0, len(colInfos))
 	for _, col := range colInfos {
 		if col.State != model.StatePublic {
 			continue
 		}
+		names = append(names, &types.FieldName{
+			ColName:     col.Name,
+			TblName:     tblName,
+			DBName:      dbName,
+			OrigTblName: tblName,
+		})
 		newCol := &Column{
-			ColName:  col.Name,
-			TblName:  tblName,
-			DBName:   dbName,
 			RetType:  &col.FieldType,
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -363,7 +627,7 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 		}
 		columns = append(columns, newCol)
 	}
-	return columns
+	return columns, names
 }
 
 // NewValuesFunc creates a new values function.
@@ -382,4 +646,53 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
+}
+
+// CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
+func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
+	for _, expr := range exprs {
+		switch x := expr.(type) {
+		case *Constant, *CorrelatedColumn, *Column:
+			exprPush = append(exprPush, expr)
+		case *ScalarFunction:
+			switch x.FuncName.L {
+			case ast.Plus, ast.Minus, ast.Div, ast.Mul,
+				ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
+				ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
+				ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+				ast.Like, ast.UnaryNot:
+				if _, r := CheckExprPushFlash(x.GetArgs()); len(r) > 0 {
+					remain = append(remain, expr)
+				} else {
+					exprPush = append(exprPush, expr)
+				}
+			default:
+				remain = append(remain, expr)
+			}
+		}
+	}
+	return
+}
+
+// wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
+// type int, otherwise, returns `arg` directly.
+// The `keepNull` controls what the istrue function will return when `arg` is null:
+// 1. keepNull is true and arg is null, the istrue function returns null.
+// 2. keepNull is false and arg is null, the istrue function returns 0.
+// TODO: remove this function. ScalarFunction should be newed in one place.
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+	if arg.GetType().EvalType() == types.ETInt {
+		return arg, nil
+	}
+	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	if err != nil {
+		return nil, err
+	}
+	sf := &ScalarFunction{
+		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}
+	return FoldConstant(sf), nil
 }

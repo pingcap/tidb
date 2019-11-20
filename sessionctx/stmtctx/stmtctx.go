@@ -47,6 +47,7 @@ type SQLWarn struct {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	// Set the following variables before execution
+	StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
@@ -124,7 +125,7 @@ type StatementContext struct {
 	MemTracker       *memory.Tracker
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
-	IndexIDs         []int64
+	IndexNames       []string
 	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
 	stmtTimeCached   bool
 	StmtType         string
@@ -134,7 +135,23 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables []TableEntry
+	Tables    []TableEntry
+	PointExec bool // for point update cached execution, Constant expression need to set "paramMarker"
+}
+
+// StmtHints are SessionVars related sql hints.
+type StmtHints struct {
+	// Hint flags
+	HasAllowInSubqToJoinAndAggHint bool
+	HasEnableIndexMergeHint        bool
+	HasMemQuotaHint                bool
+	HasReplicaReadHint             bool
+
+	// Hint Information
+	AllowInSubqToJoinAndAgg bool
+	EnableIndexMerge        bool
+	MemQuotaQuery           int64
+	ReplicaRead             byte
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -412,7 +429,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
-	sc.IndexIDs = sc.IndexIDs[:0]
+	sc.IndexNames = sc.IndexNames[:0]
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

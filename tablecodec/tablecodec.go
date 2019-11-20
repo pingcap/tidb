@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -42,9 +43,10 @@ var (
 )
 
 const (
-	idLen                 = 8
-	prefixLen             = 1 + idLen /*tableID*/ + 2
-	recordRowKeyLen       = prefixLen + idLen /*handle*/
+	idLen     = 8
+	prefixLen = 1 + idLen /*tableID*/ + 2
+	// RecordRowKeyLen is public for calculating avgerage row size.
+	RecordRowKeyLen       = prefixLen + idLen /*handle*/
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
 )
@@ -59,7 +61,7 @@ func TablePrefix() []byte {
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen)
+	buf := make([]byte, 0, RecordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = append(buf, encodedHandle...)
 	return buf
@@ -67,7 +69,7 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen)
+	buf := make([]byte, 0, RecordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = codec.EncodeInt(buf, handle)
 	return buf
@@ -127,14 +129,10 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
 	k := key
 
-	tableID, indexID, isRecord, err := DecodeKeyHead(key)
+	tableID, indexID, key, err = DecodeIndexKeyPrefix(key)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
-	}
-	key = key[prefixLen+idLen:]
 
 	for len(key) > 0 {
 		// FIXME: Without the schema information, we can only decode the raw kind of
@@ -151,6 +149,44 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		key = remain
 	}
 	return
+}
+
+// DecodeMetaKey decodes the key and get the meta key and meta field.
+func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
+	var tp uint64
+	prefix := []byte("m")
+	if !bytes.HasPrefix(ek, prefix) {
+		return nil, nil, errors.New("invalid encoded hash data key prefix")
+	}
+	ek = ek[len(prefix):]
+	ek, key, err = codec.DecodeBytes(ek, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	ek, tp, err = codec.DecodeUint(ek)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	} else if structure.TypeFlag(tp) != structure.HashData {
+		return nil, nil, errors.Errorf("invalid encoded hash data key flag %c", byte(tp))
+	}
+	_, field, err = codec.DecodeBytes(ek, nil)
+	return key, field, errors.Trace(err)
+}
+
+// DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
+func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
+	k := key
+
+	tableID, indexID, isRecord, err := DecodeKeyHead(key)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
+	if isRecord {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
+	}
+	indexValues = key[prefixLen+idLen:]
+
+	return tableID, indexID, indexValues, nil
 }
 
 // DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
@@ -202,7 +238,7 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	if len(key) != recordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
+	if len(key) != RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
 		return 0, errInvalidKey.GenWithStack("invalid key - %q", key)
 	}
 	u := binary.BigEndian.Uint64(key[prefixLen:])
@@ -560,6 +596,26 @@ func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([
 	return values, nil
 }
 
+// DecodeIndexHandle uses to decode the handle from index key/value.
+func DecodeIndexHandle(key, value []byte, colsLen int, pkTp *types.FieldType) (int64, error) {
+	_, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		d, err := DecodeColumnValue(b, pkTp, nil)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.GetInt64(), nil
+
+	} else if len(value) >= 8 {
+		return DecodeIndexValueAsHandle(value)
+	}
+	// Should never execute to here.
+	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
 // DecodeIndexValueAsHandle uses to decode index value as handle id.
 func DecodeIndexValueAsHandle(data []byte) (int64, error) {
 	var h int64
@@ -623,6 +679,14 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
+// since the untouched index key/value is no need to commit.
+func IsUntouchedIndexKValue(k, v []byte) bool {
+	vLen := len(v)
+	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
+}
+
 // GenTablePrefix composes table record and index prefix: "t[tableID]".
 func GenTablePrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8)
@@ -633,8 +697,8 @@ func GenTablePrefix(tableID int64) kv.Key {
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
 func TruncateToRowKeyLen(key kv.Key) kv.Key {
-	if len(key) > recordRowKeyLen {
-		return key[:recordRowKeyLen]
+	if len(key) > RecordRowKeyLen {
+		return key[:RecordRowKeyLen]
 	}
 	return key
 }

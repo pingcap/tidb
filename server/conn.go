@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -77,32 +78,36 @@ const (
 )
 
 var (
-	queryTotalCounterComSleepOK           = metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK")
-	queryTotalCounterComSleepError        = metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error")
-	queryTotalCounterComQuitOK            = metrics.QueryTotalCounter.WithLabelValues("Quit", "OK")
-	queryTotalCounterComQuitError         = metrics.QueryTotalCounter.WithLabelValues("Quit", "Error")
-	queryTotalCounterComInitDBOK          = metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK")
-	queryTotalCounterComInitDBError       = metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error")
-	queryTotalCounterComQueryOK           = metrics.QueryTotalCounter.WithLabelValues("Query", "OK")
-	queryTotalCounterComQueryError        = metrics.QueryTotalCounter.WithLabelValues("Query", "Error")
-	queryTotalCounterComPingOK            = metrics.QueryTotalCounter.WithLabelValues("Ping", "OK")
-	queryTotalCounterComPingError         = metrics.QueryTotalCounter.WithLabelValues("Ping", "Error")
-	queryTotalCounterComFieldListOK       = metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK")
-	queryTotalCounterComFieldListError    = metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error")
-	queryTotalCounterComPrepareOK         = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK")
-	queryTotalCounterComPrepareError      = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error")
-	queryTotalCounterComExecuteOK         = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK")
-	queryTotalCounterComExecuteError      = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error")
-	queryTotalCounterComFetchOK           = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK")
-	queryTotalCounterComFetchError        = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error")
-	queryTotalCounterComCloseOK           = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK")
-	queryTotalCounterComCloseError        = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error")
-	queryTotalCounterComSendLongDataOK    = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK")
-	queryTotalCounterComSendLongDataError = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error")
-	queryTotalCounterComResetOK           = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK")
-	queryTotalCounterComResetError        = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error")
-	queryTotalCounterComSetOptionOK       = metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK")
-	queryTotalCounterComSetOptionError    = metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error")
+	queryTotalCountOk = [...]prometheus.Counter{
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK"),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK"),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK"),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK"),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK"),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK"),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK"),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK"),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK"),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK"),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK"),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK"),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK"),
+	}
+	queryTotalCountErr = [...]prometheus.Counter{
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error"),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error"),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error"),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error"),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error"),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error"),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error"),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error"),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error"),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error"),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error"),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error"),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
+	}
 
 	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
 	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
@@ -143,7 +148,7 @@ type clientConn struct {
 	dbname       string            // default database name.
 	salt         []byte            // random bytes used for authentication.
 	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
-	lastCmd      string            // latest sql query string, currently used for logging error.
+	lastPacket   []byte            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	peerHost     string            // peer host
@@ -155,7 +160,7 @@ type clientConn struct {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
+	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
@@ -280,7 +285,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value", zap.Error(err))
+		logutil.Logger(ctx).Warn("get sysval wait_timeout failed, use default value", zap.Error(err))
 		// if get waitTimeout error, use default value
 		return variable.DefWaitTimeout
 	}
@@ -533,6 +538,20 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	return err
 }
 
+func (cc *clientConn) SessionStatusToString() string {
+	status := cc.ctx.Status()
+	inTxn, autoCommit := 0, 0
+	if status&mysql.ServerStatusInTrans > 0 {
+		inTxn = 1
+	}
+	if status&mysql.ServerStatusAutocommit > 0 {
+		autoCommit = 1
+	}
+	return fmt.Sprintf("inTxn:%d, autocommit:%d",
+		inTxn, autoCommit,
+	)
+}
+
 func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
@@ -598,8 +617,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
-				zap.String("lastCmd", cc.lastCmd),
-				zap.Reflect("err", r),
+				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
+				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.String("stack", string(buf)),
 			)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
@@ -620,7 +639,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		cc.alloc.Reset()
-		// close connection when idle time is more than wait_timout
+		// close connection when idle time is more than wait_timeout
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
@@ -666,9 +685,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 				return
 			}
-			logutil.Logger(ctx).Warn("dispatch error",
+			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
-				zap.String("sql", queryStrForLog(string(data[1:]))),
+				zap.String("command", mysql.Command2Str[data[0]]),
+				zap.String("status", cc.SessionStatusToString()),
+				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
@@ -712,91 +733,21 @@ func errStrForLog(err error) string {
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
-	switch cmd {
-	case mysql.ComSleep:
-		if err != nil {
-			queryTotalCounterComSleepError.Inc()
-		} else {
-			queryTotalCounterComSleepOK.Inc()
-		}
-	case mysql.ComQuit:
-		if err != nil {
-			queryTotalCounterComQuitError.Inc()
-		} else {
-			queryTotalCounterComQuitOK.Inc()
-		}
-	case mysql.ComQuery:
-		if cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
-			// Don't take DDL execute time into account.
-			// It's already recorded by other metrics in ddl package.
-			return
-		}
-		if err != nil {
-			queryTotalCounterComQueryError.Inc()
-		} else {
-			queryTotalCounterComQueryOK.Inc()
-		}
-	case mysql.ComPing:
-		if err != nil {
-			queryTotalCounterComPingError.Inc()
-		} else {
-			queryTotalCounterComPingOK.Inc()
-		}
-	case mysql.ComInitDB:
-		if err != nil {
-			queryTotalCounterComInitDBError.Inc()
-		} else {
-			queryTotalCounterComInitDBOK.Inc()
-		}
-	case mysql.ComFieldList:
-		if err != nil {
-			queryTotalCounterComFieldListError.Inc()
-		} else {
-			queryTotalCounterComFieldListOK.Inc()
-		}
-	case mysql.ComStmtPrepare:
-		if err != nil {
-			queryTotalCounterComPrepareError.Inc()
-		} else {
-			queryTotalCounterComPrepareOK.Inc()
-		}
-	case mysql.ComStmtExecute:
-		if err != nil {
-			queryTotalCounterComExecuteError.Inc()
-		} else {
-			queryTotalCounterComExecuteOK.Inc()
-		}
-	case mysql.ComStmtFetch:
-		if err != nil {
-			queryTotalCounterComFetchError.Inc()
-		} else {
-			queryTotalCounterComFetchOK.Inc()
-		}
-	case mysql.ComStmtClose:
-		if err != nil {
-			queryTotalCounterComCloseError.Inc()
-		} else {
-			queryTotalCounterComCloseOK.Inc()
-		}
-	case mysql.ComStmtSendLongData:
-		if err != nil {
-			queryTotalCounterComSendLongDataError.Inc()
-		} else {
-			queryTotalCounterComSendLongDataOK.Inc()
-		}
-	case mysql.ComStmtReset:
-		if err != nil {
-			queryTotalCounterComResetError.Inc()
-		} else {
-			queryTotalCounterComResetOK.Inc()
-		}
-	case mysql.ComSetOption:
-		if err != nil {
-			queryTotalCounterComSetOptionError.Inc()
-		} else {
-			queryTotalCounterComSetOptionOK.Inc()
-		}
-	default:
+	if cmd == mysql.ComQuery && cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
+		// Don't take DDL execute time into account.
+		// It's already recorded by other metrics in ddl package.
+		return
+	}
+
+	var counter prometheus.Counter
+	if err != nil && int(cmd) < len(queryTotalCountErr) {
+		counter = queryTotalCountErr[cmd]
+	} else if err == nil && int(cmd) < len(queryTotalCountOk) {
+		counter = queryTotalCountOk[cmd]
+	}
+	if counter != nil {
+		counter.Inc()
+	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
 			metrics.QueryTotalCounter.WithLabelValues(label, "ERROR").Inc()
@@ -804,6 +755,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 		}
 	}
+
 	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
 	sqlType := metrics.LblGeneral
 	if stmtType != "" {
@@ -849,9 +801,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 
 	t := time.Now()
+	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
@@ -989,7 +941,13 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		e := errors.Cause(originErr)
+		switch y := e.(type) {
+		case *terror.Error:
+			m = y.ToSQLError()
+		default:
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		}
 	}
 
 	cc.lastCode = m.Code
@@ -1043,9 +1001,8 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return cc.flush()
 }
 
-var defaultLoadDataBatchCnt uint64 = 20000
-
-func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(ctx context.Context, prevData,
+	curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -1056,21 +1013,74 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		err := loadDataInfo.CheckAndInsertOneBatch(ctx)
+		// push into commit task queue
+		err = loadDataInfo.EnqOneTask(ctx)
 		if err != nil {
-			return nil, err
-		}
-		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-			return nil, err
-		}
-		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
-			return nil, err
+			return prevData, err
 		}
 		curData = prevData
 		prevData = nil
 	}
 	return prevData, nil
+}
+
+// processStream process input stream from network
+func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo) {
+	var err error
+	var shouldBreak bool
+	var prevData, curData []byte
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+		}
+		if err != nil || r != nil {
+			loadDataInfo.ForceQuit()
+		} else {
+			loadDataInfo.CloseTaskQueue()
+		}
+	}()
+	for {
+		curData, err = cc.readPacket()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
+				break
+			}
+		}
+		if len(curData) == 0 {
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		select {
+		case <-loadDataInfo.QuitCh:
+			err = errors.New("processStream forced to quit")
+		default:
+		}
+		if err != nil {
+			break
+		}
+		// prepare batch and enqueue task
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
+		if err != nil {
+			break
+		}
+		if shouldBreak {
+			break
+		}
+	}
+	if err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+	} else {
+		err = loadDataInfo.EnqOneTask(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		}
+	}
 }
 
 // handleLoadData does the additional work after processing the 'load data' query.
@@ -1089,63 +1099,18 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	var shouldBreak bool
-	var prevData, curData []byte
-	// TODO: Make the loadDataRowCnt settable.
-	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
+	loadDataInfo.InitQueues()
+	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
+	loadDataInfo.StartStopWatcher()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
 	}
-	for {
-		curData, err = cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
-				break
-			}
-		}
-		if len(curData) == 0 {
-			shouldBreak = true
-			if len(prevData) == 0 {
-				break
-			}
-		}
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
-		if err != nil {
-			break
-		}
-		if shouldBreak {
-			break
-		}
-	}
+	// processStream process input data, enqueue commit task
+	go processStream(ctx, cc, loadDataInfo)
+	err = loadDataInfo.CommitWork(ctx)
 	loadDataInfo.SetMessage()
-
-	if err != nil {
-		loadDataInfo.Ctx.StmtRollback()
-	} else {
-		err = loadDataInfo.CheckAndInsertOneBatch(ctx)
-		if err == nil {
-			err = loadDataInfo.Ctx.StmtCommit()
-		}
-	}
-
-	var txn kv.Transaction
-	var err1 error
-	txn, err1 = loadDataInfo.Ctx.Txn(true)
-	if err1 == nil {
-		if txn != nil && txn.Valid() {
-			if err != nil {
-				if err1 := txn.Rollback(); err1 != nil {
-					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
-				}
-				return err
-			}
-			return cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx))
-		}
-	}
-	// Should never reach here.
-	panic(err1)
+	return err
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
@@ -1184,21 +1149,23 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	rs, err := cc.ctx.Execute(ctx, sql)
+	rss, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
-		killConn(cc)
+	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
+		for _, rs := range rss {
+			terror.Call(rs.Close)
+		}
 		return executor.ErrQueryInterrupted
 	}
-	if rs != nil {
-		if len(rs) == 1 {
-			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
+	if rss != nil {
+		if len(rss) == 1 {
+			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
-			err = cc.writeMultiResultset(ctx, rs, false)
+			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
@@ -1273,7 +1240,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf := make([]byte, 4096)
 		stackSize := runtime.Stack(buf, false)
 		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("write query result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
@@ -1406,6 +1373,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 			return err
 		}
 	}
+	if cl, ok := rs.(fetchNotifier); ok {
+		cl.OnFetchReturned()
+	}
 	return cc.writeEOF(serverStatus)
 }
 
@@ -1471,7 +1441,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.dbname = string(hack.String(dbName))
 	err := cc.ctx.Close()
 	if err != nil {
-		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
+		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
@@ -1498,4 +1468,36 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 
 	return cc.writeOK()
+}
+
+var _ fmt.Stringer = getLastStmtInConn{}
+
+type getLastStmtInConn struct {
+	*clientConn
+}
+
+func (cc getLastStmtInConn) String() string {
+	if len(cc.lastPacket) == 0 {
+		return ""
+	}
+	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
+	switch cmd {
+	case mysql.ComInitDB:
+		return "Use " + string(data)
+	case mysql.ComFieldList:
+		return "ListFields " + string(data)
+	case mysql.ComQuery, mysql.ComStmtPrepare:
+		return queryStrForLog(string(hack.String(data)))
+	case mysql.ComStmtExecute, mysql.ComStmtFetch:
+		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		return queryStrForLog(cc.preparedStmt2String(stmtID))
+	case mysql.ComStmtClose, mysql.ComStmtReset:
+		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
+	default:
+		if cmdStr, ok := mysql.Command2Str[cmd]; ok {
+			return cmdStr
+		}
+		return string(hack.String(data))
+	}
 }

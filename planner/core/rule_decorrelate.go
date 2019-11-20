@@ -198,11 +198,12 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					sel.Conditions = remainedExpr
 					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
+					groupByCols := expression.NewSchema(agg.groupByCols...)
 					if len(apply.corCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
-							clonedCol := eqCond.GetArgs()[1]
+							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc, err := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
@@ -210,12 +211,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 									return nil, err
 								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
-								agg.schema.Append(clonedCol.(*expression.Column))
+								agg.schema.Append(clonedCol)
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
 							}
 							// If group by cols don't contain the join key, add it into this.
-							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+							if !groupByCols.Contains(clonedCol) {
 								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+								groupByCols.Append(clonedCol)
 							}
 						}
 						agg.collectGroupByColumns()
@@ -226,7 +228,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.Init(agg.ctx)
+							proj := LogicalProjection{}.Init(agg.ctx, agg.blockOffset)
 							proj.SetSchema(apply.schema)
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {
@@ -243,6 +245,12 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 				}
 			}
+		} else if sort, ok := innerPlan.(*LogicalSort); ok {
+			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
+			// the top level Sort has no effect on the subquery's result.
+			innerPlan = sort.children[0]
+			apply.SetChildren(outerPlan, innerPlan)
+			return s.optimize(ctx, p)
 		}
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))

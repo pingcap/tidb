@@ -1,0 +1,77 @@
+[
+  {
+    "name": "TestLimitCrossEstimation",
+    "cases": [
+      // Pseudo stats.
+      [
+        "set session tidb_opt_correlation_exp_factor = 0",
+        "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;"
+      ],
+      // Positive correlation.
+      [
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+        "analyze table t",
+        "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+      ],
+      // Negative correlation.
+      [
+        "truncate table t",
+        "insert into t (a, b) values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)",
+        "analyze table t",
+        "EXPLAIN SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1"
+      ],
+      // Outer plan of index join (to test that correct column ID is used).
+      [
+        "EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1"
+      ],
+      // Desc TableScan.
+      [
+        "truncate table t",
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+        "analyze table t",
+        "EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1"
+      ],
+      // Correlation threshold not met.
+      [
+        "truncate table t",
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)",
+        "analyze table t",
+        "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+      ],
+      [
+        "set session tidb_opt_correlation_exp_factor = 1",
+        "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+      ],
+      // TableScan has access conditions, but correlation is 1.
+      [
+        "set session tidb_opt_correlation_exp_factor = 0",
+        "truncate table t",
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+        "analyze table t",
+        "EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1"
+      ],
+      // Multi-column filter.
+      [
+        "drop table t",
+        "create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx(b,d,a,c))",
+        "insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)",
+        "analyze table t",
+        "EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
+      ]
+    ]
+  },
+  {
+    "name": "TestIssue9562",
+    "cases": [
+      [
+        "create table t1(a bigint, b bigint, c bigint)",
+        "create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))",
+        "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
+      ],
+      [
+        "create table t(a int, b int, index idx_ab(a, b))",
+        "explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null"
+      ]
+    ]
+  }
+]

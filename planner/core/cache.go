@@ -17,8 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -122,12 +124,22 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
-	Plan Plan
+	Plan        Plan
+	OutPutNames []*types.FieldName
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCacheValue {
 	return &PSTMTPlanCacheValue{
-		Plan: plan,
+		Plan:        plan,
+		OutPutNames: names,
 	}
+}
+
+// CachedPrepareStmt store prepared ast from PrepareExec and other related fields
+type CachedPrepareStmt struct {
+	PreparedAst *ast.Prepared
+	VisitInfos  []visitInfo
+	ColumnInfos interface{}
+	Executor    interface{}
 }

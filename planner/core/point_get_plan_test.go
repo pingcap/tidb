@@ -78,13 +78,16 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"Point_Get_1 1.00 root table:t, handle:1",
 	))
 	tk.MustQuery("explain update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, handle:1",
+		"Update_2 N/A root N/A",
+		"└─Point_Get_1 1.00 root table:t, handle:1",
 	))
 	tk.MustQuery("explain delete from t where a = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, handle:1",
+		"Delete_2 N/A root N/A",
+		"└─Point_Get_1 1.00 root table:t, handle:1",
 	))
 	tk.MustQuery("explain select a from t where a = -1").Check(testkit.Rows(
-		"TableDual_5 0.00 root rows:0"))
+		"TableDual_5 0.00 root rows:0",
+	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")
 	tk.MustQuery("execute stmt0 using @p0").Check(testkit.Rows())
@@ -171,25 +174,98 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table fu (id int primary key)")
-	tk.MustExec("insert into fu values (6)")
-	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6"))
+	tk.MustExec("create table fu (id int primary key, val int)")
+	tk.MustExec("insert into fu values (6, 6)")
 
 	// In autocommit mode, outside a transaction, "for update" doesn't take effect.
+	checkUseForUpdate(tk, c, false)
+
+	tk.MustExec("begin")
+	checkUseForUpdate(tk, c, true)
+	tk.MustExec("rollback")
+
+	tk.MustExec("set @@session.autocommit = 0")
+	checkUseForUpdate(tk, c, true)
+	tk.MustExec("rollback")
+}
+
+func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
 	res := tk.MustQuery("explain select * from fu where id = 6 for update")
 	// Point_Get_1	1.00	root	table:fu, handle:6
 	opInfo := res.Rows()[0][3]
 	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
-	c.Assert(selectLock, IsFalse)
+	c.Assert(selectLock, Equals, expectLock)
 
-	tk.MustExec("begin")
-	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6"))
-	res = tk.MustQuery("explain select * from fu where id = 6 for update")
-	// Point_Get_1	1.00	root	table:fu, handle:6
-	opInfo = res.Rows()[0][3]
-	selectLock = strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
-	c.Assert(selectLock, IsTrue)
+	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6 6"))
+}
 
-	tk.MustExec("rollback")
+func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key auto_increment not null, b int, c int, unique key idx_abc(a, b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 5)")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 1 1",
+		"2 2 2",
+		"3 3 3",
+		"4 4 5",
+	))
+	tk.MustQuery("explain select * from t where a = 1 and b = 1 and c = 1").Check(testkit.Rows(
+		"Point_Get_1 1.00 root table:t, index:a b c",
+	))
+	tk.MustQuery("explain select * from t where 1 = a and 1 = b and 1 = c").Check(testkit.Rows(
+		"Point_Get_1 1.00 root table:t, index:a b c",
+	))
+	tk.MustQuery("explain select * from t where 1 = a and b = 1 and 1 = c").Check(testkit.Rows(
+		"Point_Get_1 1.00 root table:t, index:a b c",
+	))
+	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, index:a b c",
+	))
 
+	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4, 5)").Check(testkit.Rows(
+		"Batch_Point_Get_1 5.00 root table:t",
+	))
+
+	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 5.00 root table:t",
+	))
+
+	tk.MustQuery("explain select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
+		"Batch_Point_Get_1 5.00 root table:t",
+	))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, unique key idx_ab(a, b))")
+	tk.MustExec("insert into t values(1, 2, 3), (2, 3, 4), (3, 4, 5), (4, 5, 6)")
+	tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+		"3 4 5",
+		"4 5 6",
+	))
+	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, index:a b",
+	))
+	tk.MustQuery("select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+	))
+	tk.MustQuery("select * from t where (b, a) in ((1, 2), (2, 3))").Check(testkit.Rows())
+	tk.MustQuery("select * from t where (b, a) in ((2, 1), (3, 2))").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+	))
+	tk.MustQuery("select * from t where (b, a) in ((2, 1), (3, 2), (2, 1), (5, 4))").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+		"4 5 6",
+	))
+	tk.MustQuery("select * from t where (b, a) in ((2, 1), (3, 2), (2, 1), (5, 4), (3, 4))").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+		"4 5 6",
+	))
 }

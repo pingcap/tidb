@@ -41,14 +41,49 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
-// VecEval evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEval(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEval(input, result)
+// VecEvalInt evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalInt(input, result)
+}
+
+// VecEvalReal evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalReal(input, result)
+}
+
+// VecEvalString evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalString(input, result)
+}
+
+// VecEvalDecimal evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalDecimal(input, result)
+}
+
+// VecEvalTime evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalTime(input, result)
+}
+
+// VecEvalDuration evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalDuration(input, result)
+}
+
+// VecEvalJSON evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalJSON(input, result)
 }
 
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
+}
+
+// Vectorized returns if this expression supports vectorized evaluation.
+func (sf *ScalarFunction) Vectorized() bool {
+	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
 }
 
 // GetCtx gets the context of function.
@@ -85,7 +120,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
+		db := ctx.GetSessionVars().CurrentDB
+		if db == "" {
+			return nil, terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+		}
+
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
 	if !ctx.GetSessionVars().EnableNoopFuncs {
 		if _, ok := noopFuncs[funcName]; ok {

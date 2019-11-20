@@ -20,6 +20,7 @@ package session
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -63,8 +65,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	ddlLease := schemaLease
-	statisticLease := statsLease
+	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
+	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -110,27 +112,27 @@ var (
 	// Default schema lease time is 1 second, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
 	// For production, you should set a big schema lease, like 300s+.
-	schemaLease = 1 * time.Second
+	schemaLease = int64(1 * time.Second)
 
 	// statsLease is the time for reload stats table.
-	statsLease = 3 * time.Second
+	statsLease = int64(3 * time.Second)
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(lease time.Duration) {
-	schemaLease = lease
+	atomic.StoreInt64(&schemaLease, int64(lease))
 }
 
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
-	statsLease = lease
+	atomic.StoreInt64(&statsLease, int64(lease))
 }
 
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
-	statsLease = -1
+	SetStatsLease(-1)
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -160,20 +162,38 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
-func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+func recordAbortTxnDuration(sessVars *variable.SessionVars) {
+	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+	if sessVars.InRestrictedSQL {
+		transactionDurationInternalAbort.Observe(duration)
+	} else {
+		transactionDurationGeneralAbort.Observe(duration)
+	}
+}
+
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
+	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit error.")
+			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
+			recordAbortTxnDuration(sessVars)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
+			recordAbortTxnDuration(sessVars)
 		}
 		return meetsErr
 	}
 
 	if !sessVars.InTxn() {
-		return se.CommitTxn(ctx)
+		if err := se.CommitTxn(ctx); err != nil {
+			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
+			}
+			return err
+		}
+		return nil
 	}
 
 	return checkStmtLimit(ctx, sctx, se)
@@ -210,11 +230,17 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	se := sctx.(*session)
+	sessVars := se.GetSessionVars()
+	// Save origTxnCtx here to avoid it reset in the transaction retry.
+	origTxnCtx := sessVars.TxnCtx
 	defer func() {
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
-			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
+			s.(*executor.ExecStmt).SummaryStmt()
+			pps := types.CloneRow(sessVars.PreparedParams)
+			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
 		}
 	}()
 
@@ -223,7 +249,6 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		return nil, err
 	}
 	rs, err = s.Exec(ctx)
-	sessVars := se.GetSessionVars()
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
 		// All the history should be added here.
@@ -241,10 +266,10 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			logutil.BgLogger().Error("get txn error", zap.Error(err1))
+			logutil.BgLogger().Error("get txn failed", zap.Error(err1))
 		}
 	}
-	err = finishStmt(ctx, sctx, se, sessVars, err)
+	err = finishStmt(ctx, sctx, se, sessVars, err, s)
 
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
@@ -278,10 +303,8 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 	}
 	var rows []chunk.Row
 	req := rs.NewChunk()
+	// Must reuse `req` for imitating server.(*clientConn).writeChunks
 	for {
-		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(req)
-
 		err := rs.Next(ctx, req)
 		if err != nil {
 			return nil, err
@@ -290,10 +313,10 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 			break
 		}
 
+		iter := chunk.NewIterator4Chunk(req.CopyConstruct())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }

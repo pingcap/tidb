@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 )
 
@@ -114,11 +115,12 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		return variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
 	}
+	var valStr string
 	if v.IsGlobal {
 		// Set global scope system variable.
 		if sysVar.Scope&variable.ScopeGlobal == 0 {
@@ -131,18 +133,18 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if value.IsNull() {
 			value.SetString("")
 		}
-		svalue, err := value.ToString()
+		valStr, err = value.ToString()
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
 		if err != nil {
 			return err
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, svalue)
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, valStr)
 			}
 			return nil
 		})
@@ -179,7 +181,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			sessionVars.SnapshotTS = oldSnapshotTS
 			return err
 		}
-		var valStr string
 		if value.IsNull() {
 			valStr = "NULL"
 		} else {
@@ -187,7 +188,19 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(err)
 		}
-		logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		if name != variable.AutoCommit {
+			logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		} else {
+			// Some applications will set `autocommit` variable before query.
+			// This will print too many unnecessary log info.
+			logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		}
+	}
+
+	if name == variable.TiDBEnableStmtSummary {
+		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+	} else if name == variable.TiDBCapturePlanBaseline {
+		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
 
 	return nil

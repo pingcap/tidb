@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -57,6 +58,8 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				PrimaryLock: locked.Primary,
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
+				TxnSize:     locked.TxnSize,
+				LockType:    locked.LockType,
 			},
 		}
 	}
@@ -88,6 +91,16 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),
+		}
+	}
+	if expired, ok := errors.Cause(err).(*ErrCommitTSExpired); ok {
+		return &kvrpcpb.KeyError{
+			CommitTsExpired: &expired.CommitTsExpired,
+		}
+	}
+	if tmp, ok := errors.Cause(err).(*ErrTxnNotFound); ok {
+		return &kvrpcpb.KeyError{
+			TxnNotFound: &tmp.TxnNotFound,
 		}
 	}
 	return &kvrpcpb.KeyError{
@@ -140,6 +153,7 @@ type rpcHandler struct {
 	rawEndKey   []byte
 	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
+	resolvedLocks  []uint64
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
@@ -213,6 +227,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
 	h.isolationLevel = ctx.IsolationLevel
+	h.resolvedLocks = ctx.ResolvedLocks
 	return nil
 }
 
@@ -264,7 +279,7 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 		if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.EndKey), h.endKey) < 0) {
 			endKey = req.EndKey
 		}
-		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel, req.Context.ResolvedLocks)
 	} else {
 		// TiKV use range [end_key, start_key) for reverse scan.
 		// Should use the req.EndKey to check in region.
@@ -278,7 +293,7 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 			endKey = req.StartKey
 		}
 
-		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel, req.Context.ResolvedLocks)
 	}
 
 	return &kvrpcpb.ScanResponse{
@@ -307,10 +322,12 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
-
-	// TODO: remove this when implement sever side wait.
-	h.simulateServerSideWaitLock(errs)
+	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
+		req.GetLockTtl(), req.WaitTimeout)
+	if req.WaitTimeout == kv.LockAlwaysWait {
+		// TODO: remove this when implement sever side wait.
+		h.simulateServerSideWaitLock(errs)
+	}
 	return &kvrpcpb.PessimisticLockResponse{
 		Errors: convertToKeyErrors(errs),
 	}
@@ -356,7 +373,7 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 		panic("KvCleanup: key not in region")
 	}
 	var resp kvrpcpb.CleanupResponse
-	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion())
+	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion(), req.GetCurrentTs())
 	if err != nil {
 		if commitTS, ok := errors.Cause(err).(ErrAlreadyCommitted); ok {
 			resp.CommitVersion = uint64(commitTS)
@@ -364,6 +381,33 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 			resp.Error = convertToKeyError(err)
 		}
 	}
+	return &resp
+}
+
+func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) *kvrpcpb.CheckTxnStatusResponse {
+	if !h.checkKeyInRegion(req.PrimaryKey) {
+		panic("KvCheckTxnStatus: key not in region")
+	}
+	var resp kvrpcpb.CheckTxnStatusResponse
+	ttl, commitTS, action, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
+	if err != nil {
+		resp.Error = convertToKeyError(err)
+	} else {
+		resp.LockTtl, resp.CommitVersion, resp.Action = ttl, commitTS, action
+	}
+	return &resp
+}
+
+func (h *rpcHandler) handleTxnHeartBeat(req *kvrpcpb.TxnHeartBeatRequest) *kvrpcpb.TxnHeartBeatResponse {
+	if !h.checkKeyInRegion(req.PrimaryLock) {
+		panic("KvTxnHeartBeat: key not in region")
+	}
+	var resp kvrpcpb.TxnHeartBeatResponse
+	ttl, err := h.mvccStore.TxnHeartBeat(req.PrimaryLock, req.StartVersion, req.AdviseLockTtl)
+	if err != nil {
+		resp.Error = convertToKeyError(err)
+	}
+	resp.LockTtl = ttl
 	return &resp
 }
 
@@ -403,7 +447,7 @@ func (h *rpcHandler) handleMvccGetByStartTS(req *kvrpcpb.MvccGetByStartTsRequest
 		}
 	}
 	var resp kvrpcpb.MvccGetByStartTsResponse
-	resp.Info, resp.Key = debugger.MvccGetByStartTS(h.startKey, h.endKey, req.StartTs)
+	resp.Info, resp.Key = debugger.MvccGetByStartTS(req.StartTs)
 	return &resp
 }
 
@@ -603,14 +647,23 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 }
 
 func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
-	key := NewMvccKey(req.GetSplitKey())
-	region, _ := h.cluster.GetRegionByKey(key)
-	if bytes.Equal(region.GetStartKey(), key) {
-		return &kvrpcpb.SplitRegionResponse{}
+	keys := req.GetSplitKeys()
+	resp := &kvrpcpb.SplitRegionResponse{Regions: make([]*metapb.Region, 0, len(keys)+1)}
+	for i, key := range keys {
+		k := NewMvccKey(key)
+		region, _ := h.cluster.GetRegionByKey(k)
+		if bytes.Equal(region.GetStartKey(), key) {
+			continue
+		}
+		if i == 0 {
+			// Set the leftmost region.
+			resp.Regions = append(resp.Regions, region)
+		}
+		newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
+		newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, k, newPeerIDs, newPeerIDs[0])
+		resp.Regions = append(resp.Regions, newRegion)
 	}
-	newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
-	newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
-	return &kvrpcpb.SplitRegionResponse{Left: newRegion.Meta}
+	return resp
 }
 
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
@@ -671,6 +724,12 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("RPCClient.SendRequest", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -700,6 +759,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvScan(r)
 
 	case tikvrpc.CmdPrewrite:
+		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "notLeader":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil)
+			}
+		})
+
 		r := req.Prewrite()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Resp = &kvrpcpb.PrewriteResponse{RegionError: err}
@@ -754,6 +822,20 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.Resp = handler.handleKvCleanup(r)
+	case tikvrpc.CmdCheckTxnStatus:
+		r := req.CheckTxnStatus()
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.Resp = &kvrpcpb.CheckTxnStatusResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.Resp = handler.handleKvCheckTxnStatus(r)
+	case tikvrpc.CmdTxnHeartBeat:
+		r := req.TxnHeartBeat()
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.Resp = &kvrpcpb.TxnHeartBeatResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.Resp = handler.handleTxnHeartBeat(r)
 	case tikvrpc.CmdBatchGet:
 		r := req.BatchGet()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -931,7 +1013,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdDebugGetRegionProperties:
 		r := req.DebugGetRegionProperties()
 		region, _ := c.Cluster.GetRegion(r.RegionId)
-		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: MvccKey(region.StartKey).Raw(), EndKey: MvccKey(region.EndKey).Raw(), Version: math.MaxUint64, Limit: math.MaxUint32})
+		var reqCtx kvrpcpb.Context
+		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{
+			Context:  &reqCtx,
+			StartKey: MvccKey(region.StartKey).Raw(),
+			EndKey:   MvccKey(region.EndKey).Raw(),
+			Version:  math.MaxUint64,
+			Limit:    math.MaxUint32})
 		resp.Resp = &debugpb.GetRegionPropertiesResponse{
 			Props: []*debugpb.Property{{
 				Name:  "mvcc.num_rows",

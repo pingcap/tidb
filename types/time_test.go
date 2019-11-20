@@ -1101,9 +1101,66 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	for _, t := range tests {
 		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
 		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s", t.input))
+			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
+			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+		}
+	}
+
+	// Issue #13605: "Invalid time format" caused by time zone issue
+	// Some regions like Los Angeles use daylight saving time, see https://en.wikipedia.org/wiki/Daylight_saving_time
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	LondonTz, _ := time.LoadLocation("Europe/London")
+
+	tests = []struct {
+		tz             *time.Location
+		input          types.MysqlTime
+		expectRetError bool
+	}{{
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
+		expectRetError: true,
+	}, {
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 0, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 1, 0, 20, 0),
+		expectRetError: true,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 2, 0, 20, 0),
+		expectRetError: false,
+	},
+	}
+
+	for _, t := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
+		if t.expectRetError {
+			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+		} else {
+			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
 		}
 	}
 }
@@ -1661,6 +1718,35 @@ func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
 		re := types.FormatIntWidthN(ca.num, ca.width)
 		c.Assert(re, Equals, ca.result)
 	}
+}
+
+func (s *testTimeSuite) TestFromGoTime(c *C) {
+	// Test rounding of nanosecond to millisecond.
+	cases := []struct {
+		input string
+		yy    int
+		mm    int
+		dd    int
+		hh    int
+		min   int
+		sec   int
+		micro int
+	}{
+		{"2006-01-02T15:04:05.999999999Z", 2006, 1, 2, 15, 4, 6, 0},
+		{"2006-01-02T15:04:05.999999000Z", 2006, 1, 2, 15, 4, 5, 999999},
+		{"2006-01-02T15:04:05.999999499Z", 2006, 1, 2, 15, 4, 5, 999999},
+		{"2006-01-02T15:04:05.999999500Z", 2006, 1, 2, 15, 4, 6, 0},
+		{"2006-01-02T15:04:05.000000501Z", 2006, 1, 2, 15, 4, 5, 1},
+	}
+
+	for ith, ca := range cases {
+		t, err := time.Parse(time.RFC3339Nano, ca.input)
+		c.Assert(err, IsNil)
+
+		t1 := types.FromGoTime(t)
+		c.Assert(t1, Equals, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), Commentf("idx %d", ith))
+	}
+
 }
 
 func BenchmarkFormat(b *testing.B) {

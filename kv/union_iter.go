@@ -121,7 +121,7 @@ func (iter *UnionIter) updateCur() error {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
 					logutil.BgLogger().Warn("delete a record not exists?",
-						zap.Binary("key", iter.dirtyIt.Key()))
+						zap.Stringer("key", iter.dirtyIt.Key()))
 					// jump over this deletion
 					if err := iter.dirtyNext(); err != nil {
 						return err

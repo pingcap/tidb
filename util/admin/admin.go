@@ -89,7 +89,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
-	case model.ActionDropIndex:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
 		if job.SchemaState == model.StateDeleteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
@@ -119,13 +119,18 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, nil
 	}
 
-	jobs, err := GetDDLJobs(txn)
+	errs := make([]error, len(ids))
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
 
-	errs := make([]error, len(ids))
-	t := meta.NewMeta(txn)
 	for i, id := range ids {
 		found := false
 		for j, job := range jobs {
@@ -157,8 +162,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if job.Type == model.ActionAddIndex {
-				err = t.UpdateDDLJob(int64(j), job, true, meta.AddIndexJobListKey)
+			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+				offset := int64(j - len(generalJobs))
+				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
 				err = t.UpdateDDLJob(int64(j), job, true)
 			}
@@ -258,7 +264,7 @@ type RecordData struct {
 }
 
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -282,7 +288,7 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
+	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -293,7 +299,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
-		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+		logutil.Logger(context.Background()).Info("check indices count",
 			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
@@ -496,7 +502,6 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		return true, nil
 	}
 	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -553,6 +558,10 @@ func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver k
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
+	}
+
+	if sessCtx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snap.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
 	records, nextHandle, err := ScanTableRecord(sessCtx, snap, t, startHandle, limit)
@@ -699,8 +708,8 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	}
 
 	logutil.BgLogger().Debug("record",
-		zap.Binary("startKey", startKey),
-		zap.Binary("key", it.Key()),
+		zap.Stringer("startKey", startKey),
+		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {

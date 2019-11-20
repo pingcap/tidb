@@ -52,11 +52,14 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 	}
 
+	c.Assert(p.numRows, Equals, len(p.results))
 	for i := 0; i < p.numRows; i++ {
-		finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+		err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+		c.Assert(err, IsNil)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 		result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[i])
 		c.Assert(err, IsNil)
@@ -64,6 +67,26 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 		resultChk.Reset()
 	}
 	finalFunc.ResetPartialResult(finalPr)
+}
+
+func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...interface{}) windowTest {
+	pt := windowTest{
+		dataType: types.NewFieldType(tp),
+		numRows:  numRows,
+		funcName: funcName,
+	}
+	if funcName != ast.WindowFuncNtile {
+		pt.args = append(pt.args, &expression.Column{RetType: pt.dataType, Index: 0})
+	}
+	pt.args = append(pt.args, args...)
+	if orderByCols > 0 {
+		pt.orderByCols = append(pt.orderByCols, &expression.Column{RetType: pt.dataType, Index: 0})
+	}
+
+	for _, result := range results {
+		pt.results = append(pt.results, types.NewDatum(result))
+	}
+	return pt
 }
 
 func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...interface{}) windowTest {
@@ -90,6 +113,7 @@ func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols
 
 func (s *testSuite) TestWindowFunctions(c *C) {
 	tests := []windowTest{
+		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 0, 2, 1, 1),
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 4, 0.25, 0.5, 0.75, 1),
 
@@ -105,13 +129,7 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 		buildWindowTester(ast.WindowFuncFirstValue, mysql.TypeDuration, 0, 1, 2, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(0)}),
 		buildWindowTester(ast.WindowFuncFirstValue, mysql.TypeJSON, 0, 1, 2, json.CreateBinary(int64(0)), json.CreateBinary(int64(0))),
 
-		buildWindowTester(ast.WindowFuncLag, mysql.TypeLonglong, 1, 0, 3, nil, 0, 1),
-		buildWindowTester(ast.WindowFuncLag, mysql.TypeLonglong, 2, 1, 4, nil, nil, 0, 1),
-
 		buildWindowTester(ast.WindowFuncLastValue, mysql.TypeLonglong, 1, 0, 2, 1, 1),
-
-		buildWindowTester(ast.WindowFuncLead, mysql.TypeLonglong, 1, 0, 3, 1, 2, nil),
-		buildWindowTester(ast.WindowFuncLead, mysql.TypeLonglong, 2, 0, 4, 2, 3, nil, nil),
 
 		buildWindowTester(ast.WindowFuncNthValue, mysql.TypeLonglong, 2, 0, 3, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncNthValue, mysql.TypeLonglong, 5, 0, 3, nil, nil, nil),
@@ -119,9 +137,11 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 		buildWindowTester(ast.WindowFuncNtile, mysql.TypeLonglong, 3, 0, 4, 1, 1, 2, 3),
 		buildWindowTester(ast.WindowFuncNtile, mysql.TypeLonglong, 5, 0, 3, 1, 2, 3),
 
+		buildWindowTester(ast.WindowFuncPercentRank, mysql.TypeLonglong, 0, 1, 1, 0),
 		buildWindowTester(ast.WindowFuncPercentRank, mysql.TypeLonglong, 0, 0, 3, 0, 0, 0),
 		buildWindowTester(ast.WindowFuncPercentRank, mysql.TypeLonglong, 0, 1, 4, 0, 0.3333333333333333, 0.6666666666666666, 1),
 
+		buildWindowTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 0, 3, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 4, 1, 2, 3, 4),
 

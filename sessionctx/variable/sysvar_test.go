@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
 func TestT(t *testing.T) {
@@ -46,6 +48,9 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 
 	f = GetSysVar("tidb_low_resolution_tso")
 	c.Assert(f.Value, Equals, "0")
+
+	f = GetSysVar("tidb_replica_read")
+	c.Assert(f.Value, Equals, "leader")
 }
 
 func (*testSysVarSuite) TestTxnMode(c *C) {
@@ -60,4 +65,27 @@ func (*testSysVarSuite) TestTxnMode(c *C) {
 	c.Assert(err, IsNil)
 	err = seVar.setTxnMode("something else")
 	c.Assert(err, NotNil)
+}
+
+func (*testSysVarSuite) TestBoolToInt32(c *C) {
+	c.Assert(BoolToInt32(true), Equals, int32(1))
+	c.Assert(BoolToInt32(false), Equals, int32(0))
+}
+
+func (*testSysVarSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		ErrUnsupportedValueForVar,
+		ErrUnknownSystemVar,
+		ErrIncorrectScope,
+		ErrUnknownTimeZone,
+		ErrReadOnly,
+		ErrWrongValueForVar,
+		ErrWrongTypeForVar,
+		ErrTruncatedWrongValue,
+		ErrMaxPreparedStmtCountReached,
+		ErrUnsupportedIsolationLevel,
+	}
+	for _, err := range kvErrs {
+		c.Assert(err.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
+	}
 }
