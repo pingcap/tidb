@@ -399,6 +399,16 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferTiFlash(alias) {
 		ds.preferStoreType |= preferTiFlash
 	}
+	if hintInfo.ifPreferTiKV(alias) {
+		if ds.preferStoreType != 0 {
+			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s", alias.L)
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.preferStoreType = 0
+			return
+		}
+		ds.preferStoreType |= preferTiKV
+	}
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -1991,7 +2001,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
-		tiflashTables                               []hintTableInfo
+		tiflashTables, tikvTables                   []hintTableInfo
 		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2034,18 +2044,23 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			if hint.StoreType.L == HintTiFlash {
 				tiflashTables = tableNames2HintTableInfo(hint.Tables)
 			}
+			if hint.StoreType.L == HintTiKV {
+				tikvTables = tableNames2HintTableInfo(hint.Tables)
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(tiflashTables) > 0 || aggHints.preferAggType != 0 || aggHints.preferAggToCop {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(tiflashTables)+len(tikvTables) > 0 ||
+		aggHints.preferAggType != 0 || aggHints.preferAggToCop {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
 			aggHints:                  aggHints,
-			flashTables:               tiflashTables,
+			tiflashTables:               tiflashTables,
+			tikvTables:                tikvTables,
 		})
 		return true
 	}
