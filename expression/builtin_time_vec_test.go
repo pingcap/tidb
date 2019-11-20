@@ -71,7 +71,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.ToSeconds: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.MicroSecond: {},
+	ast.MicroSecond: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
 	ast.Now: {
 		{retEvalType: types.ETDatetime},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
@@ -123,7 +125,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
 		},
 	},
-	ast.TimestampDiff:    {},
+	ast.TimestampDiff: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDatetime, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil}},
+	},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
 	ast.AddDate:          {},
@@ -203,6 +210,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.UTCTimestamp: {
 		{retEvalType: types.ETTimestamp},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
+	},
+	ast.UnixTimestamp: {
+		{retEvalType: types.ETInt},
 	},
 	ast.UTCTime: {
 		{retEvalType: types.ETDuration},

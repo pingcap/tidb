@@ -45,3 +45,5 @@ Writing a design document can promote us to think deliberately and gather knowle
 - [Proposal: Support restoring SQL text from an AST tree](./2018-11-29-ast-to-sql-text.md)
 - [Proposal: Support Plugin](./2018-12-10-plugin-framework.md)
 - [Proposal: Support Skyline Pruning](./2019-01-25-skyline-pruning.md)
+- [Proposal: Support Index Merge](./2019-04-11-indexmerge.md)
+- [Proposal: Support Automatically Index Recommendation](./2019-11-05-index-advisor.md)
