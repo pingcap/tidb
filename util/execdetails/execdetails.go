@@ -412,7 +412,7 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
-// SetConcurrencyInfo sets the concurrency infomation.
+// SetConcurrencyInfo sets the concurrency information.
 func (e *RuntimeStats) SetConcurrencyInfo(concurrencyInfo string) {
 	var val atomic.Value
 	val.Store(concurrencyInfo)
