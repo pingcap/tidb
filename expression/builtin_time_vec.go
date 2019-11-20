@@ -1751,18 +1751,19 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 		}
 		seconds := int64(secondsFloat)
 		demical := secondsFloat - float64(seconds)
+		var minute, second int64
 		hour := seconds / 3600
-		minute := seconds % 3600 / 60
-		second := seconds % 60
 		if hour > 838 {
 			hour = 838
 			minute = 59
 			second = 59
+		} else {
+			minute = seconds % 3600 / 60
+			second = seconds % 60
 		}
 		secondDemical := float64(second) + demical
 		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), int8(b.tp.Decimal))
 		if err != nil {
-			result.SetNull(i, true)
 			return err
 		}
 		durations[i] = duration.Duration
