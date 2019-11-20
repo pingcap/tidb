@@ -744,10 +744,46 @@ func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
 	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
 	s.cluster.RemoveStore(s.store1)
 	s.cluster.ChangeLeader(s.region1, s.peer2)
-	s.cluster.RemovePeer(s.region1, s.store1)
+	s.cluster.RemovePeer(s.region1, s.peer1)
 
 	getVal, err := client.Get(testKey)
 
+	c.Assert(err, IsNil)
+	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	// pre-load store2's address into cache via follower-read.
+	loc, err := client.regionCache.LocateKey(s.bo, testKey)
+	c.Assert(err, IsNil)
+	fctx, err := client.regionCache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0)
+	c.Assert(err, IsNil)
+	c.Assert(fctx.Store.storeID, Equals, s.store2)
+	c.Assert(fctx.Addr, Equals, "store2")
+
+	// make store2 using store1's addr and store1 offline
+	store1Addr := s.storeAddr(s.store1)
+	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store2))
+	s.cluster.UpdateStoreAddr(s.store2, store1Addr)
+	s.cluster.RemoveStore(s.store1)
+	s.cluster.ChangeLeader(s.region1, s.peer2)
+	s.cluster.RemovePeer(s.region1, s.peer1)
+
+	getVal, err := client.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
 }

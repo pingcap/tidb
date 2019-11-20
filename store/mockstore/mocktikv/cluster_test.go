@@ -88,7 +88,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		if !bytes.HasPrefix(startKey, recordPrefix) {
 			continue
 		}
-		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI)
+		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI, nil)
 		if len(pairs) > 0 {
 			c.Assert(pairs, HasLen, 100)
 		}
@@ -109,7 +109,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		if !bytes.HasPrefix(startKey, indexPrefix) {
 			continue
 		}
-		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI)
+		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI, nil)
 		if len(pairs) > 0 {
 			c.Assert(pairs, HasLen, 100)
 		}
