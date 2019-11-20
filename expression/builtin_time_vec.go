@@ -1873,10 +1873,10 @@ func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			if invalidArg1 {
 				err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(args1[i].String()))
 			}
-			result.SetNull(i, true)
 			if err != nil {
 				return err
 			}
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64(types.DateDiff(args0[i].Time, args1[i].Time))
