@@ -900,8 +900,9 @@ const (
 	ErrInvalidJSONPathWildcard                                      = 3149
 	ErrInvalidJSONContainsPathType                                  = 3150
 	ErrJSONUsedAsKey                                                = 3152
-	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrBadUser                                                      = 3162
+	ErrUserAlreadyExists                                            = 3163
+	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrInvalidEncryptionOption                                      = 3184
 	ErrRoleNotGranted                                               = 3530
 	ErrLockAcquireFailAndNoWaitSet                                  = 3572
