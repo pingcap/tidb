@@ -771,9 +771,13 @@ func (b *builtinAddDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result 
 			result.SetNull(i, true)
 			continue
 		}
-		resultI, _, err := b.add(b.ctx, date, interval, unitI)
+		resultI, isNull, err := b.add(b.ctx, date, interval, unitI)
 		if err != nil {
 			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
 		}
 		results[i] = resultI
 	}
