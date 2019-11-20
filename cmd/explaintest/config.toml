@@ -2,7 +2,7 @@ port = 4001
 lease = "0"
 
 [log]
-level = "warn"
+level = "error"
 
 [status]
 status-port = 10081
