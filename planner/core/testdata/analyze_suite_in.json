@@ -81,6 +81,9 @@
         "desc select * from t"
       ],
       [
+        "desc select /*+ read_from_storage(tikv[t]) */ * from t"
+      ],
+      [
         "desc select * from t where t.a = 1 or t.a = 2"
       ],
       [
@@ -95,6 +98,15 @@
       "explain select straight_join * from t1, t2, t3, t4",
       "explain select * from t1 straight_join t2 straight_join t3 straight_join t4",
       "explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a"
+    ]
+  },
+  {
+    "name": "TestNullCount",
+    "cases": [
+      "explain select * from t where a is null",
+      "explain select * from t use index(idx) where a is null",
+      "explain select * from t where b = 1",
+      "explain select * from t where b < 1"
     ]
   }
 ]

@@ -7,7 +7,7 @@
         "Plan": [
           "IndexLookUp_14 1.00 root limit embedded(offset:2, count:1)",
           "├─Limit_13 3.00 cop[tikv] offset:0, count:3",
-          "│ └─IndexScan_11 3.00 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#8, index:b, c, range:(1,+inf], keep order:false",
+          "│ └─IndexScan_11 3.00 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#5, index:b, c, range:(1,+inf], keep order:false",
           "└─TableScan_12 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3, keep order:false, stats:pseudo"
         ]
       },
@@ -17,8 +17,8 @@
           "Projection_25 1.00 root Column#1, Column#2, Column#3",
           "└─IndexLookUp_24 1.00 root limit embedded(offset:2, count:1)",
           "  ├─Limit_23 3.00 cop[tikv] offset:0, count:3",
-          "  │ └─IndexScan_21 3.00 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#10, index:b, c, range:(1,+inf], keep order:true, desc",
-          "  └─TableScan_22 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3,_tidb_rowid->#11, keep order:false, stats:pseudo"
+          "  │ └─IndexScan_21 3.00 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#7, index:b, c, range:(1,+inf], keep order:true, desc",
+          "  └─TableScan_22 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3,_tidb_rowid->#8, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -27,7 +27,7 @@
           "IndexLookUp_15 1.00 root limit embedded(offset:2, count:1)",
           "├─Limit_14 3.00 cop[tikv] offset:0, count:3",
           "│ └─Selection_13 3.00 cop[tikv] gt(Column#3, 1)",
-          "│   └─IndexScan_11 3.75 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#8, index:b, c, range:(1,+inf], keep order:false",
+          "│   └─IndexScan_11 3.75 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#5, index:b, c, range:(1,+inf], keep order:false",
           "└─TableScan_12 1.00 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3, keep order:false, stats:pseudo"
         ]
       },
@@ -36,7 +36,7 @@
         "Plan": [
           "Limit_9 1.00 root offset:2, count:1",
           "└─IndexLookUp_15 3.00 root ",
-          "  ├─IndexScan_11 3.75 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#8, index:b, c, range:(1,+inf], keep order:false",
+          "  ├─IndexScan_11 3.75 cop[tikv] table:tbl, mapping:b->#2,c->#3,_tidb_rowid->#5, index:b, c, range:(1,+inf], keep order:false",
           "  └─Limit_14 3.00 cop[tikv] offset:0, count:3",
           "    └─Selection_13 3.00 cop[tikv] gt(Column#1, 1)",
           "      └─TableScan_12 3.75 cop[tikv] table:tbl, mapping:a->#1,b->#2,c->#3, keep order:false"

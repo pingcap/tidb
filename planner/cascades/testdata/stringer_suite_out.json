@@ -19,7 +19,7 @@
         "SQL": "select 3 * 10 + 1",
         "Result": [
           "Group#0 Schema:[Column#1]",
-          "    Projection_2 input:[Group#1], 31",
+          "    Projection_2 input:[Group#1], 31->Column#1",
           "Group#1 Schema:[]",
           "    TableDual_1 rowcount:1"
         ]

@@ -53,11 +53,7 @@
           "  │   └─TopN_36 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
           "  │     └─IndexScan_35 6.00 cop[tikv] table:t1, mapping:b->#2,c->#3,a->#1, index:b, c, range:[-inf,6], keep order:false",
           "  └─IndexReader_68 1.04 root index:IndexScan_67",
-<<<<<<< HEAD
-          "    └─IndexScan_67 1.04 cop[tikv] table:t2, mapping:b->#8,c->#18, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true"
-=======
-          "    └─IndexScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(Column#5, Column#1)], keep order:true"
->>>>>>> master
+          "    └─IndexScan_67 1.04 cop[tikv] table:t2, mapping:b->#5,c->#13, index:b, c, range: decided by [eq(Column#5, Column#1)], keep order:true"
         ]
       },
       {
@@ -131,7 +127,7 @@
           "  └─IndexReader_17 1.00 root index:TopN_16",
           "    └─TopN_16 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
           "      └─Selection_15 6.00 cop[tikv] gt(Column#3, 0)",
-          "        └─IndexScan_14 6.00 cop[tikv] table:t, mapping:b->#2,d->#8,a->#1,c->#3,a->#1, index:b, d, a, c, range:[2,2], keep order:false"
+          "        └─IndexScan_14 6.00 cop[tikv] table:t, mapping:b->#2,d->#7,a->#1,c->#3,a->#1, index:b, d, a, c, range:[2,2], keep order:false"
         ]
       }
     ]
@@ -179,6 +175,10 @@
       [
         "TableReader_7 10000.00 root data:TableScan_6",
         "└─TableScan_6 10000.00 cop[tiflash] table:t, mapping:a->#1,b->#2,c->#3, range:[-inf,+inf], keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_5 10000.00 root data:TableScan_4",
+        "└─TableScan_4 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2,c->#3, range:[-inf,+inf], keep order:false, stats:pseudo"
       ],
       [
         "TableReader_6 2.00 root data:TableScan_5",
@@ -234,6 +234,31 @@
         "└─TableReader_26 9990.00 root data:Selection_25",
         "  └─Selection_25 9990.00 cop[tikv] not(isnull(Column#7))",
         "    └─TableScan_24 10000.00 cop[tikv] table:t4, mapping:a->#7, range:[-inf,+inf], keep order:false, stats:pseudo"
+      ]
+    ]
+  },
+  {
+    "Name": "TestNullCount",
+    "Cases": [
+      [
+        "TableReader_7 2.00 root data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv] isnull(Column#1)",
+        "  └─TableScan_5 2.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false"
+      ],
+      [
+        "IndexLookUp_7 2.00 root ",
+        "├─IndexScan_5 2.00 cop[tikv] table:t, mapping:a->#1,_tidb_rowid->#4, index:a, range:[NULL,NULL], keep order:false",
+        "└─TableScan_6 2.00 cop[tikv] table:t, mapping:a->#1,b->#2, keep order:false"
+      ],
+      [
+        "TableReader_7 0.00 root data:Selection_6",
+        "└─Selection_6 0.00 cop[tikv] eq(Column#2, 1)",
+        "  └─TableScan_5 2.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false"
+      ],
+      [
+        "TableReader_7 0.00 root data:Selection_6",
+        "└─Selection_6 0.00 cop[tikv] lt(Column#2, 1)",
+        "  └─TableScan_5 2.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false"
       ]
     ]
   }

@@ -314,7 +314,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by null) as c from t",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(Column#1, 1)->Column#15 over())->Projection"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(Column#1, 1)->Column#14 over())->Projection"
       },
       {
         "SQL": "select * from t use index(f) where f = 1 and a = 1",

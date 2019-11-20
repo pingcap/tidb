@@ -7,7 +7,7 @@
         "Plan": [
           "Projection_8 3333.33 root Column#2",
           "└─TableReader_9 3333.33 root data:TableScan_10",
-          "  └─TableScan_10 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
+          "  └─TableScan_10 3333.33 cop[tikv] table:t, mapping:a->#1,b->#2, range:(1,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "4",
@@ -19,7 +19,7 @@
         "Plan": [
           "Projection_8 2.00 root Column#2",
           "└─TableReader_9 2.00 root data:TableScan_10",
-          "  └─TableScan_10 2.00 cop[tikv] table:t, range:(1,3), keep order:false, stats:pseudo"
+          "  └─TableScan_10 2.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:(1,3), keep order:false, stats:pseudo"
         ],
         "Result": null
       },
@@ -29,7 +29,7 @@
           "Projection_9 2666.67 root Column#2",
           "└─TableReader_10 2666.67 root data:Selection_11",
           "  └─Selection_11 2666.67 cop[tikv] lt(Column#2, 6)",
-          "    └─TableScan_12 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
+          "    └─TableScan_12 3333.33 cop[tikv] table:t, mapping:a->#1,b->#2, range:(1,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -41,7 +41,7 @@
           "Projection_9 4.00 root Column#1",
           "└─TableReader_10 4.00 root data:Selection_11",
           "  └─Selection_11 4.00 cop[tikv] gt(plus(mul(Column#1, 3), 1), 9)",
-          "    └─TableScan_12 5.00 cop[tikv] table:t, range:[-inf,5), keep order:false, stats:pseudo"
+          "    └─TableScan_12 5.00 cop[tikv] table:t, mapping:a->#1, range:[-inf,5), keep order:false, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -53,10 +53,10 @@
           "Projection_11 6400.00 root Column#1",
           "└─Projection_12 6400.00 root Column#1, Column#3",
           "  └─Selection_13 6400.00 root gt(Column#3, 4)",
-          "    └─HashAgg_18 8000.00 root group by:Column#7, funcs:sum(Column#5), firstrow(Column#7)",
+          "    └─HashAgg_18 8000.00 root group by:Column#7, funcs:sum(Column#5)->Column#3, funcs:firstrow(Column#7)->Column#1",
           "      └─TableReader_19 8000.00 root data:HashAgg_20",
-          "        └─HashAgg_20 8000.00 cop[tikv] group by:Column#1, funcs:sum(Column#2)",
-          "          └─TableScan_16 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "        └─HashAgg_20 8000.00 cop[tikv] group by:Column#1, funcs:sum(Column#2)->Column#5",
+          "          └─TableScan_16 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "5"
@@ -72,7 +72,7 @@
         "Plan": [
           "Projection_7 10000.00 root Column#1",
           "└─TableReader_8 10000.00 root data:TableScan_9",
-          "  └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "  └─TableScan_9 10000.00 cop[tikv] table:t, mapping:a->#1, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -87,7 +87,7 @@
           "Projection_7 10000.00 root Column#2",
           "└─Sort_12 10000.00 root Column#2:asc",
           "  └─TableReader_10 10000.00 root data:TableScan_11",
-          "    └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─TableScan_11 10000.00 cop[tikv] table:t, mapping:b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
@@ -102,10 +102,10 @@
           "Projection_7 10000.00 root Column#2",
           "└─Projection_12 10000.00 root Column#2, Column#1",
           "  └─Sort_8 10000.00 root Column#4:asc",
-          "    └─Projection_13 10000.00 root Column#2, Column#1, plus(Column#1, Column#2)",
+          "    └─Projection_13 10000.00 root Column#2, Column#1, plus(Column#1, Column#2)->Column#4",
           "      └─Projection_9 10000.00 root Column#2, Column#1",
           "        └─TableReader_10 10000.00 root data:TableScan_11",
-          "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "          └─TableScan_11 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
@@ -120,10 +120,10 @@
           "Projection_7 10000.00 root Column#2",
           "└─Projection_12 10000.00 root Column#2, Column#1",
           "  └─Sort_8 10000.00 root Column#2:asc, Column#4:asc, Column#1:asc",
-          "    └─Projection_13 10000.00 root Column#2, Column#1, plus(Column#1, Column#2)",
+          "    └─Projection_13 10000.00 root Column#2, Column#1, plus(Column#1, Column#2)->Column#4",
           "      └─Projection_9 10000.00 root Column#2, Column#1",
           "        └─TableReader_10 10000.00 root data:TableScan_11",
-          "          └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "          └─TableScan_11 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
@@ -141,10 +141,10 @@
         "SQL": "select sum(a) from t",
         "Plan": [
           "Projection_8 1.00 root Column#3",
-          "└─HashAgg_13 1.00 root funcs:sum(Column#4)",
+          "└─HashAgg_13 1.00 root funcs:sum(Column#4)->Column#3",
           "  └─TableReader_14 1.00 root data:HashAgg_15",
-          "    └─HashAgg_15 1.00 cop[tikv] funcs:sum(Column#1)",
-          "      └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─HashAgg_15 1.00 cop[tikv] funcs:sum(Column#1)->Column#4",
+          "      └─TableScan_11 10000.00 cop[tikv] table:t, mapping:a->#1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "10"
@@ -154,10 +154,10 @@
         "SQL": "select max(a), min(b) from t",
         "Plan": [
           "Projection_8 1.00 root Column#3, Column#4",
-          "└─HashAgg_12 1.00 root funcs:max(Column#5), min(Column#6)",
+          "└─HashAgg_12 1.00 root funcs:max(Column#5)->Column#3, funcs:min(Column#6)->Column#4",
           "  └─TableReader_13 1.00 root data:HashAgg_14",
-          "    └─HashAgg_14 1.00 cop[tikv] funcs:max(Column#1), min(Column#2)",
-          "      └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─HashAgg_14 1.00 cop[tikv] funcs:max(Column#1)->Column#5, funcs:min(Column#2)->Column#6",
+          "      └─TableScan_11 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "4 11"
@@ -168,10 +168,10 @@
         "Plan": [
           "Projection_10 8000.00 root Column#2, Column#3",
           "└─Sort_19 8000.00 root Column#2:asc",
-          "  └─HashAgg_12 8000.00 root group by:Column#10, funcs:avg(Column#8), firstrow(Column#9)",
-          "    └─Projection_15 10000.00 root cast(Column#1), Column#2, Column#2",
+          "  └─HashAgg_12 8000.00 root group by:Column#10, funcs:avg(Column#8)->Column#3, funcs:firstrow(Column#9)->Column#2",
+          "    └─Projection_15 10000.00 root cast(Column#1)->Column#8, Column#2, Column#2",
           "      └─TableReader_13 10000.00 root data:TableScan_14",
-          "        └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "        └─TableScan_14 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11 1.0000",
@@ -185,10 +185,10 @@
         "Plan": [
           "Projection_10 8000.00 root Column#2, Column#3",
           "└─Sort_19 8000.00 root Column#2:asc",
-          "  └─HashAgg_16 8000.00 root group by:Column#6, funcs:sum(Column#4), firstrow(Column#6)",
+          "  └─HashAgg_16 8000.00 root group by:Column#6, funcs:sum(Column#4)->Column#3, funcs:firstrow(Column#6)->Column#2",
           "    └─TableReader_17 8000.00 root data:HashAgg_18",
-          "      └─HashAgg_18 8000.00 cop[tikv] group by:Column#2, funcs:sum(Column#1)",
-          "        └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "      └─HashAgg_18 8000.00 cop[tikv] group by:Column#2, funcs:sum(Column#1)->Column#4",
+          "        └─TableScan_14 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11 1",
@@ -204,10 +204,10 @@
           "└─Projection_14 6400.00 root Column#2, Column#3, Column#4",
           "  └─Sort_27 6400.00 root Column#2:asc",
           "    └─Selection_26 6400.00 root gt(Column#4, 1)",
-          "      └─HashAgg_17 8000.00 root group by:Column#15, funcs:avg(Column#12), sum(Column#13), firstrow(Column#14)",
-          "        └─Projection_20 10000.00 root cast(Column#1), cast(Column#1), Column#2, Column#2",
+          "      └─HashAgg_17 8000.00 root group by:Column#15, funcs:avg(Column#12)->Column#3, funcs:sum(Column#13)->Column#4, funcs:firstrow(Column#14)->Column#2",
+          "        └─Projection_20 10000.00 root cast(Column#1)->Column#12, cast(Column#1)->Column#13, Column#2, Column#2",
           "          └─TableReader_18 10000.00 root data:TableScan_19",
-          "            └─TableScan_19 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "            └─TableScan_19 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "22 2.0000",
@@ -219,10 +219,10 @@
         "SQL": "select max(a+b) from t",
         "Plan": [
           "Projection_8 1.00 root Column#3",
-          "└─HashAgg_13 1.00 root funcs:max(Column#4)",
+          "└─HashAgg_13 1.00 root funcs:max(Column#4)->Column#3",
           "  └─TableReader_14 1.00 root data:HashAgg_15",
-          "    └─HashAgg_15 1.00 cop[tikv] funcs:max(plus(Column#1, Column#2))",
-          "      └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─HashAgg_15 1.00 cop[tikv] funcs:max(plus(Column#1, Column#2))->Column#4",
+          "      └─TableScan_11 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"
@@ -234,10 +234,10 @@
           "Projection_10 8000.00 root Column#3",
           "└─Projection_12 8000.00 root Column#3, Column#1",
           "  └─Sort_21 8000.00 root Column#1:asc",
-          "    └─HashAgg_14 8000.00 root group by:Column#11, Column#12, funcs:sum(Column#9), firstrow(Column#10)",
-          "      └─Projection_17 10000.00 root cast(Column#1), Column#1, Column#1, plus(Column#1, Column#2)",
+          "    └─HashAgg_14 8000.00 root group by:Column#11, Column#12, funcs:sum(Column#9)->Column#3, funcs:firstrow(Column#10)->Column#1",
+          "      └─Projection_17 10000.00 root cast(Column#1)->Column#9, Column#1, Column#1, plus(Column#1, Column#2)->Column#12",
           "        └─TableReader_15 10000.00 root data:TableScan_16",
-          "          └─TableScan_16 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "          └─TableScan_16 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -257,7 +257,7 @@
           "Limit_6 2.00 root offset:0, count:2",
           "└─Projection_7 2.00 root Column#1",
           "  └─TableReader_8 2.00 root data:TableScan_9",
-          "    └─TableScan_9 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─TableScan_9 2.00 cop[tikv] table:t, mapping:a->#1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -270,7 +270,7 @@
           "Limit_6 1.00 root offset:2, count:1",
           "└─Projection_7 3.00 root Column#1",
           "  └─TableReader_8 3.00 root data:TableScan_9",
-          "    └─TableScan_9 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─TableScan_9 3.00 cop[tikv] table:t, mapping:a->#1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -282,7 +282,7 @@
           "TopN_8 3.00 root Column#2:asc, offset:0, count:3",
           "└─Projection_10 10000.00 root Column#2",
           "  └─TableReader_11 10000.00 root data:TableScan_12",
-          "    └─TableScan_12 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─TableScan_12 10000.00 cop[tikv] table:t, mapping:b->#2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
@@ -296,7 +296,7 @@
           "Limit_9 1.00 root offset:2, count:1",
           "└─Projection_13 3.00 root Column#1",
           "  └─TableReader_14 3.00 root data:TableScan_15",
-          "    └─TableScan_15 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "    └─TableScan_15 3.00 cop[tikv] table:t, mapping:a->#1, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "3"
