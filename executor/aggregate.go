@@ -1008,6 +1008,8 @@ type vecGroupChecker struct {
 	previousLastGroupKey []byte
 	firstGroupKey        []byte
 	lastGroupKey         []byte
+	firstRowDatums       []types.Datum
+	lastRowDatums        []types.Datum
 	sameGroup            []bool
 }
 
@@ -1023,7 +1025,8 @@ func newVecGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContex
 	}
 }
 
-// splitChunk divide the chunk into more groups which the row in the same group have the same groupKey
+// splitChunk divides the chunk into more groups which the row in the same group have the same groupKey
+// the return value flag means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	numRows := chk.NumRows()
@@ -1031,6 +1034,8 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	e.groupRowsIndex = e.groupRowsIndex[:0]
 	e.firstGroupKey = e.firstGroupKey[:0]
 	e.lastGroupKey = e.lastGroupKey[:0]
+	e.firstRowDatums = e.firstRowDatums[:0]
+	e.lastRowDatums = e.lastRowDatums[:0]
 	if len(e.GroupByItems) == 0 {
 		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
 		return true, nil
@@ -1053,152 +1058,25 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 		if err != nil {
 			return false, err
 		}
+		defer expression.PutColumn(col)
 		err = expression.VecEval(e.ctx, item, chk, col)
 		if err != nil {
 			return false, err
 		}
 
-		e.firstGroupKey, err = codec.EncodeTo(e.StmtCtx, col, 0, e.firstGroupKey, tp)
+		err = e.checkOneColumn(eType, col, numRows)
 		if err != nil {
 			return false, err
 		}
+	}
+	e.firstGroupKey, err = codec.EncodeValue(e.StmtCtx, e.firstGroupKey, e.firstRowDatums...)
+	if err != nil {
+		return false, err
+	}
 
-		e.lastGroupKey, err = codec.EncodeTo(e.StmtCtx, col, numRows-1, e.firstGroupKey, tp)
-		if err != nil {
-			return false, err
-		}
-		previousIsNull := col.IsNull(0)
-		switch eType {
-		case types.ETInt:
-			i64s := col.Int64s()
-			for i := 1; i < numRows; i++ {
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if i64s[i] != i64s[i-1] {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousIsNull = isNull
-			}
-		case types.ETReal:
-			i64s := col.Float64s()
-			for i := 1; i < numRows; i++ {
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if i64s[i] != i64s[i-1] {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousIsNull = isNull
-			}
-		case types.ETDecimal:
-			i64s := col.Decimals()
-			for i := 1; i < numRows; i++ {
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if i64s[i] != i64s[i-1] {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousIsNull = isNull
-			}
-		case types.ETDatetime, types.ETTimestamp:
-			i64s := col.Times()
-			for i := 1; i < numRows; i++ {
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if i64s[i] != i64s[i-1] {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousIsNull = isNull
-			}
-		case types.ETDuration:
-			i64s := col.GoDurations()
-			for i := 1; i < numRows; i++ {
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if i64s[i] != i64s[i-1] {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousIsNull = isNull
-			}
-		case types.ETJson:
-			previousKey := col.GetJSON(0)
-			for i := 1; i < numRows; i++ {
-				key := col.GetJSON(i)
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if json.CompareBinary(previousKey, key) != 0 {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousKey = key
-				previousIsNull = isNull
-			}
-		case types.ETString:
-			previousKey := col.GetString(0)
-			for i := 1; i < numRows; i++ {
-				key := col.GetString(i)
-				isNull := col.IsNull(i)
-				if e.sameGroup[i] {
-					if isNull != previousIsNull {
-						e.sameGroup[i] = false
-					} else {
-						if !previousIsNull {
-							if previousKey != key {
-								e.sameGroup[i] = false
-							}
-						}
-					}
-				}
-				previousKey = key
-				previousIsNull = isNull
-			}
-		default:
-			err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
-		}
-		if err != nil {
-			return false, err
-		}
-		expression.PutColumn(col)
+	e.lastGroupKey, err = codec.EncodeValue(e.StmtCtx, e.lastGroupKey, e.lastRowDatums...)
+	if err != nil {
+		return false, err
 	}
 
 	if e.previousLastGroupKey == nil {
@@ -1222,6 +1100,145 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 	e.groupRowsIndex = append(e.groupRowsIndex, numRows)
 	e.groupRowsNum = len(e.groupRowsIndex)
 	return flag, nil
+}
+
+func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column, numRows int) (err error) {
+	previousIsNull := col.IsNull(0)
+	var firstRowDatum, lastRowDatum types.Datum
+	switch eType {
+	case types.ETInt:
+		i64s := col.Int64s()
+		for i := 1; i < numRows; i++ {
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && i64s[i] != i64s[i-1] {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(i64s[0])
+		lastRowDatum.SetValue(i64s[numRows-1])
+	case types.ETReal:
+		i64s := col.Float64s()
+		for i := 1; i < numRows; i++ {
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && i64s[i] != i64s[i-1] {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(i64s[0])
+		lastRowDatum.SetValue(i64s[numRows-1])
+	case types.ETDecimal:
+		i64s := col.Decimals()
+		for i := 1; i < numRows; i++ {
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && i64s[i] != i64s[i-1] {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(i64s[0])
+		lastRowDatum.SetValue(i64s[numRows-1])
+	case types.ETDatetime, types.ETTimestamp:
+		i64s := col.Times()
+		for i := 1; i < numRows; i++ {
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && i64s[i] != i64s[i-1] {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(i64s[0])
+		lastRowDatum.SetValue(i64s[numRows-1])
+	case types.ETDuration:
+		i64s := col.GoDurations()
+		for i := 1; i < numRows; i++ {
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && i64s[i] != i64s[i-1] {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(i64s[0])
+		lastRowDatum.SetValue(i64s[numRows-1])
+	case types.ETJson:
+		previousKey := col.GetJSON(0)
+		for i := 1; i < numRows; i++ {
+			key := col.GetJSON(i)
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && json.CompareBinary(previousKey, key) != 0 {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousKey = key
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(col.GetJSON(0))
+		lastRowDatum.SetValue(col.GetJSON(numRows - 1))
+	case types.ETString:
+		previousKey := col.GetString(0)
+		for i := 1; i < numRows; i++ {
+			key := col.GetString(i)
+			isNull := col.IsNull(i)
+			if e.sameGroup[i] {
+				if isNull != previousIsNull {
+					e.sameGroup[i] = false
+				} else {
+					if !previousIsNull && previousKey != key {
+						e.sameGroup[i] = false
+					}
+				}
+			}
+			previousKey = key
+			previousIsNull = isNull
+		}
+		firstRowDatum.SetValue(col.GetString(0))
+		lastRowDatum.SetValue(col.GetString(numRows - 1))
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+	}
+	if err != nil {
+		return err
+	}
+
+	e.firstRowDatums = append(e.firstRowDatums, firstRowDatum)
+	e.lastRowDatums = append(e.lastRowDatums, lastRowDatum)
+	return err
 }
 
 func (e *vecGroupChecker) getOneGroup() (begin, end int) {
@@ -1250,5 +1267,11 @@ func (e *vecGroupChecker) reset() {
 	}
 	if e.lastGroupKey != nil {
 		e.lastGroupKey = e.lastGroupKey[:0]
+	}
+	if e.firstRowDatums != nil {
+		e.firstRowDatums = e.firstRowDatums[:0]
+	}
+	if e.lastRowDatums != nil {
+		e.lastRowDatums = e.lastRowDatums[:0]
 	}
 }
