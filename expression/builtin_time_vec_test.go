@@ -51,6 +51,26 @@ func (g *unitStrGener) gen() interface{} {
 	return units[n]
 }
 
+type dateTimeUnitStrGener struct{}
+
+func (g *dateTimeUnitStrGener) gen() interface{} {
+	dateTimes := []string{
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+		"DAY_MICROSECOND",
+		"DAY_SECOND",
+		"DAY_MINUTE",
+		"DAY_HOUR",
+		"YEAR_MONTH",
+	}
+
+	n := rand.Int() % len(dateTimes)
+	return dateTimes[n]
+}
+
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
@@ -117,6 +137,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.TimeToSec: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+	},
+	ast.SecToTime: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}},
 	},
 	ast.TimestampAdd: {
 		{
@@ -261,6 +284,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.LastDay: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
+	},
+	ast.Extract: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeUnitStrGener{}, nil}},
 	},
 }
 
