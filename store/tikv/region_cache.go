@@ -1089,6 +1089,7 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
@@ -1107,6 +1108,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	if int(rs.workTiKVIdx) != currentPeerIdx {
