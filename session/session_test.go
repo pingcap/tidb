@@ -51,7 +51,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testSessionSuite{})
+var _ = SerialSuites(&testSessionSuite{})
 
 type testSessionSuite struct {
 	cluster   *mocktikv.Cluster
@@ -2420,6 +2420,7 @@ func (s *testSessionSuite) TestDBUserNameLength(c *C) {
 }
 
 func (s *testSessionSuite) TestKVVars(c *C) {
+	c.Skip("there is no backoff here in the large txn, so this test is stale")
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kvvars (a int, b int)")
 	tk.MustExec("insert kvvars values (1, 1)")
@@ -2456,6 +2457,7 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	}()
 	wg.Wait()
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC"), IsNil)
+
 	for {
 		tk2.MustQuery("select * from kvvars")
 		if atomic.LoadInt32(backOffWeightVal) != 0 {

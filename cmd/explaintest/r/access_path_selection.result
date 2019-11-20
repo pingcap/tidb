@@ -38,7 +38,7 @@ StreamAgg_13	1.00	root	funcs:max(Column#3)
       └─TableScan_25	1.25	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
 explain select count(1) from access_path_selection;
 id	count	task	operator info
-StreamAgg_28	1.00	root	funcs:count(Column#19)
+StreamAgg_28	1.00	root	funcs:count(Column#18)
 └─TableReader_29	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tikv]	funcs:count(1)
     └─TableScan_24	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
