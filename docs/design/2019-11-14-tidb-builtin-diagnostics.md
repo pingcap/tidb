@@ -2,33 +2,34 @@
 
 ## Summary
 
-Currently, TiDB obtains diagnostic information mainly relying on external tools (perf/iosnoop/iotop/iostat/vmstat/sar/...), monitoring systems (Prometheus/Grafana), log files, HTTP APIs, and system tables provided by TiDB. The decentralized toolchains and cumbersome acquisition methods lead to high barriers to the use of TiDB clusters, difficulty in operation and maintenance, failure to detect problems in advance, and failure to timely investigate, diagnose, and recover clusters.
-This proposal proposes a new method of acquiring diagnostic information in TiDB and exposing diagnostic information by the system tables so that users can query using SQL.
+Currently, TiDB obtains diagnostic information mainly relying on external tools (perf/iosnoop/iotop/iostat/vmstat/sar/...), monitoring systems (Prometheus/Grafana), log files, HTTP APIs, and system tables provided by TiDB. The decentralized toolchains and cumbersome acquisition methods lead to high barriers to the use of TiDB clusters, difficulty in operation and maintenance, failure to detect problems in advance, and failure to timely investigate,diagnose, and recover clusters.
+
+This proposal proposes a new method of acquiring diagnostic information in TiDB for exposure in system tables so that users can query diagnostic information using SQL statements.
 
 ## Motivation
 
-This proposal mainly solves the following problems in TiDB's process of obtaining diagnostic information: 
+This proposal mainly solves the following problems in TiDB's process of obtaining diagnostic information:
 
-- The toolchains are scattered, it needs to switch back and forth between different tools, and some Linux distributions do not have built-in corresponding tools or built-in tools don't have versions as expected.
-- The information acquisition methods are inconsistent, such as SQL, HTTP, export monitoring, login to each node to view logs, and so on.
-- There are many TiDB cluster components, and the comparison and correlation of monitoring of different components is inefficient and cumbersome.
-- TiDB does not have centralized log management components, and there is no efficient ways to filter, retrieve, analyze, and aggregate logs of the entire cluster.
-- The system table only contains the current node information, and does not reflect the state of the entire cluster, such as: SLOW_QUERY, PROCESSLIST, STATEMENTS_SUMMARY.
+- The toolchains are scattered, so TiDB needs to switch back and forth between different tools. In addition, some Linux distributions don't have corresponding built-in tools; even if they do, the versions of the tools aren't as expected.
+- The information acquisition methods are inconsistent, for example, SQL, HTTP, exported monitoring, viewing logs by logging into each node, and so on.
+- There are many TiDB cluster components. and the comparison and correlation of the monitoring information between different components are inefficient and cumbersome.
+- TiDB does not have centralized log management components, so there are no efficient ways to filter, retrieve, analyze, and aggregate logs of the entire cluster.
+- The system table only contains the information of the current node, which does not reflect the state of the entire cluster, such as: SLOW_QUERY, PROCESSLIST, STATEMENTS_SUMMARY.
 
-The efficiency of the cluster-based information query, state acquisition, log retrieval, one-click inspection, and fault diagnosis will be improved after the multi-dimensional cluster-level system table and the cluster's diagnostic rule framework is provided. And provide basic data for the subsequent abnormal early warning function.
+The efficiency of cluster-scale information query, state acquisition, log retrieval, one-click inspection, and fault diagnosis can be improved after the multi-dimensional cluster-level system table and the cluster's diagnostic rule framework are provided. And basic data can be provided for subsequent exception alarming.
 
-## Detailed Design
+## Detailed design
 
-### System Overview
+### System overview
 
 The implementation of this proposal is divided into four layers:
 
-- L1: The lowest level implements the information collection module at each node, including TiDB/TiKV/PD monitoring information, hardware information, network IO recorded in the kernel, Disk IO information, CPU usage, memory usage, and more.
-- L2: The second layer can obtain the information collected by the current node by calling the underlying information collection module and providing data to the upper layer through the external service interface (HTTP API/gRPC Service).
-- L3: The third layer pulls the information of each node by TiDB, aggregates and summarizes it, and provides data to the upper layer in the form of the system table.
-- L4: The fourth layer implements the diagnostic framework. The diagnostic framework obtains the status of the entire cluster by querying the system table and obtains the diagnosis result according to the diagnostic rules.
+- L1: The lowest level implements the information collection module at each node, including monitoring information, hardware information, network IO recorded in the kernel, Disk IO information, CPU usage, memory usage, etc, of TiDB/TiKV/PD.
+- L2: The second layer can obtain the information collected by the current node by calling the underlying information collection module and providing data to the upper layer through external service interfaces (HTTP API/gRPC Service).
+- L3: In the third layer, TiDB pulls the information from each node for aggregation and summarizing, and provides the data to the upper layer in the form of the system table.
+- L4: The fourth layer implements the diagnostic framework. The diagnostic framework obtains the status of the entire cluster by querying the system table and obtains the diagnostic result according to the diagnostic rules.
 
-The following is a flow chart from information collection to analysis using the diagnostic rules to analyze the collected information:
+The following chart shows the data flow from information collection to analysis using the diagnostic rules:
 
 ```
 +-L1--------------+             +-L3-----+
@@ -62,15 +63,15 @@ The following is a flow chart from information collection to analysis using the 
 +----------------------------------------+
 ```
 
-### System Information Collection
+### System information collection
 
-The TiDB/TiKV/PD three components need to implement the system information collection module. TiDB/PD uses Golang to implement and reuse logic, TiKV needs to be implemented separately by Rust.
+The system information collection module needs to be implemented for all of TiDB/TiKV/PD components. TiDB/PD uses Golang to implement with reuse of the underlying logic; TiKV needs separation implementation in Rust.
 
-#### Node Hardware Information
+#### Node hardware information
 
 The hardware information that each node needs to obtain includes:
 
-- CPU information: physical core number, logical core number, NUMA information, CPU frequency, CPU vendor, L1/L2/L3 cache size
+- CPU information: physical core number, logical core number, NUMA information, CPU frequency, CPU vendor, L1/L2/L3 cache
 - NIC information: NIC device name, NIC enabled status, manufacturer, model, bandwidth, driver version, number of interface queues (optional)
 - Disk information: disk name, disk capacity, disk usage, disk partition, mount information
 - USB device list
@@ -83,15 +84,19 @@ The hardware information that each node needs to obtain includes:
 - CPU Usage, loads in 1/5/15 minutes:
 - Memory: Total/Free/Available/Buffers/Cached/Active/Inactive/Swap
 - Disk IO:
-    - tps: The number of transfers per second that were issued to the device.
-    - rrqm/s: The number of read requests merged per second that were queued to the device.
-    - wrqm/s: The number of write requests merged per second that were queued to the device.
-    - r/s: The number (after merges) of read requests completed per second for the device.
-    - w/s: The number (after merges) of write requests completed per second for the device.
-    - rsec/s:  The number of sectors (kilobytes, megabytes) read from the device per second.
-    - wsec/s: The number of sectors (kilobytes, megabytes) written to the device per second.
-    - await: The average time (in milliseconds) for I/O requests issued to the device to be served. 
-    - %util: Percentage of elapsed time during which I/O requests were issued to the device (bandwidth utilization for the device)
+    - tps: number of transfers per second that were issued to the device.
+    - rrqm/s: number of read requests merged per second that were queued to the device.
+    - wrqm/s: number of write requests merged per second that were queued to the device.
+    - r/s: number (after merges) of read requests completed per second for the device.
+    - r/s: number (after merges) of read requests completed per second for the device.
+    - r/s: number (after merges) of read requests completed per second for the device.
+    - r/s: number (after merges) of read requests completed per second for the device.
+    - r/s: number (after merges) of read requests completed per second for the device.
+    - w/s: number (after merges) of write requests completed per second for the device.
+    - rsec/s: number of sectors (kilobytes, megabytes) read from the device per second.
+    - wsec/s: number of sectors (kilobytes, megabytes) written to the device per second.
+    - await: average time (in milliseconds) for I/O requests issued to the device to be served.
+    - %util: percentage of elapsed time during which I/O requests were issued to the device (bandwidth utilization for the device)
 - Network IO
     - IFACE: name of the network interface for which statistics are reported.
     - rxpck/s: total number of packets received per second.
@@ -103,44 +108,44 @@ The hardware information that each node needs to obtain includes:
     - rxmcst/s: number of multicast packets received per second.
 - System configuration: `sysctl -a`
 
-#### Node Configuration Information
+#### Node configuration information
 
-All nodes contain the active configuration of the current node, and no additional steps are required to get the configuration information.
+All nodes contain the effective configuration for the current node, and no additional steps are required to get the configuration information.
 
-#### Node Log Information
+#### Node log information
 
-The logs generated by TiDB/TiKV/PD are saved on their respective nodes, and no additional log collection components are deployed during TiDB cluster deployment, so there are the following problems in log retrieval:
+Currently, the logs generated by TiDB/TiKV/PD are saved on their respective nodes, and no additional log collection components are deployed during TiDB cluster deployment, so there are the following problems in log retrieval:
 
-- The logs are distributed on each node and need to be logged in to each node to search using keywords.
-- The log files will be rotated every day, so we need to search multiple log files on a single node.
--  There is no easy way to combine logs of multiple nodes into a single file which sorted by the time.
+- Logs are distributed on each node. You need to log in to each node to search using keywords.
+- Log files are rotated every day, so we need to search among multiple log files even on a single node.
+- There is no easy way to combine logs of multiple nodes into a single file which sorted by the time.
 
-This proposal provides the following two ideas to solve the above problems:
+This proposal provides the following two solutions to the above problems:
 
 - Introduce a third-party log collection component to collect logs from all nodes
-    - Advantages: unified log management, logs can be saved for a long time, and easy to retrieve, and logs of multiple components can be sorted by time
-    - Disadvantages: increasing the difficulty of cluster operation and maintenance, third-party components are not easy to integrate with TiDB SQL engine; the log collection tool collects the full amount of logs, and the collection process occupies various system resources (Disk IO, Network IO).
+    - Advantages: with a unified log management mechanism, logs can be saved for a long time, and are easy to retrieve; logs of multiple components can be sorted  by time.
+    - Disadvantages: third-party components are not easy to integrate with TiDB SQL engine, which may increase the difficulty of cluster operation and maintenance; the log collection tool collects logs fully, so the collection process will take up system resources (Disk IO, Network IO).
 - Each node provides a log service. TiDB pushes the predicate to the log retrieval interface through the log service of each node, and directly merges the logs returned by each node.
-    - Advantages: does not introduce third-party components, and returns logs that have been filtered by the pushdown predicates, can easily be integrated with TiDB SQL and reuse SQL engine to filter, aggregation, and more.
-    - Disadvantages: If the log files are deleted in some nodes, the corresponding log cannot be retrieved
+    - Advantages: no third-party component is introduced. Only logs that have been filtered by the pushdown predicates are returned; the implementation can easily be integrated with TiDB SQL and reuse SQL engine functions such as filter and aggregation.
+    - Disadvantages: If the log files are deleted in some nodes, the corresponding log cannot be retrieved.
 
-This proposal uses the second way after trading off the above advantages and disadvantages. That is, each node provides a log search service, and TiDB pushes the predicate in the log search SQL to each node. The semantics of the log search service is: search for local log files, and filter using predicates, and the matching results are returned.
+This proposal uses the second way after weighing in on the above advantages and disadvantages. That is, each node provides a log search service, and TiDB pushes the predicate in the log search SQL to each node. The semantics of the log search service is: search for local log files, and filter using predicates, and then return the matched results.
 
 The following are the predicates that the log interface needs to process:
 
-- `start_time`: The start time of the log retrieval (unix timestamp, in milliseconds). If there is no such predicate, the default is 0.
-- `end_time:` The start time of the log retrieval (unix timestamp, in milliseconds). If there is no such predicate, the default is `int64::MAX`.
-- `pattern`: Such as SELECT * FROM tidb_cluster_log WHERE pattern LIKE "%gc%" in %gc% is the filtered keyword
-- `level`: log level, can be selected as DEBUG / INFO / WARN / WARNING / TRACE / CRITICAL / ERROR
-- `limit`: The number of returning logs items, if not specified, is limited to 64k, preventing the log from being too large to occupy a large number of networks.
+- `start_time`: start time of the log retrieval (Unix timestamp, in milliseconds). If there is no such predicate, the default is 0.
+- `end_time:`: end time of the log retrieval (Unix timestamp, in milliseconds). If there is no such predicate, the default is `int64::MAX`.
+- `pattern`: filter pattern determined by the keyword. For example, `SELECT * FROM tidb_cluster_log` WHERE "%gc%" `%gc%` is the filtered keyword.
+- `level`: log level; can be selected as DEBUG/INFO/WARN/WARNING/TRACE/CRITICAL/ERROR
+- `limit`: the maximum of logs items to return, preventing the log from being too large and occupying a large bandwidth of the network.. If not specified, the default limit is 64k.
 
-#### Node Performance Sampling Data
+#### Node performance sampling data
 
 In a TiDB cluster, when performance bottlenecks occur, we usually need a way to quickly locate the problem. The Flame Graph was invented by Brendan Gregg. Unlike other trace and profiling methods, Flame Graph looks at the time distribution in a global view, listing all possible call stacks from bottom to top. Other rendering methods generally only list a single call stack or a non-hierarchical time distribution.
 
 TiKV and TiDB currently have different ways of obtaining a flame graph and all of them rely on external tools.
 
-- TiKV retrieves the flame graph
+- TiKV retrieves the flame graph via:
 
     ```
     perf record -F 99 -p proc_pid -g -- sleep 60
@@ -149,63 +154,64 @@ TiKV and TiDB currently have different ways of obtaining a flame graph and all o
     /opt/FlameGraph/flamegraph.pl out.folded > cpu.svg
     ```
 
-- TiDB retrieves the flame graph
+- TiDB retrieves the flame graph via:
 
     ```
     curl http://127.0.0.1:10080/debug/pprof/profile > cpu.pprof
     go tool pprof -svg cpu.svn cpu.pprof
     ```
 
-There are two main problems in currently:
+There are two main problems currently:
 
-- The production environment may do not contain the corresponding external tool (perf/flamegraph.pl/go)
-- There is no uniform way for TiKV and TiDB.
+- The production environment may not contain the corresponding external tool (perf/flamegraph.pl/go)
+- There is no unified way for TiKV and TiDB.
 
-In order to solve the above two problems, this proposal will be built into TiDB in the way of obtaining the flame map. The use of SQL trigger sampling and the conversion of the sampled data into a flame map as a query result display, on the one hand, reduce the dependence on external tools, and at the same time Great improvement efficiency. Each node implements a sampling data acquisition function and provides a sampling interface for outputting sampled data of a specified format to the upper layer. The tentative output is the ProtoBuf format defined by `[pprof](github.com/google/pprof)`.
+In order to solve the above two problems, this proposal proposes to build the flame map in TiDB in the flame map, so that TiDB and TiKV can both use SQL to trigger sampling, and the sampled data can be converted into query results in flame maps. This way we can reduce the dependency on external tools, and at the same time improve efficiency greatly. For each node, a sampling data acquisition function is implemented and the sampling interface provided, through which a specified format is output to the upper layer. The tentative output is the ProtoBuf format defined by `[pprof](github.com/google/pprof)`.
 
 Sampling data acquisition method:
 
-- TiDB/PD: Use the sample data acquisition interface built-in Golang Runtime
-- TiKV: Collect sample data using `[pprof-rs](github.com/tikv/pprof-rs)` library
+- TiDB/PD: Use the sample data acquisition interface built in Golang runtime
+- TiKV: Collect sample data using the `[pprof-rs](github.com/tikv/pprof-rs)` library
 
+#### Node monitoring information
 
-#### Node Monitoring Information
+Monitoring information mainly includes monitoring metrics defined internally by each component. At present, TiDB/TiKV/PD provides the `/metrics` HTTP API, through which the deployed Prometheus component pulls the monitoring metrics of each node of the cluster in a timing manner (15s interval by default). And the Grafana component is deployed to pull the monitoring data from Prometheus for visualization.
 
-Monitoring information is mainly defined internally by each component monitoring metrics, At present, TiDB/TiKV/PD will provide the `/metrics` HTTP API, and then through the deployed Prometheus component timing (default configuration 15s) pull the monitoring metrics of each node of the cluster. And the Grafana component is deployed to pull the monitoring data from Prometheus for visualization.
+The monitoring information is different from the system information acquired in real time. The monitoring data is time-series data which contains the data of each node at each time point. It is very useful for troubleshooting and diagnosing problems, so how monitoring information is saved and inquired is very important for this proposal. In order to be able to use SQL to query monitoring data in TiDB, there are currently the following options:
 
-The monitoring information is different from the real-time acquired system information. The monitoring data is a time series data, which contains the data of each node at each time point. It has very important purposes for troubleshooting and diagnosing problems, so the monitoring information is saved and inquired are very important for this proposal that built-in SQL diagnostics in TiDB. In order to be able to use SQL query monitoring data in TiDB, there are currently the following options:
+- Use Prometheus client and PromQL to query the data from the Prometheus server
+    - Advantages: there is a ready-made solution; just register the address of Prometheus server to TiDB, which is simple to implement.
+    - Disadvantages: TiDB will rely more on Prometheus, which increases the difficulty for subsequent removal of Prometheus.
+- Save the monitoring data for the most recent period (tentative 1 day) to PD and query monitoring data from PD.
+    - Advantages: this solution does not depend on the Prometheus server. Easy for subsequent removal of Prometheus.
+    - Disadvantages: requires implementation of time-series saving logic in PD and the corresponding query engine. The workload and difficulty are high.
 
-- Use Prometheus client and PromQL to query the data Prometheus server
-    - Advantages: there is a ready-made solution, just register the address of Prometheus server to TiDB, which is simple to implement.
-    - Disadvantages: enhanced TiDB's reliance on Prometheus, added difficulty for subsequent complete removal of Prometheus.
-- Saved monitoring data for the most recent period (tentative 1 day) to PD, querying monitoring data from PD.
-    - Advantages: this solution does not depend on Prometheus server, components for subsequent removal of Prometheus some help
-    - Disadvantages: the need to save to achieve timing logic, and to achieve the corresponding query engine, realize the difficulty and workload
-
-This proposal tends to Option 2, although it is more difficult to implement, but it will help the follow-up work. In order to solve the problem of realizing the difficulty and long period of implementation of PromQL and timing data saving, this function is divided into three stages (the third stage is implemented depending on the specific situation):
+In this proposal, we are opt to the second solution. Although it is more difficult to implement, it will benefit the follow-up work. Considering the difficulty and long development cycle, we can implement this function in three stages (the third stage is implemented depending on the specific situation):
 
 1. Add the `remote-metrics-storage` configuration to the PD and temporarily configure it as the address of the Prometheus Server. PD acts as a proxy, and the request is transferred to Prometheus for execution. The main considerations are as follows:
-    - Subsequent PD implements the query interface to implement bootstrapping, and TiDB does not need to make other changes.
-    - Users can still use SQL query monitoring information and diagnostic frameworks without using Prometheus deployed by TiDB and using self-built monitoring services
-2. Extract the Prometheus time series data and query the corresponding module and embed it in the PD.
-3. The PD internally implements its own timing preservation and query (currently CockroachDB's solution)
 
-##### PD Performance Analysis
+    - PD will have its own implementation of the query interface to realize bootstraping. No other changes needed for TiDB.
+    - With bootstrapping realized, users can still use SQL to query monitoring information and diagnostic frameworks without relying on the Prometheus component deployed by TiDB
 
-PD currently hosts scheduling and TSO services for TiDB clusters, where:
+2. Extract the modules for persisting and querying Prometheus time series data and embed it in PD.
+3. PD internally implements its own module for persisting and query time series data (currently CockroachDB's solution)
 
-1. TSO get accumulates only one atomic variable in Leader memory
+##### PD performance analysis
+
+PD mainly handles scheduling and TSO services for TiDB clusters, where:
+
+1. TSO fetching accumulates only one atomic variable in Leader memory
 2. The Operator and OperatorStep generated by the schedule are only stored in memory, and the state in memory is updated according to the heartbeat information of the Region.
 
-From the above information, it can be concluded that the performance impact of the new monitoring function on the PD on the PD can be neglected in most cases.
+From the above information, it can be concluded that the performance impact of the new monitoring function on the PD can be ignored in most cases.
 
-### Retrieve System Information
+### Retrieve system information
 
-Since the TiDB/TiKV/PD component has previously exposed some system information through the HTTP API, and the PD mainly provides external services through the HTTP API, some interfaces of this proposal reuse existing interfaces and use the HTTP API to obtain data from various components. For example, get configuration information.
+Since the TiDB/TiKV/PD component has previously exposed some system information through the HTTP API, and the PD mainly provides external services through the HTTP API, some interfaces of this proposal reuse existing logics and use the HTTP API to obtain data from various components. For example, configuration information.
 
-Since the TiKV follow-up plan completely removes the HTTP API, in addition to the existing interface reuse, no additional HTTP APIs are added, so the log retrieval, hardware information, and system information acquisition uniformly define the gRPC Service, and each component implements the corresponding Service. It is registered to the gRPC Server during startup.
+However, because TiKV plan to completely removes the HTTP API in the future, only the existing interfaces will be reused for TiKV, and no new HTTP APIs will be added. There will be a unified gRPC service defined for log retrieval, hardware information, and system information acquisition. Each component implements their own services, which are registered to the gRPC Server during startup.
 
-#### gRPC Service Definition
+#### gRPC service definition
 
 ```proto
 // Diagnostics service for TiDB cluster components.
@@ -256,11 +262,11 @@ message ServerInfoRequest {
 
 message ServerInfoItem {
 	// cpu, memory, disk, network ...
-	string tp = 1;
-	// eg. network: lo1/eth0, cpu: core1/core2, disk: sda1/sda2 
-	string name = 2;
-	string key = 3;
-	string value = 4;
+    string tp = 1;
+    // eg. network: lo1/eth0, cpu: core1/core2, disk: sda1/sda2
+	string name = 1;
+	string key = 2;
+	string value = 3;
 }
 
 message ServerInfoResponse {
@@ -270,29 +276,29 @@ message ServerInfoResponse {
 
 #### Reusable HTTP API
 
-Currently, TiDB/TiKV/PD includes a partially reusable HTTP API. This proposal does not migrate the corresponding interface to the gRPC Service. The migration is completed by other subsequent plans. All HTTP APIs need to return data in JSON format. The following is a list of HTTP APIs that may be used in the proposal:
+Currently, TiDB/TiKV/PD includes a partially reusable HTTP API. This proposal does not migrate the corresponding interface to the gRPC Service. The migration will be completed by other subsequent plans. All HTTP APIs need to return data in JSON format. The following is a list of HTTP APIs that may be used in this proposal:
 
 - Retrieve configuration information
     - PD: /pd/api/v1/config
     - TiDB/TiKV: /config
-- Performance sampling interface: TiDB/PD contains all the following interfaces, TiKV temporarily only contains CPU performance sampling interface
+- Performance sampling interface: TiDB and PD contain all the following interfaces, while TiKV temporarily only contains the CPU performance sampling interface
     - CPU: /debug/pprof/profile
     - Memory: /debug/pprof/heap
     - Allocs: /debug/pprof/allocs
     - Mutex: /debug/pprof/mutex
     - Block: /debug/pprof/block
 
-#### Cluster Information System Tables
+#### Cluster information system tables
 
-Each TiDB instance can access the information of other nodes through the HTTP API or gRPC Service provided by the first two layers to implement the Global View of the cluster. In this proposal, the collected cluster information is provided to the upper layer by creating a series of related system tables. The upper layer includes not limited to:
+Each TiDB instance can access the information of other nodes through the HTTP API or gRPC Service provided by the first two layers. This way we can implement the Global View forw the cluster. In this proposal, the collected cluster information is provided to the upper layer by creating a series of related system tables. The upper layer includes not limited to:
 
 - End User: Users can obtain cluster information directly through SQL query to troubleshooting problem
-- Operation and maintenance system: The ability to obtain cluster information through SQL will make it easier to integrate TiDB into its own operation and maintenance system.
-- Ecological tools: The external tools get the cluster information through SQL to realize the function customization. For example, `[sqltop](https://github.com/ngaut/sqltop)` can directly obtain the SQL sampling information of the entire cluster through the cluster `events_statements_summary_by_digest`
+- Operation and maintenance system: The ability to obtain cluster information through SQL will make it easier for users to integrate TiDB into their own operation and maintenance systems.
+- Eco-system tools: External tools get the cluster information through SQL to realize function customization. For example, `[sqltop](https://github.com/ngaut/sqltop)` can directly obtain the SQL sampling information of the entire cluster through the `events_statements_summary_by_digest` table of the cluster.
 
 #### Cluster Topology System Table
 
-We need to provide a topology system table before providing a **Global View** for the TiDB instance. Then we can obtain the HTTP API Address and gRPC Service Address of each node from the topology system table, so that each remote API can be easily constructed. The Endpoint further acquires the information collected by the target node.
+ To realize **Global View** for the TiDB instance, we need to provide a topology system table, where we can obtain the HTTP API Address and gRPC Service Address of each node. This way the Endpoints can be easily constructed for remote APIs. The Endpoint further acquires the information collected by the target node.
 
 The implementation of this proposal can query the following results through SQL:
 
@@ -325,11 +331,11 @@ mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
 3 rows in set (0.00 sec)
 ```
 
-#### Monitoring Information System Table
+#### Monitoring information system table
 
-Since the monitoring metrics are added and deleted as the program is iterated, for the same monitoring metrics, different types of information may be acquired through different PromQL expressions. In view of the above two requirements, it is necessary to design a flexible monitoring system table frame. This proposal temporarily adopts the following scheme: mapping expressions to system tables in the `metrics_schema` database. The relationship between expressions and system tables can be related in the following ways:
+Monitoring metrics are added and deleted as the program is iterated. For this reason, the same monitoring metric might be obtained through different PromQL expressions to monitor information in different dimensions. Therefore, it is necessary to design a flexible monitoring system table frame. This proposal temporarily adopts the this scheme - mapping expressions to system tables in the `metrics_schema` database. The relationship between expressions and system tables can be mapped in the following ways:
 
-- Defined in the configuration file
+- Define in the configuration file
 
     ```
     # tidb.toml
@@ -339,20 +345,20 @@ Since the monitoring metrics are added and deleted as the program is iterated, f
     goroutines = `rate(go_gc_duration_seconds_sum{job="tidb"}[$INTERVAL] offset $OFFSET_TIME)`
     ```
 
-- HTTP API injection
+- Inject via HTTP API
 
     ```
-    curl -XPOST http://host:port/metrics_schema?name=distsql_duration&expr=`histogram_quantile(0.999, 
+    curl -XPOST http://host:port/metrics_schema?name=distsql_duration&expr=`histogram_quantile(0.999,
     sum(rate(tidb_distsql_handle_query_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, type))`
     ```
 
-- Special SQL command
+- Use special SQL commands
 
     ```
     mysql> admin metrics_schema add parse_duration `histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket[$INTERVAL] offset $OFFSET_TIME)) by (le, sql_type))`
     ```
 
-- LOAD from file
+- Load from file
 
     ```
     mysql> admin metrics_schema load external_metrics.txt
@@ -382,7 +388,7 @@ mysql> show tables;
 7 rows in set (0.00 sec)
 ```
 
-The way the field is determined when the expression is mapped to the system table depends mainly on the data of the result of the expression execution. Taking the expression `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[1m]offset 0)) by (type)` as an example, the result of the query is:
+The way the field is determined when the expression is mapped to the system table depends mainly on the result data of the expression execution. Take expression `sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{type!="tso"}[1m]offset 0)) by (type)` as an example, the result of the query is:
 
 | Element | Value |
 |---------|-------|
@@ -398,7 +404,7 @@ The way the field is determined when the expression is mapped to the system tabl
 | {type="get_store"} | 0 |
 | {type="scatter_region"} | 0 |
 
-The system table schema and the query results are:
+The following are the query results mapped to the system table schema:
 
 ```
 mysql> desc pd_client_cmd_ops;
@@ -450,21 +456,13 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time=’20
 11 rows in set (0.00 sec)
 ```
 
-PromQL query result which have multiple labels will be mapped to multiple columns of data, which can be easily filtered using existing SQL execution engines. Polymerization gives the desired result.
+PromQL query statements with multiple labels will be mapped to multiple columns of data, which can be easily filtered and aggregated using existing SQL execution engines.
 
-#### Performance Profiling System Table
+#### Performance profiling system table
 
-The corresponding node performance sampling data is obtained by `/debug/pprof/profile` of each node, and then the aggregated performance profiling result is output to the user by using the SQL query result. Since the SQL query results cannot be output in svg format, you need to solve the problem of output content display.
+The corresponding node performance sampling data is obtained by `/debug/pprof/profile` of each node, and then aggregated performance profiling results are output to the user in the form of SQL query. Since the SQL query results cannot be output in svg format, we need to solve the problem of output display.
 
-The core of the flame graph to help locate the problem quickly is:
-
-- Provide a global view
-- Show all the call paths
-- Hierarchical display
-
-The solution proposed by this proposal focuses on solving the core problem, but not in the form of graphic visualization. The final solution is to aggregate the sampled data and display all the call paths on a line-by-line basis using a tree structure.
-
-The solution is to fit the three core points in the following ways:
+Our proposed solution is to aggregate the sampled data and display all the call paths on a line-by-line basis in a tree structure. This can be implemented by using flamegraph. The core ideas and the corresponding implementations are described as below:
 
 - Provide a global view: use a separate column for each aggregate result to show the global usage scale, which can be used to facilitate filtering and sorting to
 - Show all call paths: all call paths are used as query results. And use a separate column to number the subtrees of each call path, we can easily view only one subtreeby filtering
@@ -482,21 +480,21 @@ This proposal needs to implement the following performance profiling table:
 | tidb_profile_mutex | Stack traces of holders of contended mutexes |
 | tidb_profile_goroutines | Stack traces of all current goroutines |
 
-#### Globalize Memory System Table
+#### Globalized memory system table
 
-Current the `slow_query`/`events_statements_summary_by_digest`/`processlist` memory tables only contains single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
+Current the `slow_query`/`events_statements_summary_by_digest`/`processlist` memory tables only contain single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
 
 | Table Name | Description |
 |------|-----|
-| tidb_cluster_slow_query | all TiDB nodes' slow_query table data |
-| tidb_cluster_statements_summary | all TiDB nodes's statements summary table Data |
-| tidb_cluster_processlist | processlist table data of all TiDB nodes |
+| tidb_cluster_slow_query | slow_query table data for all TiDB nodes |
+| tidb_cluster_statements_summary | statements summary table Data for all TiDB nodes  |
+| tidb_cluster_processlist | processlist table data for all TiDB nodes |
 
 #### Configuration information of all nodes
 
-For a large cluster, the way to obtain configuration by each node through HTTP API is cumbersome and inefficient. This proposal provides a full cluster configuration information system table. Simplify the acquisition, filtering, and aggregation of the entire cluster configuration information.
+For a large cluster, the way to obtain configuration by each node through HTTP API is cumbersome and inefficient. This proposal provides a full cluster configuration information system table, which simplifies the acquisition, filtering, and aggregation of the entire cluster configuration information.
 
-The following example is the expected result after implementing this proposal:
+See the following example for some expected results of this proposal:
 
 ```
 mysql> use information_schema;
@@ -555,9 +553,9 @@ mysql> select * from tidb_cluster_config where type='tikv' and `key` like 'raftd
 5 rows in set (0.01 sec)
 ```
 
-#### Node Hardware/System/Load Information System Tables
+#### Node hardware/system/load information system tables
 
-According to the defination of `gRPC Service` protocol. Each `ServerInfoItem` contains the name of the information and the corresponding key-value pair. When presenting to the user, the type of the node and the node address need to be added.
+According to the definition of `gRPC Service` protocol, each `ServerInfoItem` contains the name of the information and the corresponding key-value pair. When presented to the user, the type of the node and the node address need to be added.
 
 ```
 mysql> use information_schema;
@@ -601,11 +599,11 @@ mysql> select * from tidb_cluster_load
 ```
 
 
-#### Fullchain Log System Table
+#### Full-chain log system table
 
-The current log search needs to log in to multiple machines for retrieval, and there is no easy way to sort the retrieval results of multiple machines according to time. This proposal creates a new `tidb_cluster_log` system table to provide full-link logs, simplifying the way to troubleshoot problems through logs and improving efficiency. This is achieved by pushing the log-filtered predicates down to the nodes through the `search_log` interface of the gRPC Diagnosis Service and eventually merging them by time.
+To search in the current log, users need to log in to multiple machines for retrieval respectively, and there is no easy way to sort the retrieval results of multiple machines by time. This proposal creates a new `tidb_cluster_log` system table to provide full-link logs, thereby simplifying the way to troubleshoot problems through logs and improving efficiency. This is achieved by pushing the log-filtering predicates down to the nodes through the `search_log` interface of the gRPC Diagnosis Service. The filtered logs will be eventually merged by time.
 
-The following example is the expected result after implementing this proposal:
+The following example shows the expected results of this proposal:
 
 ```
 mysql> use information_schema;
@@ -670,41 +668,41 @@ mysql> select * from tidb_cluster_log where message like '%table%';
 3 rows in set (0.00 sec)
 ```
 
-### Cluster Diagnostics
+### Cluster diagnostics
 
-In the current cluster topology, each component is dispersed, and the data source and data format are heterogeneous. It is not convenient to perform cluster diagnosis through programmatic ways, so manual diagnosis is required. Through the data system tables provided by the previous layers, each TiDB node has a stable global cluster Global View, so a problem diagnosis framework can be implemented on this basis. By defining diagnostic rules, we can quickly discover existing and potential problems with your cluster.
+In the current cluster topology, each component is dispersed. The data sources and data formats are heterogeneous. It is not convenient to perform cluster diagnosis through programmatic ways, so manual diagnosis is required. With the data system tables provided by the previous layers, each TiDB node has a stable Global View for the full cluster. Based on this, a problem diagnosis framework can be implemented. By defining diagnostic rules, we can quickly discover existing and potential problems on your cluster.
 
-**Diagnostic rule definition**: Diagnostic rules are logic for finding problems by reading data from various system tables and detecting abnormal data.
+**Diagnostic rule definition**: Diagnostic rules are the logics for finding problems by reading data from various system tables and detecting abnormal data.
 
 Diagnostic rules can be divided into three levels:
 
-- Discovery of potential problems: For example, by determining the ratio of disk capacity and disk usage, it is found with insufficient disk capacity
-- Locate an existed problem: For example, by looking at the load, it is found that the thread pool of Coprocessor has reached to bottleneck
-- Given a fix suggestions: For example, by analyzing the disk IO, the delay is too high, and the recommendation to replace the disk can be given.
+- Discovery of potential problems: For example, identify insufficient disk capacity by determining the ratio of disk capacity and disk usage
+- Locate an existing problem: For example, by looking at the load, we can know that the thread pool of Coprocessor has reached the bottleneck
+- Provide fix suggestions: For example, by analyzing the disk IO, we observe a high latency. A recommendation to replace the disk can be provided to you.
 
-This proposal is mainly responsible for implementing the diagnostic framework and some diagnostic rules. More diagnostic rules need to be gradually precipitated according to the experience, and finally form an expert system to reduce use thresholds and operational difficulty. The follow-up content does not discuss in detail the specific diagnostic rules, mainly focusing on the implementation of the diagnostic framework.
+This proposal mainly focuses on implementing the diagnostic framework and some diagnostic rules. More diagnostic rules need to be gradually accumulated based on experience, with the ultimate goal of becoming an expert system that reduces lower the bar of using and operation difficulty. The following content does not detail the specific diagnostic rules, mainly focusing on the implementation of the diagnostic framework.
 
-#### Diagnostic Framework Design
+#### Diagnostic framework design
 
-Diagnostic framework design needs to consider a variety of user scenarios, including but not limited to:
+A variety of user scenarios must be considered for the diagnostic framework design  , including but not limited to:
 
-- User selects a fixed version, the TiDB cluster version will not be easily upgraded.
+- After selecting a fixed version, users won't upgrade the TiDB cluster version easily.
 - User-defined diagnostic rules
-- Cluster loading new diagnostic rule without restarting
+- Loading new diagnostic rule without restarting the cluster
 - The diagnosis framework needs to be easily integrated with the existing operation and maintenance system.
-- Users may block some diagnostics. For example, if the user expects to be a heterogeneous system, the heterogeneous diagnostic rules will be shielded
+- Users may block some diagnostics. For example, if the user expects a heterogeneous system, heterogeneous diagnostic rules will be blocked by users.
 - ...
 
-There is a need to implement a diagnostic system that supports regular hot loading, and currently has the following options:
+Therefore, implementing a diagnostic system that supports hot rule loading is necessary. Currently there are the following options:
 
-- Golang Plugin: Use different plugins to define diagnostic rules and load them into the TiDB process
-     - Advantages: Developed with Golang, low development threshold
-     - Disadvantages: Version management is error-prone and requires compiling plugins with the same version as the host TiDB
-- Embedded Lua: Loads Lua scripts at runtime or during startup, the script reads system table data from TiDB and evaluates and feeds back results based on diagnostic rules
-     - Advantages: Lua is a fully host-dependent language with simple syntax and easy integration with the host
+- Golang Plugin: Use different plugins to define diagnostic rules and load them into the TiDB processes
+     - Advantages: Low development threshold in Golang
+     - Disadvantages: Version management is error-prone and it requires compiling plugins with the same Golang version as the host TiDB
+- Embedded Lua: Load Lua scripts in runtime or during startup. The script reads system table data from TiDB, evaluates and provide feedback based on diagnostic rules
+     - Advantages: Lua is a fully host-dependent language with simple syntaxes; easy integration with the host
      - Disadvantages: Relying on another scripting language
-- Shell Script: Shell has process control, so you can define diagnostic rules with Shell
+- Shell Script: Shell supports process control, so you can define diagnostic rules with Shell
     - Advantages: easy to write, load and execute
-    - Disadvantages: need to run on the machine where mysql client is installed
+    - Disadvantages: need to run on the machine where the MySQL client is installed
 
-This proposal temporarily adopts a third option to write diagnostic rules using Shell. There is no intrusion into TiDB, and it also provides scalability for subsequent implementations of better solutions.
+This proposal temporarily adopts the third option to write diagnostic rules using Shell. There is no intrusion into TiDB, and it also provides scalability for subsequent implementations of better solutions.

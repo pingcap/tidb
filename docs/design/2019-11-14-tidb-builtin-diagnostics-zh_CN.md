@@ -3,6 +3,7 @@
 ## Summary
 
 目前 TiDB 获取诊断信息主要依赖外部工具（perf/iosnoop/iotop/vmstat/sar/...）、监控系统（Prometheus/Grafana）、日志文件、HTTP API 和 TiDB 提供的系统表。分散的工具链和繁杂的获取方式导致 TiDB 的集群的使用门槛高、运维难度大、不能提前发现问题以及遇到问题不能及时排查、诊断和恢复集群等。
+
 本提案提出一种新的方法，在 TiDB 中内置获取诊断信息的功能，并将诊断信息使用系统表的形式对外暴露，使用户可以使用 SQL 的方式进行查询。
 
 ## Motivation
@@ -203,7 +204,7 @@ PD 目前主要承载 TiDB 集群的调度和 TSO 服务，其中：
 
 由于 TiDB/TiKV/PD 组件之前已经可以通过 HTTP API 对外暴露部分系统信息，并且 PD 主要通过 HTTP API 对外提供服务，所以本提案的部分接口会复用已有逻辑，使用 HTTP API 从各个组件获取数据，比如配置信息获取。
 
-由于 TiKV 后续计划完全移除 HTTP API，所以除了已有接口复用之外，不再额外添加新的 HTTP API，所以日志检索、硬件信息、系统信息获取统一定义 gRPC Service，各个组件实现对应的 Service 并在启动过程中注册到 gRPC Server 中。
+由于 TiKV 后续计划完全移除 HTTP API，所以除了已有接口复用之外，不再额外添加新的 HTTP API，所有日志检索、硬件信息、系统信息获取统一定义 gRPC Service，各个组件实现对应的 Service 并在启动过程中注册到 gRPC Server 中。
 
 #### gRPC Service 定义
 
