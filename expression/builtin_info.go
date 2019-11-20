@@ -455,13 +455,23 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	// Syntax: BENCHMARK(loop_count, expression)
 	// Define with same eval type of input arg to avoid unnecessary cast function.
 	sameEvalType := args[1].GetType().EvalType()
+	// constLoopCount is used by VecEvalInt
+	// since non-constant loop count would be different between rows, and cannot be vectorized.
+	var constLoopCount int64
+	con, ok := args[0].(*Constant)
+	if ok && con.Value.Kind() == types.KindInt64 {
+		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+			constLoopCount = lc
+		}
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
-	sig := &builtinBenchmarkSig{bf}
+	sig := &builtinBenchmarkSig{bf, constLoopCount}
 	return sig, nil
 }
 
 type builtinBenchmarkSig struct {
 	baseBuiltinFunc
+	constLoopCount int64
 }
 
 func (b *builtinBenchmarkSig) Clone() builtinFunc {

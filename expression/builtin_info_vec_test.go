@@ -90,6 +90,10 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
+	ast.Benchmark: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{10, 11}, nil}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
