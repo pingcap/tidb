@@ -433,6 +433,16 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			joinResult.err = err
 			break
 		}
+		if task.keepOuterOrder {
+			// We need to get a new result holder here because the old
+			// `joinResult` hash been sent to the `resultCh` or to the
+			// `joinChkResourceCh`.
+			joinResult, ok = iw.getNewJoinResult(ctx)
+			if !ok {
+				cancelFunc()
+				return
+			}
+		}
 	}
 	if joinResult.err != nil {
 		cancelFunc()
