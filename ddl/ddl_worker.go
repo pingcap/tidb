@@ -463,9 +463,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
 	if job.IsDone() || job.IsRollbackDone() ||
-		// Drainer receives a binlog without this column of data when the job is in the "Delete only" state.
-		// In this case, if we don't do special treatment, Drainer will think that this binlog has one less column.
-		// So we add this binlog to enable Drainer to handle DML correctly in this schema state.
+		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
+		// but the column has been removed from the binlog of the write operation.
+		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
 		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
 		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
