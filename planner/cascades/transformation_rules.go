@@ -87,7 +87,7 @@ var patternMap []*memo.Pattern
 
 // init initializes the patternMap when initializing the cascades package.
 func init() {
-	patternMap = make([]*memo.Pattern, ruleUnsupported-1)
+	patternMap = make([]*memo.Pattern, ruleUnsupported)
 	for _, rules := range defaultTransformationMap {
 		for _, rule := range rules {
 			patternMap[rule.ID()] = rule.GetPattern()
