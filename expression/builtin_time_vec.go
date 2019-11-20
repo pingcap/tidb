@@ -918,19 +918,12 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-<<<<<<< HEAD
 	ds := buf.GoDurations()
-=======
->>>>>>> expression: implement vectorized evaluation for builtinExtractDatetimeSig
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-<<<<<<< HEAD
 		i64s[i] = int64((ds[i] % time.Second) / time.Microsecond)
-=======
-		i64s[i] = int64(buf.GetDuration(i, int(b.args[0].GetType().Decimal)).MicroSecond())
->>>>>>> expression: implement vectorized evaluation for builtinExtractDatetimeSig
 	}
 	return nil
 }
