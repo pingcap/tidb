@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -201,11 +202,44 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinExtractDatetimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	ds := buf1.Times()
+	result.MergeNulls(buf, buf1)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinAddDateIntIntSig) vectorized() bool {
@@ -716,11 +750,36 @@ func (b *builtinGetFormatSig) getFormat(format, location string) string {
 }
 
 func (b *builtinLastDaySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLastDaySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if times[i].InvalidZero() {
+			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		tm := times[i].Time
+		year, month := tm.Year(), tm.Month()
+		lastDay := types.GetLastDay(year, month)
+		times[i] = types.Time{
+			Time: types.FromDate(year, month, lastDay, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp:  types.DefaultFsp,
+		}
+	}
+	return nil
 }
 
 func (b *builtinAddDateStringDecimalSig) vectorized() bool {
@@ -1721,11 +1780,53 @@ func (b *builtinAddDateDurationRealSig) vecEvalDuration(input *chunk.Chunk, resu
 }
 
 func (b *builtinSecToTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+	args := buf.Float64s()
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	durations := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		secondsFloat := args[i]
+		negative := ""
+		if secondsFloat < 0 {
+			negative = "-"
+			secondsFloat = math.Abs(secondsFloat)
+		}
+		seconds := int64(secondsFloat)
+		demical := secondsFloat - float64(seconds)
+		var minute, second int64
+		hour := seconds / 3600
+		if hour > 838 {
+			hour = 838
+			minute = 59
+			second = 59
+		} else {
+			minute = seconds % 3600 / 60
+			second = seconds % 60
+		}
+		secondDemical := float64(second) + demical
+		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		durations[i] = duration.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubStringAndStringSig) vectorized() bool {
