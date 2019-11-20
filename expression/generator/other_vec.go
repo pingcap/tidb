@@ -150,6 +150,21 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		}
 	}
 	{{- end }}
+	{{- if $InputString }}
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		for i := 0; i < n; i++ {
+			if buf0.IsNull(i) {
+				hasNull[i] = true
+				continue
+			}
+			arg0 := buf0.GetString(i)
+			if _, ok := b.hashSet[arg0]; ok {
+				r64s[i] = 1
+			}
+		}
+	}
+	{{- end }}
 
 	for j := 1; j < len(args); j++ {
 		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {

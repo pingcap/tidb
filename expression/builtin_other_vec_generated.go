@@ -137,6 +137,19 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	hasNull := make([]bool, n)
 	var compareResult int
 	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		for i := 0; i < n; i++ {
+			if buf0.IsNull(i) {
+				hasNull[i] = true
+				continue
+			}
+			arg0 := buf0.GetString(i)
+			if _, ok := b.hashSet[arg0]; ok {
+				r64s[i] = 1
+			}
+		}
+	}
 
 	for j := 1; j < len(args); j++ {
 		if err := args[j].VecEvalString(b.ctx, input, buf1); err != nil {

@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -87,7 +88,11 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inInt
 		sig.setPbCode(tipb.ScalarFuncSig_InInt)
 	case types.ETString:
-		inStr := builtinInStringSig{baseBuiltinFunc: bf}
+		inStr := builtinInStringSig{baseBuiltinFunc: bf, threshold: 1}
+		err := inStr.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inStr, err
+		}
 		sig = &inStr
 		sig.setPbCode(tipb.ScalarFuncSig_InString)
 	case types.ETReal:
@@ -217,11 +222,50 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
+	nonConstArgs []Expression
+	hashSet      map[string]bool
+	threshold    int
+}
+
+func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.nonConstArgs = make([]Expression, 0, len(b.args))
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.hashSet = make(map[string]bool, len(b.args)-1)
+	count := 0
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				continue
+			}
+			b.hashSet[val] = true
+			count++
+		} else {
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+		}
+	}
+	fmt.Printf("count=%v, threshold=%v\n", count, b.threshold)
+	if count < b.threshold {
+		b.nonConstArgs = b.args
+		b.hashSet = nil
+	}
+
+	return nil
 }
 
 func (b *builtinInStringSig) Clone() builtinFunc {
 	newSig := &builtinInStringSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
+	for _, arg := range b.nonConstArgs {
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg)
+	}
+	newSig.hashSet = b.hashSet
+	newSig.threshold = b.threshold
 	return newSig
 }
 
@@ -230,8 +274,17 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
+
+	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		if _, ok := b.hashSet[arg0]; ok {
+			return 1, false, nil
+		}
+	}
+
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
 			return 0, true, err

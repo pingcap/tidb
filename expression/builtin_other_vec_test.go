@@ -45,6 +45,23 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 			},
 			geners: []dataGenerator{&rangeInt64Gener{1, 2}, nil, nil, nil, nil},
 		},
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETString,
+				types.ETString, types.ETString, types.ETString, types.ETString,
+				types.ETString, //types.ETString, types.ETString, types.ETString,
+			},
+			constants: []*Constant{
+				nil,
+				nil, nil, nil, nil,
+				{Value: types.NewDatum("aaaaaaaaaa"), RetType: types.NewFieldType(mysql.TypeString)},
+				//{Value: types.NewDatum("bbbbbbbbbb"), RetType: types.NewFieldType(mysql.TypeString)},
+				//{Value: types.NewDatum("cccccccccc"), RetType: types.NewFieldType(mysql.TypeString)},
+				//{Value: types.NewDatum("dddddddddd"), RetType: types.NewFieldType(mysql.TypeString)},
+			},
+			geners: []dataGenerator{&constStrGener{"aaaaaaaaaa"}, nil, nil, nil, nil},
+		},
 	},
 	ast.GetParam: {
 		{
