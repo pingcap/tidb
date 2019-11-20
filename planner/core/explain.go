@@ -319,6 +319,20 @@ func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalHashJoin) ExplainNormalizedInfo() string {
+	return p.explainInfo(true)
+}
+
+func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
+	sortedExplainExpressionList := expression.SortedExplainExpressionList
+	if normalized {
+		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
+	}
+
 	buffer := new(bytes.Buffer)
 
 	if len(p.EqualConditions) == 0 {
@@ -336,51 +350,41 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 		buffer.WriteString(" (REVERSED)")
 	}
 	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
+		if normalized {
+			fmt.Fprintf(buffer, ", equal:%s", expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
+		} else {
+			fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
+		}
 	}
 	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		if normalized {
+			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+		} else {
+			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		}
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainExpressionList(p.RightConditions))
+			sortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainExpressionList(p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalHashJoin) ExplainNormalizedInfo() string {
-	buffer := new(bytes.Buffer)
-
-	if len(p.EqualConditions) == 0 {
-		buffer.WriteString("CARTESIAN ")
-	}
-
-	buffer.WriteString(p.JoinType.String())
-	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
-	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%s", expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainNormalizedExpressionList(p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainNormalizedExpressionList(p.OtherConditions))
+			sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
+	sortedExplainExpressionList := expression.SortedExplainExpressionList
+	if normalized {
+		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
+	}
+
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
@@ -391,42 +395,26 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 			expression.ExplainColumnList(p.RightJoinKeys))
 	}
 	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		if normalized {
+			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+		} else {
+			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		}
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainExpressionList(p.RightConditions))
+			sortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainExpressionList(p.OtherConditions))
+			sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
-	buffer := bytes.NewBufferString(p.JoinType.String())
-	if len(p.LeftJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(p.LeftJoinKeys))
-	}
-	if len(p.RightJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(p.RightJoinKeys))
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainNormalizedExpressionList(p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainNormalizedExpressionList(p.OtherConditions))
-	}
-	return buffer.String()
+	return p.explainInfo(true)
 }
 
 // ExplainInfo implements Plan interface.

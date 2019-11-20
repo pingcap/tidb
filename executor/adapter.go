@@ -844,23 +844,7 @@ func getPlanTree(p plannercore.Plan) string {
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	var selectPlan plannercore.PhysicalPlan
-	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
-		selectPlan = physicalPlan
-	} else {
-		switch x := p.(type) {
-		case *plannercore.Delete:
-			selectPlan = x.SelectPlan
-		case *plannercore.Update:
-			selectPlan = x.SelectPlan
-		case *plannercore.Insert:
-			selectPlan = x.SelectPlan
-		}
-	}
-	if selectPlan == nil {
-		return ""
-	}
-	planTree := plannercore.EncodePlan(selectPlan)
+	planTree := plannercore.EncodePlan(p)
 	if len(planTree) == 0 {
 		return planTree
 	}

@@ -35,10 +35,14 @@ type planEncoder struct {
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
-func EncodePlan(p PhysicalPlan) string {
+func EncodePlan(p Plan) string {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
-	return pn.encodePlanTree(p)
+	selectPlan := getSelectPlan(p)
+	if selectPlan == nil {
+		return ""
+	}
+	return pn.encodePlanTree(selectPlan)
 }
 
 func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
@@ -67,6 +71,13 @@ func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
 	case *PhysicalIndexLookUpReader:
 		pn.encodePlan(copPlan.indexPlan, false, depth)
 		pn.encodePlan(copPlan.tablePlan, false, depth)
+	case *PhysicalIndexMergeReader:
+		for i := 0; i < len(copPlan.partialPlans); i++ {
+			pn.encodePlan(copPlan.partialPlans[i], false, depth)
+		}
+		if copPlan.tablePlan != nil {
+			pn.encodePlan(copPlan.tablePlan, false, depth)
+		}
 	}
 }
 
@@ -85,10 +96,14 @@ type planDigester struct {
 }
 
 // NormalizePlan is used to normalize the plan and generated plan digest.
-func NormalizePlan(p PhysicalPlan) (normalized, digest string) {
+func NormalizePlan(p Plan) (normalized, digest string) {
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)
-	d.normalizePlanTree(p)
+	selectPlan := getSelectPlan(p)
+	if selectPlan == nil {
+		return "", ""
+	}
+	d.normalizePlanTree(selectPlan)
 	normalized = string(d.buf.Bytes())
 	d.hasher.Write(d.buf.Bytes())
 	d.buf.Reset()
@@ -114,13 +129,37 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
 		}
 		d.normalizePlan(child.(PhysicalPlan), isRoot, depth)
 	}
-	switch copPlan := p.(type) {
+	switch x := p.(type) {
 	case *PhysicalTableReader:
-		d.normalizePlan(copPlan.tablePlan, false, depth)
+		d.normalizePlan(x.tablePlan, false, depth)
 	case *PhysicalIndexReader:
-		d.normalizePlan(copPlan.indexPlan, false, depth)
+		d.normalizePlan(x.indexPlan, false, depth)
 	case *PhysicalIndexLookUpReader:
-		d.normalizePlan(copPlan.indexPlan, false, depth)
-		d.normalizePlan(copPlan.tablePlan, false, depth)
+		d.normalizePlan(x.indexPlan, false, depth)
+		d.normalizePlan(x.tablePlan, false, depth)
+	case *PhysicalIndexMergeReader:
+		for i := 0; i < len(x.partialPlans); i++ {
+			d.normalizePlan(x.partialPlans[i], false, depth)
+		}
+		if x.tablePlan != nil {
+			d.normalizePlan(x.tablePlan, false, depth)
+		}
 	}
+}
+
+func getSelectPlan(p Plan) PhysicalPlan {
+	var selectPlan PhysicalPlan
+	if physicalPlan, ok := p.(PhysicalPlan); ok {
+		selectPlan = physicalPlan
+	} else {
+		switch x := p.(type) {
+		case *Delete:
+			selectPlan = x.SelectPlan
+		case *Update:
+			selectPlan = x.SelectPlan
+		case *Insert:
+			selectPlan = x.SelectPlan
+		}
+	}
+	return selectPlan
 }

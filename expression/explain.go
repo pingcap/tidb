@@ -27,7 +27,6 @@ func (expr *ScalarFunction) ExplainInfo() string {
 	return expr.explainInfo(false)
 }
 
-// ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) explainInfo(normalized bool) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
