@@ -84,6 +84,21 @@ func (s *testMemoSuite) TestGroupDelete(c *C) {
 	c.Assert(g.Equivalents.Len(), Equals, 0)
 }
 
+func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
+	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0))
+	g := NewGroupWithSchema(expr, nil)
+	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))), IsTrue)
+	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))), IsTrue)
+	c.Assert(g.Equivalents.Len(), Equals, 3)
+	c.Assert(g.GetFirstElem(OperandProjection), NotNil)
+	c.Assert(g.Exists(expr), IsTrue)
+
+	g.DeleteAll()
+	c.Assert(g.Equivalents.Len(), Equals, 0)
+	c.Assert(g.GetFirstElem(OperandProjection), IsNil)
+	c.Assert(g.Exists(expr), IsFalse)
+}
+
 func (s *testMemoSuite) TestGroupExists(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
