@@ -2447,6 +2447,16 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
+
+	lhsDecimal, rhsDecimal := lhsArg.GetType().Decimal, rhsArg.GetType().Decimal
+	if lhsDecimal != -1 || rhsDecimal != -1 {
+		decimal := lhsDecimal
+		if rhsDecimal > decimal {
+			decimal = rhsDecimal
+		}
+		eps := 5.0 / math.Pow10(decimal+1)
+		return int64(types.CompareFloat64Fixed(arg0, arg1, eps)), false, nil
+	}
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
 
