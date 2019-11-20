@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -810,11 +812,57 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastStringAsIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.MergeNulls(buf)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		var (
+			res  int64
+			ures uint64
+		)
+		val := strings.TrimSpace(buf.GetString(i))
+		isNegative := len(val) > 1 && val[0] == '-'
+		if !isNegative {
+			ures, err = types.StrToUint(sc, val)
+			if err == nil && !mysql.HasUnsignedFlag(b.tp.Flag) && ures > uint64(math.MaxInt64) {
+				sc.AppendWarning(types.ErrCastAsSignedOverflow)
+			}
+			res = int64(ures)
+		} else if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
+			res = 0
+		} else {
+			res, err = types.StrToInt(sc, val)
+			if err == nil && mysql.HasUnsignedFlag(b.tp.Flag) {
+				sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
+			}
+		}
+		res, err = b.handleOverflow(res, val, err, isNegative)
+		i64s[i] = res
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsDurationSig) vectorized() bool {
