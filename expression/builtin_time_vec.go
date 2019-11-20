@@ -201,11 +201,44 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinExtractDatetimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	ds := buf1.Times()
+	result.MergeNulls(buf, buf1)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinAddDateIntIntSig) vectorized() bool {
