@@ -2010,7 +2010,7 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 func (s *testDBSuite6) TestRepairTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("drop if exists table t")
+	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("drop table if exists other_table")
 	s.tk.MustExec("drop table if exists origin")
 
