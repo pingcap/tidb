@@ -25,5 +25,14 @@
       // LeftOuterJoin should no be simplified to InnerJoin.
       "explain select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01'"
     ]
+  },
+  {
+    "name": "TestPartitionTableStats",
+    "cases": [
+      "explain select * from t order by a",
+      "select * from t order by a",
+      "explain select * from t order by a limit 3",
+      "select * from t order by a limit 3"
+    ]
   }
 ]
