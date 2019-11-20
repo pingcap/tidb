@@ -82,8 +82,8 @@ type stmtSummaryByDigest struct {
 	stmtType      string
 	normalizedSQL string
 	sampleSQL     string
-	tables        []stmtctx.TableEntry
-	indexNames    []string
+	tableNames    string
+	indexNames    string
 	sampleUser    string
 	execCount     int64
 	// latency
@@ -324,13 +324,25 @@ func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
 		normalizedSQL = normalizedSQL[:maxSQLLength]
 	}
 
+	// Use "," to separate table names and index names to support FIND_IN_SET.
+	var buffer bytes.Buffer
+	for i, value := range sei.StmtCtx.Tables {
+		buffer.WriteString(strings.ToLower(value.DB))
+		buffer.WriteString(".")
+		buffer.WriteString(strings.ToLower(value.Table))
+		if i < len(sei.StmtCtx.Tables)-1 {
+			buffer.WriteString(",")
+		}
+	}
+	tableNames := buffer.String()
+
 	ssbd := &stmtSummaryByDigest{
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
 		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
 		normalizedSQL: normalizedSQL,
-		tables:        sei.StmtCtx.Tables,
-		indexNames:    sei.StmtCtx.IndexNames,
+		tableNames:    tableNames,
+		indexNames:    strings.Join(sei.StmtCtx.IndexNames, ","),
 		minLatency:    sei.TotalLatency,
 		backoffTypes:  make(map[fmt.Stringer]int),
 		firstSeen:     sei.StartTime,
@@ -484,34 +496,13 @@ func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
-	// Use "," to separate table names and index names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range ssbd.tables {
-		buffer.WriteString(value.DB)
-		buffer.WriteString(".")
-		buffer.WriteString(value.Table)
-		if i < len(ssbd.tables)-1 {
-			buffer.WriteString(",")
-		}
-	}
-	tableNames := buffer.String()
-
-	buffer.Reset()
-	for i, value := range ssbd.indexNames {
-		buffer.WriteString(value)
-		if i < len(ssbd.indexNames)-1 {
-			buffer.WriteString(",")
-		}
-	}
-	indexNames := buffer.String()
-
 	return types.MakeDatums(
 		ssbd.stmtType,
 		ssbd.schemaName,
 		ssbd.digest,
 		ssbd.normalizedSQL,
-		convertEmptyToNil(tableNames),
-		convertEmptyToNil(indexNames),
+		convertEmptyToNil(ssbd.tableNames),
+		convertEmptyToNil(ssbd.indexNames),
 		convertEmptyToNil(ssbd.sampleUser),
 		ssbd.execCount,
 		int64(ssbd.sumLatency),

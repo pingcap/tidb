@@ -120,8 +120,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		digest:               stmtExecInfo1.Digest,
 		normalizedSQL:        stmtExecInfo1.NormalizedSQL,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
-		tables:               stmtExecInfo1.StmtCtx.Tables,
-		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
+		tableNames:           "db1.tb1,db2.tb2",
+		indexNames:           "a",
 		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
@@ -405,13 +405,15 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	c.Assert(ok, IsTrue)
 }
 
-func matchStmtSummaryByDigest(first *stmtSummaryByDigest, second *stmtSummaryByDigest) bool {
+func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 	if first.schemaName != second.schemaName ||
 		strings.ToLower(first.stmtType) != strings.ToLower(second.stmtType) ||
 		first.digest != second.digest ||
 		first.normalizedSQL != second.normalizedSQL ||
 		first.sampleSQL != second.sampleSQL ||
 		first.sampleUser != second.sampleUser ||
+		first.tableNames != second.tableNames ||
+		first.indexNames != second.indexNames ||
 		first.execCount != second.execCount ||
 		first.sumLatency != second.sumLatency ||
 		first.maxLatency != second.maxLatency ||
@@ -463,23 +465,6 @@ func matchStmtSummaryByDigest(first *stmtSummaryByDigest, second *stmtSummaryByD
 		first.firstSeen != second.firstSeen ||
 		first.lastSeen != second.lastSeen {
 		return false
-	}
-	if len(first.tables) != len(second.tables) {
-		return false
-	}
-	for i := 0; i < len(first.tables); i++ {
-		if first.tables[i].DB != second.tables[i].DB ||
-			first.tables[i].Table != second.tables[i].Table {
-			return false
-		}
-	}
-	if len(first.indexNames) != len(second.indexNames) {
-		return false
-	}
-	for i := 0; i < len(first.indexNames); i++ {
-		if first.indexNames[i] != second.indexNames[i] {
-			return false
-		}
 	}
 	if len(first.backoffTypes) != len(second.backoffTypes) {
 		return false
