@@ -562,13 +562,6 @@ func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	return types.Duration{Duration: time.Duration(dur), Fsp: int8(fillFsp)}
 }
 
-// GetGoDuration returns the time.Duration in the specific row.
-// Different from the Row.GetDuration method, the argument Fsp is ignored, so the user should handle it outside.
-func (c *Column) GetGoDuration(rowID int) time.Duration {
-	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
-	return time.Duration(dur)
-}
-
 func (c *Column) getNameValue(rowID int) (string, uint64) {
 	start, end := c.offsets[rowID], c.offsets[rowID+1]
 	if start == end {
