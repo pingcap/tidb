@@ -2531,16 +2531,13 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		"YEAR_MONTH":      {},
 	}
 	isDatetimeUnit := true
-	fmt.Println("args0--", args[0].ConstItem())
 	args[0] = WrapWithCastAsString(ctx, args[0])
-	fmt.Println("args0--", args[0].ConstItem())
 	if _, isCon := args[0].(*Constant); isCon {
 		unit, _, err1 := args[0].EvalString(ctx, chunk.Row{})
 		if err1 != nil {
 			return nil, err1
 		}
 		_, isDatetimeUnit = datetimeUnits[unit]
-		fmt.Println("unit---", unit)
 	}
 	var bf baseBuiltinFunc
 	if isDatetimeUnit {
