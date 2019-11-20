@@ -350,6 +350,10 @@ type DataSource struct {
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
+
+	// TblCols contains the original columns of table before being pruned, and it
+	// is used for estimating table scan cost.
+	TblCols []*expression.Column
 }
 
 // accessPath tells how we access one index or just access table.
