@@ -229,6 +229,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	c.Assert(res, HasLen, 0)
 
 	// Commit txn, check the final commit ts is pushed.
+	committer.commitTS = txn.StartTS() + 1
 	c.Assert(committer.commitKeys(bo, committer.keys), IsNil)
 	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, []byte("x"))
 	c.Assert(err, IsNil)
