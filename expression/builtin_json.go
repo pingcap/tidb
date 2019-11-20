@@ -15,6 +15,7 @@ package expression
 
 import (
 	json2 "encoding/json"
+	"github.com/pingcap/parser/mysql"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -98,7 +99,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
-	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
+	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig, nil
