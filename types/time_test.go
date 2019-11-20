@@ -1109,6 +1109,7 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	// Issue #13605: "Invalid time format" caused by time zone issue
 	// Some regions like Los Angeles use daylight saving time, see https://en.wikipedia.org/wiki/Daylight_saving_time
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	LondonTz, _ := time.LoadLocation("Europe/London")
 
 	tests = []struct {
 		tz             *time.Location
@@ -1116,15 +1117,19 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 		expectRetError bool
 	}{{
 		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             losAngelesTz,
 		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
 		expectRetError: true,
 	}, {
 		tz:             losAngelesTz,
-		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
 		expectRetError: false,
 	}, {
-		tz:             losAngelesTz,
-		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
 		expectRetError: false,
 	}, {
 		tz:             shanghaiTz,
@@ -1132,11 +1137,19 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 		expectRetError: false,
 	}, {
 		tz:             shanghaiTz,
-		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
 		expectRetError: false,
 	}, {
-		tz:             shanghaiTz,
-		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 0, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 1, 0, 20, 0),
+		expectRetError: true,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 2, 0, 20, 0),
 		expectRetError: false,
 	},
 	}
