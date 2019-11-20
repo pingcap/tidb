@@ -1512,7 +1512,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
 	}
 
-	if _, err := t.GoTime(gotime.UTC); err != nil {
+	if _, err := t.GoTime(sc.TimeZone); err != nil {
 		return errors.Trace(err)
 	}
 
