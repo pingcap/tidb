@@ -86,6 +86,8 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// AlterPrimaryKey is used to control alter primary key feature.
+	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool        `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -281,6 +283,9 @@ type TiKVClient struct {
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
+	// If a store has been up to the limit, it will return error for successive request to
+	// prevent the store occupying too much token in dispatching level.
+	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
 }
 
 // Binlog is the config for binlog.
@@ -333,6 +338,7 @@ var defaultConf = Config{
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
 	CheckMb4ValueInUTF8:          true,
+	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	SplitRegionMaxNum:            1000,
 	TxnLocalLatches: TxnLocalLatches{
@@ -401,6 +407,7 @@ var defaultConf = Config{
 		BatchWaitSize:     8,
 
 		RegionCacheTTL: 600,
+		StoreLimit:     0,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

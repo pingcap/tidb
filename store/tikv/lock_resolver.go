@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"fmt"
@@ -137,7 +138,12 @@ type Lock struct {
 }
 
 func (l *Lock) String() string {
-	return fmt.Sprintf("key: %s, primary: %s, txnStartTS: %d, ttl: %d", l.Key, l.Primary, l.TxnID, l.TTL)
+	buf := bytes.NewBuffer(make([]byte, 0, 128))
+	buf.WriteString("key: ")
+	prettyWriteKey(buf, l.Key)
+	buf.WriteString(", primary: ")
+	prettyWriteKey(buf, l.Primary)
+	return fmt.Sprintf("%s, txnStartTS: %d, ttl: %d, type: %s", buf.String(), l.TxnID, l.TTL, l.LockType)
 }
 
 // NewLock creates a new *Lock.
@@ -477,6 +483,9 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
 			req.ResolveLock.Keys = [][]byte{l.Key}
+			if !status.IsCommitted() {
+				logutil.Logger(context.Background()).Info("resolveLock rollback", zap.String("lock", l.String()))
+			}
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {

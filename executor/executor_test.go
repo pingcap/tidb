@@ -2618,6 +2618,7 @@ func (s *testSuite1) SetUpSuite(c *C) {
 		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
+	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
@@ -4243,4 +4244,22 @@ func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.
 		return ce.AddCore(e, h)
 	}
 	return ce
+}
+
+func (s *testSuite1) TestPartitionHashCode(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by hash (c1) partitions 4;`)
+	wg := sync.WaitGroup{}
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk1 := testkit.NewTestKitWithInit(c, s.store)
+			for i := 0; i < 5; i++ {
+				tk1.MustExec("select * from t")
+			}
+		}()
+	}
+	wg.Wait()
 }
