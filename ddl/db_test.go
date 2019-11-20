@@ -1029,9 +1029,13 @@ LOOP:
 		return
 	}
 
-	// test index range
-	for i := 0; i < 100; i++ {
-		index := rand.Intn(len(keys) - 3)
+	// Test index range with lower/upper boundary and random inner cases
+	step := len(keys) / 20
+	for i := 0; i <= 20; i++ {
+		index := i * step
+		if index > len(keys)-3 {
+			index = len(keys) - 3
+		}
 		rows := tk.MustQuery("select c1 from test_add_index where c3 >= ? order by c1 limit 3", keys[index]).Rows()
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
@@ -1400,6 +1404,9 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	// The primary key name is the same as the existing index name.
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
+
+	// Check if the primary key exists before checking the table's pkIsHandle.
+	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
 
 	// for the limit of name
 	validName := strings.Repeat("a", mysql.MaxIndexIdentifierLen)
