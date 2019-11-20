@@ -229,7 +229,7 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	ds := buf1.Times()
 	result.MergeNulls(buf, buf1)
 	for i := 0; i < n; i++ {
-		if result.isNull(i) {
+		if result.IsNull(i) {
 			continue
 		}
 		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
