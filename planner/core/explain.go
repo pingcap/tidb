@@ -68,7 +68,7 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
 	} else if haveCorCol {
 		if normalized {
-			fmt.Fprintf(buffer, ", range: decided by %v", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
 			fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 		}
@@ -137,7 +137,7 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
 	} else if haveCorCol {
 		if normalized {
-			fmt.Fprintf(buffer, ", range: decided by %v", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
 			fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 		}

@@ -150,6 +150,21 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
 			isSame: false,
 		},
+		{ // test for apply.
+			sql1:   "select * from t1 where t1.b > 0 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >1)",
+			sql2:   "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >0)",
+			isSame: true,
+		},
+		{ // test for apply.
+			sql1:   "select * from t1 where t1.b > 0 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >1)",
+			sql2:   "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
+			isSame: false,
+		},
+		{ // test for topN.
+			sql1:   "SELECT * from t1 where a!=1 order by c limit 1",
+			sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
+			isSame: true,
+		},
 	}
 	for _, testCase := range normalizedDigestCases {
 		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
@@ -172,12 +187,13 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
 	c.Assert(ok, IsTrue)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
+	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
-		c.Assert(normalized1, Equals, normalized2, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
-		c.Assert(digest1, Equals, digest2, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
+		c.Assert(normalized1, Equals, normalized2, comment)
+		c.Assert(digest1, Equals, digest2, comment)
 	} else {
-		c.Assert(normalized1 != normalized2, IsTrue, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
-		c.Assert(digest1 != digest2, IsTrue, Commentf("sql1: %v, sql2: %v\n", sql1, sql2))
+		c.Assert(normalized1 != normalized2, IsTrue, comment)
+		c.Assert(digest1 != digest2, IsTrue, comment)
 	}
 }
 

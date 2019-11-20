@@ -9,6 +9,8 @@
 			"select * from t1 where a in (1,2,3)",
 			"select * from t1 where b=1",
 			"select a+1,b+2 from t1 use index(b) where b=3",
+			"select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
+			"SELECT * from t1 where a!=1 order by c limit 1",
 			"SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
 			"SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
 			"SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
