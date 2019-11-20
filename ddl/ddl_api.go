@@ -3319,13 +3319,15 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	if isPK {
-		if !config.GetGlobalConfig().AlterPrimaryKey || t.Meta().PKIsHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack(fmt.Sprintf(
-				"Unsupported drop primary key when alter-primary-key is %v and the table's pkIsHandle is %v",
-				config.GetGlobalConfig().AlterPrimaryKey, t.Meta().PKIsHandle))
+		if !config.GetGlobalConfig().AlterPrimaryKey {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
+
 		}
 		if indexInfo == nil {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+		}
+		if t.Meta().PKIsHandle {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
 		}
 	}
 	if indexInfo == nil {
