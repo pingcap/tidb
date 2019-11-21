@@ -91,6 +91,26 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = tk.Exec("alter table primary_key_test drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:206]Unsupported drop primary key when alter-primary-key is false")
+
+	// Change the value of AlterPrimaryKey.
+	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
+	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
+	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
+	newCfg.AlterPrimaryKey = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:206]Unsupported drop primary key when the table's pkIsHandle is true")
+	tk.MustExec("alter table primary_key_test2 drop primary key")
+	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
