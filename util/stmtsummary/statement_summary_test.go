@@ -59,57 +59,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	indexes := []string{"a"}
 
 	// first statement
-	stmtExecInfo1 := &StmtExecInfo{
-		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql1",
-		NormalizedSQL:  "normalized_sql",
-		Digest:         "digest",
-		User:           "user1",
-		TotalLatency:   10000,
-		ParseLatency:   100,
-		CompileLatency: 1000,
-		CopTasks: &stmtctx.CopTasksDetails{
-			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
-			MaxProcessAddress: "127",
-			MaxProcessTime:    15000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
-			MaxWaitAddress:    "128",
-			MaxWaitTime:       1500,
-		},
-		ExecDetail: &execdetails.ExecDetails{
-			CalleeAddress: "129",
-			ProcessTime:   500,
-			WaitTime:      50,
-			BackoffTime:   80,
-			RequestCount:  10,
-			TotalKeys:     1000,
-			ProcessedKeys: 500,
-			CommitDetail: &execdetails.CommitDetails{
-				GetCommitTsTime:   100,
-				PrewriteTime:      10000,
-				CommitTime:        1000,
-				LocalLatchTime:    10,
-				CommitBackoffTime: 200,
-				Mu:                mu,
-				ResolveLockTime:   2000,
-				WriteKeys:         20000,
-				WriteSize:         200000,
-				PrewriteRegionNum: 20,
-				TxnRetry:          2,
-			},
-		},
-		StmtCtx: &stmtctx.StatementContext{
-			StmtType:   "Select",
-			Tables:     tables,
-			IndexNames: indexes,
-		},
-		MemMax:    10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
-	}
-	stmtExecInfo1.StmtCtx.AddAffectedRows(1000)
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.ExecDetail.CommitDetail.Mu = mu
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
@@ -343,7 +294,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		MemMax:    200,
 		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 	}
-	stmtExecInfo3.StmtCtx.AddAffectedRows(10000)
+	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
 	expectedSummary.execCount++
 	expectedSummary.sampleUser = stmtExecInfo3.User
 	expectedSummary.sampleSQL = stmtExecInfo3.OriginalSQL
