@@ -38,7 +38,6 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
-	conf.Binlog.BinlogSocket = "/tmp/socket"
 	conf.Performance.TxnEntryCountLimit = 1000
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"

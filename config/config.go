@@ -202,14 +202,6 @@ type Performance struct {
 	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
-// XProtocol is the XProtocol section of the config.
-type XProtocol struct {
-	XServer bool   `toml:"xserver" json:"xserver"`
-	XHost   string `toml:"xhost" json:"xhost"`
-	XPort   uint   `toml:"xport" json:"xport"`
-	XSocket string `toml:"xsocket" json:"xsocket"`
-}
-
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
 	Enabled  bool `toml:"enabled" json:"enabled"`
