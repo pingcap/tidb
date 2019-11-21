@@ -34,7 +34,7 @@ var (
 	ErrGetStartTS    = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan   = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti  = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrPrepareDDL    = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
+	ErrPrepareDDL    = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements with parameters")
 	ErrResultIsEmpty = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
 	ErrBuildExecutor = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 	ErrBatchDMLFail  = terror.ClassExecutor.New(codeBatchDMLFail, "Batch DML failed, please clean the table and try again. %s")
