@@ -90,7 +90,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := compareStringWithTrim(buf0.GetString(i), b.args[0].GetType(), buf1.GetString(i), b.args[1].GetType())
 {{- else if eq .type.ETName "Duration" }}
 		val := types.CompareDuration(arg0[i], arg1[i])
 {{- else if eq .type.ETName "Datetime" }}

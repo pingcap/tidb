@@ -3433,6 +3433,16 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+
+	// test for char(n) pad
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a CHAR(4))")
+	tk.MustExec("insert into t value('a ')")
+	tk.MustQuery("select * from t where a = 'a'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t where a = 'a '").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t where a = binary('a')").Check(testkit.Rows("a"))
+	result = tk.MustQuery("select * from t where a = binary('a ')")
+	c.Assert(len(result.Rows()), Equals, 0)
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {

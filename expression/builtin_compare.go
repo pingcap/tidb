@@ -15,8 +15,10 @@ package expression
 
 import (
 	"math"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
@@ -2429,7 +2431,18 @@ func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, r
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareString(arg0, arg1)), false, nil
+	ret := compareStringWithTrim(arg0, lhsArg.GetType(), arg1, rhsArg.GetType())
+	return int64(ret), false, nil
+}
+
+func compareStringWithTrim(lhs string, lhsFt *types.FieldType, rhs string, rhsFt *types.FieldType) int {
+	if lhsFt.Collate != charset.CollationBin {
+		lhs = strings.TrimRight(lhs, " ")
+	}
+	if rhsFt.Collate != charset.CollationBin {
+		rhs = strings.TrimRight(rhs, " ")
+	}
+	return types.CompareString(lhs, rhs)
 }
 
 // CompareReal compares two float-point values.

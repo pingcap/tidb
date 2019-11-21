@@ -1054,7 +1054,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_Uint64:
 		return convertUint(expr.Val)
 	case tipb.ExprType_String:
-		return convertString(expr.Val)
+		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
@@ -1153,10 +1153,15 @@ func convertUint(val []byte) (*Constant, error) {
 	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
-func convertString(val []byte) (*Constant, error) {
+func convertString(val []byte, ft *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
 	d.SetBytesAsString(val)
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
+	retType := types.NewFieldType(mysql.TypeVarString)
+	if ft != nil {
+		retType.Charset = ft.Charset
+		retType.Collate = mysql.Collations[uint8(ft.Collate)]
+	}
+	return &Constant{Value: d, RetType: retType}, nil
 }
 
 func convertFloat(val []byte, f32 bool) (*Constant, error) {

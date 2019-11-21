@@ -264,9 +264,9 @@ func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
 	tk.MustExec("insert into t1 values ('xy');")
 	tk.MustExec("set sql_mode='';")
 	r := tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
-	r.Check(testkit.Rows("0 2"))
+	r.Check(testkit.Rows("1 2"))
 	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
-	r.Check(testkit.Rows("0"))
+	r.Check(testkit.Rows("1"))
 	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
 	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
 	r.Check(testkit.Rows("1 10"))
@@ -279,12 +279,12 @@ func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
 	tk.MustExec("insert into t1 values ('xy');")
 	tk.MustExec("set sql_mode='';")
 	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
-	r.Check(testkit.Rows("0 2"))
+	r.Check(testkit.Rows("1 2"))
 	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
-	r.Check(testkit.Rows("0"))
+	r.Check(testkit.Rows("1"))
 	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
 	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
-	r.Check(testkit.Rows("0 2"))
+	r.Check(testkit.Rows("1 2"))
 }
 
 func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
