@@ -1275,7 +1275,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check MMDD.
 	if num < 101 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, num))
+		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Adjust year
