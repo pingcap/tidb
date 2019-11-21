@@ -658,7 +658,7 @@ func (s *testSuite) TestPartitionInsertOnDuplicate(c *C) {
 
 }
 
-func (s *testSuite3) TestJiraIssue5366(c *C) {
+func (s *testSuite) TestJiraIssue5366(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table bug (a varchar(100))`)
