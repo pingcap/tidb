@@ -566,6 +566,16 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSuiteAgg) TestIssue13652(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a real)")
+	tk.MustQuery("select a from t group by (a)")
+	tk.MustQuery("select a from t group by ((a))")
+}
+
 func (s *testSuiteAgg) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 

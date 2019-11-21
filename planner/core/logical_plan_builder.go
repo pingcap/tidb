@@ -1910,7 +1910,11 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	gbyColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	for _, byItem := range sel.GroupBy.Items {
-		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
+		expr := byItem.Expr
+		if pe, ok := expr.(*ast.ParenthesesExpr); ok {
+			expr = getInnerFromParenthesesAndUnaryPlus(pe)
+		}
+		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
 			idx, err := expression.FindFieldName(p.OutputNames(), colExpr.Name)
 			if err != nil || idx < 0 {
 				continue
