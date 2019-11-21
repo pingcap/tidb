@@ -3003,12 +3003,18 @@ func (b *PlanBuilder) buildUpdateLists(
 ) (newList []*expression.Assignment,
 	po LogicalPlan,
 	allAssignmentsAreConstant bool,
-	error error,
+	e error,
 ) {
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
 	modifyColumns := make(map[string]bool, p.Schema().Len())
+	var columnsIdx map[*ast.ColumnName]int
+	cacheColumnsIdx := false
+	if len(p.OutputNames()) > 16 {
+		cacheColumnsIdx = true
+		columnsIdx = make(map[*ast.ColumnName]int, len(list))
+	}
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
@@ -3016,6 +3022,9 @@ func (b *PlanBuilder) buildUpdateLists(
 		}
 		if idx < 0 {
 			return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field_list")
+		}
+		if cacheColumnsIdx {
+			columnsIdx[assign.Column] = idx
 		}
 		name := p.OutputNames()[idx]
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
@@ -3064,7 +3073,17 @@ func (b *PlanBuilder) buildUpdateLists(
 
 	allAssignments := append(list, virtualAssignments...)
 	for i, assign := range allAssignments {
-		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
+		var idx int
+		var err error
+		if cacheColumnsIdx {
+			if i, ok := columnsIdx[assign.Column]; ok {
+				idx = i
+			} else {
+				idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
+			}
+		} else {
+			idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
+		}
 		if err != nil {
 			return nil, nil, false, err
 		}
