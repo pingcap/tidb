@@ -115,8 +115,8 @@ func (a assertionPair) String() string {
 // SetAssertion sets a assertion for the key operation.
 func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
 	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
-	key1 := append([]byte{}, key...)
-	txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
+	// key1 := append([]byte{}, key...)
+	// txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
 }
 
 func (txn *tikvTxn) ConfirmAssertions(succ bool) {
