@@ -2406,14 +2406,11 @@ func (b *builtinSubTimeStringNullSig) vectorized() bool {
 
 func (b *builtinSubTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		result.AppendNull()
 	}
-
 	return nil
-
 }
 
 func (b *builtinMonthNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
