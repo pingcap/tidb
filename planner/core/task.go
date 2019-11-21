@@ -953,9 +953,14 @@ func BuildFinalModeAggregation(
 	// add group by columns
 	finalGbyItems = make([]expression.Expression, 0, len(groupByItems))
 	for _, gbyExpr := range groupByItems {
-		gbyCol := &expression.Column{
-			UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  gbyExpr.GetType(),
+		var gbyCol *expression.Column
+		if col, ok := gbyExpr.(*expression.Column); ok {
+			gbyCol = col
+		} else {
+			gbyCol = &expression.Column{
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  gbyExpr.GetType(),
+			}
 		}
 		partialSchema.Append(gbyCol)
 		finalGbyItems = append(finalGbyItems, gbyCol)
