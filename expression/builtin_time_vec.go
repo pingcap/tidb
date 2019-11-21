@@ -49,7 +49,7 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 					return err
 				}
 				result.SetNull(i, true)
@@ -88,7 +88,7 @@ func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 					return err
 				}
 				result.SetNull(i, true)
@@ -116,7 +116,7 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 			continue
 		}
 		if times[i].IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -281,7 +281,7 @@ func (b *builtinDayNameSig) vecEvalIndex(input *chunk.Chunk, apply func(i, res i
 			continue
 		}
 		if ds[i].InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
 			applyNull(i)
@@ -366,7 +366,7 @@ func (b *builtinWeekDaySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 			continue
 		}
 		if ds[i].IsZero() {
-			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -529,7 +529,7 @@ func (b *builtinYearWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *c
 		}
 		date := ds[i]
 		if date.InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -765,7 +765,7 @@ func (b *builtinLastDaySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		if times[i].InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(times[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -842,14 +842,14 @@ func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		var t types.Time
 		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
 		if !succ {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 			continue
 		}
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1076,7 +1076,7 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		}
 		date := ds[i]
 		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1122,7 +1122,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		}
 		date := ds[i]
 		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1191,7 +1191,7 @@ func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		arg := ds[i]
 		ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
 		if ret == 0 {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1361,7 +1361,7 @@ func (b *builtinMakeDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colum
 		}
 		retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
 		if retTimestamp == 0 {
-			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(startTime.String())); err != nil {
+			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, startTime.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1402,7 +1402,7 @@ func (b *builtinWeekOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		if ds[i].IsZero() {
-			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1549,14 +1549,14 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 		var t types.Time
 		succ := t.StrToDate(sc, dateBuf.GetString(i), formatBuf.GetString(i))
 		if !succ {
-			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 			continue
 		}
 		if hasNoZeroDateMode && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
-			if err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String())); err != nil {
+			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1626,7 +1626,7 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		}
 		date := ds[i]
 		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1803,7 +1803,7 @@ func (b *builtinToDaysSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		arg := ds[i]
 		ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 		if ret == 0 {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -2114,7 +2114,7 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -2203,7 +2203,7 @@ func (b *builtinYearWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 		date := ds[i]
 		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -2266,10 +2266,10 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 		}
 		if invalidLHS, invalidRHS := lhs[i].InvalidZero(), rhs[i].InvalidZero(); invalidLHS || invalidRHS {
 			if invalidLHS {
-				err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(lhs[i].String()))
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, lhs[i].String()))
 			}
 			if invalidRHS {
-				err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(rhs[i].String()))
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rhs[i].String()))
 			}
 			if err != nil {
 				return err
@@ -2370,10 +2370,10 @@ func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 	n := input.NumRows()
 	mode := b.ctx.GetSessionVars().SQLMode
 	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
-		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String())
+		return types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
 	}
 	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
-		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(b.literal.String())
+		return types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
 	}
 
 	result.ResizeTime(n, false)
@@ -2428,7 +2428,7 @@ func (b *builtinMonthNameSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		}
 		mon := ds[i].Time.Month()
 		if (ds[i].IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) || mon < 0 || mon > len(types.MonthNames) {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
 			result.AppendNull()
@@ -2493,7 +2493,7 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -2705,7 +2705,7 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
+				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 					return err
 				}
 				result.SetNull(i, true)

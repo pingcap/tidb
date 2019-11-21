@@ -1694,7 +1694,7 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 		if t.isValidDate {
 			c.Check(err, IsNil)
 		} else {
-			c.Check(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+			c.Check(types.ErrWrongValue.Equal(err), IsTrue)
 		}
 	}
 }

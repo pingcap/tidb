@@ -19,6 +19,11 @@ import (
 	parser_types "github.com/pingcap/parser/types"
 )
 
+// const strings for ErrWrongValue
+const (
+	DateTimeStr = "datetime"
+)
+
 var (
 	// ErrInvalidDefault is returned when meet a invalid default value.
 	ErrInvalidDefault = parser_types.ErrInvalidDefault
@@ -65,12 +70,12 @@ var (
 	ErrInvalidYear = terror.ClassTypes.New(mysql.ErrInvalidYear, mysql.MySQLErrName[mysql.ErrInvalidYear])
 	// ErrTruncatedWrongVal is returned when data has been truncated during conversion.
 	ErrTruncatedWrongVal = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	// ErrIncorrectDatetimeValue is returned when the input is not valid date time value.
-	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrIncorrectDatetimeValue, mysql.MySQLErrName[mysql.ErrIncorrectDatetimeValue])
 	// ErrInvalidTimeFormat is returned when the time format is not correct.
 	ErrInvalidTimeFormat = terror.ClassTypes.New(mysql.ErrInvalidTimeFormat, mysql.MySQLErrName[mysql.ErrInvalidTimeFormat])
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
 	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
+	// ErrWrongValue is returned when the input value is in wrong format.
+	ErrWrongValue = terror.ClassTypes.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 )
 
 func init() {
@@ -97,9 +102,9 @@ func init() {
 		mysql.ErrInvalidYearFormat:        mysql.ErrInvalidYearFormat,
 		mysql.ErrInvalidYear:              mysql.ErrInvalidYear,
 		mysql.ErrTruncatedWrongValue:      mysql.ErrTruncatedWrongValue,
-		mysql.ErrIncorrectDatetimeValue:   mysql.ErrIncorrectDatetimeValue,
 		mysql.ErrInvalidTimeFormat:        mysql.ErrInvalidTimeFormat,
 		mysql.ErrInvalidWeekModeFormat:    mysql.ErrInvalidWeekModeFormat,
+		mysql.ErrWrongValue:               mysql.ErrWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }

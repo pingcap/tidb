@@ -47,9 +47,9 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrInvalidYearFormat,
 		ErrInvalidYear,
 		ErrTruncatedWrongVal,
-		ErrIncorrectDatetimeValue,
 		ErrInvalidTimeFormat,
 		ErrInvalidWeekModeFormat,
+		ErrWrongValue,
 	}
 	for _, err := range kvErrs {
 		code := err.ToSQLError().Code
