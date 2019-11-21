@@ -49,18 +49,12 @@ func TestT(t *testing.T) {
 func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	s.ssMap.Clear()
 
-	mu := struct {
-		sync.Mutex
-		BackoffTypes []fmt.Stringer
-	}{
-		BackoffTypes: make([]fmt.Stringer, 0),
-	}
-	tables := []stmtctx.TableEntry{{"db1", "tb1"}, {"db2", "tb2"}}
+	tables := []stmtctx.TableEntry{{DB: "db1", Table: "tb1"}, {DB: "db2", Table: "tb2"}}
 	indexes := []string{"a"}
 
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.CommitDetail.Mu = mu
+	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make([]fmt.Stringer, 0)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
@@ -133,7 +127,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 	// Second statement is similar with the first statement, and its values are
 	// greater than that of the first statement.
-	mu.BackoffTypes = append(mu.BackoffTypes, tikv.BoTxnLock)
 	stmtExecInfo2 := &StmtExecInfo{
 		SchemaName:     "schema_name",
 		OriginalSQL:    "original_sql2",
@@ -168,7 +161,12 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				CommitTime:        5000,
 				LocalLatchTime:    50,
 				CommitBackoffTime: 1000,
-				Mu:                mu,
+				Mu: struct {
+					sync.Mutex
+					BackoffTypes []fmt.Stringer
+				}{
+					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+				},
 				ResolveLockTime:   10000,
 				WriteKeys:         100000,
 				WriteSize:         1000000,
@@ -278,7 +276,12 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				CommitTime:        500,
 				LocalLatchTime:    5,
 				CommitBackoffTime: 100,
-				Mu:                mu,
+				Mu: struct {
+					sync.Mutex
+					BackoffTypes []fmt.Stringer
+				}{
+					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+				},
 				ResolveLockTime:   1000,
 				WriteKeys:         10000,
 				WriteSize:         100000,
@@ -442,13 +445,7 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 }
 
 func generateAnyExecInfo() *StmtExecInfo {
-	mu := struct {
-		sync.Mutex
-		BackoffTypes []fmt.Stringer
-	}{
-		BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
-	}
-	tables := []stmtctx.TableEntry{{"db1", "tb1"}, {"db2", "tb2"}}
+	tables := []stmtctx.TableEntry{{DB: "db1", Table: "tb1"}, {DB: "db2", Table: "tb2"}}
 	indexes := []string{"a"}
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
@@ -484,7 +481,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 				CommitTime:        1000,
 				LocalLatchTime:    10,
 				CommitBackoffTime: 200,
-				Mu:                mu,
+				Mu: struct {
+					sync.Mutex
+					BackoffTypes []fmt.Stringer
+				}{
+					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+				},
 				ResolveLockTime:   2000,
 				WriteKeys:         20000,
 				WriteSize:         200000,
