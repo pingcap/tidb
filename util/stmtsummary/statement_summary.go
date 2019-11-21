@@ -34,16 +34,16 @@ import (
 // There're many types of statement summary tables in MySQL, but we have
 // only implemented events_statement_summary_by_digest for now.
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap
+// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
 type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
-	// `hash` is the hash value of this object
+	// `hash` is the hash value of this object.
 	hash []byte
 }
 
-// Hash implements SimpleLRUCache.Key
+// Hash implements SimpleLRUCache.Key.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest))
@@ -292,7 +292,7 @@ func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 	return enabled
 }
 
-// normalizeEnableValue converts 'ON' to '1' and 'OFF' to '0'
+// normalizeEnableValue converts 'ON' to '1' and 'OFF' to '0'.
 func (ssMap *stmtSummaryByDigestMap) normalizeEnableValue(value string) string {
 	switch {
 	case strings.EqualFold(value, "ON"):
@@ -315,7 +315,7 @@ func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
 	return value != ""
 }
 
-// newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo
+// newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
 	// Trim SQL to size MaxSQLLength.
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength

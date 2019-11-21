@@ -553,7 +553,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 	return stmtExecInfo
 }
 
-// Test stmtSummaryByDigest.ToDatum
+// Test stmtSummaryByDigest.ToDatum.
 func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	s.ssMap.Clear()
 
@@ -587,7 +587,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		t, t, stmtExecInfo1.OriginalSQL)
 }
 
-// Test AddStatement and ToDatum parallel
+// Test AddStatement and ToDatum parallel.
 func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	s.ssMap.Clear()
 
@@ -600,13 +600,13 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
 
-		// Add 32 times with different digest
+		// Add 32 times with different digest.
 		for i := 0; i < loops; i++ {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			s.ssMap.AddStatement(stmtExecInfo1)
 		}
 
-		// There would be 32 summaries
+		// There would be 32 summaries.
 		datums := s.ssMap.ToDatum()
 		c.Assert(len(datums), Equals, loops)
 	}
@@ -634,11 +634,11 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 		s.ssMap.AddStatement(stmtExecInfo1)
 	}
 
-	// Summary count should be MaxStmtCount
+	// Summary count should be MaxStmtCount.
 	sm := s.ssMap.summaryMap
 	c.Assert(sm.Size(), Equals, int(maxStmtCount))
 
-	// LRU cache should work
+	// LRU cache should work.
 	for i := loops - int(maxStmtCount); i < loops; i++ {
 		key := &stmtSummaryByDigestKey{
 			schemaName: stmtExecInfo1.SchemaName,
@@ -669,13 +669,13 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	}
 	value, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	// Length of normalizedSQL and sampleSQL should be maxSQLLength
+	// Length of normalizedSQL and sampleSQL should be maxSQLLength.
 	summary := value.(*stmtSummaryByDigest)
 	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
 	c.Assert(len(summary.sampleSQL), Equals, int(maxSQLLength))
 }
 
-// Test setting EnableStmtSummary to 0
+// Test setting EnableStmtSummary to 0.
 func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	s.ssMap.Clear()
 
@@ -705,19 +705,19 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 2)
 
-	// Unset in session scope
+	// Unset in session scope.
 	s.ssMap.SetEnabled("", true)
 	s.ssMap.AddStatement(stmtExecInfo2)
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 0)
 
-	// Unset in global scope
+	// Unset in global scope.
 	s.ssMap.SetEnabled("", false)
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 0)
 
-	// Set back
+	// Set back.
 	s.ssMap.SetEnabled("1", false)
 }
 
@@ -748,6 +748,7 @@ func (s *testStmtSummarySuite) TestGetMoreThenOnceSelect(c *C) {
 	c.Assert(len(sqls), Equals, 1)
 }
 
+// Test `formatBackoffTypes`.
 func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
 	backoffMap := make(map[fmt.Stringer]int)
 	c.Assert(formatBackoffTypes(backoffMap), IsNil)
