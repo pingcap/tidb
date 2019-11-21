@@ -46,6 +46,9 @@ func (r *repairInfo) GetRepairTableList() []string {
 
 // InRepairMode set the simple repaired table list.
 func (r *repairInfo) SetRepairTableList(list []string) {
+	for i, one := range list {
+		list[i] = strings.ToLower(one)
+	}
 	r.repairTableList.Store(list)
 }
 

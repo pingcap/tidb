@@ -3932,7 +3932,7 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 }
 
 func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
-	// tableInfo and oldDBInfo's existence have been checked in preprocessor.
+	// Existence of DB and table has been checked in the preprocessor.
 	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
 	if !ok || oldTableInfo == nil {
 		return ErrRepairTableFail.GenWithStack("Failed to get the repaired table")
@@ -3956,6 +3956,12 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	newTableInfo.ID = oldTableInfo.ID
 	// If any old partitionInfo has lost, that means the partition ID lost too, so did the data, repair failed.
 	if newTableInfo.Partition != nil {
+		// Check whether partitionType is hash partition.
+		if newTableInfo.Partition.Type == oldTableInfo.Partition.Type && newTableInfo.Partition.Type == model.PartitionTypeHash {
+			if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
+				return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be same")
+			}
+		}
 		for i, new := range newTableInfo.Partition.Definitions {
 			found := false
 			if oldTableInfo.Partition == nil {

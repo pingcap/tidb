@@ -2056,6 +2056,27 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	_, err = s.tk.Exec("admin repair table other_table CREATE TABLE other_table (a int);")
 	c.Assert(err, IsNil)
 
+	// Test whether repair table name is case sensitive.
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
+	s.tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
+	err = domain.GetDomain(s.s).Reload()
+	c.Assert(err, IsNil)
+	_, err = s.tk.Exec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a float, b varchar(2));")
+	c.Assert(err, IsNil)
+	repairTable := testGetTableByName(c, s.s, "test", "otHeR_tAbLe")
+	c.Assert(repairTable.Meta().Name.O, Equals, "otHeR_tAbLe")
+
+	// Test memory and system database is not for repair.
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.xxx"})
+	_, err = s.tk.Exec("admin repair table performance_schema.xxx CREATE TABLE yyy (a int);")
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: memory or System database is not for repair")
+
+	_, err = s.tk.Exec("admin repair table information_schema.xxx CREATE TABLE yyy (a int);")
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: memory or System database is not for repair")
+
+	_, err = s.tk.Exec("admin repair table mysql.xxx CREATE TABLE yyy (a int);")
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: memory or System database is not for repair")
+
 	// Test the repair detail.
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
@@ -2099,7 +2120,7 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
 	// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
-	repairTable := testGetTableByName(c, s.s, "test", "origin")
+	repairTable = testGetTableByName(c, s.s, "test", "origin")
 	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
 	c.Assert(len(repairTable.Meta().Columns), Equals, 2)
 	c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
@@ -2191,10 +2212,13 @@ func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 	err = domain.GetDomain(s.s).Reload()
 	c.Assert(err, IsNil)
 
-	// Partition num should be exactly same with old one, other wise will cause semantic problem.
+	// Test partition num in repair should be exactly same with old one, other wise will cause partition semantic problem.
+	_, err = s.tk.Exec("admin repair table origin create table origin (a bigint, b bigint not null, c int, key idx(c)) partition by hash(b) partitions 20")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Hash partition num should be same")
 
 	originTableInfo = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
-	s.tk.MustExec("admin repair table origin create table origin (a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	s.tk.MustExec("admin repair table origin create table origin (a bigint, b bigint not null, c int, key idx(c)) partition by hash(b) partitions 30")
 	repairTable = testGetTableByName(c, s.s, "test", "origin")
 	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
 	c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 30)

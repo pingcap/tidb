@@ -77,7 +77,7 @@ alter-primary-key = false
 # repair mode is used to repair the broken table meta in TiKV in extreme cases.
 repair-mode = false
 
-# Repair table list is used to list the table by DB and table name in repair mode, the table should be list as ["db.table",]
+# Repair table list is used to list the tables in repair mode with the format like ["db.table",].
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 

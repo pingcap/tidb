@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"strings"
 
@@ -795,6 +796,11 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 }
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
+	// Check the whether the repaired table is system table.
+	if util.IsMemOrSysDB(tn.Schema.L) {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or System database is not for repair")
+		return
+	}
 	dbMap := domainutil.RepairInfo.GetTablesInRepair()
 	// tableName here only has the schema rather than DBInfo.
 	var dbInfo *model.DBInfo
