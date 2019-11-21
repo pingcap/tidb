@@ -459,6 +459,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		return errors.Trace(e)
 	}
 	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
+	if rateLim > 20 {
+		rateLim = 20
+	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
 	return errors.Trace(err)
