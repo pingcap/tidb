@@ -422,7 +422,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	spill := oomUseTmpStorage && rowSize*innerCnt > memQuota
 	// Cost of building hash table.
 	cpuCost := innerCnt * sessVars.CPUFactor
-	memoryCost := innerCnt * sessVars.MemoryFactor * rowSize
+	memoryCost := innerCnt * sessVars.MemoryFactor
 	diskCost := innerCnt * sessVars.DiskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
@@ -479,7 +479,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	}
 
 	if spill {
-		memoryCost = memQuota * sessVars.MemoryFactor
+		memoryCost *= memQuota / (rowSize * innerCnt)
 	} else {
 		diskCost = 0
 	}
