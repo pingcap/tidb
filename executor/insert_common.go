@@ -206,10 +206,10 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 			if err != nil {
 				return err
 			}
-			if err := exec(ctx, rows); err != nil {
+			if err = exec(ctx, rows); err != nil {
 				return err
 			}
-			if err := batchDMLCommit(ctx, e.ctx); err != nil {
+			if err = batchDMLCommit(ctx, e.ctx); err != nil {
 				return err
 			}
 			rows = rows[:0]
@@ -344,11 +344,11 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 			}
 			rows = append(rows, row)
 			if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
-				if err := exec(ctx, rows); err != nil {
-					return errors.Trace(err)
+				if err = exec(ctx, rows); err != nil {
+					return err
 				}
-				if err := batchDMLCommit(ctx, e.ctx); err != nil {
-					return errors.Trace(err)
+				if err = batchDMLCommit(ctx, e.ctx); err != nil {
+					return err
 				}
 				rows = rows[:0]
 			}

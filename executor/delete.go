@@ -116,7 +116,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount%sessVars.DMLBatchSize == 0 && rowCount != 0 {
-				if err := batchDMLCommit(ctx, e.ctx); err != nil {
+				if err = batchDMLCommit(ctx, e.ctx); err != nil {
 					return err
 				}
 			}
