@@ -124,7 +124,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
 	ast.AddDate:          {},
-	ast.SubTime:          {
+	ast.SubTime: {
 		// builtinSubTimeStringNullSig
 		{
 			retEvalType:   types.ETString,
