@@ -809,7 +809,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 }
 
-func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database if not exists test")
@@ -1874,7 +1874,7 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	tk.MustGetErrCode(dropIndexSQL, mysql.ErrWrongAutoKey)
 }
 
-func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *C) {
+func (s *testIntegrationSuite4) TestInsertIntoGeneratedColumnWithDefaultExpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
