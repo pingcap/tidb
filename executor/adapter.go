@@ -858,14 +858,28 @@ func (a *ExecStmt) SummaryStmt() {
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
+
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.String()
+	}
+
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:    sessVars.CurrentDB,
-		OriginalSQL:   a.Text,
-		NormalizedSQL: normalizedSQL,
-		Digest:        digest,
-		TotalLatency:  uint64(costTime.Nanoseconds()),
-		AffectedRows:  stmtCtx.AffectedRows(),
-		SentRows:      0,
-		StartTime:     sessVars.StartTime,
+		SchemaName:     strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:    a.Text,
+		NormalizedSQL:  normalizedSQL,
+		Digest:         digest,
+		User:           userString,
+		TotalLatency:   costTime,
+		ParseLatency:   sessVars.DurationParse,
+		CompileLatency: sessVars.DurationCompile,
+		StmtCtx:        stmtCtx,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     &execDetail,
+		MemMax:         memMax,
+		StartTime:      sessVars.StartTime,
 	})
 }
