@@ -621,5 +621,4 @@ func (w *Worker) flushToFile() {
 	w.ctx.appendFileName(fileName)
 	w.buf = w.buf[:0]
 	atomic.StoreInt32(&(w.busy), int32(0))
-	return
 }
