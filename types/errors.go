@@ -71,8 +71,6 @@ var (
 	ErrInvalidYear = terror.ClassTypes.New(mysql.ErrInvalidYear, mysql.MySQLErrName[mysql.ErrInvalidYear])
 	// ErrTruncatedWrongVal is returned when data has been truncated during conversion.
 	ErrTruncatedWrongVal = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	// ErrInvalidTimeFormat is returned when the time format is not correct.
-	ErrInvalidTimeFormat = terror.ClassTypes.New(mysql.ErrInvalidTimeFormat, mysql.MySQLErrName[mysql.ErrInvalidTimeFormat])
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
 	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
 	// ErrWrongValue is returned when the input value is in wrong format.

@@ -47,7 +47,6 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrInvalidYearFormat,
 		ErrInvalidYear,
 		ErrTruncatedWrongVal,
-		ErrInvalidTimeFormat,
 		ErrInvalidWeekModeFormat,
 		ErrWrongValue,
 	}
