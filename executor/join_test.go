@@ -891,7 +891,7 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec("analyze table t;")
 	tk.MustExec("analyze table s;")
 
-	tk.MustQuery("desc select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
+	tk.MustQuery("desc select  /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
 		"StreamAgg_11 1.00 root funcs:count(1)",
 		"└─IndexJoin_24 64.00 root inner join, inner:IndexReader_23, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader_19 64.00 root data:Selection_18",
