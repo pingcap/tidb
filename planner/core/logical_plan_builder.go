@@ -3020,7 +3020,7 @@ func (b *PlanBuilder) buildUpdateLists(
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
-		if _, ok := extractDefaultExpr(assign.Expr); ok {
+		if extractDefaultExpr(assign.Expr) != nil {
 			modifyColumns[columnFullName] = true
 		} else {
 			modifyColumns[columnFullName] = false
@@ -3073,7 +3073,7 @@ func (b *PlanBuilder) buildUpdateLists(
 		var np LogicalPlan
 		if i < len(list) {
 			// If assign `DEFAULT` to column, fill the `defaultExpr.Name` before rewrite expression
-			if expr, ok := extractDefaultExpr(assign.Expr); ok {
+			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
@@ -3115,15 +3115,14 @@ func (b *PlanBuilder) buildUpdateLists(
 	return newList, p, allAssignmentsAreConstant, nil
 }
 
-// extractDefaultExpr extract a `DefaultExpr` without any parameter from a `ExprNode`,
-// return the `DefaultExpr` and whether it's extracted successfully.
-// Note: the SQL function `DEFAULT(a)` is not the same with keyword `DEFAULT`,
-// SQL function `DEFAULT(a)` will return `false`.
-func extractDefaultExpr(node ast.ExprNode) (*ast.DefaultExpr, bool) {
+// extractDefaultExpr extract a `DefaultExpr` from `ExprNode`,
+// If it is a `DEFAULT` function like `DEFAULT(a)`, return nil.
+// Only if it is `DEFAULT` keyword, it will return the `DefaultExpr`.
+func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
-		return expr, true
+		return expr
 	}
-	return nil, false
+	return nil
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
