@@ -960,30 +960,8 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
-	if err != nil {
-		return 0, err
-	}
-	if t.meta.ShardRowIDBits > 0 {
-		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits) {
-			// If overflow, the rowID may be duplicated. For examples,
-			// t.meta.ShardRowIDBits = 4
-			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
-			// shard = 01000000000000000000000000000000000000000000000000000000000000000
-			// will be duplicated with:
-			// rowID = 0100111111111111111111111111111111111111111111111111111111111111
-			// shard = 0010000000000000000000000000000000000000000000000000000000000000
-			return 0, autoid.ErrAutoincReadFailed
-		}
-		txnCtx := ctx.GetSessionVars().TxnCtx
-		if txnCtx.Shard == nil {
-			shard := t.calcShard(txnCtx.StartTS)
-			txnCtx.Shard = &shard
-		}
-		rowID |= *txnCtx.Shard
-	}
-	return rowID, nil
+	_, rowID, err := t.AllocHandleIDs(ctx, 1)
+	return rowID, err
 }
 
 // AllocHandle implements table.Table AllocHandle interface.
