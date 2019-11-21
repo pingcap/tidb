@@ -879,7 +879,7 @@ func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
 func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
+	resp, err := http.Get("http://127.0.0.1:10090/debug/zip?seconds=1")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	out, err := os.Create("/tmp/tidb_debug.zip")
