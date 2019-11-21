@@ -583,12 +583,17 @@ func (g *dateTimeStrGener) gen() interface{} {
 
 // timeStrGener is used to generate strings which are time format
 type timeStrGener struct {
-	Year  int
-	Month int
-	Day   int
+	Year       int
+	Month      int
+	Day        int
+	NullRation float64
 }
 
 func (g *timeStrGener) gen() interface{} {
+	if g.NullRation > 1e-6 && rand.Float64() < g.NullRation {
+		return nil
+	}
+
 	if g.Year == 0 {
 		g.Year = 1970 + rand.Intn(100)
 	}
