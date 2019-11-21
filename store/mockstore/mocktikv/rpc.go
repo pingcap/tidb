@@ -59,6 +59,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
 				TxnSize:     locked.TxnSize,
+				LockType:    locked.LockType,
 			},
 		}
 	}
@@ -311,8 +312,10 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	h.cluster.handleDelay(startTS, regionID)
 	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
 
-	// TODO: remove this when implement sever side wait.
-	h.simulateServerSideWaitLock(errs)
+	if req.WaitTimeout == kv.LockAlwaysWait {
+		// TODO: remove this when implement sever side wait.
+		h.simulateServerSideWaitLock(errs)
+	}
 	return &kvrpcpb.PessimisticLockResponse{
 		Errors: convertToKeyErrors(errs),
 	}
@@ -633,17 +636,20 @@ type RPCClient struct {
 	Cluster       *Cluster
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
+	done          chan struct{}
 }
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
-	ch := make(chan *tikvrpc.Lease)
-	go tikvrpc.CheckStreamTimeoutLoop(ch)
+	ch := make(chan *tikvrpc.Lease, 1024)
+	done := make(chan struct{})
+	go tikvrpc.CheckStreamTimeoutLoop(ch, done)
 	return &RPCClient{
 		Cluster:       cluster,
 		MvccStore:     mvccStore,
 		streamTimeout: ch,
+		done:          done,
 	}
 }
 
@@ -975,14 +981,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				Value: strconv.Itoa(len(scanResp.Pairs)),
 			}}}
 	default:
-		return nil, errors.Errorf("unsupport this request type %v", req.Type)
+		return nil, errors.Errorf("unsupported this request type %v", req.Type)
 	}
 	return resp, nil
 }
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
-	close(c.streamTimeout)
+	close(c.done)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
 	}

@@ -941,7 +941,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
+		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	if err != nil {

@@ -66,15 +66,7 @@ type partitionedTable struct {
 
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
 	ret := &partitionedTable{Table: *tbl}
-	pi := tblInfo.GetPartitionInfo()
-	var partitionExpr *PartitionExpr
-	var err error
-	switch pi.Type {
-	case model.PartitionTypeRange:
-		partitionExpr, err = generatePartitionExpr(tblInfo)
-	case model.PartitionTypeHash:
-		partitionExpr, err = generateHashPartitionExpr(tblInfo)
-	}
+	partitionExpr, err := newPartitionExpr(tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -84,6 +76,7 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		return nil, errors.Trace(err)
 	}
 	partitions := make(map[int64]*partition)
+	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
 		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
@@ -94,6 +87,24 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 	}
 	ret.partitions = partitions
 	return ret, nil
+}
+
+func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
+	ctx := mock.NewContext()
+	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	return newPartitionExprBySchema(ctx, tblInfo, columns)
+}
+
+func newPartitionExprBySchema(ctx sessionctx.Context, tblInfo *model.TableInfo, columns []*expression.Column) (*PartitionExpr, error) {
+	pi := tblInfo.GetPartitionInfo()
+	switch pi.Type {
+	case model.PartitionTypeRange:
+		return generatePartitionExpr(ctx, pi, columns)
+	case model.PartitionTypeHash:
+		return generateHashPartitionExpr(ctx, pi, columns)
+	}
+	panic("cannot reach here")
 }
 
 // PartitionExpr is the partition definition expressions.
@@ -132,16 +143,13 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 	panic("create table assert len(columns) = 1")
 }
 
-func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
+func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	columns []*expression.Column) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
-	pi := tblInfo.GetPartitionInfo()
-	ctx := mock.NewContext()
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
 	partStr := rangePartitionString(pi)
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -184,6 +192,8 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+		// Get a hash code in advance to prevent data race afterwards.
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
@@ -194,15 +204,12 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	}, nil
 }
 
-func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
+func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	columns []*expression.Column) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
-	pi := tblInfo.GetPartitionInfo()
-	ctx := mock.NewContext()
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
 	for i := 0; i < int(pi.Num); i++ {
 		fmt.Fprintf(&buf, "MOD(ABS(%s),(%d))=%d", pi.Expr, pi.Num, i)
@@ -212,6 +219,8 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+		// Get a hash code in advance to prevent data race afterwards.
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
@@ -232,8 +241,10 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 }
 
 // PartitionExpr returns the partition expression.
-func (t *partitionedTable) PartitionExpr() *PartitionExpr {
-	return t.partitionExpr
+func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expression.Column) (*PartitionExpr, error) {
+	// TODO: a better performance implementation:
+	// traverse the Expression, find all columns and rewrite them.
+	return newPartitionExprBySchema(ctx, t.meta, columns)
 }
 
 func partitionRecordKey(pid int64, handle int64) kv.Key {

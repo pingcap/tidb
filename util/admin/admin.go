@@ -89,7 +89,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
-	case model.ActionDropIndex:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
 		if job.SchemaState == model.StateDeleteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
@@ -162,7 +162,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if job.Type == model.ActionAddIndex {
+			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
@@ -299,7 +299,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
-		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+		logutil.Logger(context.Background()).Info("check indices count",
 			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
@@ -502,7 +502,6 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		return true, nil
 	}
 	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
-
 	if err != nil {
 		return errors.Trace(err)
 	}

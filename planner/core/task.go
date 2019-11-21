@@ -509,18 +509,27 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
-		if partialAgg != nil {
-			if cop.tablePlan != nil {
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
+		// The `doubleReadNeedProj` is always set if the double read needs to keep order. So we just use it to decided
+		// whether the following plan is double read with order reserved.
+		if !cop.doubleReadNeedProj {
+			partialAgg, finalAgg := p.newPartialAggregate()
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
 			}
+			t = finishCopTask(p.ctx, cop)
+			attachPlan2Task(finalAgg, t)
+		} else {
+			t = finishCopTask(p.ctx, cop)
+			attachPlan2Task(p, t)
 		}
-		t = finishCopTask(p.ctx, cop)
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}

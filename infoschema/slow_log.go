@@ -41,6 +41,19 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogHostStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogQueryTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogParseTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCompileTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.PreWriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CommitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{execdetails.ResolveLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LocalLatchWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.WriteKeysStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.WriteSizeStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.PrewriteRegionStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.TxnRetryStr, mysql.TypeLonglong, 22, 0, nil, nil},
 	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
@@ -92,7 +105,9 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
+	lineNum := 0
 	for {
+		lineNum++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
@@ -104,7 +119,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
+			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], lineNum)
 			if err != nil {
 				return rows, err
 			}
@@ -125,7 +140,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						err = st.setFieldValue(tz, field, fieldValues[i+1])
+						err = st.setFieldValue(tz, field, fieldValues[i+1], lineNum)
 						if err != nil {
 							return rows, err
 						}
@@ -133,7 +148,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
+				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), lineNum)
 				if err != nil {
 					return rows, err
 				}
@@ -178,39 +193,52 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 type slowQueryTuple struct {
-	time              time.Time
-	txnStartTs        uint64
-	user              string
-	host              string
-	connID            uint64
-	queryTime         float64
-	processTime       float64
-	waitTime          float64
-	backOffTime       float64
-	requestCount      uint64
-	totalKeys         uint64
-	processKeys       uint64
-	db                string
-	indexIDs          string
-	digest            string
-	statsInfo         string
-	avgProcessTime    float64
-	p90ProcessTime    float64
-	maxProcessTime    float64
-	maxProcessAddress string
-	avgWaitTime       float64
-	p90WaitTime       float64
-	maxWaitTime       float64
-	maxWaitAddress    string
-	memMax            int64
-	prevStmt          string
-	sql               string
-	isInternal        bool
-	succ              bool
-	plan              string
+	time               time.Time
+	txnStartTs         uint64
+	user               string
+	host               string
+	connID             uint64
+	queryTime          float64
+	parseTime          float64
+	compileTime        float64
+	preWriteTime       float64
+	commitTime         float64
+	getCommitTSTime    float64
+	commitBackoffTime  float64
+	backoffTypes       string
+	resolveLockTime    float64
+	localLatchWaitTime float64
+	writeKeys          uint64
+	writeSize          uint64
+	prewriteRegion     uint64
+	txnRetry           uint64
+	processTime        float64
+	waitTime           float64
+	backOffTime        float64
+	requestCount       uint64
+	totalKeys          uint64
+	processKeys        uint64
+	db                 string
+	indexIDs           string
+	digest             string
+	statsInfo          string
+	avgProcessTime     float64
+	p90ProcessTime     float64
+	maxProcessTime     float64
+	maxProcessAddress  string
+	avgWaitTime        float64
+	p90WaitTime        float64
+	maxWaitTime        float64
+	maxWaitAddress     string
+	memMax             int64
+	prevStmt           string
+	sql                string
+	isInternal         bool
+	succ               bool
+	plan               string
 }
 
-func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
+func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int) error {
 	var err error
 	switch field {
 	case variable.SlowLogTimeStr:
@@ -235,6 +263,32 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.connID, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogQueryTimeStr:
 		st.queryTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogParseTimeStr:
+		st.parseTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogCompileTimeStr:
+		st.compileTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.PreWriteTimeStr:
+		st.preWriteTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.CommitTimeStr:
+		st.commitTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.GetCommitTSTimeStr:
+		st.getCommitTSTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.CommitBackoffTimeStr:
+		st.commitBackoffTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.BackoffTypesStr:
+		st.backoffTypes = value
+	case execdetails.ResolveLockTimeStr:
+		st.resolveLockTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.LocalLatchWaitTimeStr:
+		st.localLatchWaitTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.WriteKeysStr:
+		st.writeKeys, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.WriteSizeStr:
+		st.writeSize, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.PrewriteRegionStr:
+		st.prewriteRegion, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.TxnRetryStr:
+		st.txnRetry, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.ProcessTimeStr:
 		st.processTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitTimeStr:
@@ -283,7 +337,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.sql = value
 	}
 	if err != nil {
-		return errors.Wrap(err, "parse slow log failed `"+field+"` error")
+		return errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
 	}
 	return nil
 }
@@ -300,6 +354,19 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewStringDatum(st.host))
 	record = append(record, types.NewUintDatum(st.connID))
 	record = append(record, types.NewFloat64Datum(st.queryTime))
+	record = append(record, types.NewFloat64Datum(st.parseTime))
+	record = append(record, types.NewFloat64Datum(st.compileTime))
+	record = append(record, types.NewFloat64Datum(st.preWriteTime))
+	record = append(record, types.NewFloat64Datum(st.commitTime))
+	record = append(record, types.NewFloat64Datum(st.getCommitTSTime))
+	record = append(record, types.NewFloat64Datum(st.commitBackoffTime))
+	record = append(record, types.NewStringDatum(st.backoffTypes))
+	record = append(record, types.NewFloat64Datum(st.resolveLockTime))
+	record = append(record, types.NewFloat64Datum(st.localLatchWaitTime))
+	record = append(record, types.NewUintDatum(st.writeKeys))
+	record = append(record, types.NewUintDatum(st.writeSize))
+	record = append(record, types.NewUintDatum(st.prewriteRegion))
+	record = append(record, types.NewUintDatum(st.txnRetry))
 	record = append(record, types.NewFloat64Datum(st.processTime))
 	record = append(record, types.NewFloat64Datum(st.waitTime))
 	record = append(record, types.NewFloat64Datum(st.backOffTime))

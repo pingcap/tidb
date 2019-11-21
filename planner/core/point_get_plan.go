@@ -53,6 +53,7 @@ type PointGetPlan struct {
 	IsTableDual      bool
 	Lock             bool
 	IsForUpdate      bool
+	LockWaitTime     int64
 }
 
 type nameValuePair struct {
@@ -161,6 +162,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				if !sessVars.IsAutocommit() || sessVars.InTxn() {
 					fp.Lock = true
 					fp.IsForUpdate = true
+					fp.LockWaitTime = sessVars.LockWaitTimeout
 				}
 			}
 			return fp
@@ -284,10 +286,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
 	p := &PointGetPlan{
-		basePlan: newBasePlan(ctx, plancodec.TypePointGet),
-		dbName:   dbName,
-		schema:   schema,
-		TblInfo:  tbl,
+		basePlan:     newBasePlan(ctx, plancodec.TypePointGet),
+		dbName:       dbName,
+		schema:       schema,
+		TblInfo:      tbl,
+		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
 	return p
@@ -435,6 +438,10 @@ func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.Ex
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
 	if !tblInfo.PKIsHandle {
+		rowIDIdx := findInPairs("_tidb_rowid", pairs)
+		if rowIDIdx != -1 {
+			return pairs[rowIDIdx], types.NewFieldType(mysql.TypeLonglong)
+		}
 		return handlePair, nil
 	}
 	for _, col := range tblInfo.Columns {

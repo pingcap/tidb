@@ -17,11 +17,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -351,7 +353,8 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
 }
 
-func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64,
+	lockWaitTime int64, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
@@ -379,11 +382,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 				return err
 			}
 		}
-		if txn.committer.pessimisticTTL == 0 {
-			// add elapsed time to pessimistic TTL on the first LockKeys request.
-			elapsed := uint64(time.Since(txn.startTime) / time.Millisecond)
-			txn.committer.pessimisticTTL = PessimisticLockTTL + elapsed
-		}
 		var assignedPrimaryKey bool
 		if txn.committer.primaryKey == nil {
 			txn.committer.primaryKey = keys[0]
@@ -395,18 +393,28 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err := txn.committer.pessimisticLockKeys(bo, keys)
+		err := txn.committer.pessimisticLockKeys(bo, killed, lockWaitTime, keys)
+		if killed != nil {
+			// If the kill signal is received during waiting for pessimisticLock,
+			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
+			// We need to reset the killed flag here.
+			atomic.CompareAndSwapUint32(killed, 1, 0)
+		}
 		if err != nil {
 			for _, key := range keys {
 				txn.us.DeleteConditionPair(key)
 			}
-			wg := txn.asyncPessimisticRollback(ctx, keys)
-			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
-				dl.IsRetryable = true
-				// Wait for the pessimistic rollback to finish before we retry the statement.
-				wg.Wait()
-				// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
-				time.Sleep(time.Millisecond * 5)
+			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && terror.ErrorNotEqual(kv.ErrKeyExists, err)
+			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
+			if len(keys) > 1 || keyMayBeLocked {
+				wg := txn.asyncPessimisticRollback(ctx, keys)
+				if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
+					dl.IsRetryable = true
+					// Wait for the pessimistic rollback to finish before we retry the statement.
+					wg.Wait()
+					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+					time.Sleep(time.Millisecond * 5)
+				}
 			}
 			if assignedPrimaryKey {
 				// unset the primary key if we assigned primary key when failed to lock it.
@@ -415,7 +423,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer)
+			txn.committer.ttlManager.run(txn.committer, killed)
 		}
 	}
 	txn.mu.Lock()
