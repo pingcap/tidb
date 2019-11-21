@@ -104,6 +104,7 @@ func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest
 		builder.Request.StartTs = checksum.StartTs
 		builder.Request.Data, builder.err = checksum.Marshal()
 		builder.Request.NotFillCache = true
+		builder.Request.Priority = kv.PriorityLow
 	}
 
 	return builder

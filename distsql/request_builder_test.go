@@ -555,7 +555,7 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 		Desc:           false,
 		Concurrency:    concurrency,
 		IsolationLevel: 0,
-		Priority:       0,
+		Priority:       kv.PriorityLow,
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
