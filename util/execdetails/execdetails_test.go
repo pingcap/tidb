@@ -19,9 +19,14 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
