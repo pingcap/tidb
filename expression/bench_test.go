@@ -289,6 +289,27 @@ func (g *constJSONGener) gen() interface{} {
 	return *j
 }
 
+type decimalJSONGener struct {
+	nullRation float64
+}
+
+func (g *decimalJSONGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+
+	var f float64
+	if rand.Float64() < 0.5 {
+		f = rand.Float64() * 100000
+	} else {
+		f = -rand.Float64() * 100000
+	}
+	if err := (&types.MyDecimal{}).FromFloat64(f); err != nil {
+		panic(err)
+	}
+	return json.CreateBinary(f)
+}
+
 type jsonStringGener struct{}
 
 func (g *jsonStringGener) gen() interface{} {
