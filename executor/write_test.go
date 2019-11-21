@@ -17,12 +17,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -2448,84 +2446,4 @@ func (s *testSuite4) TestSetWithCurrentTimestampAndNow(c *C) {
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1", "1"))
-}
-
-func (s *testSuite) TestBatchDML(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (i int key, j varchar(20))")
-	orgConf := config.GetGlobalConfig()
-	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	defer func() {
-		config.StoreGlobalConfig(orgConf)
-		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
-	}()
-	atomic.StoreUint64(&kv.TxnEntryCountLimit, 2)
-	newConf := config.NewConfig()
-	newConf.EnableBatchDML = true
-	config.StoreGlobalConfig(newConf)
-	tk.MustExec("set @@session.tidb_dml_batch_size=1;")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0;")
-
-	// Test auto commit transaction.
-	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
-	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 -a", "2 -b", "3 -c"))
-	tk.MustExec("update t set i = -i")
-	tk.MustQuery("select * from t order by i desc").Check(testkit.Rows("-1 -a", "-2 -b", "-3 -c"))
-	tk.MustExec("delete from t")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-
-	// Test transaction block.
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
-	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 -a", "2 -b", "3 -c"))
-	tk.MustExec("update t set i = -i")
-	tk.MustQuery("select * from t order by i desc").Check(testkit.Rows("-1 -a", "-2 -b", "-3 -c"))
-	tk.MustExec("delete from t")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("commit")
-
-	// Test disable batch DML.
-	config.GetGlobalConfig().EnableBatchDML = false
-	_, err := tk.Exec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-	_, err = tk.Exec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("insert into t values (1, 'a')")
-	tk.MustExec("insert into t values (2, 'b')")
-	tk.MustExec("insert into t values (3, 'c')")
-	_, err = tk.Exec("update t set i = -i")
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
-	_, err = tk.Exec("delete from t")
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
-
-	// Test batched retry
-	config.GetGlobalConfig().EnableBatchDML = true
-	atomic.StoreUint64(&kv.TxnEntryCountLimit, 10)
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
-	tk1.MustExec("set @@session.tidb_disable_txn_auto_retry=0;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=2;")
-
-	tk.MustExec("begin")
-	tk1.MustExec("update t set j = 'e'")
-	_, err = tk.Exec("update t set j = 'd'")
-	c.Assert(executor.ErrBatchDMLFail.Equal(err), IsTrue, Commentf("error %s", err))
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 e", "2 e", "3 e"))
-
-	// Test normal retry
-	config.GetGlobalConfig().EnableBatchDML = false
-	tk.MustExec("begin")
-	tk1.MustExec("update t set j = 'f' where i = 1")
-	tk.MustExec("update t set j = 'd' where i = 1")
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 d", "2 e", "3 e"))
 }
