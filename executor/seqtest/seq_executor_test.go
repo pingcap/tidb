@@ -1083,6 +1083,7 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 func (s *seqTestSuite) TestBatchDML(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (i int key, j varchar(20))")
 	orgConf := config.GetGlobalConfig()
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
