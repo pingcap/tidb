@@ -135,6 +135,18 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
 		},
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&randLenStrGener{0, 20}, &rangeInt64Gener{168435456, 368435456}, &randLenStrGener{0, 10}},
+		},
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+		},
 	},
 	ast.Rpad: {
 		{
@@ -162,11 +174,18 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.CharLength: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+		},
 	},
 	ast.BitLength: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.FindInSet: {},
+	ast.FindInSet: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"case"}, &constStrGener{"test,case"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{""}, &constStrGener{"test,case"}}},
+	},
 	ast.MakeSet: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString}},
 	},
@@ -255,11 +274,44 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
 		},
 	},
+	ast.Instr: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"case"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"testcase"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			},
+			geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"case"}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			},
+			geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{""}},
+		},
+	},
 	ast.Replace: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{0, 10}, &randLenStrGener{0, 10}}},
 	},
 	ast.InsertFunc: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 20}, &rangeInt64Gener{0, 100}, &randLenStrGener{0, 10}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			},
+		},
 	},
 	ast.Elt: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&rangeInt64Gener{-1, 5}}},
@@ -271,6 +323,21 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 				&constStrGener{"%y-%m-%d"},
 			},
 		},
+	},
+	ast.Strcmp: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{
+			&selectStringGener{
+				candidates: []string{
+					"test",
+				},
+			},
+			&selectStringGener{
+				candidates: []string{
+					"test",
+				},
+			},
+		}},
 	},
 }
 
