@@ -1117,6 +1117,7 @@ func (b *builtinLocateBinary2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chu
 	if err != nil {
 		return err
 	}
+	defer b.bufAllocator.put(buf1)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
