@@ -1735,9 +1735,15 @@ func NewTimeDatum(t Time) (d Datum) {
 	return d
 }
 
-// NewDecimalDatum creates a new Datum form a MyDecimal value.
+// NewDecimalDatum creates a new Datum from a MyDecimal value.
 func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	d.SetMysqlDecimal(dec)
+	return d
+}
+
+// NewJSONDatum creates a new Datum from a BinaryJSON value
+func NewJSONDatum(j json.BinaryJSON) (d Datum) {
+	d.SetMysqlJSON(j)
 	return d
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 func dateTimeFromString(s string) types.Time {
@@ -80,6 +81,18 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 				nil,
 				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
 				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+			},
+		},
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETJson,
+				types.ETJson, //types.ETJson,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewJSONDatum(json.CreateBinary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				//{Value: types.NewJSONDatum(json.CreateBinary("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 			},
 		},
 	},
