@@ -181,6 +181,24 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Trim: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}}},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}, nil},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimBoth), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}, nil},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimLeading), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}, nil},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
 	},
 	ast.LTrim: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
