@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -254,7 +255,10 @@ func (s *testSuite3) TestUser(c *C) {
 
 	// Create duplicate user without IfNotExists will cause error.
 	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
-	tk.MustGetErrCode(createUserSQL, mysql.ErrUserAlreadyExists)
+	tk.MustGetErrCode(createUserSQL, mysql.ErrCannotUser)
+	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
+	tk.MustExec(createUserSQL)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3163|User test@localhost already exists."))
 	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 	// Create user test.
@@ -273,20 +277,28 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("111")))
+	alterUserSQL = `ALTER USER 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
+	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
+	alterUserSQL = `ALTER USER 'test1'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
+	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	result.Check(testkit.Rows(auth.EncodePassword("222")))
+
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
-	_, err := tk.Exec(alterUserSQL)
-	c.Check(err, NotNil)
+	tk.MustExec(alterUserSQL)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test_not_exist@localhost does not exist."))
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
-	_, err = tk.Exec(alterUserSQL)
-	c.Check(err, NotNil)
+	tk.MustExec(alterUserSQL)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test_not_exist@localhost does not exist."))
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("333")))
+
 	// Test alter user user().
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
-	_, err = tk.Exec(alterUserSQL)
-	c.Check(err, NotNil)
+	_, err := tk.Exec(alterUserSQL)
+	c.Check(terror.ErrorEqual(err, errors.New("Session user is empty")), IsTrue, Commentf("err %v", err))
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
@@ -308,14 +320,11 @@ func (s *testSuite3) TestUser(c *C) {
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
-	_, err = tk.Exec(dropUserSQL)
-	c.Check(err, NotNil)
+	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
-	_, err = tk.Exec(dropUserSQL)
-	c.Check(err, NotNil)
+	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
-	_, err = tk.Exec(dropUserSQL)
-	c.Check(err, NotNil)
+	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)

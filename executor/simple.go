@@ -645,6 +645,15 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if err1 != nil {
 			return err1
 		}
+		if exists {
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Hostname, spec.User.Username)
+			if !s.IfNotExists {
+				return ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
+			}
+			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			continue
+		}
 		pwd, ok := spec.EncodedPassword()
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
@@ -652,12 +661,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		user := fmt.Sprintf(`('%s', '%s', '%s')`, spec.User.Hostname, spec.User.Username, pwd)
 		if s.IsCreateRole {
 			user = fmt.Sprintf(`('%s', '%s', '%s', 'Y')`, spec.User.Hostname, spec.User.Username, pwd)
-		}
-		if exists {
-			if !s.IfNotExists {
-				return infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
-			}
-			continue
 		}
 		users = append(users, user)
 	}
@@ -697,10 +700,8 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			return err
 		}
 		if !exists {
-			failedUsers = append(failedUsers, spec.User.String())
-			// TODO: Make this error as a warning.
-			// if s.IfExists {
-			// }
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Hostname, spec.User.Username)
+			failedUsers = append(failedUsers, user)
 			continue
 		}
 		pwd := ""
@@ -728,7 +729,13 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return err
 		}
-		return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
+		if !s.IfExists {
+			return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
+		}
+		for _, user := range failedUsers {
+			err := infoschema.ErrUserDropExists.GenWithStackByArgs(user)
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		}
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
