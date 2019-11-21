@@ -1910,14 +1910,15 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	gbyColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	for _, byItem := range sel.GroupBy.Items {
-		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
+		expr := getInnerFromParenthesesAndUnaryPlus(byItem.Expr)
+		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
 			idx, err := expression.FindFieldName(p.OutputNames(), colExpr.Name)
 			if err != nil || idx < 0 {
 				continue
 			}
 			gbyColNames[p.OutputNames()[idx]] = struct{}{}
 		} else {
-			gbyExprs = append(gbyExprs, byItem.Expr)
+			gbyExprs = append(gbyExprs, expr)
 		}
 	}
 
@@ -3002,12 +3003,18 @@ func (b *PlanBuilder) buildUpdateLists(
 ) (newList []*expression.Assignment,
 	po LogicalPlan,
 	allAssignmentsAreConstant bool,
-	error error,
+	e error,
 ) {
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
 	modifyColumns := make(map[string]bool, p.Schema().Len())
+	var columnsIdx map[*ast.ColumnName]int
+	cacheColumnsIdx := false
+	if len(p.OutputNames()) > 16 {
+		cacheColumnsIdx = true
+		columnsIdx = make(map[*ast.ColumnName]int, len(list))
+	}
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
@@ -3016,11 +3023,14 @@ func (b *PlanBuilder) buildUpdateLists(
 		if idx < 0 {
 			return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field_list")
 		}
+		if cacheColumnsIdx {
+			columnsIdx[assign.Column] = idx
+		}
 		name := p.OutputNames()[idx]
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
-		if _, ok := extractDefaultExpr(assign.Expr); ok {
+		if extractDefaultExpr(assign.Expr) != nil {
 			modifyColumns[columnFullName] = true
 		} else {
 			modifyColumns[columnFullName] = false
@@ -3063,7 +3073,17 @@ func (b *PlanBuilder) buildUpdateLists(
 
 	allAssignments := append(list, virtualAssignments...)
 	for i, assign := range allAssignments {
-		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
+		var idx int
+		var err error
+		if cacheColumnsIdx {
+			if i, ok := columnsIdx[assign.Column]; ok {
+				idx = i
+			} else {
+				idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
+			}
+		} else {
+			idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
+		}
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -3073,7 +3093,7 @@ func (b *PlanBuilder) buildUpdateLists(
 		var np LogicalPlan
 		if i < len(list) {
 			// If assign `DEFAULT` to column, fill the `defaultExpr.Name` before rewrite expression
-			if expr, ok := extractDefaultExpr(assign.Expr); ok {
+			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
@@ -3115,15 +3135,14 @@ func (b *PlanBuilder) buildUpdateLists(
 	return newList, p, allAssignmentsAreConstant, nil
 }
 
-// extractDefaultExpr extract a `DefaultExpr` without any parameter from a `ExprNode`,
-// return the `DefaultExpr` and whether it's extracted successfully.
-// Note: the SQL function `DEFAULT(a)` is not the same with keyword `DEFAULT`,
-// SQL function `DEFAULT(a)` will return `false`.
-func extractDefaultExpr(node ast.ExprNode) (*ast.DefaultExpr, bool) {
+// extractDefaultExpr extract a `DefaultExpr` from `ExprNode`,
+// If it is a `DEFAULT` function like `DEFAULT(a)`, return nil.
+// Only if it is `DEFAULT` keyword, it will return the `DefaultExpr`.
+func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
-		return expr, true
+		return expr
 	}
-	return nil, false
+	return nil
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
