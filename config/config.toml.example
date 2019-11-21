@@ -57,6 +57,11 @@ treat-old-version-utf8-as-utf8mb4 = true
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
+# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
+# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+alter-primary-key = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -180,6 +185,18 @@ force-priority = "NO_PRIORITY"
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
 
+# The limitation of the number for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-entry-count-limit = 300000
+
+# The limitation of the size in byte for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-total-size-limit = 104857600
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -276,6 +293,11 @@ batch-wait-size = 8
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
 region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when

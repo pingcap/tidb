@@ -520,6 +520,7 @@ func upgrade(s Session) {
 		upgradeToVer28(s)
 	}
 
+	// upgradeToVer29 only need to be run when the current version is 28.
 	if ver == version28 {
 		upgradeToVer29(s)
 	}
@@ -533,7 +534,7 @@ func upgrade(s Session) {
 	}
 
 	if ver < version32 {
-		upgradeToVer29(s)
+		upgradeToVer32(s)
 	}
 
 	if ver < version33 {

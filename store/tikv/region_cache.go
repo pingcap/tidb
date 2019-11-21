@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -901,6 +902,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 			logutil.Logger(context.Background()).Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
@@ -955,11 +957,12 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string     // loaded store address
-	storeID      uint64     // store's id
-	state        uint64     // unsafe store storeState
-	resolveMutex sync.Mutex // protect pd from concurrent init requests
-	fail         uint32     // store fail count, see RegionStore.storeFails
+	addr         string        // loaded store address
+	storeID      uint64        // store's id
+	state        uint64        // unsafe store storeState
+	resolveMutex sync.Mutex    // protect pd from concurrent init requests
+	fail         uint32        // store fail count, see RegionStore.storeFails
+	tokenCount   atomic2.Int64 // used store token count
 }
 
 type resolveState uint64

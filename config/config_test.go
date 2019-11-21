@@ -15,7 +15,7 @@ package config
 
 import (
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -38,11 +38,13 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
+	conf.Performance.TxnEntryCountLimit = 1000
+	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
-	configFile = path.Join(path.Dir(localFile), configFile)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
@@ -61,12 +63,16 @@ unrecognized-option-test = true
 
 	_, err = f.WriteString(`
 token-limit = 0
+alter-primary-key = true
 split-region-max-num=10000
 [performance]
+txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
 region-cache-ttl=6000
+store-limit=0
 [stmt-summary]
 max-stmt-count=1000
 max-sql-length=1024
@@ -81,9 +87,17 @@ max-sql-length=1024
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
 
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.AlterPrimaryKey, Equals, true)
+
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
+	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
+
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
+	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
@@ -91,7 +105,7 @@ max-sql-length=1024
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
-	configFile = path.Join(path.Dir(localFile), "config.toml.example")
+	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
 
 	// Make sure the example config is the same as default config.
@@ -110,7 +124,7 @@ max-sql-length=1024
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = path.Join(path.Dir(localFile), certFile)
+	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -136,7 +150,7 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	c.Assert(f.Sync(), IsNil)
 
 	keyFile := "key.pem"
-	keyFile = path.Join(path.Dir(localFile), keyFile)
+	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
