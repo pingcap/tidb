@@ -614,9 +614,10 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			continue
 		}
 		names = append(names, &types.FieldName{
-			ColName: col.Name,
-			TblName: tblName,
-			DBName:  dbName,
+			ColName:     col.Name,
+			TblName:     tblName,
+			DBName:      dbName,
+			OrigTblName: tblName,
 		})
 		newCol := &Column{
 			RetType:  &col.FieldType,
