@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
