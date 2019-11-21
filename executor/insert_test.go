@@ -766,22 +766,19 @@ func (s *testSuite3) TestBit(c *C) {
 }
 
 func (s *testSuite3) TestAllocateContinuousRowID(c *C) {
-	println("star test======")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
 	wg := sync.WaitGroup{}
-	fmt.Println("run sql======")
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			tk := testkit.NewTestKitWithInit(c, s.store)
 			for j := 0; j < 10; j++ {
-				fmt.Printf("run sql====== %d\n", j)
 				k := strconv.Itoa(idx*100 + j)
 				sql := "insert into t1(a,b) values (" + k + ", 2)"
-				for t := 0; t < 10; t++ {
+				for t := 0; t < 20; t++ {
 					sql += ",(" + k + ",2)"
 				}
 				tk.MustExec(sql)
@@ -792,7 +789,6 @@ func (s *testSuite3) TestAllocateContinuousRowID(c *C) {
 				last := 0
 				for _, r := range rows {
 					c.Assert(len(r), Equals, 1)
-					fmt.Printf("%s\n", r[0])
 					v, err := strconv.Atoi(r[0].(string))
 					c.Assert(err, Equals, nil)
 					if last > 0 {
@@ -804,4 +800,12 @@ func (s *testSuite3) TestAllocateContinuousRowID(c *C) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func (s *testSuite3) TestJiraIssue5366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table bug (a varchar(100))`)
+	tk.MustExec(` insert into bug select  ifnull(JSON_UNQUOTE(JSON_EXTRACT('[{"amount":2000,"feeAmount":0,"merchantNo":"20190430140319679394","shareBizCode":"20160311162_SECOND"}]', '$[0].merchantNo')),'') merchant_no union SELECT '20180531557' merchant_no;`)
+	tk.MustQuery(`select * from bug`).Sort().Check(testkit.Rows("20180531557", "20190430140319679394"))
 }

@@ -674,9 +674,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 }
 
 var tableTiDBClusterConfigCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
@@ -1037,9 +1035,7 @@ var filesCols = []columnInfo{
 }
 
 var tableTiDBClusterInfoCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1906,14 +1902,10 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 
 	rows := make([][]types.Datum, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
-		tp := "tidb"
-		name := fmt.Sprintf("%s-%d", tp, len(rows))
 		addr := fmt.Sprintf("%s:%d", node.IP, node.Port)
 		statusAddr := fmt.Sprintf("%s:%d", node.IP, node.StatusPort)
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"tidb",
 			addr,
 			statusAddr,
 			node.Version,
@@ -1928,7 +1920,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	for i, addr := range etcd.EtcdAddrs() {
+	for _, addr := range etcd.EtcdAddrs() {
 		addr = strings.TrimSpace(addr)
 
 		// Get PD version
@@ -1968,12 +1960,8 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		}
 		terror.Log(resp.Body.Close())
 
-		tp := "pd"
-		name := fmt.Sprintf("%s-%d", tp, i)
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"pd",
 			addr,
 			addr,
 			version,
@@ -1996,13 +1984,9 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for i, storeStat := range storesStat.Stores {
-		tp := "tikv"
-		name := fmt.Sprintf("%s-%d", tp, i)
+	for _, storeStat := range storesStat.Stores {
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"tikv",
 			storeStat.Store.Address,
 			storeStat.Store.StatusAddress,
 			storeStat.Store.Version,
@@ -2014,7 +1998,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sql := "SELECT type, name, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
+	sql := "SELECT type, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
@@ -2059,11 +2043,10 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	ch := make(chan result, len(rows))
 	for i, row := range rows {
 		typ := row.GetString(0)
-		name := row.GetString(1)
-		address := row.GetString(2)
-		statusAddr := row.GetString(3)
+		address := row.GetString(1)
+		statusAddr := row.GetString(2)
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s(%s) does not contain status address", typ, name, address))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 
@@ -2117,9 +2100,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
-						0,
 						typ,
-						name,
 						address,
 						item.key,
 						item.val,
@@ -2145,7 +2126,6 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
 	for _, result := range results {
 		for _, row := range result.rows {
-			row[0] = types.NewDatum(len(finalRows) + 1)
 			finalRows = append(finalRows, row)
 		}
 	}
