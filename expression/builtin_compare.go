@@ -2449,7 +2449,7 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	}
 
 	lhsDecimal, rhsDecimal := lhsArg.GetType().Decimal, rhsArg.GetType().Decimal
-	if lhsDecimal != -1 || rhsDecimal != -1 {
+	if lhsDecimal != types.UnspecifiedLength && rhsDecimal != types.UnspecifiedLength {
 		decimal := lhsDecimal
 		if rhsDecimal > decimal {
 			decimal = rhsDecimal

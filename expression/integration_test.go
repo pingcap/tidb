@@ -3433,6 +3433,20 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+
+	// test for float compare
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float)")
+	tk.MustExec("insert into t values (1.2)")
+	result = tk.MustQuery("select * from t where a = 1.2")
+	c.Assert(len(result.Rows()), Equals, 0)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float(9, 4))")
+	tk.MustExec("insert into t values (1.2)")
+	tk.MustQuery("select * from t where a = 1.2").Check(testkit.Rows("1.2"))
+	result = tk.MustQuery("select * from t where a = 1.200001")
+	c.Assert(len(result.Rows()), Equals, 0)
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {

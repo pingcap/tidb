@@ -160,19 +160,6 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 	args = bf.getArgs()
 	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeDatetime)
 	c.Assert(args[1].GetType().Tp, Equals, mysql.TypeDatetime)
-
-	// test compare float with explicit decimal.
-	bf, err = funcs[ast.EQ].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{float32(1.2), float32(1.2)}))
-	c.Assert(err, IsNil)
-	args = bf.getArgs()
-	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeFloat)
-	c.Assert(args[1].GetType().Tp, Equals, mysql.TypeFloat)
-
-	args[0].GetType().Decimal = 1
-	res, isNil, err := bf.evalInt(chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(isNil, IsFalse)
-	c.Assert(res, Equals, int64(1))
 }
 
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {

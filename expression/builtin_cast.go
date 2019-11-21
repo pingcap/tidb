@@ -1773,7 +1773,11 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+	if expr.GetType().Tp == mysql.TypeNewDecimal {
+		tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
+	} else {
+		tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
