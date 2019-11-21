@@ -686,12 +686,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	origTblName, dbName = name.OrigTblName, name.DBName
-	if name.OrigColName.L == "" {
-		origColName = colNameField.Name.Name
-	} else {
-		origColName = name.OrigColName
-	}
+	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
 	if origField.AsName.L == "" {
 		colName = colNameField.Name.Name
 	} else {
