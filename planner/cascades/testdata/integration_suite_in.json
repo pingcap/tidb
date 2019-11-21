@@ -48,5 +48,12 @@
       "select c from t",
       "select a from t order by c"
     ]
+  },
+  {
+    "name": "TestJoin",
+    "cases": [
+      "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
+      "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200"
+    ]
   }
 ]

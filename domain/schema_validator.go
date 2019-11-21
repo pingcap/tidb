@@ -79,10 +79,17 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 }
 
 func (s *schemaValidator) IsStarted() bool {
-	s.mux.Lock()
+	s.mux.RLock()
 	isStarted := s.isStarted
-	s.mux.Unlock()
+	s.mux.RUnlock()
 	return isStarted
+}
+
+func (s *schemaValidator) LatestSchemaVersion() int64 {
+	s.mux.RLock()
+	latestSchemaVer := s.latestSchemaVer
+	s.mux.RUnlock()
+	return latestSchemaVer
 }
 
 func (s *schemaValidator) Stop() {
