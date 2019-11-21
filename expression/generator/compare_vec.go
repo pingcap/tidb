@@ -88,7 +88,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- if eq .type.ETName "Json" }}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
 {{- else if eq .type.ETName "Real" }}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 {{- else if eq .type.ETName "String" }}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
 {{- else if eq .type.ETName "Duration" }}

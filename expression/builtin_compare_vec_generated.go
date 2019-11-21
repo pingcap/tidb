@@ -49,7 +49,7 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -297,7 +297,7 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -545,7 +545,7 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -793,7 +793,7 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1041,7 +1041,7 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1289,7 +1289,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareFloat64(arg0[i], arg1[i])
+		val := approximateCompareReal(arg0[i], b.args[0].GetType(), arg1[i], b.args[1].GetType())
 		if val != 0 {
 			i64s[i] = 1
 		} else {

@@ -2448,16 +2448,21 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 
-	lhsDecimal, rhsDecimal := lhsArg.GetType().Decimal, rhsArg.GetType().Decimal
+	ret := approximateCompareReal(arg0, lhsArg.GetType(), arg1, rhsArg.GetType())
+	return int64(ret), false, nil
+}
+
+func approximateCompareReal(lhs float64, lhsFt *types.FieldType, rhs float64, rhsFt *types.FieldType) int {
+	lhsDecimal, rhsDecimal := lhsFt.Decimal, rhsFt.Decimal
 	if lhsDecimal != types.UnspecifiedLength && rhsDecimal != types.UnspecifiedLength {
 		decimal := lhsDecimal
 		if rhsDecimal > decimal {
 			decimal = rhsDecimal
 		}
 		eps := 5.0 / math.Pow10(decimal+1)
-		return int64(types.CompareFloat64Fixed(arg0, arg1, eps)), false, nil
+		return types.CompareFloat64Fixed(lhs, rhs, eps)
 	}
-	return int64(types.CompareFloat64(arg0, arg1)), false, nil
+	return types.CompareFloat64(lhs, rhs)
 }
 
 // CompareDecimal compares two decimals.
