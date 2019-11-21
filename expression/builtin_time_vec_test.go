@@ -124,7 +124,20 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
 	ast.AddDate:          {},
-	ast.SubTime:          {},
+	ast.SubTime:          {
+		// builtinSubTimeStringNullSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
+
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+	},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
 		// arg1 has BinaryFlag here.
