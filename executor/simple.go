@@ -646,7 +646,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return err1
 		}
 		if exists {
-			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Hostname, spec.User.Username)
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			if !s.IfNotExists {
 				return ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
@@ -700,7 +700,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			return err
 		}
 		if !exists {
-			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Hostname, spec.User.Username)
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
 		}

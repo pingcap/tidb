@@ -258,7 +258,7 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustGetErrCode(createUserSQL, mysql.ErrCannotUser)
 	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3163|User test@localhost already exists."))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3163|User 'test'@'localhost' already exists."))
 	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 	// Create user test.
@@ -286,12 +286,12 @@ func (s *testSuite3) TestUser(c *C) {
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	tk.MustExec(alterUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test_not_exist@localhost does not exist."))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
 	tk.MustExec(alterUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test_not_exist@localhost does not exist."))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("333")))
 
