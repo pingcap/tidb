@@ -2454,17 +2454,20 @@ func (s *testSuite) TestBatchDML(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key, j varchar(20))")
-	originConfig := config.GetGlobalConfig().EnableBatchDML
+	orgConf := config.GetGlobalConfig()
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	defer func() {
-		config.GetGlobalConfig().EnableBatchDML = originConfig
+		config.StoreGlobalConfig(orgConf)
 		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
 	}()
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 2)
+	newConf := config.NewConfig()
+	newConf.EnableBatchDML = true
+	config.StoreGlobalConfig(newConf)
 	tk.MustExec("set @@session.tidb_dml_batch_size=1;")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0;")
 
 	// Test auto commit transaction.
-	config.GetGlobalConfig().EnableBatchDML = true
 	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
 	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
 	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
@@ -2509,6 +2512,7 @@ func (s *testSuite) TestBatchDML(c *C) {
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 10)
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set @@session.tidb_disable_txn_auto_retry=0;")
 	tk.MustExec("set @@session.tidb_dml_batch_size=2;")
 
 	tk.MustExec("begin")
