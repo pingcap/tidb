@@ -2594,17 +2594,6 @@ func dayOfYearThreeDigits(t *MysqlTime, input string, ctx map[string]int) (strin
 	return input[3:], true
 }
 
-func abbreviatedWeekday(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	if len(input) >= 3 {
-		dayName := input[:3]
-		if _, ok := weekdayAbbrev[dayName]; ok {
-			// TODO: We need refact mysql time to support this.
-			return input, false
-		}
-	}
-	return input, false
-}
-
 func abbreviatedMonth(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
 		monthName := input[:3]
@@ -2637,16 +2626,6 @@ func monthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 	}
 	t.month = uint8(v)
 	return input[length:], true
-}
-
-//  dayOfMonthWithSuffix returns different suffix according t being which day. i.e. 0 return th. 1 return st.
-func dayOfMonthWithSuffix(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	month, remain := parseOrdinalNumbers(input)
-	if month >= 0 {
-		t.month = uint8(month)
-		return remain, true
-	}
-	return input, false
 }
 
 func parseOrdinalNumbers(input string) (value int, remain string) {
