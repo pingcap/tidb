@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,14 +59,23 @@ type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
 	summaryMap *kvcache.SimpleLRUCache
+	// These fields are used for rolling summary.
+	beginTimeForCurInterval int64
+	lastCheckExpireTime     int64
 
-	// enabledWrapper encapsulates variables needed to judge whether statement summary is enabled.
-	enabledWrapper struct {
+	// sysVars encapsulates system variables needed to control statement summary.
+	sysVars struct {
 		sync.RWMutex
 		// enabled indicates whether statement summary is enabled in current server.
 		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
 		globalEnabled string
+		// XXXRefreshInterval indicates the refresh interval of summaries.
+		// It must be > 0.
+		sessionRefreshInterval string
+		globalRefreshInterval  string
+		// A cached result. It must be read atomically.
+		refreshInterval int64
 	}
 }
 
@@ -76,6 +86,8 @@ var StmtSummaryByDigestMap = newStmtSummaryByDigestMap()
 type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
+	// Each summary is summarized between [beginTime, beginTime + interval]
+	beginTime int64
 	// basic
 	schemaName    string
 	digest        string
@@ -167,16 +179,21 @@ type StmtExecInfo struct {
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
 	ssMap := &stmtSummaryByDigestMap{
-		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		summaryMap:              kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		beginTimeForCurInterval: 0,
+		lastCheckExpireTime:     0,
 	}
-	// enabledWrapper.defaultEnabled will be initialized in package variable.
-	ssMap.enabledWrapper.sessionEnabled = ""
-	ssMap.enabledWrapper.globalEnabled = ""
+	// sysVars.defaultEnabled will be initialized in package variable.
+	ssMap.sysVars.sessionEnabled = ""
+	ssMap.sysVars.globalEnabled = ""
 	return ssMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
+	// All times are count in seconds.
+	now := time.Now().Unix()
+
 	key := &stmtSummaryByDigestKey{
 		schemaName: sei.SchemaName,
 		digest:     sei.Digest,
@@ -192,9 +209,25 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			return nil, false
 		}
 
+		// Check refreshing every second.
+		if now > ssMap.lastCheckExpireTime {
+			intervalSeconds := ssMap.RefreshInterval()
+			if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+				// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
+				// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
+				ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+			}
+			ssMap.lastCheckExpireTime = now
+		}
+
 		value, ok := ssMap.summaryMap.Get(key)
+		// Replacing an element in LRU cache can only be `Delete` + `Put`.
+		if ok && (value.(*stmtSummaryByDigest).beginTime < ssMap.beginTimeForCurInterval) {
+			ssMap.summaryMap.Delete(key)
+			ok = false
+		}
 		if !ok {
-			newSummary := newStmtSummaryByDigest(sei)
+			newSummary := newStmtSummaryByDigest(sei, ssMap.beginTimeForCurInterval)
 			ssMap.summaryMap.Put(key, newSummary)
 		}
 		return value, ok
@@ -212,6 +245,8 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	defer ssMap.Unlock()
 
 	ssMap.summaryMap.DeleteAll()
+	ssMap.beginTimeForCurInterval = 0
+	ssMap.lastCheckExpireTime = 0
 }
 
 // ToDatum converts statement summary to datum.
@@ -223,8 +258,10 @@ func (ssMap *stmtSummaryByDigestMap) ToDatum() [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		record := ssbd.toDatum()
-		rows = append(rows, record)
+		record := ssbd.toDatum(ssMap.beginTimeForCurInterval)
+		if record != nil {
+			rows = append(rows, record)
+		}
 	}
 	return rows
 }
@@ -256,15 +293,15 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 	value = ssMap.normalizeEnableValue(value)
 
-	ssMap.enabledWrapper.Lock()
+	ssMap.sysVars.Lock()
 	if inSession {
-		ssMap.enabledWrapper.sessionEnabled = value
+		ssMap.sysVars.sessionEnabled = value
 	} else {
-		ssMap.enabledWrapper.globalEnabled = value
+		ssMap.sysVars.globalEnabled = value
 	}
-	sessionEnabled := ssMap.enabledWrapper.sessionEnabled
-	globalEnabled := ssMap.enabledWrapper.globalEnabled
-	ssMap.enabledWrapper.Unlock()
+	sessionEnabled := ssMap.sysVars.sessionEnabled
+	globalEnabled := ssMap.sysVars.globalEnabled
+	ssMap.sysVars.Unlock()
 
 	// Clear all summaries once statement summary is disabled.
 	var needClear bool
@@ -280,14 +317,14 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	ssMap.enabledWrapper.RLock()
-	defer ssMap.enabledWrapper.RUnlock()
+	ssMap.sysVars.RLock()
+	defer ssMap.sysVars.RUnlock()
 
 	var enabled bool
-	if ssMap.isSet(ssMap.enabledWrapper.sessionEnabled) {
-		enabled = ssMap.isEnabled(ssMap.enabledWrapper.sessionEnabled)
+	if ssMap.isSet(ssMap.sysVars.sessionEnabled) {
+		enabled = ssMap.isEnabled(ssMap.sysVars.sessionEnabled)
 	} else {
-		enabled = ssMap.isEnabled(ssMap.enabledWrapper.globalEnabled)
+		enabled = ssMap.isEnabled(ssMap.sysVars.globalEnabled)
 	}
 	return enabled
 }
@@ -315,8 +352,44 @@ func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
 	return value != ""
 }
 
+// SetRefreshInterval sets refreshing interval in ssMap.sysVars.
+func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession bool) {
+	ssMap.sysVars.Lock()
+	if inSession {
+		ssMap.sysVars.sessionRefreshInterval = value
+	} else {
+		ssMap.sysVars.globalRefreshInterval = value
+	}
+	sessionRefreshInterval := ssMap.sysVars.sessionRefreshInterval
+	globalRefreshInterval := ssMap.sysVars.globalRefreshInterval
+	ssMap.sysVars.Unlock()
+
+	// Calculate the cached `refreshInterval`.
+	var interval int
+	var err error
+	if ssMap.isSet(sessionRefreshInterval) {
+		interval, err = strconv.Atoi(sessionRefreshInterval)
+		if err != nil {
+			interval = 0
+		}
+	}
+	if interval <= 0 {
+		interval, err = strconv.Atoi(globalRefreshInterval)
+		if err != nil {
+			interval = 0
+		}
+	}
+	if interval > 0 {
+		atomic.StoreInt64(&ssMap.sysVars.refreshInterval, int64(interval))
+	}
+}
+
+func (ssMap *stmtSummaryByDigestMap) RefreshInterval() int64 {
+	return atomic.LoadInt64(&ssMap.sysVars.refreshInterval)
+}
+
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
-func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
+func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64) *stmtSummaryByDigest {
 	// Trim SQL to size MaxSQLLength.
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
 	normalizedSQL := sei.NormalizedSQL
@@ -337,6 +410,7 @@ func newStmtSummaryByDigest(sei *StmtExecInfo) *stmtSummaryByDigest {
 	tableNames := buffer.String()
 
 	ssbd := &stmtSummaryByDigest{
+		beginTime:     beginTime,
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
 		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
@@ -488,11 +562,16 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 	}
 }
 
-func (ssbd *stmtSummaryByDigest) toDatum() []types.Datum {
+func (ssbd *stmtSummaryByDigest) toDatum(oldestBeginTime int64) []types.Datum {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
+	if ssbd.beginTime < oldestBeginTime {
+		return nil
+	}
+
 	return types.MakeDatums(
+		types.Time{Time: types.FromGoTime(time.Unix(ssbd.beginTime, 0)), Type: mysql.TypeTimestamp},
 		ssbd.stmtType,
 		ssbd.schemaName,
 		ssbd.digest,
