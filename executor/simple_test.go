@@ -254,8 +254,7 @@ func (s *testSuite3) TestUser(c *C) {
 
 	// Create duplicate user without IfNotExists will cause error.
 	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
-	_, err := tk.Exec(createUserSQL)
-	c.Check(err, NotNil)
+	tk.MustGetErrCode(createUserSQL, mysql.ErrUserAlreadyExists)
 	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 	// Create user test.
@@ -275,7 +274,7 @@ func (s *testSuite3) TestUser(c *C) {
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("111")))
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
-	_, err = tk.Exec(alterUserSQL)
+	_, err := tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))

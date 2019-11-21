@@ -645,12 +645,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if err1 != nil {
 			return err1
 		}
-		if exists {
-			if !s.IfNotExists {
-				return errors.New("Duplicate user")
-			}
-			continue
-		}
 		pwd, ok := spec.EncodedPassword()
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
@@ -658,6 +652,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		user := fmt.Sprintf(`('%s', '%s', '%s')`, spec.User.Hostname, spec.User.Username, pwd)
 		if s.IsCreateRole {
 			user = fmt.Sprintf(`('%s', '%s', '%s', 'Y')`, spec.User.Hostname, spec.User.Username, pwd)
+		}
+		if exists {
+			if !s.IfNotExists {
+				return infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
+			}
+			continue
 		}
 		users = append(users, user)
 	}
