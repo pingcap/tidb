@@ -37,7 +37,7 @@ Projection_11	7992.00	root	Column#1
   │ └─Selection_15	9970.03	cop[tikv]	not(isnull(Column#1)), not(isnull(Column#2)), not(isnull(Column#3))
   │   └─TableScan_14	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─Selection_17	6393.60	root	not(isnull(Column#9))
-    └─HashAgg_23	7992.00	root	group by:Column#12, funcs:max(Column#10), firstrow(Column#12)
+    └─HashAgg_23	7992.00	root	group by:Column#6, funcs:max(Column#10), firstrow(Column#6)
       └─TableReader_24	7992.00	root	data:HashAgg_18
         └─HashAgg_18	7992.00	cop[tikv]	group by:Column#6, funcs:max(Column#5)
           └─Selection_22	9990.00	cop[tikv]	not(isnull(Column#6))
