@@ -101,7 +101,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &builtinInDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InDecimal)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinInTimeSig{baseBuiltinFunc: bf}
+		inTime := builtinInTimeSig{baseBuiltinFunc: bf, threshold: 2}
+		err := inTime.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inTime, err
+		}
+		sig = &inTime
 		sig.setPbCode(tipb.ScalarFuncSig_InTime)
 	case types.ETDuration:
 		sig = &builtinInDurationSig{baseBuiltinFunc: bf}
@@ -367,11 +372,49 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInTimeSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseBuiltinFunc
+	nonConstArgs []Expression
+	hashSet      map[types.Time]bool
+	threshold    int
+}
+
+func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.nonConstArgs = make([]Expression, 0, len(b.args))
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.hashSet = make(map[types.Time]bool, len(b.args)-1)
+	count := 0
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				continue
+			}
+			b.hashSet[val] = true
+			count++
+		} else {
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+		}
+	}
+	if count < b.threshold {
+		b.nonConstArgs = b.args
+		b.hashSet = nil
+	}
+
+	return nil
 }
 
 func (b *builtinInTimeSig) Clone() builtinFunc {
 	newSig := &builtinInTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
+	for _, arg := range b.nonConstArgs {
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg)
+	}
+	newSig.hashSet = b.hashSet
+	newSig.threshold = b.threshold
 	return newSig
 }
 
@@ -380,8 +423,15 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
+	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		if _, ok := b.hashSet[arg0]; ok {
+			return 1, false, nil
+		}
+	}
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
 		if err != nil {
 			return 0, true, err

@@ -22,6 +22,14 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+func dateTimeFromString(s string) types.Time {
+	t, err := types.ParseDate(nil, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.SetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -55,12 +63,24 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 			constants: []*Constant{
 				nil,
 				nil, nil, nil, nil,
-				{Value: types.NewDatum("aaaaaaaaaa"), RetType: types.NewFieldType(mysql.TypeString)},
+				{Value: types.NewStringDatum("aaaaaaaaaa"), RetType: types.NewFieldType(mysql.TypeString)},
 				//{Value: types.NewDatum("bbbbbbbbbb"), RetType: types.NewFieldType(mysql.TypeString)},
 				//{Value: types.NewDatum("cccccccccc"), RetType: types.NewFieldType(mysql.TypeString)},
 				//{Value: types.NewDatum("dddddddddd"), RetType: types.NewFieldType(mysql.TypeString)},
 			},
 			geners: []dataGenerator{&constStrGener{"aaaaaaaaaa"}, nil, nil, nil, nil},
+		},
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETDatetime,
+				types.ETDatetime, types.ETDatetime,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+			},
 		},
 	},
 	ast.GetParam: {
