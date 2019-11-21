@@ -1866,15 +1866,14 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
-		isDefault := false
-		if expr := extractDefaultExpr(assign.Expr); expr != nil {
-			expr.Name = assign.Column
-			isDefault = true
+		var defaultExpr *ast.DefaultExpr
+		if defaultExpr = extractDefaultExpr(assign.Expr); defaultExpr != nil {
+			defaultExpr.Name = assign.Column
 		}
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 		if column.IsGenerated() {
-			if isDefault {
+			if defaultExpr != nil {
 				continue
 			}
 			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
@@ -1949,15 +1948,14 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
-		isDefault := false
-		if expr := extractDefaultExpr(assign.Expr); expr != nil {
-			expr.Name = assign.Column
-			isDefault = true
+		var defaultExpr *ast.DefaultExpr
+		if defaultExpr = extractDefaultExpr(assign.Expr); defaultExpr != nil {
+			defaultExpr.Name = assign.Column
 		}
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
-			if isDefault {
+			if defaultExpr != nil {
 				continue
 			}
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
