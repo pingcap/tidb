@@ -248,7 +248,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg_9 2.00 root group by:Column#5, funcs:count(Column#4)",
+		"HashAgg_9 2.00 root group by:Column#1, funcs:count(Column#4)",
 		"└─TableReader_10 2.00 root data:HashAgg_5",
 		"  └─HashAgg_5 2.00 cop[tikv] group by:Column#1, funcs:count(1)",
 		"    └─TableScan_8 8.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
