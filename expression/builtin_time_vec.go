@@ -1760,7 +1760,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 		case "YEAR":
 			tb = tm1.AddDate(int(v), 0, 0)
 		default:
-			return types.ErrInvalidTimeFormat.GenWithStackByArgs(unit)
+			return types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
 		}
 		r := types.Time{Time: types.FromGoTime(tb), Type: b.resolveType(arg.Type, unit), Fsp: fsp}
 		if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {

@@ -22,6 +22,7 @@ import (
 // const strings for ErrWrongValue
 const (
 	DateTimeStr = "datetime"
+	TimeStr     = "time"
 )
 
 var (
