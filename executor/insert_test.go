@@ -785,7 +785,7 @@ func (s *testSuite3) TestAllocateContinuousRowID(c *C) {
 				q := "select _tidb_rowid from t1 where a=" + k
 				fmt.Printf("query: %v\n", q)
 				rows := tk.MustQuery(q).Rows()
-				c.Assert(len(rows), Equals, 11)
+				c.Assert(len(rows), Equals, 21)
 				last := 0
 				for _, r := range rows {
 					c.Assert(len(r), Equals, 1)
