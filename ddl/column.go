@@ -383,16 +383,21 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	})
 
-	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
-		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+	// Column from null to not null.
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
+		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.Tp)
-		if err != nil && (ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err)) {
-			job.State = model.JobStateRollingback
+		if err != nil {
+			if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
+				job.State = model.JobStateRollingback
+			}
+			return ver, err
 		}
-		if err == nil {
-			ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
+		// The column should get into prevent null status first.
+		if noPreventNullFlag {
+			return updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 		}
-		return ver, errors.Trace(err)
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.

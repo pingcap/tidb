@@ -19,15 +19,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/coreos/etcd/integration"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
+	"go.etcd.io/etcd/integration"
 	goctx "golang.org/x/net/context"
 )
 
