@@ -1929,11 +1929,7 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
 	tk.MustGetErrCode("insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
 
-	tk.MustExec("drop table t1")
-	tk.MustExec("drop table t2")
-	tk.MustExec("drop table t3")
-	tk.MustExec("drop table t4")
-	tk.MustExec("drop table t5")
+	tk.MustExec("drop table t1, t2, t3, t4, t5")
 }
 
 func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
