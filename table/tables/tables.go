@@ -987,8 +987,8 @@ func (t *tableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, i
 			shard := t.calcShard(txnCtx.StartTS)
 			txnCtx.Shard = &shard
 		}
-		maxID |= *txnCtx.Shard
 		base |= *txnCtx.Shard
+		maxID |= *txnCtx.Shard
 	}
 	return base, maxID, nil
 }
