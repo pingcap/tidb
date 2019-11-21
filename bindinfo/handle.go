@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -737,31 +736,28 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	if maxTime == 0 || !timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) {
 		return nil
 	}
-	sctx.GetSessionVars().UsePlanBaselines = false
-	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	sctx.GetSessionVars().UsePlanBaselines = true
+	acceptedPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
 	// If we just return the error to the caller, this job will be retried again and again and cause endless logs,
 	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
 	// we will hope for that we can capture this evolve task again.
 	if err != nil {
 		return h.DropBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 	}
-	// Time limit exceeded.
-	if verifyPlanTime < 0 {
-		binding.Status = Rejected
-		return h.AddBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	// If the accepted plan timeouts, it is hard to decide the timeout for verify plan.
+	// Currently we simply mark the verify plan as `using` if it could run successfully within maxTime.
+	if acceptedPlanTime > 0 {
+		maxTime = time.Duration(float64(acceptedPlanTime) / acceptFactor)
 	}
-	sctx.GetSessionVars().UsePlanBaselines = true
-	maxTime = time.Duration(mathutil.MinInt64(int64(maxTime), int64(float64(verifyPlanTime)*acceptFactor)))
-	acceptedPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	sctx.GetSessionVars().UsePlanBaselines = false
+	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
 	if err != nil {
 		return h.DropBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 	}
-	// It is hard to decide if we should mark it as `using` if it exceeded max time, because
-	// we don't know the exact execution time. Currently we simply mark it as `using` since the verify plan could run successfully.
-	if acceptedPlanTime < 0 {
-		binding.Status = Using
-	} else {
+	if verifyPlanTime < 0 {
 		binding.Status = Rejected
+	} else {
+		binding.Status = Using
 	}
 	return h.AddBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 }
