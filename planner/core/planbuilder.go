@@ -1866,8 +1866,8 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
-		var defaultExpr *ast.DefaultExpr
-		if defaultExpr = extractDefaultExpr(assign.Expr); defaultExpr != nil {
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
@@ -1948,8 +1948,8 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
-		var defaultExpr *ast.DefaultExpr
-		if defaultExpr = extractDefaultExpr(assign.Expr); defaultExpr != nil {
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
