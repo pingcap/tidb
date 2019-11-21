@@ -114,16 +114,22 @@ func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string
 	repairedLowerName := schemaLowerName + "." + tableLowerName
 	// Remove from the repair list.
 	ls := r.repairTableList.Load().([]string)
-	for i, rt := range ls {
+	lsCopy := make([]string, 0, len(ls))
+	copy(lsCopy, ls)
+	for i, rt := range lsCopy {
 		if strings.ToLower(rt) == repairedLowerName {
-			ls = append(ls[:i], ls[i+1:]...)
+			lsCopy = append(lsCopy[:i], lsCopy[i+1:]...)
 			break
 		}
 	}
-	r.repairTableList.Store(ls)
+	r.repairTableList.Store(lsCopy)
 	// Remove from the repair map.
 	mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
-	for _, db := range mp {
+	mpCopy := make(map[int64]*model.DBInfo, len(mp))
+	for i, db := range mp {
+		mpCopy[i] = db.Copy()
+	}
+	for _, db := range mpCopy {
 		if db.Name.L == schemaLowerName {
 			for j, t := range db.Tables {
 				if t.Name.L == tableLowerName {
@@ -132,12 +138,12 @@ func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string
 				}
 			}
 			if len(db.Tables) == 0 {
-				delete(mp, db.ID)
+				delete(mpCopy, db.ID)
 			}
 			break
 		}
 	}
-	r.repairDBInfoMap.Store(mp)
+	r.repairDBInfoMap.Store(mpCopy)
 }
 
 // repairKeyType is keyType for admin repair table.

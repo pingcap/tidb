@@ -751,7 +751,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 		// Create stmt is not in repair stmt, check the table not in repair list.
-		p.checkNotInRepair(tn)
+		if domainutil.RepairInfo.GetRepairMode() {
+			p.checkNotInRepair(tn)
+		}
 		return
 	}
 	// repairStmt: admin repair table A create table B ...
