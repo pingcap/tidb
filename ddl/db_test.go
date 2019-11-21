@@ -1405,6 +1405,30 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 
+	// for describing table
+	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),YES,MUL,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 add primary key idx(a)")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,PRI,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 drop primary key")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,MUL,<nil>,`))
+	s.tk.MustExec("create table test_add_pk2(a int, b int, index idx(a))")
+	s.tk.MustExec("alter table test_add_pk2 add primary key idx(a, b)")
+	s.tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
+		"a int(11) NO PRI <nil> ]\n"+
+		"[b int(11) NO PRI <nil> "))
+	s.tk.MustQuery("show create table test_add_pk2").Check(testutil.RowsWithSep("|", ""+
+		"test_add_pk2 CREATE TABLE `test_add_pk2` (\n"+
+		"  `a` int(11) NOT NULL,\n"+
+		"  `b` int(11) NOT NULL,\n"+
+		"  KEY `idx` (`a`),\n"+
+		"  PRIMARY KEY (`a`,`b`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("alter table test_add_pk2 drop primary key")
+	s.tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
+		"a int(11) NO MUL <nil> ]\n"+
+		"[b int(11) NO  <nil> "))
+
 	// Check if the primary key exists before checking the table's pkIsHandle.
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
 
@@ -1953,21 +1977,24 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 
 	s.tk.MustExec("drop table t")
 
-	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
-	c.Assert(err, NotNil)
+	s.tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", mysql.ErrUnknownCharacterSet)
 
-	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	c.Assert(err, IsNil)
-	result := s.tk.MustQuery("show create table collateTest")
-	got := result.Rows()[0][1]
-	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	s.tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	expects := "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	s.tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
+
+	s.tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", mysql.ErrCollationCharsetMismatch)
+	s.tk.MustGetErrCode("CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8", mysql.ErrConflictingDeclarations)
+
+	s.tk.MustExec("CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci")
+	expects = "CREATE TABLE `collateTest4` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+	s.tk.MustQuery("show create table collateTest4").Check(testkit.Rows(expects))
 
 	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
 	s.tk.MustExec("use test2")
 	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
-	result = s.tk.MustQuery("show create table dbCollateTest")
-	got = result.Rows()[0][1]
-	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+	expects = "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
+	s.tk.MustQuery("show create table dbCollateTest").Check(testkit.Rows(expects))
 
 	// test for enum column
 	s.tk.MustExec("use test")

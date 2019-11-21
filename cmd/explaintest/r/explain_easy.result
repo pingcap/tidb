@@ -66,7 +66,7 @@ Projection_11	9990.00	root	cast(Column#8)->Column#7
 └─HashLeftJoin_21	9990.00	root	inner join, inner:HashAgg_28, equal:[eq(Column#1, Column#5)]
   ├─TableReader_34	10000.00	root	data:TableScan_33
   │ └─TableScan_33	10000.00	cop[tikv]	table:a, mapping:c1->#1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─HashAgg_28	7992.00	root	group by:Column#11, funcs:count(Column#9)->Column#8, funcs:firstrow(Column#11)->Column#5
+  └─HashAgg_28	7992.00	root	group by:Column#5, funcs:count(Column#9)->Column#8, funcs:firstrow(Column#5)->Column#5
     └─TableReader_29	7992.00	root	data:HashAgg_23
       └─HashAgg_23	7992.00	cop[tikv]	group by:Column#5, funcs:count(Column#5)->Column#9
         └─Selection_27	9990.00	cop[tikv]	not(isnull(Column#5))
@@ -560,7 +560,7 @@ Projection_12	10000.00	root	Column#14
       ├─TableReader_24	9.99	root	data:Selection_23
       │ └─Selection_23	9.99	cop[tikv]	eq(Column#5, Column#1), not(isnull(Column#5))
       │   └─TableScan_22	10000.00	cop[tikv]	table:s, mapping:a->#5, range:[-inf,+inf], keep order:false, stats:pseudo
-      └─HashAgg_30	7.99	root	group by:Column#18, funcs:count(Column#16)->Column#15, funcs:firstrow(Column#18)->Column#9
+      └─HashAgg_30	7.99	root	group by:Column#9, funcs:count(Column#16)->Column#15, funcs:firstrow(Column#9)->Column#9
         └─TableReader_31	7.99	root	data:HashAgg_25
           └─HashAgg_25	7.99	cop[tikv]	group by:Column#9, funcs:count(1)->Column#16
             └─Selection_29	9.99	cop[tikv]	eq(Column#9, Column#1), not(isnull(Column#9))
@@ -593,7 +593,7 @@ Projection_12	10000.00	root	Column#14
       ├─TableReader_24	9.99	root	data:Selection_23
       │ └─Selection_23	9.99	cop[tikv]	eq(Column#5, Column#1), not(isnull(Column#5))
       │   └─TableScan_22	10000.00	cop[tikv]	table:s, mapping:a->#5, range:[-inf,+inf], keep order:false, stats:pseudo
-      └─HashAgg_30	7.99	root	group by:Column#18, funcs:count(Column#16)->Column#15, funcs:firstrow(Column#18)->Column#9
+      └─HashAgg_30	7.99	root	group by:Column#9, funcs:count(Column#16)->Column#15, funcs:firstrow(Column#9)->Column#9
         └─TableReader_31	7.99	root	data:HashAgg_25
           └─HashAgg_25	7.99	cop[tikv]	group by:Column#9, funcs:count(1)->Column#16
             └─Selection_29	9.99	cop[tikv]	eq(Column#9, Column#1), not(isnull(Column#9))

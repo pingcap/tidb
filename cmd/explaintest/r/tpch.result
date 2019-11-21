@@ -121,7 +121,7 @@ l_linestatus;
 id	count	task	operator info
 Sort_6	2.94	root	Column#9:asc, Column#10:asc
 └─Projection_8	2.94	root	Column#9, Column#10, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23, Column#24, Column#25
-  └─HashAgg_14	2.94	root	group by:Column#39, Column#40, funcs:sum(Column#26)->Column#18, funcs:sum(Column#27)->Column#19, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#21, funcs:avg(Column#30, Column#31)->Column#22, funcs:avg(Column#32, Column#33)->Column#23, funcs:avg(Column#34, Column#35)->Column#24, funcs:count(Column#36)->Column#25, funcs:firstrow(Column#39)->Column#9, funcs:firstrow(Column#40)->Column#10
+  └─HashAgg_14	2.94	root	group by:Column#10, Column#9, funcs:sum(Column#26)->Column#18, funcs:sum(Column#27)->Column#19, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#21, funcs:avg(Column#30, Column#31)->Column#22, funcs:avg(Column#32, Column#33)->Column#23, funcs:avg(Column#34, Column#35)->Column#24, funcs:count(Column#36)->Column#25, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10
     └─TableReader_15	2.94	root	data:HashAgg_9
       └─HashAgg_9	2.94	cop[tikv]	group by:Column#10, Column#9, funcs:sum(Column#5)->Column#26, funcs:sum(Column#6)->Column#27, funcs:sum(mul(Column#6, minus(1, Column#7)))->Column#28, funcs:sum(mul(mul(Column#6, minus(1, Column#7)), plus(1, Column#8)))->Column#29, funcs:count(Column#5)->Column#30, funcs:sum(Column#5)->Column#31, funcs:count(Column#6)->Column#32, funcs:sum(Column#6)->Column#33, funcs:count(Column#7)->Column#34, funcs:sum(Column#7)->Column#35, funcs:count(1)->Column#36
         └─Selection_13	293795345.00	cop[tikv]	le(Column#11, 1998-08-15)
@@ -980,7 +980,7 @@ Projection_16	1.00	root	div(Column#46, 7.0)->Column#47
       │ │   └─TableScan_40	10000000.00	cop[tikv]	table:part, mapping:p_partkey->#18,p_brand->#21,p_container->#24, range:[-inf,+inf], keep order:false
       │ └─TableReader_39	300005811.00	root	data:TableScan_38
       │   └─TableScan_38	300005811.00	cop[tikv]	table:lineitem, mapping:l_partkey->#2,l_quantity->#5,l_extendedprice->#6, range:[-inf,+inf], keep order:false
-      └─HashAgg_47	9943040.00	root	group by:Column#53, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(Column#53)->Column#28
+      └─HashAgg_47	9943040.00	root	group by:Column#28, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(Column#28)->Column#28
         └─TableReader_48	9943040.00	root	data:HashAgg_43
           └─HashAgg_43	9943040.00	cop[tikv]	group by:Column#28, funcs:count(Column#31)->Column#50, funcs:sum(Column#31)->Column#51
             └─TableScan_46	300005811.00	cop[tikv]	table:lineitem, mapping:l_partkey->#28,l_quantity->#31, range:[-inf,+inf], keep order:false
@@ -1038,7 +1038,7 @@ Projection_24	100.00	root	Column#2, Column#1, Column#9, Column#13, Column#12, Co
       │ │ └─TableReader_63	75000000.00	root	data:TableScan_62
       │ │   └─TableScan_62	75000000.00	cop[tikv]	table:orders, mapping:o_orderkey->#9,o_custkey->#10,o_totalprice->#12,o_orderdate->#13, range:[-inf,+inf], keep order:false
       │ └─Selection_66	59251097.60	root	gt(Column#52, 314)
-      │   └─HashAgg_73	74063872.00	root	group by:Column#62, funcs:sum(Column#60)->Column#52, funcs:firstrow(Column#62)->Column#35
+      │   └─HashAgg_73	74063872.00	root	group by:Column#35, funcs:sum(Column#60)->Column#52, funcs:firstrow(Column#35)->Column#35
       │     └─TableReader_74	74063872.00	root	data:HashAgg_67
       │       └─HashAgg_67	74063872.00	cop[tikv]	group by:Column#35, funcs:sum(Column#39)->Column#60
       │         └─TableScan_72	300005811.00	cop[tikv]	table:lineitem, mapping:l_orderkey->#35,l_quantity->#39, range:[-inf,+inf], keep order:false
