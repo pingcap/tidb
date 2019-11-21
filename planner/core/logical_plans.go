@@ -350,6 +350,10 @@ type DataSource struct {
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
+
+	// TblCols contains the original columns of table before being pruned, and it
+	// is used for estimating table scan cost.
+	TblCols []*expression.Column
 }
 
 // accessPath tells how we access one index or just access table.
@@ -613,6 +617,12 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	if !ds.tableInfo.PKIsHandle {
+		// If the PKIsHandle is false, return the ExtraHandleColumn.
+		for i, col := range ds.Columns {
+			if col.ID == model.ExtraHandleID {
+				return ds.schema.Columns[i]
+			}
+		}
 		return nil
 	}
 	for i, col := range ds.Columns {

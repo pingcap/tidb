@@ -540,7 +540,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo, isPK bool) error {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -564,9 +564,13 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.In
 		}
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression.
+	// Every unique key on the table must use every column in the table's partitioning expression.(This
+	// also includes the table's primary key.)
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
 	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), idxColNames) {
+		if isPK {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+		}
 		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 	}
 	return nil
