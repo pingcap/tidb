@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -281,6 +282,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		// {retEvalType: types.ETDatetime},
 		// {retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
 		// 	geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
+	},
+	ast.TiDBParseTso: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt},
+			geners:        []dataGenerator{&rangeInt64Gener{0, math.MaxInt64}},
+		},
 	},
 	ast.LastDay: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
