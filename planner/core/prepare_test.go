@@ -36,8 +36,12 @@ import (
 )
 
 var _ = Suite(&testPrepareSuite{})
+var _ = SerialSuites(&testPrepareSerialSuite{})
 
 type testPrepareSuite struct {
+}
+
+type testPrepareSerialSuite struct {
 }
 
 func (s *testPrepareSuite) TestPrepareCache(c *C) {
@@ -311,7 +315,7 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 }
 
 // unit test for issue https://github.com/pingcap/tidb/issues/8518
-func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

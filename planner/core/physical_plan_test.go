@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
@@ -1070,5 +1071,45 @@ func testDAGPlanBuilderSplitAvg(c *C, root core.PhysicalPlan) {
 	}
 	for _, son := range childs {
 		testDAGPlanBuilderSplitAvg(c, son)
+	}
+}
+
+func (s *testPlanSuite) TestIndexJoinHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2;`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan string
+	}
+	is := domain.GetDomain(se).InfoSchema()
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		comment := Commentf("case:%v sql: %s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+		p, _, err := planner.Optimize(ctx, se, stmt, is)
+		c.Assert(err, IsNil, comment)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
 }

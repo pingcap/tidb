@@ -256,7 +256,7 @@ drop table if exists t;
 create table t (a int, b int, c int, key idx(a, b, c));
 explain select count(a) from t;
 id	count	task	operator info
-StreamAgg_20	1.00	root	funcs:count(Column#14)
+StreamAgg_20	1.00	root	funcs:count(Column#13)
 └─TableReader_21	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tikv]	funcs:count(Column#1)
     └─TableScan_18	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
@@ -267,7 +267,7 @@ insert t values(0,0,0);
 explain select distinct b from t group by a;
 id	count	task	operator info
 HashAgg_7	8000.00	root	group by:Column#2, funcs:firstrow(Column#2)
-└─StreamAgg_22	8000.00	root	group by:Column#12, funcs:firstrow(Column#11)
+└─StreamAgg_22	8000.00	root	group by:Column#1, funcs:firstrow(Column#9)
   └─IndexReader_23	8000.00	root	index:StreamAgg_11
     └─StreamAgg_11	8000.00	cop[tikv]	group by:Column#1, funcs:firstrow(Column#2)
       └─IndexScan_21	10000.00	cop[tikv]	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
@@ -276,7 +276,7 @@ b
 0
 explain select count(b) from t group by a;
 id	count	task	operator info
-StreamAgg_19	8000.00	root	group by:Column#13, funcs:count(Column#12)
+StreamAgg_19	8000.00	root	group by:Column#1, funcs:count(Column#10)
 └─IndexReader_20	8000.00	root	index:StreamAgg_8
   └─StreamAgg_8	8000.00	cop[tikv]	group by:Column#1, funcs:count(Column#2)
     └─IndexScan_18	10000.00	cop[tikv]	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
@@ -286,7 +286,7 @@ count(b)
 insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
 explain select count(a) from t where b>0 group by a, b;
 id	count	task	operator info
-StreamAgg_25	2666.67	root	group by:Column#14, Column#15, funcs:count(Column#13)
+StreamAgg_25	2666.67	root	group by:Column#1, Column#2, funcs:count(Column#10)
 └─IndexReader_26	2666.67	root	index:StreamAgg_9
   └─StreamAgg_9	2666.67	cop[tikv]	group by:Column#1, Column#2, funcs:count(Column#1)
     └─Selection_24	3333.33	cop[tikv]	gt(Column#2, 0)
@@ -300,7 +300,7 @@ count(a)
 explain select count(a) from t where b>0 group by a, b order by a;
 id	count	task	operator info
 Projection_7	2666.67	root	Column#5
-└─StreamAgg_36	2666.67	root	group by:Column#23, Column#24, funcs:count(Column#21), firstrow(Column#23)
+└─StreamAgg_36	2666.67	root	group by:Column#1, Column#2, funcs:count(Column#15), firstrow(Column#1)
   └─IndexReader_37	2666.67	root	index:StreamAgg_34
     └─StreamAgg_34	2666.67	cop[tikv]	group by:Column#1, Column#2, funcs:count(Column#1)
       └─Selection_28	3333.33	cop[tikv]	gt(Column#2, 0)
@@ -315,7 +315,7 @@ explain select count(a) from t where b>0 group by a, b order by a limit 1;
 id	count	task	operator info
 Projection_9	1.00	root	Column#5
 └─Limit_15	1.00	root	offset:0, count:1
-  └─StreamAgg_44	1.00	root	group by:Column#24, Column#25, funcs:count(Column#22), firstrow(Column#24)
+  └─StreamAgg_44	1.00	root	group by:Column#1, Column#2, funcs:count(Column#16), firstrow(Column#1)
     └─IndexReader_45	1.00	root	index:StreamAgg_40
       └─StreamAgg_40	1.00	cop[tikv]	group by:Column#1, Column#2, funcs:count(Column#1)
         └─Selection_43	1.25	cop[tikv]	gt(Column#2, 0)
@@ -382,21 +382,21 @@ drop table if exists t;
 create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;
 id	count	task	operator info
-Projection_8	10000.00	root	and(or(or(gt(Column#9, 1), ne(Column#1, Column#8)), if(ne(Column#10, 0), NULL, 0)), and(ne(Column#11, 0), if(isnull(Column#1), NULL, 1)))
+Projection_8	10000.00	root	and(or(or(gt(Column#8, 1), ne(Column#1, Column#7)), if(ne(Column#9, 0), NULL, 0)), and(ne(Column#10, 0), if(isnull(Column#1), NULL, 1)))
 └─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
   ├─TableReader_12	10000.00	root	data:TableScan_11
   │ └─TableScan_11	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_16	1.00	root	funcs:firstrow(Column#15), count(distinct Column#16), sum(Column#17), count(1)
+  └─StreamAgg_16	1.00	root	funcs:firstrow(Column#13), count(distinct Column#14), sum(Column#15), count(1)
     └─Projection_26	10000.00	root	Column#4, Column#4, cast(isnull(Column#4))
       └─TableReader_23	10000.00	root	data:TableScan_22
         └─TableScan_22	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a = all (select a from t t2) from t t1;
 id	count	task	operator info
-Projection_8	10000.00	root	or(and(and(le(Column#9, 1), eq(Column#1, Column#8)), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(Column#1), NULL, 0)))
+Projection_8	10000.00	root	or(and(and(le(Column#8, 1), eq(Column#1, Column#7)), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(Column#1), NULL, 0)))
 └─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
   ├─TableReader_12	10000.00	root	data:TableScan_11
   │ └─TableScan_11	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_16	1.00	root	funcs:firstrow(Column#15), count(distinct Column#16), sum(Column#17), count(1)
+  └─StreamAgg_16	1.00	root	funcs:firstrow(Column#13), count(distinct Column#14), sum(Column#15), count(1)
     └─Projection_26	10000.00	root	Column#4, Column#4, cast(isnull(Column#4))
       └─TableReader_23	10000.00	root	data:TableScan_22
         └─TableScan_22	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
@@ -406,8 +406,8 @@ drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain select a in (select a from s where s.b = t.b) from t;
 id	count	task	operator info
-Projection_9	10000.00	root	Column#8
-└─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#10, Column#11)], other cond:eq(cast(Column#1), cast(Column#4))
+Projection_9	10000.00	root	Column#7
+└─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#8, Column#9)], other cond:eq(cast(Column#1), cast(Column#4))
   ├─Projection_11	10000.00	root	Column#1, Column#2, cast(Column#2)
   │ └─TableReader_13	10000.00	root	data:TableScan_12
   │   └─TableScan_12	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
@@ -426,7 +426,7 @@ drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
 id	count	task	operator info
-Projection_7	10000.00	root	Column#8
+Projection_7	10000.00	root	Column#7
 └─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(Column#2, Column#5) eq(Column#1, Column#4)]
   ├─TableReader_10	10000.00	root	data:TableScan_9
   │ └─TableScan_9	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
@@ -441,9 +441,9 @@ drop table if exists t;
 create table t(a int, b int);
 explain select a from t order by rand();
 id	count	task	operator info
-Projection_8	10000.00	root	Column#4
-└─Sort_4	10000.00	root	Column#5:asc
-  └─Projection_9	10000.00	root	Column#4, rand()
+Projection_8	10000.00	root	Column#1
+└─Sort_4	10000.00	root	Column#4:asc
+  └─Projection_9	10000.00	root	Column#1, rand()
     └─TableReader_7	10000.00	root	data:TableScan_6
       └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a, b from t order by abs(2);
@@ -452,9 +452,9 @@ TableReader_8	10000.00	root	data:TableScan_7
 └─TableScan_7	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a from t order by abs(rand())+1;
 id	count	task	operator info
-Projection_8	10000.00	root	Column#4
-└─Sort_4	10000.00	root	Column#5:asc
-  └─Projection_9	10000.00	root	Column#4, plus(abs(rand()), 1)
+Projection_8	10000.00	root	Column#1
+└─Sort_4	10000.00	root	Column#4:asc
+  └─Projection_9	10000.00	root	Column#1, plus(abs(rand()), 1)
     └─TableReader_7	10000.00	root	data:TableScan_6
       └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t1;
@@ -478,7 +478,7 @@ PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
 id	count	task	operator info
-Projection_7	10000.00	root	minus(Column#7, Column#3)
+Projection_7	10000.00	root	minus(Column#5, Column#3)
 └─Window_8	10000.00	root	row_number() over(partition by Column#2)
   └─Sort_11	10000.00	root	Column#2:asc
     └─TableReader_10	10000.00	root	data:TableScan_9

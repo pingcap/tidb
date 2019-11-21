@@ -15,7 +15,9 @@ package main_test
 
 import (
 	"context"
+	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -51,4 +53,8 @@ func LoadRunShutdownPluginExample() {
 	}
 
 	plugin.Shutdown(context.Background())
+}
+
+func TestT(t *testing.T) {
+	TestingT(t)
 }

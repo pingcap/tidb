@@ -49,8 +49,7 @@ type InsertValues struct {
 	Lists   [][]expression.Expression
 	SetList []*expression.Assignment
 
-	GenColumns []*ast.ColumnName
-	GenExprs   []expression.Expression
+	GenExprs []expression.Expression
 
 	insertColumns []*table.Column
 
@@ -105,9 +104,6 @@ func (e *InsertValues) initInsertColumns() error {
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
 			columns = append(columns, v.ColName.O)
-		}
-		for _, v := range e.GenColumns {
-			columns = append(columns, v.Name.O)
 		}
 		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
