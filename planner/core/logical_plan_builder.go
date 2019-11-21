@@ -197,7 +197,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			if name.Hidden {
 				continue
 			}
-			name.OrigTblName = name.TblName
 			if x.AsName.L != "" {
 				name.TblName = x.AsName
 			}
@@ -721,19 +720,18 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
-	if origField.AsName.L != "" {
-		colName = origField.AsName
+	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+	if origField.AsName.L == "" {
+		colName = colNameField.Name.Name
 	} else {
-		colName = origColName
+		colName = origField.AsName
 	}
 	if tblName.L == "" {
 		tblName = name.TblName
+	} else {
+		tblName = colNameField.Name.Table
 	}
-	if dbName.L == "" {
-		dbName = name.DBName
-	}
-	return colName, origColName, tblName, name.OrigTblName, name.DBName
+	return
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -2544,6 +2542,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			DBName:      dbName,
 			TblName:     tableInfo.Name,
 			ColName:     col.Name,
+			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
 		})
 		newCol := &expression.Column{
