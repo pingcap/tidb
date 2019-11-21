@@ -136,7 +136,7 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`DROP USER 'u_tp'@'localhost';`)
 }
 
-func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
