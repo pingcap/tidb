@@ -36,7 +36,6 @@ import (
 
 const (
 	partitionMaxValue = "MAXVALUE"
-	primarykey        = "PRIMARY KEY"
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
