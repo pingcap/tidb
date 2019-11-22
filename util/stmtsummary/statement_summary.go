@@ -212,6 +212,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		// Check refreshing every second.
 		if now > ssMap.lastCheckExpireTime {
 			intervalSeconds := ssMap.RefreshInterval()
+			if intervalSeconds <= 0 {
+				return nil, false
+			}
+
 			if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
 				// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 				// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
