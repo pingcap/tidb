@@ -153,9 +153,9 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
-	switch v.(type) {
+	switch v := v.(type) {
 	case bool:
-		*b = nullableBool{true, v.(bool)}
+		*b = nullableBool{true, v}
 	default:
 		*b = nbUnset
 	}
@@ -635,9 +635,6 @@ func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{}
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
-	if c.TokenLimit <= 0 {
-		c.TokenLimit = 1000
-	}
 
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.

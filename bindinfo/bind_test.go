@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -53,7 +52,6 @@ type testSuite struct {
 	store     kv.Storage
 	domain    *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in bind test")
