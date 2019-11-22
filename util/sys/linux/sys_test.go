@@ -15,8 +15,13 @@ package linux_test
 import (
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/sys/linux"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestGetOSVersion(t *testing.T) {
 	osRelease, err := linux.OSVersion()
