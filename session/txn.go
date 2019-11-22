@@ -455,6 +455,7 @@ func (s *session) StmtCommit() error {
 		for _, op := range st.dirtyTableOP {
 			mergeToDirtyDB(dirtyDB, op)
 		}
+		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
 	st.ConfirmAssertions(true)
 	return nil
