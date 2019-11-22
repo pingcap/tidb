@@ -12,7 +12,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p 8
 OVERALLS        := GO111MODULE=on overalls
@@ -20,7 +20,7 @@ OVERALLS        := GO111MODULE=on overalls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd" | grep -vE "test"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd"
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
@@ -60,7 +60,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist check test
 
 build:
 	$(GOBUILD)
@@ -144,8 +144,8 @@ endif
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
-	@export log_level=error; \
 	$(GO) get github.com/go-playground/overalls
+	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \
@@ -155,7 +155,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=error; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 

@@ -854,7 +854,7 @@ func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 				return err
 			}
 
-			return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, idx.Meta().Name)
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
 		}
 		return err
 	}

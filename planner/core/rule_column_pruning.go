@@ -16,8 +16,6 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,22 +33,13 @@ func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPla
 	return lp, err
 }
 
-func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
-	failpoint.Inject("enableGetUsedListErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr"))
-		}
-	})
-
+func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
+	tmpSchema := expression.NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
-	for _, col := range usedCols {
-		idx := schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, errors.Errorf("Can't find column %s from schema %s.", col, schema)
-		}
-		used[idx] = true
+	for i, col := range schema.Columns {
+		used[i] = tmpSchema.Contains(col)
 	}
-	return used, nil
+	return used
 }
 
 // exprsHasSideEffects checks if any of the expressions has side effects.
@@ -84,10 +73,7 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
-	used, err := getUsedList(parentUsedCols, p.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.schema)
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
@@ -110,10 +96,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) err
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := la.children[0]
-	used, err := getUsedList(parentUsedCols, la.Schema())
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, la.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -133,7 +116,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		}
 		la.AggFuncs = []*aggregation.AggFuncDesc{one}
 		col := &expression.Column{
-			ColName:  model.NewCIStr("dummy_agg"),
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 		}
@@ -181,10 +163,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, p.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.schema)
 
 	hasBeenUsed := false
 	for i := range used {
@@ -221,10 +200,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, ds.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, ds.schema)
 
 	var (
 		handleCol     *expression.Column
@@ -258,10 +234,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, p.Schema())
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -354,7 +327,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate {
+	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 

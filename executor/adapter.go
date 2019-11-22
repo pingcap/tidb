@@ -68,12 +68,7 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		// The else branch will be removed after we totally remove the *Name from expression.Column.
-		if len(a.stmt.OutputNames) > 0 {
-			a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
-		} else {
-			a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
-		}
+		a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
@@ -96,42 +91,6 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			Table:        &model.TableInfo{Name: names[i].OrigTblName},
 			TableAsName:  names[i].TblName,
 			DBName:       dbName,
-		}
-		// This is for compatibility.
-		// See issue https://github.com/pingcap/tidb/issues/10513 .
-		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
-			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
-		}
-		// Usually the length of O equals the length of L.
-		// Add this len judgement to avoid panic.
-		if len(rf.ColumnAsName.L) > mysql.MaxAliasIdentifierLen {
-			rf.ColumnAsName.L = rf.ColumnAsName.L[:mysql.MaxAliasIdentifierLen]
-		}
-		rfs = append(rfs, rf)
-	}
-	return rfs
-}
-
-func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
-	rfs = make([]*ast.ResultField, 0, schema.Len())
-	for _, col := range schema.Columns {
-		dbName := col.DBName.O
-		if dbName == "" && col.TblName.L != "" {
-			dbName = defaultDB
-		}
-		origColName := col.OrigColName
-		if origColName.L == "" {
-			origColName = col.ColName
-		}
-		rf := &ast.ResultField{
-			ColumnAsName: col.ColName,
-			TableAsName:  col.TblName,
-			DBName:       model.NewCIStr(dbName),
-			Table:        &model.TableInfo{Name: col.OrigTblName},
-			Column: &model.ColumnInfo{
-				FieldType: *col.RetType,
-				Name:      origColName,
-			},
 		}
 		// This is for compatibility.
 		// See issue https://github.com/pingcap/tidb/issues/10513 .
@@ -216,6 +175,7 @@ type ExecStmt struct {
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
+	PsStmt      *plannercore.CachedPrepareStmt
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -232,17 +192,35 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		return nil, err
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
-	b := newExecutorBuilder(a.Ctx, is)
-	exec := b.build(a.Plan)
-	if b.err != nil {
-		return nil, b.err
+
+	// try to reuse point get executor
+	if a.PsStmt.Executor != nil {
+		exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
+		if !ok {
+			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
+			a.PsStmt.Executor = nil
+		} else {
+			// CachedPlan type is already checked in last step
+			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
+			exec.Init(pointGetPlan, startTs)
+			a.PsStmt.Executor = exec
+		}
 	}
-	if err = exec.Open(ctx); err != nil {
-		terror.Call(exec.Close)
+	if a.PsStmt.Executor == nil {
+		b := newExecutorBuilder(a.Ctx, is)
+		newExecutor := b.build(a.Plan)
+		if b.err != nil {
+			return nil, b.err
+		}
+		a.PsStmt.Executor = newExecutor
+	}
+	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
+	if err = pointExecutor.Open(ctx); err != nil {
+		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
 	return &recordSet{
-		executor:   exec,
+		executor:   pointExecutor,
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
@@ -286,11 +264,11 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, err
 	}
-	a.OutputNames = p.OutputNames()
+	a.OutputNames = names
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
 }
@@ -557,7 +535,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, forUpdateTS, keys...)
+		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout, keys...)
 		if err == nil {
 			return nil
 		}
@@ -566,6 +544,24 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return err
 		}
 	}
+}
+
+// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
+func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
+	if newForUpdateTS == 0 {
+		version, err := seCtx.GetStore().CurrentVersion()
+		if err != nil {
+			return err
+		}
+		newForUpdateTS = version.Ver
+	}
+	txn, err := seCtx.Txn(true)
+	if err != nil {
+		return err
+	}
+	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
+	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
+	return nil
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
@@ -584,9 +580,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
 		errStr := err.Error()
 		conflictCommitTS := extractConflictCommitTS(errStr)
-		if conflictCommitTS == 0 {
-			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS when write conflicted", zap.String("err", errStr))
-		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -596,24 +589,29 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 			newForUpdateTS = conflictCommitTS
 		}
 	} else {
+		// this branch if err not nil, always update forUpdateTS to avoid problem described below
+		// for nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn
+		// the select for updateTs must be updated, otherwise there maybe rollback problem.
+		// begin;  select for update key1(here ErrLocked or other errors(or max_execution_time like util),
+		//         key1 lock not get and async rollback key1 is raised)
+		//         select for update key1 again(this time lock succ(maybe lock released by others))
+		//         the async rollback operation rollbacked the lock just acquired
+		if err != nil {
+			tsErr := UpdateForUpdateTS(a.Ctx, 0)
+			if tsErr != nil {
+				return nil, tsErr
+			}
+		}
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	if newForUpdateTS == 0 {
-		newForUpdateTS, err = a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	txnCtx.SetForUpdateTS(newForUpdateTS)
-	txn, err := a.Ctx.Txn(true)
+	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
 	}
-	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -860,14 +858,28 @@ func (a *ExecStmt) SummaryStmt() {
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
+
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.String()
+	}
+
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:    sessVars.CurrentDB,
-		OriginalSQL:   a.Text,
-		NormalizedSQL: normalizedSQL,
-		Digest:        digest,
-		TotalLatency:  uint64(costTime.Nanoseconds()),
-		AffectedRows:  stmtCtx.AffectedRows(),
-		SentRows:      0,
-		StartTime:     sessVars.StartTime,
+		SchemaName:     strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:    a.Text,
+		NormalizedSQL:  normalizedSQL,
+		Digest:         digest,
+		User:           userString,
+		TotalLatency:   costTime,
+		ParseLatency:   sessVars.DurationParse,
+		CompileLatency: sessVars.DurationCompile,
+		StmtCtx:        stmtCtx,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     &execDetail,
+		MemMax:         memMax,
+		StartTime:      sessVars.StartTime,
 	})
 }

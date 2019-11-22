@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -247,7 +248,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg_9 2.00 root group by:Column#6, funcs:count(Column#5)",
+		"HashAgg_9 2.00 root group by:Column#1, funcs:count(Column#4)",
 		"└─TableReader_10 2.00 root data:HashAgg_5",
 		"  └─HashAgg_5 2.00 cop[tikv] group by:Column#1, funcs:count(1)",
 		"    └─TableScan_8 8.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
@@ -393,7 +394,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -443,7 +444,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -559,7 +560,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -635,7 +636,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -699,7 +700,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
-			"Projection_11 10.00 root Column#15",
+			"Projection_11 10.00 root Column#14",
 			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(Column#3, Column#13)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
@@ -890,7 +891,7 @@ func BenchmarkOptimize(b *testing.B) {
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()
@@ -1017,4 +1018,42 @@ func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
+}
+
+func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("desc select * from t").Check(testkit.Rows(
+		"TableReader_7 10000.00 root data:TableScan_6",
+		"└─TableScan_6 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("desc select /*+ read_from_storage(tikv[t]) */ * from t").Check(testkit.Rows(
+		"TableReader_5 10000.00 root data:TableScan_4",
+		"└─TableScan_4 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
+		"TableReader_6 2.00 root data:TableScan_5",
+		"└─TableScan_5 2.00 cop[tikv] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo",
+	))
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
+		"TableReader_7 2.00 root data:Selection_6",
+		"└─Selection_6 2.00 cop[tiflash] or(eq(Column#1, 1), eq(Column#1, 2))",
+		"  └─TableScan_5 2.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
 }

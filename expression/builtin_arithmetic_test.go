@@ -21,14 +21,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
-	defer testleak.AfterTest(c)()
-
 	ret := &types.FieldType{}
 	a := &types.FieldType{
 		Decimal: 1,
@@ -93,8 +90,6 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
-	defer testleak.AfterTest(c)()
-
 	ret := &types.FieldType{}
 	a := &types.FieldType{
 		Decimal: 1,
@@ -120,8 +115,6 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
-	defer testleak.AfterTest(c)()
-
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
 
@@ -200,8 +193,6 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
-	defer testleak.AfterTest(c)()
-
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
 
@@ -279,7 +270,6 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
-	defer testleak.AfterTest(c)()
 	testCases := []struct {
 		args   []interface{}
 		expect interface{}
@@ -322,7 +312,6 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
-	defer testleak.AfterTest(c)()
 	testCases := []struct {
 		args   []interface{}
 		expect interface{}
@@ -390,7 +379,6 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
-	defer testleak.AfterTest(c)()
 	testCases := []struct {
 		args   []interface{}
 		expect []interface{}
@@ -504,7 +492,6 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
-	defer testleak.AfterTest(c)()
 	testCases := []struct {
 		args   []interface{}
 		expect interface{}

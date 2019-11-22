@@ -83,6 +83,12 @@ func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
+
+	old := config.GetGlobalConfig()
+	new := *old
+	new.Log.SlowThreshold = 30000 // 30s
+	config.StoreGlobalConfig(&new)
+
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
@@ -96,8 +102,13 @@ var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
 var _ = Suite(&testSuite5{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
+var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
+var _ = Suite(&testSuiteAgg{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
+var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -456,7 +467,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	err = tk.Se.CommitTxn(context.Background())
 	c.Assert(err, IsNil)
@@ -1407,7 +1418,7 @@ func (s *testSuiteP1) TestTablePKisHandleScan(c *C) {
 	}
 }
 
-func (s *testSuiteP1) TestIndexScan(c *C) {
+func (s *testSuite8) TestIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1622,19 +1633,21 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	result.Check(testkit.Rows(`3 {} <nil>`))
 
 	// Check cast json to decimal.
-	tk.MustExec("drop table if exists test_json")
-	tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
-	tk.MustExec(`insert into test_json (b) values
-		('{"c": "1267.1"}'),
-		('{"c": "1267.01"}'),
-		('{"c": "1267.1234"}'),
-		('{"c": "1267.3456"}'),
-		('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
-		('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
-
-	tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
-		"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
-		"1234567890123456789012345678901234567890123456789012345.12"))
+	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
+	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12178
+	//tk.MustExec("drop table if exists test_json")
+	//tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
+	//tk.MustExec(`insert into test_json (b) values
+	//	('{"c": "1267.1"}'),
+	//	('{"c": "1267.01"}'),
+	//	('{"c": "1267.1234"}'),
+	//	('{"c": "1267.3456"}'),
+	//	('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
+	//	('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
+	//
+	//tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
+	//	"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
+	//	"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
 func (s *testSuiteP1) TestMultiUpdate(c *C) {
@@ -1826,6 +1839,13 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10, n.a = n.a + 10`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `18 8 26 144 52`))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(18)")
+	tk.MustExec("update test_gc_read set a = a+1 where a in (select a from t)")
+	result = tk.MustQuery("select * from test_gc_read order by a")
+	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `19 8 27 152 54`))
 
 	// Test different types between generation expression and generated column.
 	tk.MustExec(`CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED)`)
@@ -2076,7 +2096,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -2388,7 +2408,7 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
-func (s *testSuiteP2) TestLowResolutionTSORead(c *C) {
+func (s *testSuite2) TestLowResolutionTSORead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@autocommit=1")
 	tk.MustExec("use test")
@@ -2828,7 +2848,7 @@ func (s *testSuite1) TearDownTest(c *C) {
 	}
 }
 
-func (s *testSuite1) TestAddIndexPriority(c *C) {
+func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -3815,11 +3835,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'test.view_t.a' in 'field list'")
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view2")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'test.view_t.a' in 'field list'")
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view3")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'field list'")
+	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(a int,b int,c int)")
 	tk.MustExec("insert into view_t values(1,2,3)")
@@ -3942,6 +3962,24 @@ type testSuite7 struct {
 }
 
 func (s *testSuite7) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
+type testSuite8 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite8) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show full tables")
@@ -4116,7 +4154,7 @@ func (s *testSuiteP2) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
-func (s *testSuite) TestShowTableRegion(c *C) {
+func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
@@ -4396,7 +4434,7 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 }
 
 func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.oom = &oomCapturer{r.Core, ""}
 	lg := zap.New(s.oom)
@@ -4436,9 +4474,10 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 }
 
 func setOOMAction(action string) {
-	newConf := config.NewConfig()
+	old := config.GetGlobalConfig()
+	newConf := *old
 	newConf.OOMAction = action
-	config.StoreGlobalConfig(newConf)
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
@@ -4527,6 +4566,11 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+}
+
+func (s *testRecoverTable) TearDownSuite(c *C) {
+	s.store.Close()
+	s.dom.Close()
 }
 
 func (s *testRecoverTable) TestRecoverTable(c *C) {
@@ -5022,4 +5066,22 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
 	tk1.MustExec("commit")
 
 	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
+}
+
+func (s *testSuite1) TestPartitionHashCode(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by hash (c1) partitions 4;`)
+	wg := sync.WaitGroup{}
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk1 := testkit.NewTestKitWithInit(c, s.store)
+			for i := 0; i < 5; i++ {
+				tk1.MustExec("select * from t")
+			}
+		}()
+	}
+	wg.Wait()
 }

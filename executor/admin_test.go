@@ -399,6 +399,101 @@ func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test_p")
+	tk.MustExec("create table admin_test_p (c1 int key,c2 int,c3 int,index idx(c2)) partition by hash(c1) partitions 4")
+	tk.MustExec("insert admin_test_p (c1, c2, c3) values (0,0,0), (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	tk.MustExec("admin check table admin_test_p")
+
+	// Make some corrupted index. Build the index information.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test_p")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	tk.Se.GetSessionVars().MaxChunkSize = 3
+
+	// Reduce one row of index on partitions.
+	// Table count > index count.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i), int64(i), nil)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
+		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+		// TODO: fix admin recover for partition table.
+		//r := tk.MustQuery("admin recover index admin_test_p idx")
+		//r.Check(testkit.Rows("0 0"))
+		//tk.MustExec("admin check table admin_test_p")
+		// Manual recover index.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+
+	// Add one row of index on partitions.
+	// Table count < index count.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i+8), int64(i+8))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
+		// TODO: fix admin recover for partition table.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i+8), nil)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+
+	// Table count = index count, but the index value was wrong.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i+8), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
+		// TODO: fix admin recover for partition table.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i), nil)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+}
+
 func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -505,7 +600,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite1) TestAdminCheckTable(c *C) {
+func (s *testSuite2) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -525,8 +620,8 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists test`)
 	tk.MustExec(`create table test (
 		a time,
- 		PRIMARY KEY (a)
- 		);`)
+		PRIMARY KEY (a)
+		);`)
 
 	tk.MustExec(`insert into test set a='12:10:36';`)
 	tk.MustExec(`admin check table test`)
@@ -618,7 +713,7 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`insert into t1 set a='1.9'`)
 	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify decimal column precision")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change decimal column precision")
 	tk.MustExec(`delete from t1;`)
 	tk.MustExec(`admin check table t1;`)
 }

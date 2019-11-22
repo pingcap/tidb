@@ -100,3 +100,22 @@ func (s *testBatchPointGetSuite) TestBatchPointGetExec(c *C) {
 		"4",
 	))
 }
+
+func (s *testBatchPointGetSuite) TestBatchPointGetInTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key auto_increment, name varchar(30))")
+
+	// Fix a bug that BatchPointGetExec doesn't consider membuffer data in a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (4, 'name')")
+	tk.MustQuery("select * from t where id in (4)").Check(testkit.Rows("4 name"))
+	tk.MustExec("rollback")
+
+	// Pessimistic transaction doesn't use BatchPointGet! Make sure this work.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (4, 'name')")
+	tk.MustQuery("select * from t where id in (4)").Check(testkit.Rows("4 name"))
+	tk.MustExec("rollback")
+}

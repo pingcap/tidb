@@ -1355,6 +1355,10 @@ func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Tim
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
 func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
+	// MySQL compatibility: 0.0 should not be converted to null, see #11203
+	if len(str) >= 3 && str[:3] == "0.0" {
+		return Time{Time: ZeroTime, Type: tp}, nil
+	}
 	return parseTime(sc, str, tp, fsp, true)
 }
 
@@ -1395,6 +1399,10 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
+	// MySQL compatibility: 0 should not be converted to null, see #11203
+	if num == 0 {
+		return Time{Time: ZeroTime, Type: tp}, nil
+	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
@@ -1525,7 +1533,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
 	}
 
-	if _, err := t.GoTime(gotime.Local); err != nil {
+	if _, err := t.GoTime(sc.TimeZone); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2491,25 +2499,6 @@ var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 
 // numericRegex: it was for any numeric characters
 var numericRegex = regexp.MustCompile("[0-9]+")
-
-// parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
-// It returns the parsed int, and remain data after parse.
-func parseTwoNumeric(input string) (int, string) {
-	if len(input) > 1 && input[0] == '0' {
-		return 0, input[1:]
-	}
-	matched := twoDigitRegex.FindAllString(input, -1)
-	if len(matched) == 0 {
-		return 0, input
-	}
-
-	str := matched[0]
-	v, err := strconv.ParseInt(str, 10, 64)
-	if err != nil {
-		return 0, input
-	}
-	return int(v), input[len(str):]
-}
 
 func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input) // 0..31

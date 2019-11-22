@@ -16,7 +16,6 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -37,7 +36,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 	}
 	conditions = expression.PropagateConstant(p.SCtx(), conditions)
 	// Return table dual when filter is constant false or null.
-	dual := conds2TableDual(child, conditions)
+	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		return
@@ -79,7 +78,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, p.Conditions)
+		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			return nil, dual
 		}
@@ -121,7 +120,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.outerJoinPropConst(predicates)
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -138,7 +137,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
 		predicates = p.outerJoinPropConst(predicates)
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -163,7 +162,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, tempCond)
+		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual
 		}
@@ -177,7 +176,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.ctx, predicates)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -276,7 +275,6 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}
 	p.schema.Append(col)
@@ -342,7 +340,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
-	expr = expression.PushDownNot(nil, expr, false)
+	expr = expression.PushDownNot(nil, expr)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.InNullRejectCheck = true
 	result := expression.EvaluateExprWithNull(ctx, schema, expr)
@@ -392,11 +390,6 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p
 }
 
-// getGbyColIndex gets the column's index in the group-by columns.
-func (la *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
-	return expression.NewSchema(la.groupByCols...).ColumnIndex(col)
-}
-
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
@@ -404,6 +397,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
+	groupByColumns := expression.NewSchema(la.groupByCols...)
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:
@@ -416,7 +410,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 			extractedCols := expression.ExtractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {
-				if la.getGbyColIndex(col) == -1 {
+				if !groupByColumns.Contains(col) {
 					ok = false
 					break
 				}
@@ -514,8 +508,8 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	return nil
 }
 
-// conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
+// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
+func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if len(conds) != 1 {
 		return nil
 	}

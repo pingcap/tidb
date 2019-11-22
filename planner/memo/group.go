@@ -144,21 +144,31 @@ func (g *Group) Delete(e *GroupExpr) {
 		return // Can not find the target GroupExpr.
 	}
 
+	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
+	if g.FirstExpr[operand] == equiv {
+		// The target GroupExpr is the first Element of the same Operand.
+		// We need to change the FirstExpr to the next Expr, or delete the FirstExpr.
+		nextElem := equiv.Next()
+		if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
+			g.FirstExpr[operand] = nextElem
+		} else {
+			// There is no more GroupExpr of the Operand, so we should
+			// delete the FirstExpr of this Operand.
+			delete(g.FirstExpr, operand)
+		}
+	}
+
 	g.Equivalents.Remove(equiv)
 	delete(g.Fingerprints, fingerprint)
 	e.Group = nil
+}
 
-	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
-	if g.FirstExpr[operand] != equiv {
-		return // The target GroupExpr is not the first Element of the same Operand.
-	}
-
-	nextElem := equiv.Next()
-	if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
-		g.FirstExpr[operand] = nextElem
-		return // The first Element of the same Operand has been changed.
-	}
-	delete(g.FirstExpr, operand)
+// DeleteAll deletes all of the GroupExprs in the Group.
+func (g *Group) DeleteAll() {
+	g.Equivalents = list.New()
+	g.Fingerprints = make(map[string]*list.Element)
+	g.FirstExpr = make(map[Operand]*list.Element)
+	g.SelfFingerprint = ""
 }
 
 // Exists checks whether a Group expression existed in a Group.

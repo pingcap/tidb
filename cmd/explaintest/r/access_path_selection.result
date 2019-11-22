@@ -15,9 +15,9 @@ IndexReader_6	3323.33	root	index:IndexScan_5
 └─IndexScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where b < 3;
 id	count	task	operator info
-IndexReader_13	3323.33	root	index:Selection_12
-└─Selection_12	3323.33	cop[tikv]	lt(Column#2, 3)
-  └─IndexScan_11	10000.00	cop[tikv]	table:access_path_selection, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+TableReader_7	3323.33	root	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]	lt(Column#2, 3)
+  └─TableScan_5	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3 and b < 3;
 id	count	task	operator info
 IndexReader_11	1104.45	root	index:Selection_10
@@ -38,7 +38,7 @@ StreamAgg_13	1.00	root	funcs:max(Column#3)
       └─TableScan_25	1.25	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
 explain select count(1) from access_path_selection;
 id	count	task	operator info
-StreamAgg_28	1.00	root	funcs:count(Column#7)
-└─IndexReader_29	1.00	root	index:StreamAgg_8
+StreamAgg_28	1.00	root	funcs:count(Column#18)
+└─TableReader_29	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tikv]	funcs:count(1)
-    └─IndexScan_25	10000.00	cop[tikv]	table:access_path_selection, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+    └─TableScan_24	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
