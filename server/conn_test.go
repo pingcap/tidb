@@ -487,11 +487,11 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 			capability: defaultCapability,
 		},
 		status: connStatusReading,
-		ctx: tc,
+		ctx:    tc,
 	}
-	c.Assert(cc.ShutdownOrNotify(),Equals,true)
-	c.Assert(cc.status,Equals,connStatusShutdown)
+	c.Assert(cc.ShutdownOrNotify(), Equals, true)
+	c.Assert(cc.status, Equals, connStatusShutdown)
 	cc.status = connStatusDispatching
-	c.Assert(cc.ShutdownOrNotify(),Equals,false)
-	c.Assert(cc.status,Equals,connStatusWaitShutdown)
+	c.Assert(cc.ShutdownOrNotify(), Equals, false)
+	c.Assert(cc.status, Equals, connStatusWaitShutdown)
 }
