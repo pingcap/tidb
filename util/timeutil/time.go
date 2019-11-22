@@ -15,6 +15,7 @@ package timeutil
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -45,10 +46,15 @@ type locCache struct {
 	locMap map[string]*time.Location
 }
 
-// InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
+// InferSystemTZ reads system timezone from `TZ` and time.Local. If both of them are failed, system timezone will be set to `UTC`.
 // It is exported because we need to use it during bootstrap stage. And it should be only used at that stage.
 func InferSystemTZ() string {
-	tz := time.Local.String()
+	tz := os.Getenv("TZ")
+	_, err := time.LoadLocation(tz)
+	if err == nil {
+		return tz
+	}
+	tz = time.Local.String()
 	if tz != "Local" {
 		return tz
 	}
