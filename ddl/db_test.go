@@ -297,7 +297,7 @@ LOOP:
 			if times >= 10 {
 				break
 			}
-			step := 10
+			step := 5
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
@@ -323,7 +323,7 @@ LOOP:
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite2) TestCancelAddPrimaryKey(c *C) {
+func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
@@ -402,7 +402,7 @@ LOOP:
 			if times >= 10 {
 				break
 			}
-			step := 10
+			step := 5
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
@@ -992,7 +992,7 @@ LOOP:
 			if num > defaultBatchSize*10 {
 				break
 			}
-			step := 10
+			step := 5
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
@@ -1024,20 +1024,9 @@ LOOP:
 	rows := tk.MustQuery(fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start)).Rows()
 	matchRows(c, rows, expectedRows)
 
+	tk.MustExec("admin check table test_add_index")
 	if testPartition {
-		tk.MustExec("admin check table test_add_index")
 		return
-	}
-
-	// Test index range with lower/upper boundary and random inner cases
-	step := len(keys) / 20
-	for i := 0; i <= 20; i++ {
-		index := i * step
-		if index > len(keys)-3 {
-			index = len(keys) - 3
-		}
-		rows := tk.MustQuery("select c1 from test_add_index where c3 >= ? order by c1 limit 3", keys[index]).Rows()
-		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
 	// TODO: Support explain in future.
@@ -1238,7 +1227,7 @@ LOOP:
 			}
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
-			step := 10
+			step := 5
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
@@ -2085,7 +2074,7 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
-func (s *testDBSuite2) TestFKOnGeneratedColumns(c *C) {
+func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	// test add foreign key to generated column
