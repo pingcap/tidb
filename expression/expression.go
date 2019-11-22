@@ -74,7 +74,7 @@ type ReverseExpr interface {
 	SupportReverseEval() bool
 
 	// ReverseEval evaluates the only one column value with given function result.
-	ReverseEval(res types.Datum, rType RoundingType) (val types.Datum, err error)
+	ReverseEval(res types.Datum, rType RoundingType, col *Column) (val types.Datum, err error)
 
 	// ReverseEvalInt evaluates the only one column int value with given function result.
 	ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error)

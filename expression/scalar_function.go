@@ -122,8 +122,8 @@ func (sf *ScalarFunction) SupportReverseEval() bool {
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (sf *ScalarFunction) ReverseEval(res types.Datum, rType RoundingType) (val types.Datum, err error) {
-	switch sf.RetType.EvalType() {
+func (sf *ScalarFunction) ReverseEval(res types.Datum, rType RoundingType, col *Column) (val types.Datum, err error) {
+	switch col.RetType.EvalType() {
 	case types.ETInt:
 		ret, err := sf.ReverseEvalInt(res, rType)
 		return types.NewIntDatum(ret), err
