@@ -26,7 +26,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/jeremywohl/flatten v0.0.0-20190921043622-d936035e55cf
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
-	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
@@ -39,7 +38,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20191118050206-47672e7eabc0
 	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
-	github.com/pingcap/parser v0.0.0-20191120165920-d5c49d11cc64
+	github.com/pingcap/parser v0.0.0-20191120083129-cbaf2bd7f17d
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
 	github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible
 	github.com/pingcap/tipb v0.0.0-20191120020146-6161b015e21e
@@ -61,9 +60,9 @@ require (
 	go.uber.org/atomic v1.5.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.12.0
-	golang.org/x/crypto v0.0.0-20191119213627-4f8c1d86b1ba // indirect
+	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20191120155948-bd437916bb0e
+	golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	golang.org/x/tools v0.0.0-20191107010934-f79515f33823
