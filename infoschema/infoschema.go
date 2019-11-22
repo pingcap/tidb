@@ -320,24 +320,24 @@ func (h *Handle) EmptyClone() *Handle {
 // Schema error codes.
 const (
 	codeDBDropExists      terror.ErrCode = 1008
-	codeDatabaseNotExists                = 1049
-	codeTableNotExists                   = 1146
-	codeColumnNotExists                  = 1054
+	codeDatabaseNotExists terror.ErrCode = 1049
+	codeTableNotExists    terror.ErrCode = 1146
+	codeColumnNotExists   terror.ErrCode = 1054
 
-	codeCannotAddForeign    = 1215
-	codeForeignKeyNotExists = 1091
-	codeWrongFkDef          = 1239
+	codeCannotAddForeign    terror.ErrCode = 1215
+	codeForeignKeyNotExists terror.ErrCode = 1091
+	codeWrongFkDef          terror.ErrCode = 1239
 
-	codeDatabaseExists   = 1007
-	codeTableExists      = 1050
-	codeBadTable         = 1051
-	codeBadUser          = 3162
-	codeColumnExists     = 1060
-	codeIndexExists      = 1831
-	codeMultiplePriKey   = 1068
-	codeTooManyKeyParts  = 1070
-	codeKeyNameDuplicate = 1061
-	codeKeyNotExists     = 1176
+	codeDatabaseExists   terror.ErrCode = 1007
+	codeTableExists      terror.ErrCode = 1050
+	codeBadTable         terror.ErrCode = 1051
+	codeBadUser          terror.ErrCode = 3162
+	codeColumnExists     terror.ErrCode = 1060
+	codeIndexExists      terror.ErrCode = 1831
+	codeMultiplePriKey   terror.ErrCode = 1068
+	codeTooManyKeyParts  terror.ErrCode = 1070
+	codeKeyNameDuplicate terror.ErrCode = 1061
+	codeKeyNotExists     terror.ErrCode = 1176
 
 	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
 	codeErrTableNotLocked         = mysql.ErrTableNotLocked

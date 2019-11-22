@@ -67,7 +67,6 @@ var (
 )
 
 var (
-
 	// ErrDBExists is the error for db exists.
 	ErrDBExists = terror.ClassMeta.New(codeDatabaseExists, "database already exists")
 	// ErrDBNotExists is the error for db not exists.
@@ -820,13 +819,10 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 
 // meta error codes.
 const (
-	codeInvalidTableKey terror.ErrCode = 1
-	codeInvalidDBKey                   = 2
-
-	codeDatabaseExists    = 1007
-	codeDatabaseNotExists = 1049
-	codeTableExists       = 1050
-	codeTableNotExists    = 1146
+	codeDatabaseExists    terror.ErrCode = 1007
+	codeDatabaseNotExists terror.ErrCode = 1049
+	codeTableExists       terror.ErrCode = 1050
+	codeTableNotExists    terror.ErrCode = 1146
 )
 
 func init() {
