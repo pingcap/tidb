@@ -2516,6 +2516,11 @@ func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (it *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
+}
+
 // Allocator implements table.Table Allocator interface.
 func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
@@ -2631,6 +2636,11 @@ func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, n
 // AllocHandle implements table.Table AllocHandle interface.
 func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
+}
+
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (vt *VirtualTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Allocator interface.
