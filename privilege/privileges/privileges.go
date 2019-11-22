@@ -138,7 +138,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
-		p.host = host
+		p.host = h
 		success = true
 		return
 	}
@@ -158,7 +158,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	p.user = user
-	p.host = host
+	p.host = h
 	success = true
 	return
 }
