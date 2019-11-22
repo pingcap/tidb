@@ -36,6 +36,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
+	DefTxnEntryCountLimit = 300 * 1000
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -68,6 +70,7 @@ type Config struct {
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
@@ -196,6 +199,8 @@ type Performance struct {
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -337,6 +342,7 @@ var defaultConf = Config{
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
+	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
@@ -375,6 +381,8 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
+		TxnEntryCountLimit:  DefTxnEntryCountLimit,
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

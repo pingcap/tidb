@@ -410,7 +410,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		return newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {
-		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable())
+		return kv.ErrTxnRetryable.GenWithStackByArgs("tikv restarts txn: " + keyErr.GetRetryable())
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())

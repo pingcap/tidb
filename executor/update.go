@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -52,13 +53,18 @@ type UpdateExec struct {
 	evalBuffer     chunk.MutRow
 }
 
-func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
+func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
 	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
 	if err != nil {
 		return nil, err
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
+	}
+	if config.GetGlobalConfig().EnableBatchDML && e.cursor%e.ctx.GetSessionVars().DMLBatchSize == 0 && e.cursor != 0 {
+		if err = batchDMLCommit(ctx, e.ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[int64]map[int64]bool)
@@ -148,7 +154,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(e.rows)))
 
 		for {
-			row, err := e.exec(e.children[0].Schema())
+			row, err := e.exec(ctx, e.children[0].Schema())
 			if err != nil {
 				return err
 			}

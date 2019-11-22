@@ -311,6 +311,19 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableStreaming = false
+	s.testAnalyzeIncremental(tk, c)
+}
+
+func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableStreaming = true
+	s.testAnalyzeIncremental(tk, c)
+}
+
+func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
 	tk.MustExec("analyze incremental table t index")

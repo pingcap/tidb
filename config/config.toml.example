@@ -41,6 +41,9 @@ mem-quota-query = 34359738368
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
@@ -184,6 +187,18 @@ force-priority = "NO_PRIORITY"
 
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
+
+# The limitation of the number for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-entry-count-limit = 300000
+
+# The limitation of the size in byte for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
