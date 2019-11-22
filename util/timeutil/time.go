@@ -116,3 +116,18 @@ func Zone(loc *time.Location) (string, int64) {
 
 	return name, int64(offset)
 }
+
+// WithinDayTimePeriod tests whether `now` is between `start` and `end`.
+func WithinDayTimePeriod(start, end, now time.Time) bool {
+	// Converts to UTC and only keeps the hour and minute info.
+	start, end, now = start.UTC(), end.UTC(), now.UTC()
+	start = time.Date(0, 0, 0, start.Hour(), start.Minute(), 0, 0, time.UTC)
+	end = time.Date(0, 0, 0, end.Hour(), end.Minute(), 0, 0, time.UTC)
+	now = time.Date(0, 0, 0, now.Hour(), now.Minute(), 0, 0, time.UTC)
+	// for cases like from 00:00 to 06:00
+	if end.Sub(start) >= 0 {
+		return now.Sub(start) >= 0 && now.Sub(end) <= 0
+	}
+	// for cases like from 22:00 to 06:00
+	return now.Sub(end) <= 0 || now.Sub(start) >= 0
+}
