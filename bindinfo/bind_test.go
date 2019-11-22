@@ -443,7 +443,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
-	s.domain.BindHandle().CaptureBaselines()
+	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t")
@@ -518,7 +518,7 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	// It cannot choose table path although it has lowest cost.
 	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-	domain.GetDomain(tk.Se).BindHandle().SaveEvolveTasksToStore()
+	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")

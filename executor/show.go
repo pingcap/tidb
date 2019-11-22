@@ -362,13 +362,6 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	return nil
 }
 
-func createOptions(tb *model.TableInfo) string {
-	if tb.GetPartitionInfo() != nil {
-		return "partitioned"
-	}
-	return ""
-}
-
 func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
 

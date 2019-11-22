@@ -70,7 +70,8 @@ type BindHandle struct {
 	bindInfo struct {
 		sync.Mutex
 		atomic.Value
-		parser *parser.Parser
+		parser         *parser.Parser
+		lastUpdateTime types.Time
 	}
 
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
@@ -79,10 +80,6 @@ type BindHandle struct {
 
 	// pendingVerifyBindRecordMap indicates the pending verify bind records that found during query.
 	pendingVerifyBindRecordMap tmpBindRecordMap
-
-	lastUpdateTime types.Time
-
-	parser4Baseline *parser.Parser
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -106,7 +103,6 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle.sctx.Context = ctx
 	handle.bindInfo.Value.Store(make(cache, 32))
 	handle.bindInfo.parser = parser.New()
-	handle.parser4Baseline = parser.New()
 	handle.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
 		// We do not need the first two parameters because they are only use to generate hint,
@@ -124,10 +120,16 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 
 // Update updates the global sql bind cache.
 func (h *BindHandle) Update(fullLoad bool) (err error) {
+	h.bindInfo.Lock()
+	lastUpdateTime := h.bindInfo.lastUpdateTime
+	h.bindInfo.Unlock()
+
 	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	if !fullLoad {
-		sql += " where update_time >= \"" + h.lastUpdateTime.String() + "\""
+		sql += " where update_time >= \"" + lastUpdateTime.String() + "\""
 	}
+	// We need to apply the updates by order, wrong apply order of same original sql may cause inconsistent state.
+	sql += " order by update_time"
 
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
@@ -140,6 +142,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	defer func() {
+		h.bindInfo.lastUpdateTime = lastUpdateTime
 		h.bindInfo.Value.Store(newCache)
 		h.bindInfo.Unlock()
 	}()
@@ -147,8 +150,8 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	for _, row := range rows {
 		hash, meta, err := h.newBindRecord(row)
 		// Update lastUpdateTime to the newest one.
-		if meta.Bindings[0].UpdateTime.Compare(h.lastUpdateTime) > 0 {
-			h.lastUpdateTime = meta.Bindings[0].UpdateTime
+		if meta.Bindings[0].UpdateTime.Compare(lastUpdateTime) > 0 {
+			lastUpdateTime = meta.Bindings[0].UpdateTime
 		}
 		if err != nil {
 			logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -156,8 +159,8 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		}
 
 		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-		newRecord := merge(oldRecord, meta)
-		if meta.HasUsingBinding() {
+		newRecord := merge(oldRecord, meta).removeDeletedBindings()
+		if len(newRecord.Bindings) > 0 {
 			newCache.setBindRecord(hash, newRecord)
 		} else {
 			newCache.removeDeletedBindRecord(hash, oldRecord)
@@ -542,9 +545,10 @@ var GenHintsFromSQL func(ctx context.Context, sctx sessionctx.Context, node ast.
 
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
+	parser4Capture := parser.New()
 	schemas, sqls := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceSelect()
 	for i := range sqls {
-		stmt, err := h.parser4Baseline.ParseOneStmt(sqls[i], "", "")
+		stmt, err := parser4Capture.ParseOneStmt(sqls[i], "", "")
 		if err != nil {
 			logutil.BgLogger().Debug("parse SQL failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
@@ -766,5 +770,5 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 func (h *BindHandle) Clear() {
 	h.bindInfo.Store(make(cache))
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
-	h.lastUpdateTime = types.ZeroTimestamp
+	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 }
