@@ -32,15 +32,18 @@ import (
 	"go.uber.org/zap"
 )
 
-type statsCache map[int64]*Table
+// statsCache caches the tables in memory for Handle.
+type statsCache struct {
+	tables map[int64]*Table
+	// version is the latest version of cache.
+	version uint64
+}
 
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
 		sync.Mutex
 		ctx sessionctx.Context
-		// lastVersion is the latest update version before last lease.
-		lastVersion uint64
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
 		// pid2tid is the map from partition ID to table ID.
@@ -49,9 +52,15 @@ type Handle struct {
 		schemaVersion int64
 	}
 
+	// It can be read by multiply readers at the same time without acquire lock, but it can be
+	// written only after acquire the lock.
+	statsCache struct {
+		sync.Mutex
+		atomic.Value
+	}
+
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
-	statsCache atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *util.Event
@@ -68,8 +77,7 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
-	h.statsCache.Store(statsCache{})
-	h.mu.lastVersion = 0
+	h.statsCache.Store(statsCache{tables: make(map[int64]*Table)})
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -99,7 +107,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	}
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache.Store(statsCache{})
+	handle.statsCache.Store(statsCache{tables: make(map[int64]*Table)})
 	return handle
 }
 
@@ -118,7 +126,8 @@ func DurationToTS(d time.Duration) uint64 {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
-	lastVersion := h.LastUpdateVersion()
+	oldCache := h.statsCache.Load().(statsCache)
+	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
@@ -169,10 +178,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.name = getFullTableName(is, tableInfo)
 		tables = append(tables, tbl)
 	}
-	h.mu.Lock()
-	h.mu.lastVersion = lastVersion
-	h.UpdateTableStats(tables, deletedTableIDs)
-	h.mu.Unlock()
+	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
 	return nil
 }
 
@@ -211,43 +217,54 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[pid]
+	statsCache := h.statsCache.Load().(statsCache)
+	tbl, ok := statsCache.tables[pid]
 	if !ok {
 		tbl = PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
-		h.UpdateTableStats([]*Table{tbl}, nil)
+		h.updateStatsCache(statsCache.update([]*Table{tbl}, nil, statsCache.version))
 		return tbl
 	}
 	return tbl
 }
 
-func (h *Handle) copyFromOldCache() statsCache {
-	newCache := statsCache{}
+func (h *Handle) updateStatsCache(newCache statsCache) {
+	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
-	for k, v := range oldCache {
-		newCache[k] = v
+	if oldCache.version <= newCache.version {
+		h.statsCache.Store(newCache)
+	}
+	h.statsCache.Unlock()
+}
+
+func (sc statsCache) copy() statsCache {
+	newCache := statsCache{tables: make(map[int64]*Table, len(sc.tables)), version: sc.version}
+	for k, v := range sc.tables {
+		newCache.tables[k] = v
 	}
 	return newCache
 }
 
-// UpdateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
-	newCache := h.copyFromOldCache()
+// update updates the statistics table cache using copy on write.
+func (sc statsCache) update(tables []*Table, deletedIDs []int64, newVersion uint64) statsCache {
+	newCache := sc.copy()
+	newCache.version = newVersion
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		newCache[id] = tbl
+		newCache.tables[id] = tbl
 	}
 	for _, id := range deletedIDs {
-		delete(newCache, id)
+		delete(newCache.tables, id)
 	}
-	h.statsCache.Store(newCache)
+	return newCache
 }
 
 // LoadNeededHistograms will load histograms for those needed columns.
 func (h *Handle) LoadNeededHistograms() error {
 	cols := histogramNeededColumns.allCols()
 	for _, col := range cols {
-		tbl, ok := h.statsCache.Load().(statsCache)[col.tableID]
+		statsCache := h.statsCache.Load().(statsCache)
+		tbl, ok := statsCache.tables[col.tableID]
 		if !ok {
 			continue
 		}
@@ -266,7 +283,7 @@ func (h *Handle) LoadNeededHistograms() error {
 			return errors.Trace(err)
 		}
 		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount()), isHandle: c.isHandle}
-		h.UpdateTableStats([]*Table{tbl}, nil)
+		h.updateStatsCache(statsCache.update([]*Table{tbl}, nil, statsCache.version))
 		histogramNeededColumns.delete(col)
 	}
 	return nil
@@ -274,16 +291,13 @@ func (h *Handle) LoadNeededHistograms() error {
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.mu.lastVersion
+	return h.statsCache.Load().(statsCache).version
 }
 
 // SetLastUpdateVersion sets the last update version.
 func (h *Handle) SetLastUpdateVersion(version uint64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.mu.lastVersion = version
+	statsCache := h.statsCache.Load().(statsCache)
+	h.updateStatsCache(statsCache.update(nil, nil, version))
 }
 
 // FlushStats flushes the cached stats update into store.
