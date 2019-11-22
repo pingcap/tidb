@@ -83,7 +83,7 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = setUpRPCService(c, "0.0.0.0:10091")
+	s.rpcserver = setUpRPCService(c, "0.0.0.0:10080")
 }
 
 func setUpRPCService(c *C, addr string) *grpc.Server {
