@@ -1047,6 +1047,30 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustExec("set tidb_force_priority = 'DELAYED'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
 	cli.mu.Lock()
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()

@@ -52,6 +52,7 @@ const (
 	rulePushSelDownSort
 	rulePushSelDownProjection
 	rulePushSelDownAggregation
+	rulePushSelDownJoin
 	ruleEnumeratePaths
 	rulePushAggDownGather
 	ruleTransformLimitToTopN
@@ -63,6 +64,7 @@ var transformationRuleList = []Transformation{
 	&PushSelDownSort{},
 	&PushSelDownProjection{},
 	&PushSelDownAggregation{},
+	&PushSelDownJoin{},
 	&EnumeratePaths{},
 	&PushAggDownGather{},
 	&TransformLimitToTopN{},
@@ -75,6 +77,7 @@ var defaultTransformationMap = map[memo.Operand][]TransformationID{
 		rulePushSelDownSort,
 		rulePushSelDownProjection,
 		rulePushSelDownAggregation,
+		rulePushSelDownJoin,
 	},
 	memo.OperandDataSource: {
 		ruleEnumeratePaths,
@@ -542,4 +545,90 @@ func (r *TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	topNExpr := memo.NewGroupExpr(topN)
 	topNExpr.SetChildren(childGroup)
 	return []*memo.GroupExpr{topNExpr}, true, false, nil
+}
+
+// PushSelDownJoin pushes Selection through Join.
+type PushSelDownJoin struct {
+}
+
+// GetPattern implements Transformation interface.
+// The pattern of this rule is `Selection -> Join`.
+func (r *PushSelDownJoin) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
+func buildChildSelectionGroup(
+	oldSel *plannercore.LogicalSelection,
+	conditions []expression.Expression,
+	childGroup *memo.Group) *memo.Group {
+	if len(conditions) == 0 {
+		return childGroup
+	}
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(oldSel.SCtx(), oldSel.SelectBlockOffset())
+	groupExpr := memo.NewGroupExpr(newSel)
+	groupExpr.SetChildren(childGroup)
+	newChild := memo.NewGroupWithSchema(groupExpr, childGroup.Prop.Schema)
+	return newChild
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the Selection through Join. Besides, this rule fulfills the `XXXConditions` field of Join.
+func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	joinExpr := old.Children[0].GetExpr()
+	// TODO: we need to create a new LogicalJoin here.
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	sctx := sel.SCtx()
+	leftGroup := old.Children[0].GetExpr().Children[0]
+	rightGroup := old.Children[0].GetExpr().Children[1]
+	var equalCond []*expression.ScalarFunction
+	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	switch join.JoinType {
+	case plannercore.InnerJoin:
+		tempCond := make([]expression.Expression, 0,
+			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(sel.Conditions))
+		tempCond = append(tempCond, join.LeftConditions...)
+		tempCond = append(tempCond, join.RightConditions...)
+		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
+		tempCond = append(tempCond, join.OtherConditions...)
+		tempCond = append(tempCond, sel.Conditions...)
+		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
+		tempCond = expression.PropagateConstant(sctx, tempCond)
+		// Return table dual when filter is constant false or null.
+		dual := plannercore.Conds2TableDual(join, tempCond)
+		if dual != nil {
+			return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, false, true, nil
+		}
+		equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(tempCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, true, true)
+		join.LeftConditions = nil
+		join.RightConditions = nil
+		join.EqualConditions = equalCond
+		join.OtherConditions = otherCond
+		leftCond = leftPushCond
+		rightCond = rightPushCond
+	default:
+		// TODO: Enhance this rule to deal with LeftOuter/RightOuter/Semi/SmiAnti/LeftOuterSemi/LeftOuterSemiAnti Joins.
+	}
+	leftCond = expression.RemoveDupExprs(sctx, leftCond)
+	rightCond = expression.RemoveDupExprs(sctx, rightCond)
+	for _, eqCond := range join.EqualConditions {
+		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
+		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
+	}
+	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
+	leftGroup = buildChildSelectionGroup(sel, leftCond, joinExpr.Children[0])
+	rightGroup = buildChildSelectionGroup(sel, rightCond, joinExpr.Children[1])
+	newJoinExpr := memo.NewGroupExpr(join)
+	newJoinExpr.SetChildren(leftGroup, rightGroup)
+	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
 }
