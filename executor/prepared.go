@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
@@ -248,7 +249,9 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	e.lowerPriority = needLowerPriority(e.plan)
+	if e.ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		e.lowerPriority = needLowerPriority(e.plan)
+	}
 	return nil
 }
 
