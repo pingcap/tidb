@@ -295,7 +295,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		return ""
 	}
 	if size == 1 {
-		return fmt.Sprintf("rpc time:%v", rrs.copRespTime[0])
+		return fmt.Sprintf("rpc num:1, time:%v", rrs.copRespTime[0])
 	}
 	sort.Slice(rrs.copRespTime, func(i, j int) bool {
 		return rrs.copRespTime[i] < rrs.copRespTime[j]
@@ -307,7 +307,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		sum += float64(t)
 	}
 	vAvg := time.Duration(sum / float64(size))
-	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95)
+	return fmt.Sprintf("rpc num:%v, max:%v, min:%v, avg:%v, p80:%v, p95:%v", len(rrs.copRespTime), vMax, vMin, vAvg, vP80, vP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
