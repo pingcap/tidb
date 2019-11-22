@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -611,21 +612,6 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 	return false
 }
 
-// withinTimePeriod tests whether `now` is between `start` and `end`.
-func withinTimePeriod(start, end, now time.Time) bool {
-	// Converts to UTC and only keeps the hour and minute info.
-	start, end, now = start.UTC(), end.UTC(), now.UTC()
-	start = time.Date(0, 0, 0, start.Hour(), start.Minute(), 0, 0, time.UTC)
-	end = time.Date(0, 0, 0, end.Hour(), end.Minute(), 0, 0, time.UTC)
-	now = time.Date(0, 0, 0, now.Hour(), now.Minute(), 0, 0, time.UTC)
-	// for cases like from 00:00 to 06:00
-	if end.Sub(start) >= 0 {
-		return now.Sub(start) >= 0 && now.Sub(end) <= 0
-	}
-	// for cases like from 22:00 to 06:00
-	return now.Sub(end) <= 0 || now.Sub(start) >= 0
-}
-
 // NeedAnalyzeTable checks if we need to analyze the table:
 // 1. If the table has never been analyzed, we need to analyze it when it has
 //    not been modified for a while.
@@ -648,7 +634,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
+	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
 }
 
 const (
@@ -687,11 +673,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	if end == "" {
 		end = variable.DefAutoAnalyzeEndTime
 	}
-	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
+	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
 	if err != nil {
 		return s, s, errors.Trace(err)
 	}
-	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
+	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
 	return s, e, err
 }
 
