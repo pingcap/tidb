@@ -230,7 +230,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.statsCache.Load().(statsCache)[id]
+	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -373,7 +373,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.tp == pkType {
 			err = h.dumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.statsCache.Load().(statsCache)[fb.tableID]
+			t, ok := h.statsCache.Load().(statsCache).tables[fb.tableID]
 			if ok {
 				err = dumpFeedbackForIndex(h, fb, t)
 			}
@@ -447,7 +447,8 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newCol.Histogram = *UpdateHistogram(&col.Histogram, newFB)
 			newTblStats.Columns[fb.hist.ID] = &newCol
 		}
-		h.UpdateTableStats([]*Table{newTblStats}, nil)
+		oldCache := h.statsCache.Load().(statsCache)
+		h.updateStatsCache(oldCache.update([]*Table{newTblStats}, nil, oldCache.version))
 	}
 }
 
@@ -478,7 +479,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	h.UpdateTableStats(tbls, nil)
+	oldCache := h.statsCache.Load().(statsCache)
+	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
 }
 
 // HandleUpdateStats update the stats using feedback.
