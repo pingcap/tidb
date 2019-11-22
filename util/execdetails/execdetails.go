@@ -297,7 +297,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		return ""
 	}
 	if size == 1 {
-		return fmt.Sprintf("rpc time:%v, total keys:%v", rrs.copRespTime[0], rrs.procKeys[0])
+		return fmt.Sprintf("rpc time:%v, proc keys:%v", rrs.copRespTime[0], rrs.procKeys[0])
 	}
 	sort.Slice(rrs.copRespTime, func(i, j int) bool {
 		return rrs.copRespTime[i] < rrs.copRespTime[j]
@@ -315,7 +315,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 	})
 	kMax := rrs.procKeys[size-1]
 	kP95 := rrs.procKeys[size*19/20]
-	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc key max:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95, kMax, kP95)
+	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95, kMax, kP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
