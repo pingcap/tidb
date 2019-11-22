@@ -364,7 +364,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
 				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
-				zap.Bool("IsPessimistic", isPessimistic),
 				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),
 				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
 				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
