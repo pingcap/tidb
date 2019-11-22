@@ -1488,10 +1488,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	hints := extractStmtHintsFromStmtNode(s)
 	stmtHints, hintWarns := handleStmtHints(hints)
 	vars := ctx.GetSessionVars()
-	if stmtHints.HasMemQuotaHint {
-		vars.MemQuotaQuery = stmtHints.MemQuotaQuery
-	}
 	memQuota := vars.MemQuotaQuery
+	if stmtHints.HasMemQuotaHint {
+		memQuota = stmtHints.MemQuotaQuery
+	}
 	sc := &stmtctx.StatementContext{
 		StmtHints:  stmtHints,
 		TimeZone:   vars.Location(),

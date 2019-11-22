@@ -417,9 +417,9 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	}
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
-	memQuota := float64(p.ctx.GetSessionVars().MemQuotaQuery)
+	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := p.avgRowSize(inner)
-	spill := oomUseTmpStorage && rowSize*innerCnt > memQuota
+	spill := oomUseTmpStorage && memQuota > 0 && rowSize*innerCnt > float64(memQuota)
 	// Cost of building hash table.
 	cpuCost := innerCnt * sessVars.CPUFactor
 	memoryCost := innerCnt * sessVars.MemoryFactor
@@ -479,7 +479,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	}
 
 	if spill {
-		memoryCost *= memQuota / (rowSize * innerCnt)
+		memoryCost *= float64(memQuota) / (rowSize * innerCnt)
 	} else {
 		diskCost = 0
 	}
