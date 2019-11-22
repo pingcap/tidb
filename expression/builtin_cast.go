@@ -500,9 +500,8 @@ func (b *builtinCastIntAsRealSig) reverseEvalInt(res types.Datum, rType Rounding
 		}
 		if rType == Ceiling {
 			return int64(math.Ceil(resVal)), nil
-		} else {
-			return int64(math.Floor(resVal)), nil
 		}
+		return int64(math.Floor(resVal)), nil
 	case *Constant:
 		return 0, errors.Errorf("invalid args for reverse evaluation, " +
 			"the expression should have exactly one column")
