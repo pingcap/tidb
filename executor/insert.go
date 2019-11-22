@@ -80,10 +80,13 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
-		for _, row := range rows {
+		for i := 0; i < len(rows); i++ {
+			row := rows[i]
 			if _, err := e.addRecord(ctx, row); err != nil {
 				return err
 			}
+			// Release it ASAP to reduce memory occupy for the large txn.
+			rows[i] = nil
 		}
 	}
 	return nil

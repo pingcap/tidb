@@ -396,6 +396,15 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 					return err
 				}
 			}
+
+			if len(rows) > 3000 {
+				// As rows in memdb representation is smaller than []datum, this may reduce the footprint.
+				err = base.exec(ctx, rows)
+				if err != nil {
+					return err
+				}
+				rows = rows[:0]
+			}
 		}
 	}
 	return base.exec(ctx, rows)
