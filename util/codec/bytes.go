@@ -28,8 +28,7 @@ const (
 )
 
 var (
-	pads    = make([]byte, encGroupSize)
-	encPads = []byte{encPad}
+	pads = make([]byte, encGroupSize)
 )
 
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
