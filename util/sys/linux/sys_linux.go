@@ -15,8 +15,9 @@
 package linux
 
 import (
-	"golang.org/x/sys/unix"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // OSVersion returns version info of operation system.
@@ -27,7 +28,7 @@ func OSVersion() (osVersion string, err error) {
 	if err != nil {
 		return
 	}
-	charsToString := func(ca []int8) string {
+	charsToString := func(ca []uint8) string {
 		s := make([]byte, len(ca))
 		var lens int
 		for ; lens < len(ca); lens++ {
