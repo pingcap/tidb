@@ -28,18 +28,32 @@ func OSVersion() (osVersion string, err error) {
 	if err != nil {
 		return
 	}
-	charsToString := func(ca []uint8) string {
-		s := make([]byte, len(ca))
-		var lens int
-		for ; lens < len(ca); lens++ {
-			if ca[lens] == 0 {
-				break
-			}
-			s[lens] = uint8(ca[lens])
+
+	sysName := make([]byte, 0, len(un.Sysname))
+	for _, name := range un.Sysname {
+		if name == 0 {
+			break
 		}
-		return string(s[0:lens])
+		sysName = append(sysName, byte(name))
 	}
-	osVersion = charsToString(un.Sysname[:]) + " " + charsToString(un.Release[:]) + "." + charsToString(un.Machine[:])
+
+	release := make([]byte, 0, len(un.Release))
+	for _, c := range un.Release {
+		if c == 0 {
+			break
+		}
+		release = append(release, c)
+	}
+
+	machine := make([]byte, 0, len(un.Machine))
+	for _, c := range un.Machine {
+		if c == 0 {
+			break
+		}
+		machine = append(machine, c)
+	}
+
+	osVersion = string(sysName) + " " + string(release) + "." + string(machine)
 	return
 }
 
