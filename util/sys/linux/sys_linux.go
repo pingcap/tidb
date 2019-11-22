@@ -42,7 +42,7 @@ func OSVersion() (osVersion string, err error) {
 		if c == 0 {
 			break
 		}
-		release = append(release, c)
+		release = append(release, byte(c))
 	}
 
 	machine := make([]byte, 0, len(un.Machine))
@@ -50,7 +50,7 @@ func OSVersion() (osVersion string, err error) {
 		if c == 0 {
 			break
 		}
-		machine = append(machine, c)
+		machine = append(machine, byte(c))
 	}
 
 	osVersion = string(sysName) + " " + string(release) + "." + string(machine)
