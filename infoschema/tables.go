@@ -2200,23 +2200,19 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
-func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
+func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
-	return &infoschemaTable{
-		handle: handle,
-		meta:   meta,
-		cols:   columns,
-	}
+	return &infoschemaTable{meta: meta, cols: columns}, nil
 }
 
 type infoschemaTable struct {
-	handle *Handle
-	meta   *model.TableInfo
-	cols   []*table.Column
-	rows   [][]types.Datum
+	// handle *Handle
+	meta *model.TableInfo
+	cols []*table.Column
+	rows [][]types.Datum
 }
 
 // schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
