@@ -28,6 +28,8 @@ import (
 	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -49,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -95,6 +99,7 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
 	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
+	tableTiDBClusterLoadInfo                = "TIDB_CLUSTER_LOAD_INFO"
 	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
@@ -676,6 +681,15 @@ var tableTiDBServersInfoCols = []columnInfo{
 var tableTiDBClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableTiDBClusterLoadInfoCols = []columnInfo{
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
@@ -1997,6 +2011,81 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
+type addressWithType struct {
+	addr string
+	// TiDB/PD/TiKV
+	tp string
+}
+
+func dataForClusterLoadInfo() ([][]types.Datum, error) {
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	addrWithTps := make([]addressWithType, 0, len(serversInfo))
+	ipMap := make(map[string]struct{}, len(serversInfo))
+	for _, srv := range serversInfo {
+		if _, ok := ipMap[srv.IP]; ok {
+			continue
+		}
+		ipMap[srv.IP] = struct{}{}
+		addr := srv.IP + ":" + strconv.FormatUint(uint64(srv.StatusPort), 10)
+		addrWithTps = append(addrWithTps, addressWithType{addr: addr, tp: "tidb"})
+	}
+
+	rows := make([][]types.Datum, 0, len(serversInfo)*10)
+	for _, addrWithTp := range addrWithTps {
+		items, err := getServerInfoByGRPC(addrWithTp.addr, diagnosticspb.ServerInfoType_LoadInfo)
+		if err != nil {
+			return nil, err
+		}
+		partRows := serverInfoItemToRows(items, addrWithTp)
+		rows = append(rows, partRows...)
+	}
+	return rows, nil
+}
+
+func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, addrWithTp addressWithType) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(items))
+	for _, v := range items {
+		for _, item := range v.Pairs {
+			row := types.MakeDatums(
+				addrWithTp.tp,
+				addrWithTp.addr,
+				v.Tp,
+				v.Name,
+				item.Key,
+				item.Value,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			log.Error("close grpc connection error", zap.Error(err))
+		}
+	}()
+
+	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
+	if err != nil {
+		return nil, err
+	}
+	return r.Items, nil
+}
+
 func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	sql := "SELECT type, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
@@ -2197,6 +2286,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
 	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
+	tableTiDBClusterLoadInfo:                tableTiDBClusterLoadInfoCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
@@ -2307,6 +2397,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
+	case tableTiDBClusterLoadInfo:
+		fullRows, err = dataForClusterLoadInfo()
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
 	}

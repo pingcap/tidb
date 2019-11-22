@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http/httptest"
 	"os"
 	"strconv"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/rpcserver"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -46,9 +48,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"google.golang.org/grpc"
 )
 
 var _ = Suite(&testTableSuite{})
+var _ = Suite(&testClusterTableSuite{&testTableSuite{}, nil})
 
 type testTableSuite struct {
 	store kv.Storage
@@ -70,6 +74,35 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	s.dom.Close()
 	s.store.Close()
+}
+
+type testClusterTableSuite struct {
+	*testTableSuite
+	rpcserver *grpc.Server
+}
+
+func (s *testClusterTableSuite) SetUpSuite(c *C) {
+	s.testTableSuite.SetUpSuite(c)
+	s.rpcserver = setUpRPCService(c, "0.0.0.0:10091")
+}
+
+func setUpRPCService(c *C, addr string) *grpc.Server {
+	lis, err := net.Listen("tcp", addr)
+	c.Assert(err, IsNil)
+	server := rpcserver.CreateTiDBRPCServer()
+	go func() {
+		err = server.Serve(lis)
+		c.Assert(err, IsNil)
+	}()
+	return server
+}
+
+func (s *testClusterTableSuite) TearDownSuite(c *C) {
+	s.testTableSuite.TearDownSuite(c)
+	if s.rpcserver != nil {
+		s.rpcserver.Stop()
+		s.rpcserver = nil
+	}
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
@@ -768,4 +801,11 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(err, IsNil)
 	tbl.Meta().TiFlashReplica.Available = true
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1"))
+}
+
+func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use information_schema;")
+	re := tk.MustQuery("select * from `TIDB_CLUSTER_LOAD_INFO`;")
+	c.Assert(len(re.Rows()), Greater, 0)
 }
