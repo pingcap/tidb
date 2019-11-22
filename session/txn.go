@@ -292,7 +292,12 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (st *TxnState) cleanup() {
-	st.buf.Reset()
+	const sz100M = 100 << 20
+	if st.buf.Size() > sz100M {
+		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	} else {
+		st.buf.Reset()
+	}
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
@@ -301,7 +306,12 @@ func (st *TxnState) cleanup() {
 		for i := 0; i < len(st.dirtyTableOP); i++ {
 			st.dirtyTableOP[i] = empty
 		}
-		st.dirtyTableOP = st.dirtyTableOP[:0]
+		if len(st.dirtyTableOP) > 200 {
+			// Reduce memory footprint for the large transaction.
+			st.dirtyTableOP = nil
+		} else {
+			st.dirtyTableOP = st.dirtyTableOP[:0]
+		}
 	}
 }
 
@@ -455,7 +465,6 @@ func (s *session) StmtCommit() error {
 		for _, op := range st.dirtyTableOP {
 			mergeToDirtyDB(dirtyDB, op)
 		}
-		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
 	st.ConfirmAssertions(true)
 	return nil
