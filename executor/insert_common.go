@@ -103,9 +103,6 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		for _, v := range e.GenColumns {
-			columns = append(columns, v.Name.O)
-		}
 		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
 			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
