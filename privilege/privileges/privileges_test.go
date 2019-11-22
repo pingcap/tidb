@@ -662,7 +662,7 @@ func (s *testPrivilegeSuite) TestAuthHost(c *C) {
 	mustExec(c, se, "GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), "creat user test_auth_host_a")
+	_, err := se.Execute(context.Background(), "create user test_auth_host_a")
 	c.Assert(err, NotNil)
 
 	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'192.168.%';")
