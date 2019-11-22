@@ -307,7 +307,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		sum += float64(t)
 	}
 	vAvg := time.Duration(sum / float64(size))
-	return fmt.Sprintf("rpc num:%v, max:%v, min:%v, avg:%v, p80:%v, p95:%v", len(rrs.copRespTime), vMax, vMin, vAvg, vP80, vP95)
+	return fmt.Sprintf("rpc num:%v, max:%v, min:%v, avg:%v, p80:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
