@@ -1057,10 +1057,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertString(expr.Val)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
-	case tipb.ExprType_Float32:
-		return convertFloat(expr.Val, true, expr.FieldType)
-	case tipb.ExprType_Float64:
-		return convertFloat(expr.Val, false, expr.FieldType)
+	case tipb.ExprType_Float32, tipb.ExprType_Float64:
+		return convertFloat(expr)
 	case tipb.ExprType_MysqlDecimal:
 		return convertDecimal(expr.Val)
 	case tipb.ExprType_MysqlDuration:
@@ -1159,7 +1157,10 @@ func convertString(val []byte) (*Constant, error) {
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 
-func convertFloat(val []byte, f32 bool, ft *tipb.FieldType) (*Constant, error) {
+func convertFloat(expr *tipb.Expr) (*Constant, error) {
+	val := expr.Val
+	ft := expr.GetFieldType()
+	f32 := expr.Tp == tipb.ExprType_Float32
 	var d types.Datum
 	_, f, err := codec.DecodeFloat(val)
 	if err != nil {
