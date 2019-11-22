@@ -15,14 +15,8 @@ package timeutil
 
 import (
 	"fmt"
-	"path/filepath"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
-
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
@@ -54,49 +48,11 @@ type locCache struct {
 // InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
 // It is exported because we need to use it during bootstrap stage. And it should be only used at that stage.
 func InferSystemTZ() string {
-	// consult $TZ to find the time zone to use.
-	// no $TZ means use the system default /etc/localtime.
-	// $TZ="" means use UTC.
-	// $TZ="foo" means use /usr/share/zoneinfo/foo.
-	tz, ok := syscall.Getenv("TZ")
-	switch {
-	case !ok:
-		path, err1 := filepath.EvalSymlinks("/etc/localtime")
-		if err1 == nil {
-			name, err2 := inferTZNameFromFileName(path)
-			if err2 == nil {
-				return name
-			}
-			logutil.BgLogger().Error("infer timezone failed", zap.Error(err2))
-		}
-		logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
-	case tz != "" && tz != "UTC":
-		_, err := time.LoadLocation(tz)
-		if err == nil {
-			return tz
-		}
+	tz := time.Local.String()
+	if tz != "Local" {
+		return tz
 	}
 	return "UTC"
-}
-
-// inferTZNameFromFileName gets IANA timezone name from zoneinfo path.
-// TODO: It will be refined later. This is just a quick fix.
-func inferTZNameFromFileName(path string) (string, error) {
-	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
-	substr := "zoneinfo"
-	// macOs MoJave changes the sofe link of /etc/localtime from
-	// "/var/db/timezone/tz/2018e.1.0/zoneinfo/Asia/Shanghai"
-	// to "/usr/share/zoneinfo.default/Asia/Shanghai"
-	substrMojave := "zoneinfo.default"
-
-	if idx := strings.Index(path, substrMojave); idx != -1 {
-		return string(path[idx+len(substrMojave)+1:]), nil
-	}
-
-	if idx := strings.Index(path, substr); idx != -1 {
-		return string(path[idx+len(substr)+1:]), nil
-	}
-	return "", fmt.Errorf("path %s is not supported", path)
 }
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
@@ -152,8 +108,8 @@ func LoadLocation(name string) (*time.Location, error) {
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := time.Now().In(loc).Zone()
 	name := loc.String()
-	// when we found name is "System", we have no chice but push down
-	// "System" to tikv side.
+	// when we found name is "System", we have no choice but push down
+	// "System" to TiKV side.
 	if name == "Local" {
 		name = "System"
 	}
