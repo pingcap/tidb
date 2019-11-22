@@ -501,6 +501,9 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 	}
 	return json.BinaryJSON{}, m.i == nil, m.err
 }
+func (m *MockExpr) ReverseEval(res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	return types.Datum{}, m.err
+}
 func (m *MockExpr) ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
 	return 0, m.err
 }
@@ -531,4 +534,4 @@ func (m *MockExpr) resolveIndices(schema *Schema) error               { return n
 func (m *MockExpr) ExplainInfo() string                               { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                  { return false }
-func (m *MockExpr) SupportReverseEval() bool 						  { return false }
+func (m *MockExpr) SupportReverseEval() bool                          { return false }

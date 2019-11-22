@@ -548,11 +548,11 @@ func (b *builtinCastIntAsDecimalSig) reverseEvalInt(res types.Datum, rType Round
 	case *Column:
 		val, err = resVal.ToInt()
 		// if err happen, then means decimal is overflow int64.
-		if err != nil || val == math.MaxInt64{
+		if err != nil || val == math.MaxInt64 {
 			return val, nil
 		}
 		if resVal.GetDigitsFrac() > 0 && rType == Ceiling {
-			return val+1, nil
+			return val + 1, nil
 		}
 		return val, nil
 	case *Constant:
@@ -612,7 +612,7 @@ func (b *builtinCastIntAsStringSig) reverseEvalInt(res types.Datum, rType Roundi
 			return 0, err
 		}
 		if rType == Ceiling && hasFrac {
-			return val+1, nil
+			return val + 1, nil
 		}
 		return val, nil
 	case *Constant:
@@ -664,11 +664,11 @@ func (b *builtinCastIntAsTimeSig) reverseEvalInt(res types.Datum, rType Rounding
 		}
 		val, err = valDecimal.ToInt()
 		// if err happen, then means decimal is overflow int64.
-		if err != nil || val == math.MaxInt64{
+		if err != nil || val == math.MaxInt64 {
 			return val, nil
 		}
 		if valDecimal.GetDigitsFrac() > 0 && rType == Ceiling {
-			return val+1, nil
+			return val + 1, nil
 		}
 		return val, nil
 	case *Constant:
@@ -719,11 +719,11 @@ func (b *builtinCastIntAsDurationSig) reverseEvalInt(res types.Datum, rType Roun
 		}
 		val, err = valDecimal.ToInt()
 		// if err happen, then means decimal is overflow int64.
-		if err != nil || val == math.MaxInt64{
+		if err != nil || val == math.MaxInt64 {
 			return val, nil
 		}
 		if valDecimal.GetDigitsFrac() > 0 && rType == Ceiling {
-			return val+1, nil
+			return val + 1, nil
 		}
 		return val, nil
 	case *Constant:

@@ -111,11 +111,11 @@ explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) fr
 id	count	task	operator info
 Projection_12	10000.00	root	ifnull(Column#7, 0)
 └─MergeJoin_13	10000.00	root	left outer join, left key:Column#1, right key:Column#4
-  ├─TableReader_17	10000.00	root	data:TableScan_16
-  │ └─TableScan_16	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
-  └─Projection_18	8000.00	root	1, Column#4
-    └─TableReader_20	10000.00	root	data:TableScan_19
-      └─TableScan_19	10000.00	cop[tikv]	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
+  ├─TableReader_30	10000.00	root	data:TableScan_29
+  │ └─TableScan_29	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+  └─Projection_31	8000.00	root	1, Column#4
+    └─TableReader_33	10000.00	root	data:TableScan_32
+      └─TableScan_32	10000.00	cop[tikv]	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	

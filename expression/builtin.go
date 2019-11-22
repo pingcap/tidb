@@ -77,6 +77,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	return baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -182,6 +183,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	return baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -349,6 +351,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalSliceBuffer(len(b.args))
 	b.childrenVectorizedOnce = new(sync.Once)
+	b.childrenReversedOnce = new(sync.Once)
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
