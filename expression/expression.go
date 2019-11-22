@@ -347,13 +347,15 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 			continue
 		}
 		newCol := &Column{
-			ColName:  col.Name,
-			TblName:  tblName,
-			DBName:   dbName,
-			RetType:  &col.FieldType,
-			ID:       col.ID,
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-			Index:    col.Offset,
+			OrigColName: col.Name,
+			OrigTblName: tblName,
+			ColName:     col.Name,
+			TblName:     tblName,
+			DBName:      dbName,
+			RetType:     &col.FieldType,
+			ID:          col.ID,
+			UniqueID:    ctx.GetSessionVars().AllocPlanColumnID(),
+			Index:       col.Offset,
 		}
 		columns = append(columns, newCol)
 	}
