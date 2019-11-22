@@ -280,13 +280,15 @@ type ReaderRuntimeStats struct {
 	sync.Mutex
 
 	copRespTime []time.Duration
+	totalKeys   []int64
 }
 
 // recordOneCopTask record once cop response time to update maxcopRespTime
-func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration) {
+func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration, detail *ExecDetails) {
 	rrs.Lock()
 	defer rrs.Unlock()
 	rrs.copRespTime = append(rrs.copRespTime, t)
+	rrs.totalKeys = append(rrs.totalKeys, detail.TotalKeys)
 }
 
 func (rrs *ReaderRuntimeStats) String() string {
@@ -295,7 +297,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		return ""
 	}
 	if size == 1 {
-		return fmt.Sprintf("rpc time:%v", rrs.copRespTime[0])
+		return fmt.Sprintf("rpc time:%v, total keys:%v", rrs.copRespTime[0], rrs.totalKeys[0])
 	}
 	sort.Slice(rrs.copRespTime, func(i, j int) bool {
 		return rrs.copRespTime[i] < rrs.copRespTime[j]
@@ -307,7 +309,13 @@ func (rrs *ReaderRuntimeStats) String() string {
 		sum += float64(t)
 	}
 	vAvg := time.Duration(sum / float64(size))
-	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95)
+
+	sort.Slice(rrs.totalKeys, func(i, j int) bool {
+		return rrs.totalKeys[i] < rrs.totalKeys[j]
+	})
+	kMax := rrs.totalKeys[size-1]
+	kP95 := rrs.totalKeys[size*19/20]
+	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, total key max:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95, kMax, kP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
@@ -365,9 +373,9 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 }
 
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration) {
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration, detail *ExecDetails) {
 	readerStats := e.GetReaderStats(planID)
-	readerStats.recordOneCopTask(copRespTime)
+	readerStats.recordOneCopTask(copRespTime, detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
