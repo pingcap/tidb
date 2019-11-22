@@ -624,6 +624,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
+			OrigName: fmt.Sprintf("%v.%v.%v", dbName, tblName, col.Name),
 		}
 		columns = append(columns, newCol)
 	}
