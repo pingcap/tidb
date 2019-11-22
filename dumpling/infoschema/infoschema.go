@@ -372,14 +372,8 @@ func init() {
 		codeTableLocked:               mysql.ErrTableLocked,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
-	initInfoSchemaDB()
-}
 
-var (
-	infoSchemaDB *model.DBInfo
-)
-
-func initInfoSchemaDB() {
+	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.GenLocalSchemaID()
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
@@ -390,20 +384,18 @@ func initInfoSchemaDB() {
 			c.ID = autoid.GenLocalSchemaID()
 		}
 	}
-	infoSchemaDB = &model.DBInfo{
+	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
 		Name:    model.NewCIStr(Name),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
 	}
+	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 }
 
 // IsMemoryDB checks if the db is in memory.
 func IsMemoryDB(dbName string) bool {
-	if dbName == "information_schema" {
-		return true
-	}
 	for _, driver := range drivers {
 		if driver.DBInfo.Name.L == dbName {
 			return true
