@@ -865,15 +865,15 @@
     "Cases": [
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ SM_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ HASH_JOIN(t3, t4) */ or /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ INL_JOIN(t3, t4) */ or /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
@@ -881,27 +881,27 @@
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
-        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ SM_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
       }
     ]
   },
   {
-    "Name": "TestIndexJoinHint",
+    "Name": "TestJoinHints",
     "Cases": [
       {
-        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+        "SQL": "select /*+ TIDB_INLJ(t1), USE_INDEX(t1), USE_INDEX(t2), USE_INDEX(t3) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t2.a,test.t1.a)}(test.t3.a,test.t2.a)->Projection",
         "Warning": ""
       },
       {
-        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
-        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t1.b,test.t2.a)",
-        "Warning": "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable"
+        "SQL": "select /*+ TIDB_INLJ(t1), USE_INDEX(t1), USE_INDEX(t2) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)",
+        "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
         "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->IndexReader(Index(t2.b_c)[[NULL,+inf]]->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
-        "Warning": "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable"
+        "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable"
       }
     ]
   },

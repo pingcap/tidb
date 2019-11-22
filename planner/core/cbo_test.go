@@ -724,7 +724,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"      └─IndexLookUp_21 0.10 root ",
 			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(test.t1.c, test.t.c)], keep order:false",
 			"        └─Selection_20 0.10 cop eq(test.t1.a, test.t.a)",
-			"          └─TableScan_19 1.00 cop table:t, keep order:false",
+			"          └─TableScan_19 1.00 cop table:t1, keep order:false",
 		))
 }
 
