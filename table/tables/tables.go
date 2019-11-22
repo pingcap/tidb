@@ -1089,10 +1089,6 @@ func (t *tableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) 
 	return false
 }
 
-var (
-	recordPrefixSep = []byte("_r")
-)
-
 // FindIndexByColName returns a public table index containing only one column named `name`.
 func FindIndexByColName(t table.Table, name string) table.Index {
 	for _, idx := range t.Indices() {
