@@ -314,7 +314,11 @@ func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(buf.GetJSON(i).Quote())
+		jsonItem := buf.GetJSON(i)
+		if jsonItem.TypeCode != json.TypeCodeString {
+			return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
+		}
+		result.AppendString(jsonItem.Quote())
 	}
 	return nil
 }

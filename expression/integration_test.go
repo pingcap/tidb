@@ -3900,10 +3900,23 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_quote('hello,"宽字符",world'),
 		json_quote('Invalid Json string	is OK'),
 		json_quote('1\u2232\u22322')
+		json_quote(null)
 	`)
 	r.Check(testkit.Rows(
-		`"" "\"\"" "a" "3" "{\"a\": \"b\"}" "{\"a\":     \"b\"}" "hello,\"quoted string\",world" "hello,\"宽字符\",world" "Invalid Json string\tis OK" "1u2232u22322"`,
+		`"" "\"\"" "a" "3" "{\"a\": \"b\"}" "{\"a\":     \"b\"}" "hello,\"quoted string\",world" "hello,\"宽字符\",world" "Invalid Json string\tis OK" "1u2232u22322" "NULL"`,
 	))
+
+	tk.MustGetErrCode("select json_quote(123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(-100)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(123.123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(-100.000)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(true));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(false));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("{}" as JSON));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("[]" as JSON));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
 
 	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
