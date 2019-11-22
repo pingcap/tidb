@@ -75,10 +75,10 @@ var (
 	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
 	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
 	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalOK        = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "ok")
-	transactionDurationInternalError     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "error")
-	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
-	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
+	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
+	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
+	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
+	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
 	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
 	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
@@ -394,12 +394,16 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
-	var txnSize int
-	var isPessimistic bool
-	if s.txn.Valid() {
-		txnSize = s.txn.Size()
-		isPessimistic = s.txn.IsPessimistic()
+	defer func() {
+		s.txn.changeToInvalid()
+		s.cleanRetryInfo()
+	}()
+	if !s.txn.Valid() {
+		// If the transaction is invalid, maybe it has already been rolled back by the client.
+		return nil
 	}
+	txnSize := s.txn.Size()
+	isPessimistic := s.txn.IsPessimistic()
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
@@ -432,7 +436,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
-	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
 		switch isoLevelOneShot.State {
@@ -1892,18 +1895,18 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	if s.isInternal() {
 		if err != nil {
 			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalError.Observe(duration)
+			transactionDurationInternalAbort.Observe(duration)
 		} else {
 			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalOK.Observe(duration)
+			transactionDurationInternalCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
 			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralError.Observe(duration)
+			transactionDurationGeneralAbort.Observe(duration)
 		} else {
 			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralOK.Observe(duration)
+			transactionDurationGeneralCommit.Observe(duration)
 		}
 	}
 }
