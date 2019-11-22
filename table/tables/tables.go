@@ -496,9 +496,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	colIDs = make([]int64, 0, len(r))
 	row = rowPool.Get().([]types.Datum)
 	row = row[:0]
-	defer func() {
-		rowPool.Put(row)
-	}()
+	defer rowPool.Put(row)
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
