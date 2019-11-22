@@ -26,9 +26,8 @@ const (
 )
 
 var (
-	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type %s")
-	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
-	errNonexistingGrant      = terror.ClassPrivilege.New(codeErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	errInvalidPrivilegeType = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type %s")
+	errNonexistingGrant     = terror.ClassPrivilege.New(codeErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 )
 
 func init() {
