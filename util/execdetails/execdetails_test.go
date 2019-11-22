@@ -117,17 +117,17 @@ func TestReaderStats(t *testing.T) {
 		t.Fatal()
 	}
 
-	r.totalKeys = append(r.totalKeys, 100)
+	r.procKeys = append(r.procKeys, 100)
 	r.copRespTime = append(r.copRespTime, time.Millisecond*100)
 	if r.String() != "rpc time:100ms, total keys:100" {
 		t.Fatal()
 	}
 
 	for i := 0; i < 100; i++ {
-		r.totalKeys = append(r.totalKeys, int64(i))
+		r.procKeys = append(r.procKeys, int64(i))
 		r.copRespTime = append(r.copRespTime, time.Millisecond*time.Duration(i))
 	}
-	if r.String() != "rpc max:100ms, min:0s, avg:50ms, p80:80ms, p95:95ms, total key max:100, p95:95" {
+	if r.String() != "rpc max:100ms, min:0s, avg:50ms, p80:80ms, p95:95ms, proc key max:100, p95:95" {
 		t.Fatal()
 	}
 }

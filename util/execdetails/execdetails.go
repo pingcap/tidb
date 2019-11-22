@@ -280,7 +280,7 @@ type ReaderRuntimeStats struct {
 	sync.Mutex
 
 	copRespTime []time.Duration
-	totalKeys   []int64
+	procKeys    []int64
 }
 
 // recordOneCopTask record once cop response time to update maxcopRespTime
@@ -288,7 +288,7 @@ func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration, detail *ExecDet
 	rrs.Lock()
 	defer rrs.Unlock()
 	rrs.copRespTime = append(rrs.copRespTime, t)
-	rrs.totalKeys = append(rrs.totalKeys, detail.TotalKeys)
+	rrs.procKeys = append(rrs.procKeys, detail.ProcessedKeys)
 }
 
 func (rrs *ReaderRuntimeStats) String() string {
@@ -297,7 +297,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		return ""
 	}
 	if size == 1 {
-		return fmt.Sprintf("rpc time:%v, total keys:%v", rrs.copRespTime[0], rrs.totalKeys[0])
+		return fmt.Sprintf("rpc time:%v, total keys:%v", rrs.copRespTime[0], rrs.procKeys[0])
 	}
 	sort.Slice(rrs.copRespTime, func(i, j int) bool {
 		return rrs.copRespTime[i] < rrs.copRespTime[j]
@@ -310,12 +310,12 @@ func (rrs *ReaderRuntimeStats) String() string {
 	}
 	vAvg := time.Duration(sum / float64(size))
 
-	sort.Slice(rrs.totalKeys, func(i, j int) bool {
-		return rrs.totalKeys[i] < rrs.totalKeys[j]
+	sort.Slice(rrs.procKeys, func(i, j int) bool {
+		return rrs.procKeys[i] < rrs.procKeys[j]
 	})
-	kMax := rrs.totalKeys[size-1]
-	kP95 := rrs.totalKeys[size*19/20]
-	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, total key max:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95, kMax, kP95)
+	kMax := rrs.procKeys[size-1]
+	kP95 := rrs.procKeys[size*19/20]
+	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc key max:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95, kMax, kP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
