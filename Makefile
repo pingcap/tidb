@@ -128,9 +128,9 @@ clean:
 
 test: checklist checkdep gotest explaintest gogenerate
 
-test_chunk_1: checklist check explaintest
+check_test_chunk_1: checklist check explaintest
 
-test_chunk_2: checkdep gotest gogenerate
+check_test_chunk_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
