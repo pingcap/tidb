@@ -805,7 +805,15 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use information_schema;")
-	re := tk.MustQuery("select * from `TIDB_CLUSTER_LOAD_INFO`;")
-	c.Assert(len(re.Rows()), Greater, 0)
+	mockAddr := "127.0.0.1:10080"
+	instances := []string{
+		"pd,127.0.0.1:11080," + mockAddr,
+		"tidb,127.0.0.1:11080," + mockAddr,
+		"tikv,127.0.0.1:11080," + mockAddr,
+	}
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
+
+	tk.MustQuery("select * from information_schema.TIDB_CLUSTER_LOAD;")
 }

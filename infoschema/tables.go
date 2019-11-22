@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/util/chunk"
 	"io/ioutil"
 	"net/http"
 	"sort"
@@ -27,7 +29,6 @@ import (
 
 	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -99,7 +99,7 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
 	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
-	tableTiDBClusterLoadInfo                = "TIDB_CLUSTER_LOAD_INFO"
+	tableTiDBClusterLoadInfo                = "TIDB_CLUSTER_LOAD"
 	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
@@ -2011,48 +2011,41 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
-type addressWithType struct {
-	addr string
-	// TiDB/PD/TiKV
-	tp string
-}
-
-func dataForClusterLoadInfo() ([][]types.Datum, error) {
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	serversInfo, err := getClusterServerInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	addrWithTps := make([]addressWithType, 0, len(serversInfo))
 	ipMap := make(map[string]struct{}, len(serversInfo))
+	rows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for _, srv := range serversInfo {
-		if _, ok := ipMap[srv.IP]; ok {
+		// TODO: remove this after PD/TiKV support diagnostic grpc service.
+		if srv.tp == "pd" || srv.tp == "tikv" {
 			continue
 		}
-		ipMap[srv.IP] = struct{}{}
-		addr := srv.IP + ":" + strconv.FormatUint(uint64(srv.StatusPort), 10)
-		addrWithTps = append(addrWithTps, addressWithType{addr: addr, tp: "tidb"})
-	}
+		addr := srv.statusAddr
+		if _, ok := ipMap[addr]; ok {
+			continue
+		}
+		ipMap[addr] = struct{}{}
 
-	rows := make([][]types.Datum, 0, len(serversInfo)*10)
-	for _, addrWithTp := range addrWithTps {
-		items, err := getServerInfoByGRPC(addrWithTp.addr, diagnosticspb.ServerInfoType_LoadInfo)
+		items, err := getServerInfoByGRPC(srv.statusAddr, diagnosticspb.ServerInfoType_LoadInfo)
 		if err != nil {
 			return nil, err
 		}
-		partRows := serverInfoItemToRows(items, addrWithTp)
+		partRows := serverInfoItemToRows(items, srv.tp, srv.statusAddr)
 		rows = append(rows, partRows...)
 	}
 	return rows, nil
 }
 
-func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, addrWithTp addressWithType) [][]types.Datum {
+func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(items))
 	for _, v := range items {
 		for _, item := range v.Pairs {
 			row := types.MakeDatums(
-				addrWithTp.tp,
-				addrWithTp.addr,
+				tp,
+				addr,
 				v.Tp,
 				v.Name,
 				item.Key,
@@ -2086,7 +2079,13 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
+type serverInfo struct {
+	tp         string
+	address    string
+	statusAddr string
+}
+
+func getClusterServerInfo(ctx sessionctx.Context) ([]serverInfo, error) {
 	sql := "SELECT type, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
@@ -2117,23 +2116,41 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 			err = nil
 		}
 	})
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	srvInfos := make([]serverInfo, 0, len(rows))
+	for _, row := range rows {
+		row.GetString(0)
+		srvInfos = append(srvInfos, serverInfo{
+			tp:         row.GetString(0),
+			address:    row.GetString(1),
+			statusAddr: row.GetString(2),
+		})
+	}
+	return srvInfos, nil
+}
+
+func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
 		err  error
 	}
+	serversInfo, err := getClusterServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
-	ch := make(chan result, len(rows))
-	for i, row := range rows {
-		typ := row.GetString(0)
-		address := row.GetString(1)
-		statusAddr := row.GetString(2)
+	ch := make(chan result, len(serversInfo))
+	for i, srv := range serversInfo {
+		typ := srv.tp
+		address := srv.address
+		statusAddr := srv.statusAddr
 		if len(statusAddr) == 0 {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
@@ -2398,7 +2415,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
 	case tableTiDBClusterLoadInfo:
-		fullRows, err = dataForClusterLoadInfo()
+		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
 	}
