@@ -1156,11 +1156,13 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 }
 
 func (b *builtinSubTimeDateTimeNullSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubTimeDateTimeNullSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeTime(n, true)
+	return nil
 }
 
 func (b *builtinToSecondsSig) vectorized() bool {
