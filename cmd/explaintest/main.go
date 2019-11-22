@@ -578,17 +578,6 @@ func loadAllTests() ([]string, error) {
 	return tests, nil
 }
 
-func resultExists(name string) bool {
-	resultFile := fmt.Sprintf("./r/%s.result", name)
-
-	if _, err := os.Stat(resultFile); err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
-}
-
 // openDBWithRetry opens a database specified by its database driver name and a
 // driver-specific data source name. And it will do some retries if the connection fails.
 func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error) {
