@@ -15,11 +15,11 @@ set @@session.tidb_hashagg_final_concurrency = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
 Projection_11	1600.00	root	Column#1, Column#2, Column#3, Column#4
-└─HashLeftJoin_12	1600.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#19, Column#11)]
+└─HashLeftJoin_12	1600.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#13, Column#11)]
   ├─Projection_13	2000.00	root	Column#1, Column#2, Column#3, Column#4, cast(Column#1)
   │ └─TableReader_15	2000.00	root	data:TableScan_14
   │   └─TableScan_14	2000.00	cop[tikv]	table:t3, range:[-inf,+inf], keep order:false
-  └─StreamAgg_27	1.00	root	funcs:sum(Column#22)
+  └─StreamAgg_27	1.00	root	funcs:sum(Column#16)
     └─TableReader_28	1.00	root	data:StreamAgg_19
       └─StreamAgg_19	1.00	cop[tikv]	funcs:sum(Column#6)
         └─TableScan_26	2000.00	cop[tikv]	table:s, range:[-inf,+inf], keep order:false
@@ -34,7 +34,7 @@ IndexLookUp_12	1999.00	root
 └─TableScan_11	1999.00	cop[tikv]	table:t1, keep order:false
 explain select * from t2 order by c2;
 id	count	task	operator info
-Sort_4	1985.00	root	Column#5:asc
+Sort_4	1985.00	root	Column#2:asc
 └─TableReader_8	1985.00	root	data:TableScan_7
   └─TableScan_7	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
 explain select * from t1 where t1.c1 > 0;
@@ -65,7 +65,7 @@ Delete_4	N/A	root	N/A
   └─TableScan_10	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
-Projection_11	1985.00	root	cast(Column#9)
+Projection_11	1985.00	root	cast(Column#8)
 └─HashLeftJoin_21	1985.00	root	inner join, inner:HashAgg_25, equal:[eq(Column#1, Column#5)]
   ├─TableReader_34	1999.00	root	data:TableScan_33
   │ └─TableScan_33	1999.00	cop[tikv]	table:a, range:[-inf,+inf], keep order:false
@@ -123,13 +123,12 @@ Limit_10	1.00	root	offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
-Projection_6	1999.00	root	Column#8
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
+Projection_6	1999.00	root	Column#7
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(1, Column#5)
   ├─TableReader_9	1999.00	root	data:TableScan_8
   │ └─TableScan_8	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
-  └─TableReader_14	0.00	root	data:Selection_13
-    └─Selection_13	0.00	cop[tikv]	eq(1, Column#5)
-      └─TableScan_12	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+  └─TableReader_13	1985.00	root	data:TableScan_12
+    └─TableScan_12	1985.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -140,7 +139,7 @@ color=black
 label = "root"
 "Projection_6" -> "HashLeftJoin_7"
 "HashLeftJoin_7" -> "TableReader_9"
-"HashLeftJoin_7" -> "TableReader_14"
+"HashLeftJoin_7" -> "TableReader_13"
 }
 subgraph cluster8{
 node [style=filled, color=lightgrey]
@@ -148,14 +147,14 @@ color=black
 label = "cop"
 "TableScan_8"
 }
-subgraph cluster13{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_13" -> "TableScan_12"
+"TableScan_12"
 }
 "TableReader_9" -> "TableScan_8"
-"TableReader_14" -> "Selection_13"
+"TableReader_13" -> "TableScan_12"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
