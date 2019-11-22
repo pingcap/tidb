@@ -2209,7 +2209,6 @@ func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Tab
 }
 
 type infoschemaTable struct {
-	// handle *Handle
 	meta *model.TableInfo
 	cols []*table.Column
 	rows [][]types.Datum
