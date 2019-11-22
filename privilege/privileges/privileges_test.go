@@ -651,6 +651,24 @@ func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
 }
 
+func (s *testPrivilegeSuite) TestAuthHost(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'test_auth_host'@'%';`)
+	mustExec(c, rootSe, `GRANT ALL ON *.* TO 'test_auth_host'@'%' WITH GRANT OPTION;`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	mustExec(c, se, "CREATE USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, se, "GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "create user test_auth_host_a")
+	c.Assert(err, NotNil)
+
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'%';")
+}
+
 func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'testdefault'@'localhost';`)
