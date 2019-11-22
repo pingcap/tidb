@@ -1031,6 +1031,33 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 		`1 0 0`,
 		`2 <nil> <nil>`,
 	))
+
+	tk.MustExec("drop table if exists t,s")
+	tk.MustExec("create table t(a int primary key auto_increment, b time)")
+	tk.MustExec("create table s(a int, b time)")
+	tk.MustExec("alter table s add index idx(a,b)")
+	tk.MustExec("set @@tidb_index_join_batch_size=4;set @@tidb_init_chunk_size=1;set @@tidb_max_chunk_size=32; set @@tidb_index_lookup_join_concurrency=15;")
+	// insert 64 rows into `t`
+	tk.MustExec("insert into t values(0, '01:01:01')")
+	for i := 0; i < 6; i++ {
+		tk.MustExec("insert into t select 0, b + 1 from t")
+	}
+	tk.MustExec("insert into s select a, b - 1 from t")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table s;")
+
+	tk.MustQuery("desc select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
+		"HashAgg_9 1.00 root funcs:count(1)",
+		"└─IndexJoin_16 64.00 root inner join, inner:IndexReader_15, outer key:Column#1, inner key:Column#3, other cond:lt(Column#4, Column#2)",
+		"  ├─TableReader_26 64.00 root data:Selection_25",
+		"  │ └─Selection_25 64.00 cop[tikv] not(isnull(Column#2))",
+		"  │   └─TableScan_24 64.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
+		"  └─IndexReader_15 1.00 root index:Selection_14",
+		"    └─Selection_14 1.00 cop[tikv] not(isnull(Column#3)), not(isnull(Column#4))",
+		"      └─IndexScan_13 1.00 cop[tikv] table:s, index:a, b, range: decided by [eq(Column#3, Column#1) lt(Column#4, Column#2)], keep order:false"))
+	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 }
 
 func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
@@ -1065,6 +1092,30 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	for i, row := range rs.Rows() {
 		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
 	}
+}
+
+func (s *testSuiteJoin3) TestIssue13449(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("create table t(a int, index(a));")
+	tk.MustExec("create table s(a int, index(a));")
+	for i := 1; i <= 128; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.MustExec("insert into s values(1), (128)")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustExec("set @@tidb_index_join_batch_size=32;")
+
+	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
+		"IndexHashJoin_35 12487.50 root inner join, inner:IndexReader_27, outer key:Column#1, inner key:Column#3",
+		"├─IndexReader_37 9990.00 root index:IndexScan_36",
+		"│ └─IndexScan_36 9990.00 cop[tikv] table:t, index:a, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─IndexReader_27 1.25 root index:Selection_26",
+		"  └─Selection_26 1.25 cop[tikv] not(isnull(Column#3))",
+		"    └─IndexScan_25 1.25 cop[tikv] table:s, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
 }
 
 func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
@@ -1588,4 +1639,24 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustExec("create table 11390t (k1 int unsigned, k2 int unsigned, key(k1, k2))")
 	tk.MustExec("insert into 11390t values(1, 1)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testSuiteJoin1) TestIssue13177(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a varchar(20), b int, c int)")
+	tk.MustExec("create table t2(a varchar(20), b int, c int, primary key(a, b))")
+	tk.MustExec("insert into t1 values(\"abcd\", 1, 1), (\"bacd\", 2, 2), (\"cbad\", 3, 3)")
+	tk.MustExec("insert into t2 values(\"bcd\", 1, 1), (\"acd\", 2, 2), (\"bad\", 3, 3)")
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+		"bacd 2 2 acd 2 2",
+		"cbad 3 3 bad 3 3",
+		"abcd 1 1 bcd 1 1",
+	))
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+		"bacd 2 2",
+		"cbad 3 3",
+		"abcd 1 1",
+	))
 }
