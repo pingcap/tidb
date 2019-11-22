@@ -1036,6 +1036,8 @@ func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool
 	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	} else if j.TypeCode != json.TypeCodeString {
+		return "", false, ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
 	}
 	return j.Quote(), false, nil
 }
