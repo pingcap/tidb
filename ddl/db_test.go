@@ -1029,9 +1029,13 @@ LOOP:
 		return
 	}
 
-	// test index range
-	for i := 0; i < 100; i++ {
-		index := rand.Intn(len(keys) - 3)
+	// Test index range with lower/upper boundary and random inner cases
+	step := len(keys) / 20
+	for i := 0; i <= 20; i++ {
+		index := i * step
+		if index > len(keys)-3 {
+			index = len(keys) - 3
+		}
 		rows := tk.MustQuery("select c1 from test_add_index where c3 >= ? order by c1 limit 3", keys[index]).Rows()
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
@@ -1400,6 +1404,33 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	// The primary key name is the same as the existing index name.
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
 	s.tk.MustExec("alter table test_add_pk drop primary key")
+
+	// for describing table
+	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),YES,MUL,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 add primary key idx(a)")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,PRI,<nil>,`))
+	s.tk.MustExec("alter table test_add_pk1 drop primary key")
+	s.tk.MustQuery("desc test_add_pk1").Check(testutil.RowsWithSep(",", `a,int(11),NO,MUL,<nil>,`))
+	s.tk.MustExec("create table test_add_pk2(a int, b int, index idx(a))")
+	s.tk.MustExec("alter table test_add_pk2 add primary key idx(a, b)")
+	s.tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
+		"a int(11) NO PRI <nil> ]\n"+
+		"[b int(11) NO PRI <nil> "))
+	s.tk.MustQuery("show create table test_add_pk2").Check(testutil.RowsWithSep("|", ""+
+		"test_add_pk2 CREATE TABLE `test_add_pk2` (\n"+
+		"  `a` int(11) NOT NULL,\n"+
+		"  `b` int(11) NOT NULL,\n"+
+		"  KEY `idx` (`a`),\n"+
+		"  PRIMARY KEY (`a`,`b`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	s.tk.MustExec("alter table test_add_pk2 drop primary key")
+	s.tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
+		"a int(11) NO MUL <nil> ]\n"+
+		"[b int(11) NO  <nil> "))
+
+	// Check if the primary key exists before checking the table's pkIsHandle.
+	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
 
 	// for the limit of name
 	validName := strings.Repeat("a", mysql.MaxIndexIdentifierLen)
@@ -1946,21 +1977,24 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 
 	s.tk.MustExec("drop table t")
 
-	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
-	c.Assert(err, NotNil)
+	s.tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", mysql.ErrUnknownCharacterSet)
 
-	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	c.Assert(err, IsNil)
-	result := s.tk.MustQuery("show create table collateTest")
-	got := result.Rows()[0][1]
-	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	s.tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	expects := "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	s.tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
+
+	s.tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", mysql.ErrCollationCharsetMismatch)
+	s.tk.MustGetErrCode("CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8", mysql.ErrConflictingDeclarations)
+
+	s.tk.MustExec("CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci")
+	expects = "CREATE TABLE `collateTest4` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+	s.tk.MustQuery("show create table collateTest4").Check(testkit.Rows(expects))
 
 	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
 	s.tk.MustExec("use test2")
 	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
-	result = s.tk.MustQuery("show create table dbCollateTest")
-	got = result.Rows()[0][1]
-	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+	expects = "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
+	s.tk.MustQuery("show create table dbCollateTest").Check(testkit.Rows(expects))
 
 	// test for enum column
 	s.tk.MustExec("use test")
@@ -3227,6 +3261,70 @@ func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
 	tk.MustExec("insert into t1 set a=1;")
 	tk.MustExec("alter table t1 modify column b int;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+}
+
+func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2, t3, t4;")
+
+	// For issue #13189
+	// Use `DEFAULT()` in `INSERT` / `INSERT ON DUPLICATE KEY UPDATE` statement
+	tk.MustExec("create table t1(a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("insert into t1 set a = 1, b = default(c);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40"))
+	tk.MustExec("insert into t1 set a = 2, b = default(c), c = default(d), d = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40", "2 30 40 20"))
+	tk.MustExec("insert into t1 values (2, 3, 4, 5) on duplicate key update b = default(d), c = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40", "2 40 20 20"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a = default(b) + default(c) - default(d)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20 30 40"))
+	// Use `DEFAULT()` in `UPDATE` statement
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
+	tk.MustExec("update t1 set a = 1, c = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 2 20 4"))
+	tk.MustExec("insert into t1 value (2, 2, 3, 4);")
+	tk.MustExec("update t1 set c = default(b), b = default(c) where a = 2;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 2 20 4", "2 30 20 4"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a = 10")
+	tk.MustExec("update t1 set a = 10, b = default(c) + default(d)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	// Use `DEFAULT()` in `REPLACE` statement
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
+	tk.MustExec("replace into t1 set a = 1, c = default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 20 40"))
+	tk.MustExec("insert into t1 value (2, 2, 3, 4);")
+	tk.MustExec("replace into t1 set a = 2, d = default(b), c = default(d);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 20 40", "2 20 40 20"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a = 10, c = 3")
+	tk.MustExec("replace into t1 set a = 10, b = default(c) + default(d)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	tk.MustExec("replace into t1 set a = 20, d = default(c) + default(b)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40", "20 20 30 50"))
+
+	// Use `DEFAULT()` in expression of generate columns, issue #12471
+	tk.MustExec("create table t2(a int default 9, b int as (1 + default(a)));")
+	tk.MustExec("insert into t2 values(1, default);")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10"))
+
+	// Use `DEFAULT()` with subquery, issue #13390
+	tk.MustExec("create table t3(f1 int default 11);")
+	tk.MustExec("insert into t3 value ();")
+	tk.MustQuery("select default(f1) from (select * from t3) t1;").Check(testkit.Rows("11"))
+	tk.MustQuery("select default(f1) from (select * from (select * from t3) t1 ) t1;").Check(testkit.Rows("11"))
+
+	tk.MustExec("create table t4(a int default 4);")
+	tk.MustExec("insert into t4 value (2);")
+	tk.MustQuery("select default(c) from (select b as c from (select a as b from t4) t3) t2;").Check(testkit.Rows("4"))
+	tk.MustGetErrCode("select default(a) from (select a from (select 1 as a) t4) t4;", mysql.ErrNoDefaultForField)
+
+	tk.MustExec("drop table t1, t2, t3, t4;")
 }
 
 func (s *testDBSuite4) TestIssue9100(c *C) {
