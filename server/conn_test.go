@@ -472,3 +472,26 @@ func (ts *ConnTestSuite) TestShutDown(c *C) {
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 	c.Assert(rs.closed, Equals, int32(1))
 }
+
+func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
+	c.Parallel()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: 1,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		status: connStatusReading,
+		ctx: tc,
+	}
+	c.Assert(cc.ShutdownOrNotify(),Equals,true)
+	c.Assert(cc.status,Equals,connStatusShutdown)
+	cc.status = connStatusDispatching
+	c.Assert(cc.ShutdownOrNotify(),Equals,false)
+	c.Assert(cc.status,Equals,connStatusWaitShutdown)
+}
