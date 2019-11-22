@@ -2058,11 +2058,51 @@ func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *
 }
 
 func (b *builtinAddDateIntStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinAddDateIntStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	unit, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(unit)
+	if err = b.args[2].VecEvalString(b.ctx, input, unit); err != nil {
+		return err
+	}
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		unitI := unit.GetString(i)
+		row := input.GetRow(i)
+		date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unitI)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unitI)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		resultI, isNull, err := b.add(b.ctx, date, interval, unitI)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		times[i] = resultI
+	}
+	return nil
 }
 
 func (b *builtinAddDateDatetimeStringSig) vectorized() bool {
