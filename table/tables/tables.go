@@ -431,7 +431,7 @@ func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.Retrie
 	return bs, nil
 }
 
-var rowPool = sync.Pool {
+var rowPool = sync.Pool{
 	New: func() interface{} {
 		return make([]types.Datum, 0, 200)
 	},
