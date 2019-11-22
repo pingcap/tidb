@@ -357,25 +357,6 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 	return exec(ctx, rows)
 }
 
-func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	sessVars := e.ctx.GetSessionVars()
-	if err := e.ctx.StmtCommit(); err != nil {
-		return err
-	}
-	if err := e.ctx.NewTxn(ctx); err != nil {
-		// We should return a special error for batch insert.
-		return ErrBatchDMLFail.GenWithStack("BatchInsert failed with error: %v", err)
-	}
-	if !sessVars.LightningMode {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
-	}
-	return nil
-}
-
 // getRow gets the row which from `insert into select from` or `load data`.
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
