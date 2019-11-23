@@ -408,6 +408,18 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	hasNull := make([]bool, n)
 	var compareResult int
 	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		for i := 0; i < n; i++ {
+			if buf0.IsNull(i) {
+				hasNull[i] = true
+				continue
+			}
+			if _, ok := b.hashSet[args0[i]]; ok {
+				r64s[i] = 1
+			}
+		}
+	}
 
 	for j := 1; j < len(args); j++ {
 		if err := args[j].VecEvalDuration(b.ctx, input, buf1); err != nil {

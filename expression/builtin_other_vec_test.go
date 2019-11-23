@@ -15,6 +15,7 @@ package expression
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -93,6 +94,18 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 				nil,
 				{Value: types.NewJSONDatum(json.CreateBinary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
 				//{Value: types.NewJSONDatum(json.CreateBinary("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+			},
+		},
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETDuration,
+				types.ETDuration, types.ETDuration,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
 			},
 		},
 	},

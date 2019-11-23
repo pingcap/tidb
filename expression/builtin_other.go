@@ -15,6 +15,7 @@ package expression
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -109,7 +110,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inTime
 		sig.setPbCode(tipb.ScalarFuncSig_InTime)
 	case types.ETDuration:
-		sig = &builtinInDurationSig{baseBuiltinFunc: bf}
+		inDuration := builtinInDurationSig{baseBuiltinFunc: bf, threshold: 1}
+		err := inDuration.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inDuration, err
+		}
+		sig = &inDuration
 		sig.setPbCode(tipb.ScalarFuncSig_InDuration)
 	case types.ETJson:
 		inJSON := builtinInJSONSig{baseBuiltinFunc: bf, threshold: 1}
@@ -455,11 +461,49 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInDurationSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDurationSig struct {
 	baseBuiltinFunc
+	nonConstArgs []Expression
+	hashSet      map[time.Duration]bool
+	threshold    int
+}
+
+func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.nonConstArgs = make([]Expression, 0, len(b.args))
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.hashSet = make(map[time.Duration]bool, len(b.args)-1)
+	count := 0
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalDuration(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				continue
+			}
+			b.hashSet[val.Duration] = true
+			count++
+		} else {
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+		}
+	}
+	if count < b.threshold {
+		b.nonConstArgs = b.args
+		b.hashSet = nil
+	}
+
+	return nil
 }
 
 func (b *builtinInDurationSig) Clone() builtinFunc {
 	newSig := &builtinInDurationSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
+	for _, arg := range b.nonConstArgs {
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg)
+	}
+	newSig.hashSet = b.hashSet
+	newSig.threshold = b.threshold
 	return newSig
 }
 
@@ -468,8 +512,15 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
+	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		if _, ok := b.hashSet[arg0.Duration]; ok {
+			return 1, false, nil
+		}
+	}
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
 		if err != nil {
 			return 0, true, err

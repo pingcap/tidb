@@ -493,7 +493,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_InTime:
 		f = &builtinInTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InDuration:
-		f = &builtinInDurationSig{base}
+		f = &builtinInDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InJson:
 		f = &builtinInJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullInt:
