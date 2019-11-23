@@ -96,7 +96,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inStr
 		sig.setPbCode(tipb.ScalarFuncSig_InString)
 	case types.ETReal:
-		sig = &builtinInRealSig{baseBuiltinFunc: bf}
+		inReal := builtinInRealSig{baseBuiltinFunc: bf, threshold: 1}
+		err := inReal.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inReal, err
+		}
+		sig = &inReal
 		sig.setPbCode(tipb.ScalarFuncSig_InReal)
 	case types.ETDecimal:
 		sig = &builtinInDecimalSig{baseBuiltinFunc: bf}
@@ -317,11 +322,49 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInRealSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
 	baseBuiltinFunc
+	nonConstArgs []Expression
+	hashSet      map[float64]bool
+	threshold    int
+}
+
+func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.nonConstArgs = make([]Expression, 0, len(b.args))
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.hashSet = make(map[float64]bool, len(b.args)-1)
+	count := 0
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalReal(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				continue
+			}
+			b.hashSet[val] = true
+			count++
+		} else {
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+		}
+	}
+	if count < b.threshold {
+		b.nonConstArgs = b.args
+		b.hashSet = nil
+	}
+
+	return nil
 }
 
 func (b *builtinInRealSig) Clone() builtinFunc {
 	newSig := &builtinInRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
+	for _, arg := range b.nonConstArgs {
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg)
+	}
+	newSig.hashSet = b.hashSet
+	newSig.threshold = b.threshold
 	return newSig
 }
 
@@ -330,8 +373,15 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
+	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		if _, ok := b.hashSet[arg0]; ok {
+			return 1, false, nil
+		}
+	}
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
 		if err != nil {
 			return 0, true, err

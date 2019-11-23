@@ -108,6 +108,18 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
 			},
 		},
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETReal,
+				types.ETReal, types.ETReal,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldType(mysql.TypeFloat)},
+				{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldType(mysql.TypeFloat)},
+			},
+		},
 	},
 	ast.GetParam: {
 		{

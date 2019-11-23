@@ -114,6 +114,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ range . }}
 {{ $InputInt := (eq .Input.TypeName "Int") }}
 {{ $InputString := (eq .Input.TypeName "String") }}
+{{ $InputReal := (eq .Input.TypeName "Real") }}
 {{ $InputTime := (eq .Input.TypeName "Time") }}
 {{ $InputJson := (eq .Input.TypeName "JSON") }}
 {{ $InputDuration := (eq .Input.TypeName "Duration")}}
@@ -182,7 +183,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		}
 	}
 	{{- end }}
-	{{- if or $InputDuration }}
+	{{- if or $InputDuration $InputReal }}
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {

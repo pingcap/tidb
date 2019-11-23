@@ -485,7 +485,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InReal:
-		f = &builtinInRealSig{base}
+		f = &builtinInRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InDecimal:
 		f = &builtinInDecimalSig{base}
 	case tipb.ScalarFuncSig_InString:
