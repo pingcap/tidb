@@ -81,7 +81,6 @@ var (
 	errInvalidDDLJob         = terror.ClassDDL.New(mysql.ErrInvalidDDLJob, mysql.MySQLErrName[mysql.ErrInvalidDDLJob])
 	errCancelledDDLJob       = terror.ClassDDL.New(mysql.ErrCancelledDDLJob, mysql.MySQLErrName[mysql.ErrCancelledDDLJob])
 	errFileNotFound          = terror.ClassDDL.New(mysql.ErrFileNotFound, mysql.MySQLErrName[mysql.ErrFileNotFound])
-	errInvalidDDLJobFlag     = terror.ClassDDL.New(mysql.ErrInvalidDDLJobFlag, mysql.MySQLErrName[mysql.ErrInvalidDDLJobFlag])
 	errRunMultiSchemaChanges = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "multi schema change"))
 	errWaitReorgTimeout      = terror.ClassDDL.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = terror.ClassDDL.New(mysql.ErrInvalidStoreVersion, mysql.MySQLErrName[mysql.ErrInvalidStoreVersion])
@@ -544,7 +543,7 @@ func (d *ddl) GetID() string {
 func checkJobMaxInterval(job *model.Job) time.Duration {
 	// The job of adding index takes more time to process.
 	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		return 3 * time.Second
 	}
 	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
@@ -559,7 +558,7 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 		return
 	}
 
-	if jobTp == model.ActionAddIndex {
+	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
 		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
 	} else {
 		asyncNotify(d.workers[generalWorker].ddlJobCh)

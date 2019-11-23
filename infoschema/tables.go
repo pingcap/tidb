@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -177,6 +178,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 	{"TIDB_TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"TIDB_ROW_ID_SHARDING_INFO", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -672,9 +674,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 }
 
 var tableTiDBClusterConfigCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
@@ -1035,9 +1035,7 @@ var filesCols = []columnInfo{
 }
 
 var tableTiDBClusterInfoCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1303,6 +1301,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
+
+				shardingInfo := GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					catalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
@@ -1326,6 +1326,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					createOptions, // CREATE_OPTIONS
 					table.Comment, // TABLE_COMMENT
 					table.ID,      // TIDB_TABLE_ID
+					shardingInfo,  // TIDB_ROW_ID_SHARDING_INFO
 				)
 				rows = append(rows, record)
 			} else {
@@ -1352,12 +1353,35 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // CREATE_OPTIONS
 					"VIEW",        // TABLE_COMMENT
 					table.ID,      // TIDB_TABLE_ID
+					nil,           // TIDB_ROW_ID_SHARDING_INFO
 				)
 				rows = append(rows, record)
 			}
 		}
 	}
 	return rows, nil
+}
+
+// GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
+// The returned description string may be:
+//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables that is primary key is row id.
+//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+// The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
+// This function is exported for unit test.
+func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
+	if dbInfo == nil || tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.Name.L) {
+		return nil
+	}
+	shardingInfo := "NOT_SHARDED"
+	if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	} else {
+		if tableInfo.ShardRowIDBits > 0 {
+			shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+		}
+	}
+	return shardingInfo
 }
 
 func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1878,14 +1902,10 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 
 	rows := make([][]types.Datum, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
-		tp := "tidb"
-		name := fmt.Sprintf("%s-%d", tp, len(rows))
 		addr := fmt.Sprintf("%s:%d", node.IP, node.Port)
 		statusAddr := fmt.Sprintf("%s:%d", node.IP, node.StatusPort)
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"tidb",
 			addr,
 			statusAddr,
 			node.Version,
@@ -1900,7 +1920,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	for i, addr := range etcd.EtcdAddrs() {
+	for _, addr := range etcd.EtcdAddrs() {
 		addr = strings.TrimSpace(addr)
 
 		// Get PD version
@@ -1940,12 +1960,8 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		}
 		terror.Log(resp.Body.Close())
 
-		tp := "pd"
-		name := fmt.Sprintf("%s-%d", tp, i)
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"pd",
 			addr,
 			addr,
 			version,
@@ -1968,13 +1984,9 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for i, storeStat := range storesStat.Stores {
-		tp := "tikv"
-		name := fmt.Sprintf("%s-%d", tp, i)
+	for _, storeStat := range storesStat.Stores {
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"tikv",
 			storeStat.Store.Address,
 			storeStat.Store.StatusAddress,
 			storeStat.Store.Version,
@@ -1986,7 +1998,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sql := "SELECT type, name, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
+	sql := "SELECT type, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
@@ -2031,11 +2043,10 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	ch := make(chan result, len(rows))
 	for i, row := range rows {
 		typ := row.GetString(0)
-		name := row.GetString(1)
-		address := row.GetString(2)
-		statusAddr := row.GetString(3)
+		address := row.GetString(1)
+		statusAddr := row.GetString(2)
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s(%s) does not contain status address", typ, name, address))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 
@@ -2089,9 +2100,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
-						0,
 						typ,
-						name,
 						address,
 						item.key,
 						item.val,
@@ -2117,7 +2126,6 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
 	for _, result := range results {
 		for _, row := range result.rows {
-			row[0] = types.NewDatum(len(finalRows) + 1)
 			finalRows = append(finalRows, row)
 		}
 	}
@@ -2192,23 +2200,18 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
-func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
+func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
-	return &infoschemaTable{
-		handle: handle,
-		meta:   meta,
-		cols:   columns,
-	}
+	return &infoschemaTable{meta: meta, cols: columns}, nil
 }
 
 type infoschemaTable struct {
-	handle *Handle
-	meta   *model.TableInfo
-	cols   []*table.Column
-	rows   [][]types.Datum
+	meta *model.TableInfo
+	cols []*table.Column
+	rows [][]types.Datum
 }
 
 // schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
@@ -2416,6 +2419,11 @@ func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (it *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
+}
+
 // Allocator implements table.Table Allocator interface.
 func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
@@ -2531,6 +2539,11 @@ func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, n
 // AllocHandle implements table.Table AllocHandle interface.
 func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
+}
+
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (vt *VirtualTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Allocator interface.
