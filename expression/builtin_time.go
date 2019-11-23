@@ -2724,15 +2724,11 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 			interval = "-" + interval
 		}
 	case "SECOND":
-		// Decimal's EvalString is like %f format.
-		interval, isNull, err = args[1].EvalString(ctx, row)
-		if isNull || err != nil {
-			return "", true, err
-		}
+		// interval is already like the %f format.
 	default:
 		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
-		args[1] = WrapWithCastAsInt(ctx, args[1])
-		interval, isNull, err = args[1].EvalString(ctx, row)
+		castExpr := WrapWithCastAsString(ctx, WrapWithCastAsInt(ctx, args[1]))
+		interval, isNull, err = castExpr.EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
@@ -2851,6 +2847,236 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 	return date, false, nil
+}
+
+func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(unit, buf)
+	dates := result.Times()
+	i64s := buf.Int64s()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		date, err := types.ParseTimeFromInt64(sc, i64s[i])
+		if err != nil {
+			return err
+		}
+		dateTp := mysql.TypeDate
+		if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit.GetString(i)) {
+			dateTp = mysql.TypeDatetime
+		}
+		date.Type = dateTp
+		dates[i] = date
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(unit, buf)
+	dates := result.Times()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		dateStr := buf.GetString(i)
+		dateTp := mysql.TypeDate
+		if !types.IsDateFormat(dateStr) || types.IsClockUnit(unit.GetString(i)) {
+			dateTp = mysql.TypeDatetime
+		}
+
+		date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
+		if err != nil {
+			err = handleInvalidTimeError(b.ctx, err)
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			dates[i] = date
+		}
+
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if unit.IsNull(i) || buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		interval := buf.GetString(i)
+		if unitLower := strings.ToLower(unit.GetString(i)); unitLower == "day" || unitLower == "hour" {
+			if intervalLower := strings.ToLower(interval); intervalLower == "true" {
+				interval = "1"
+			} else if intervalLower == "false" {
+				interval = "0"
+			} else {
+				interval = du.intervalRegexp.FindString(interval)
+			}
+		}
+		result.AppendString(interval)
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	decs := buf.Decimals()
+	castExpr := WrapWithCastAsString(b.ctx, WrapWithCastAsInt(b.ctx, b.args[1]))
+	for i := 0; i < n; i++ {
+		if unit.IsNull(i) || buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		isNull := false
+		row := input.GetRow(i)
+		interval := decs[i].String()
+		unitUpper := strings.ToUpper(unit.GetString(i))
+		switch unitUpper {
+		case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
+			"DAY_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND", "HOUR_SECOND", "MINUTE_MICROSECOND", "SECOND_MICROSECOND":
+			neg := false
+			if interval != "" && interval[0] == '-' {
+				neg = true
+				interval = interval[1:]
+			}
+			switch unitUpper {
+			case "HOUR_MINUTE", "MINUTE_SECOND":
+				interval = strings.Replace(interval, ".", ":", -1)
+			case "YEAR_MONTH":
+				interval = strings.Replace(interval, ".", "-", -1)
+			case "DAY_HOUR":
+				interval = strings.Replace(interval, ".", " ", -1)
+			case "DAY_MINUTE":
+				interval = "0 " + strings.Replace(interval, ".", ":", -1)
+			case "DAY_SECOND":
+				interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
+			case "DAY_MICROSECOND":
+				interval = "0 00:00:" + interval
+			case "HOUR_MICROSECOND":
+				interval = "00:00:" + interval
+			case "HOUR_SECOND":
+				interval = "00:" + strings.Replace(interval, ".", ":", -1)
+			case "MINUTE_MICROSECOND":
+				interval = "00:" + interval
+			case "SECOND_MICROSECOND":
+				/* keep interval as original decimal */
+			}
+			if neg {
+				interval = "-" + interval
+			}
+		case "SECOND":
+			// interval is already like the %f format.
+		default:
+			// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
+			interval, isNull, err = castExpr.EvalString(b.ctx, row)
+			if err != nil {
+				return err
+			}
+		}
+		if isNull {
+			result.AppendNull()
+		} else {
+			result.AppendString(interval)
+		}
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if unit.IsNull(i) || buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(strconv.FormatInt(i64s[i], 10))
+		}
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromReal(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	f64s := buf.Float64s()
+	prec := b.args[1].GetType().Decimal
+	for i := 0; i < n; i++ {
+		if unit.IsNull(i) || buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(strconv.FormatFloat(f64s[i], 'f', prec, 64))
+		}
+	}
+	return nil
 }
 
 type addDateFunctionClass struct {

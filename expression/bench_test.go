@@ -612,15 +612,15 @@ func (g *dateTimeStrGener) gen() interface{} {
 	return dataTimeStr
 }
 
-// timeStrGener is used to generate strings which are time format
-type timeStrGener struct {
+// dateStrGener is used to generate strings which are date format
+type dateStrGener struct {
 	Year       int
 	Month      int
 	Day        int
 	NullRation float64
 }
 
-func (g *timeStrGener) gen() interface{} {
+func (g *dateStrGener) gen() interface{} {
 	if g.NullRation > 1e-6 && rand.Float64() < g.NullRation {
 		return nil
 	}
@@ -638,12 +638,12 @@ func (g *timeStrGener) gen() interface{} {
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
 }
 
-// dateStrGener is used to generate strings which are data format
-type dateStrGener struct {
+// timeStrGener is used to generate strings which are time format
+type timeStrGener struct{
 	nullRation float64
 }
 
-func (g *dateStrGener) gen() interface{} {
+func (g *timeStrGener) gen() interface{} {
 	if g.nullRation > 1e-6 && rand.Float64() < g.nullRation {
 		return nil
 	}
@@ -652,6 +652,24 @@ func (g *dateStrGener) gen() interface{} {
 	second := rand.Intn(60)
 
 	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
+}
+
+type dateTimeIntGener struct {
+	dateTimeGener
+	nullRation float64
+}
+
+func (g *dateTimeIntGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+
+	t := g.dateTimeGener.gen().(types.Time)
+	num, err := t.ToNumber().ToInt()
+	if err != nil {
+		panic(err)
+	}
+	return num
 }
 
 // constStrGener always returns the given string
