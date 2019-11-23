@@ -179,6 +179,11 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
 		},
+		// builtinSubTimeDurationNullSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime},
+		},
 	},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
