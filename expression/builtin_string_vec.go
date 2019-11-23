@@ -657,7 +657,7 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 		str := strings.Join(strs[i], seps[i])
 		// check whether the length of result is larger than Flen
-		if len(str) > b.tp.Flen {
+		if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
 			result.AppendNull()
 			continue
 		}
