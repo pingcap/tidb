@@ -15,6 +15,7 @@ package handle_test
 
 import (
 	"fmt"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -48,7 +49,15 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tbl := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTbl, tbl)
 
+	cleanEnv(c, s.store, s.do)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		c.Assert(h.Update(is), IsNil)
+		wg.Done()
+	}()
 	err = h.LoadStatsFromJSON(is, jsonTbl)
+	wg.Wait()
 	c.Assert(err, IsNil)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTblInStorage, tbl)
