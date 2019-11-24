@@ -1467,11 +1467,43 @@ func (b *builtinAddDateIntRealSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinSubDurationAndDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubDurationAndDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
+		return err
+	}
+	buf0 := result
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.MergeNulls(buf1)
+	arg0s := buf0.GoDurations()
+	arg1s := buf1.GoDurations()
+	resultSlice := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		// get arg0 & arg1
+		arg0 := arg0s[i]
+		arg1 := arg1s[i]
+		// calculate
+		output, err := types.AddDuration(arg0, -arg1)
+		if err != nil {
+			return err
+		}
+		// commit result
+		resultSlice[i] = output
+	}
+	return nil
 }
 
 func (b *builtinTimeToSecSig) vectorized() bool {
