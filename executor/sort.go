@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -50,6 +51,10 @@ type SortExec struct {
 	rowPtrs []chunk.RowPtr
 
 	memTracker *memory.Tracker
+
+	rowChunksInDisk *chunk.ListInDisk
+	exceeded        uint32
+	spilled         uint32
 }
 
 // Close implements the Executor Close interface.
@@ -68,6 +73,9 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
+	e.exceeded = 0
+	e.spilled = 0
+	e.rowChunksInDisk = nil
 	return e.children[0].Open(ctx)
 }
 
@@ -87,7 +95,15 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		rowPtr := e.rowPtrs[e.Idx]
-		req.AppendRow(e.rowChunks.GetRow(rowPtr))
+		if e.alreadySpilled() {
+			row, err := e.rowChunksInDisk.GetRow(rowPtr)
+			if err != nil {
+				return err
+			}
+			req.AppendRow(row)
+		} else {
+			req.AppendRow(e.rowChunks.GetRow(rowPtr))
+		}
 		e.Idx++
 	}
 	return nil
@@ -108,19 +124,46 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if rowCount == 0 {
 			break
 		}
-		e.rowChunks.Add(chk)
+		if e.alreadySpilled() {
+			// append chk to disk.
+			err := e.rowChunksInDisk.Add(chk)
+			if err != nil {
+				return err
+			}
+		} else {
+			e.rowChunks.Add(chk)
+			if atomic.LoadUint32(&e.exceeded) == 0 {
+				err := e.spillToDisk()
+				if err != nil {
+					return err
+				}
+				e.rowChunks = nil // GC its internal chunks.
+				e.memTracker.Consume(-e.memTracker.BytesConsumed())
+				atomic.StoreUint32(&e.spilled, 1)
+			}
+		}
 	}
 	return nil
 }
 
 func (e *SortExec) initPointers() {
-	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
-	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
-	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-		rowChk := e.rowChunks.GetChunk(chkIdx)
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+	if !e.alreadySpilled() {
+		e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
+		e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
+		for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
+			rowChk := e.rowChunks.GetChunk(chkIdx)
+			for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+				e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			}
 		}
+	} else {
+		e.rowPtrs = make([]chunk.RowPtr, 0)
+		for chkIdx := 0; chkIdx < e.rowChunksInDisk.NumChunks(); chkIdx++ {
+			for rowIdx := 0; rowIdx < e.rowChunksInDisk.NumRowsOfChunk(chkIdx); rowIdx++ {
+				e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			}
+		}
+		e.memTracker.Consume(int64(8 * len(e.rowPtrs)))
 	}
 }
 
@@ -158,9 +201,39 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
-	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
+	var rowI, rowJ chunk.Row
+	var err error
+	if e.alreadySpilled() {
+		rowI, err = e.rowChunksInDisk.GetRow(e.rowPtrs[i])
+		if err != nil {
+			panic("read Row fail")
+		}
+		rowJ, err = e.rowChunksInDisk.GetRow(e.rowPtrs[j])
+		if err != nil {
+			panic("read Row fail")
+		}
+	} else {
+		rowI = e.rowChunks.GetRow(e.rowPtrs[i])
+		rowJ = e.rowChunks.GetRow(e.rowPtrs[j])
+	}
 	return e.lessRow(rowI, rowJ)
+}
+
+func (e *SortExec) alreadySpilled() bool { return e.rowChunksInDisk != nil }
+
+func (e *SortExec) alreadySpilledSafe() bool { return atomic.LoadUint32(&e.spilled) == 1 }
+
+func (e *SortExec) spillToDisk() (err error) {
+	N := e.rowChunks.NumChunks()
+	e.rowChunksInDisk = chunk.NewListInDisk(e.retFieldTypes)
+	for i := 0; i < N; i++ {
+		chk := e.rowChunks.GetChunk(i)
+		err = e.rowChunksInDisk.Add(chk)
+		if err != nil {
+			return
+		}
+	}
+	return
 }
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
