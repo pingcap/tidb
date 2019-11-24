@@ -292,7 +292,7 @@ max-batch-wait-time = 0
 batch-wait-size = 8
 
 # Enable chunk encoded data for coprocessor requests.
-enable-chunk-rpc = true
+enable-chunk-rpc = false
 
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
