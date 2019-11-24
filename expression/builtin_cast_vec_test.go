@@ -26,6 +26,7 @@ import (
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&decimalJSONGener{}}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
@@ -81,6 +82,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&jsonTimeGener{},
 			}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 	},
 }
 

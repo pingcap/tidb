@@ -530,11 +530,33 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastDecimalAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	decs := result.Decimals()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		dec := &types.MyDecimal{}
+		if !(conditionUnionAndUnsigned && decs[i].IsNegative()) {
+			*dec = decs[i]
+		}
+		dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		decs[i] = *dec
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsTimeSig) vectorized() bool {
@@ -1287,11 +1309,38 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastJSONAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	res := result.Decimals()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		tempres, err := types.ConvertJSONToDecimal(sc, buf.GetJSON(i))
+		if err != nil {
+			return err
+		}
+		tempres, err = types.ProduceDecWithSpecifiedTp(tempres, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		res[i] = *tempres
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsRealSig) vectorized() bool {

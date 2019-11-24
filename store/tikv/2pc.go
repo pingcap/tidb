@@ -489,6 +489,20 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 			isPessimisticLock[i] = true
 		}
 	}
+	var minCommitTS uint64
+	if c.forUpdateTS > 0 {
+		minCommitTS = c.forUpdateTS + 1
+	} else {
+		minCommitTS = c.startTS + 1
+	}
+
+	failpoint.Inject("mockZeroCommitTS", func(val failpoint.Value) {
+		// Should be val.(uint64) but failpoint doesn't support that.
+		if tmp, ok := val.(int); ok && uint64(tmp) == c.startTS {
+			minCommitTS = 0
+		}
+	})
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
@@ -497,6 +511,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
+		MinCommitTs:       minCommitTS,
 	}
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
@@ -558,7 +573,8 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		// Set callerStartTS to 0 so as not to update minCommitTS.
+		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -759,7 +775,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
-		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1098,11 +1114,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			c.connID, c.startTS, c.commitTS)
 		return err
 	}
-
-	failpoint.Inject("mockSleepBetween2PC", func() error {
-		time.Sleep(100 * time.Millisecond)
-		return nil
-	})
 
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
