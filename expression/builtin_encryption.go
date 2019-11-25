@@ -74,9 +74,6 @@ var (
 	_ builtinFunc = &builtinUncompressedLengthSig{}
 )
 
-// ivSize indicates the initialization vector supplied to aes_decrypt
-const ivSize = aes.BlockSize
-
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
 // keySize is the key length in bits and mode is the encryption mode.
 // ivRequired indicates that initialization vector is required or not.
