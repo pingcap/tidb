@@ -839,16 +839,16 @@ func (s *testExecSuite) TestVecGroupChecker(c *C) {
 	ctx := mock.NewContext()
 	for _, testCase := range testCases {
 		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum)
-		groupChecker := newVecGroupChecker(ctx, ctx.GetSessionVars().StmtCtx, expr)
+		groupChecker := newVecGroupChecker(ctx, expr)
 		groupNum := 0
 		for i, inputChk := range inputChks {
-			flag, err := groupChecker.splitChunk(inputChk)
+			flag, err := groupChecker.splitIntoGroups(inputChk)
 			c.Assert(err, IsNil)
 			c.Assert(flag, Equals, testCase.expectedFlag[i])
 			if flag {
-				groupNum += groupChecker.groupRowsNum - 1
+				groupNum += groupChecker.groupCount - 1
 			} else {
-				groupNum += groupChecker.groupRowsNum
+				groupNum += groupChecker.groupCount
 			}
 		}
 		c.Assert(groupNum, Equals, testCase.expectedGroups)

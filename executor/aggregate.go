@@ -830,12 +830,12 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.groupChecker.curGroupID >= e.groupChecker.groupRowsNum {
-		if err = e.fetchChildIfNecessary(ctx, chk); err != nil {
+	if e.groupChecker.isExhausted() {
+		if err = e.fetchChild(ctx, chk); err != nil {
 			return err
 		}
 		if !e.executed && !chk.IsFull() {
-			_, err := e.groupChecker.splitChunk(e.childResult)
+			_, err := e.groupChecker.splitIntoGroups(e.childResult)
 			if err != nil {
 				return err
 			}
@@ -843,7 +843,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 			return nil
 		}
 	}
-	begin, end := e.groupChecker.getOneGroup()
+	begin, end := e.groupChecker.getNextGroup()
 	e.groupRows = e.groupRows[:0]
 	for i := begin; i < end; i++ {
 		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
@@ -851,18 +851,17 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 
 	for end == e.childResult.NumRows() {
 		end = -1
-		if err = e.fetchChildIfNecessary(ctx, chk); err != nil || e.executed {
+		if err = e.fetchChild(ctx, chk); err != nil || e.executed {
 			return err
 		}
 
-		flag, err := e.groupChecker.splitChunk(e.childResult)
+		areSameGroup, err := e.groupChecker.splitIntoGroups(e.childResult)
 		if err != nil {
 			return err
 		}
 
-		if flag {
-			begin, end = e.groupChecker.getOneGroup()
-			e.groupRows = e.groupRows[:0]
+		if areSameGroup {
+			begin, end = e.groupChecker.getNextGroup()
 			for i := begin; i < end; i++ {
 				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 			}
@@ -896,7 +895,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	return nil
 }
 
-func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *StreamAggExec) fetchChild(ctx context.Context, chk *chunk.Chunk) (err error) {
 	// Before fetching a new batch of input, we should consume the last group.
 	err = e.consumeGroupRows()
 	if err != nil {
@@ -1000,10 +999,9 @@ func (e *groupChecker) reset() {
 
 type vecGroupChecker struct {
 	ctx                  sessionctx.Context
-	StmtCtx              *stmtctx.StatementContext
 	GroupByItems         []expression.Expression
-	groupRowsIndex       []int
-	groupRowsNum         int
+	groupOffset          []int
+	groupCount           int
 	curGroupID           int
 	previousLastGroupKey string
 	firstGroupKey        []byte
@@ -1013,31 +1011,25 @@ type vecGroupChecker struct {
 	sameGroup            []bool
 }
 
-func newVecGroupChecker(ctx sessionctx.Context, stmtCtx *stmtctx.StatementContext, items []expression.Expression) *vecGroupChecker {
+func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
 	sameGroup := make([]bool, 1024)
 	return &vecGroupChecker{
 		ctx:          ctx,
-		StmtCtx:      stmtCtx,
 		GroupByItems: items,
-		groupRowsNum: 0,
+		groupCount:   0,
 		curGroupID:   0,
 		sameGroup:    sameGroup,
 	}
 }
 
-// splitChunk divides the chunk into more groups which the row in the same group have the same groupKey
-// the return value flag means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
+// splitIntoGroups divides the chunk into more groups which the row in the same group have the same groupKey
+// the return value areSameGroup means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
+func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, err error) {
 	numRows := chk.NumRows()
-	e.curGroupID = 0
-	e.groupRowsIndex = e.groupRowsIndex[:0]
-	e.firstGroupKey = e.firstGroupKey[:0]
-	e.lastGroupKey = e.lastGroupKey[:0]
-	e.firstRowDatums = e.firstRowDatums[:0]
-	e.lastRowDatums = e.lastRowDatums[:0]
+	e.reset()
 	if len(e.GroupByItems) == 0 {
-		e.groupRowsIndex = append(e.groupRowsIndex, numRows)
+		e.groupOffset = append(e.groupOffset, numRows)
 		return true, nil
 	}
 
@@ -1069,37 +1061,37 @@ func (e *vecGroupChecker) splitChunk(chk *chunk.Chunk) (flag bool, err error) {
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeValue(e.StmtCtx, e.firstGroupKey, e.firstRowDatums...)
+	e.firstGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeValue(e.StmtCtx, e.lastGroupKey, e.lastRowDatums...)
+	e.lastGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
 	if err != nil {
 		return false, err
 	}
 
 	if len(e.previousLastGroupKey) == 0 {
-		flag = false
+		areSameGroup = false
 	} else {
-		groupKey0 := string(e.previousLastGroupKey)
+		groupKey0 := e.previousLastGroupKey
 		groupKey1 := string(e.firstGroupKey)
 		if groupKey0 == groupKey1 {
-			flag = true
+			areSameGroup = true
 		} else {
-			flag = false
+			areSameGroup = false
 		}
 	}
 	e.previousLastGroupKey = string(e.lastGroupKey)
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
-			e.groupRowsIndex = append(e.groupRowsIndex, i)
+			e.groupOffset = append(e.groupOffset, i)
 		}
 	}
-	e.groupRowsIndex = append(e.groupRowsIndex, numRows)
-	e.groupRowsNum = len(e.groupRowsIndex)
-	return flag, nil
+	e.groupOffset = append(e.groupOffset, numRows)
+	e.groupCount = len(e.groupOffset)
+	return areSameGroup, nil
 }
 
 func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column, numRows int) (err error) {
@@ -1107,102 +1099,98 @@ func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column
 	var firstRowDatum, lastRowDatum types.Datum
 	switch eType {
 	case types.ETInt:
-		i64s := col.Int64s()
+		vals := col.Int64s()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && i64s[i] != i64s[i-1] {
+					if !previousIsNull && vals[i] != vals[i-1] {
 						e.sameGroup[i] = false
 					}
 				}
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(i64s[0])
-		lastRowDatum.SetValue(i64s[numRows-1])
+		firstRowDatum.SetValue(vals[0])
+		lastRowDatum.SetValue(vals[numRows-1])
 	case types.ETReal:
-		i64s := col.Float64s()
+		vals := col.Float64s()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && i64s[i] != i64s[i-1] {
+					if !previousIsNull && vals[i] != vals[i-1] {
 						e.sameGroup[i] = false
 					}
 				}
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(i64s[0])
-		lastRowDatum.SetValue(i64s[numRows-1])
+		firstRowDatum.SetValue(vals[0])
+		lastRowDatum.SetValue(vals[numRows-1])
 	case types.ETDecimal:
-		i64s := col.Decimals()
+		vals := col.Decimals()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && i64s[i] != i64s[i-1] {
+					if !previousIsNull && vals[i] != vals[i-1] {
 						e.sameGroup[i] = false
 					}
 				}
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(i64s[0])
-		lastRowDatum.SetValue(i64s[numRows-1])
+		firstRowDatum.SetValue(vals[0])
+		lastRowDatum.SetValue(vals[numRows-1])
 	case types.ETDatetime, types.ETTimestamp:
-		i64s := col.Times()
+		vals := col.Times()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && i64s[i] != i64s[i-1] {
+					if !previousIsNull && vals[i] != vals[i-1] {
 						e.sameGroup[i] = false
 					}
 				}
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(i64s[0])
-		lastRowDatum.SetValue(i64s[numRows-1])
+		firstRowDatum.SetValue(vals[0])
+		lastRowDatum.SetValue(vals[numRows-1])
 	case types.ETDuration:
-		i64s := col.GoDurations()
+		vals := col.GoDurations()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && i64s[i] != i64s[i-1] {
+					if !previousIsNull && vals[i] != vals[i-1] {
 						e.sameGroup[i] = false
 					}
 				}
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(i64s[0])
-		lastRowDatum.SetValue(i64s[numRows-1])
+		firstRowDatum.SetValue(vals[0])
+		lastRowDatum.SetValue(vals[numRows-1])
 	case types.ETJson:
 		previousKey := col.GetJSON(0)
 		for i := 1; i < numRows; i++ {
 			key := col.GetJSON(i)
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+				if isNull != previousIsNull || json.CompareBinary(previousKey, key) != 0 {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && json.CompareBinary(previousKey, key) != 0 {
-						e.sameGroup[i] = false
-					}
 				}
 			}
 			previousKey = key
@@ -1216,12 +1204,8 @@ func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column
 			key := col.GetString(i)
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+				if isNull != previousIsNull || previousKey != key {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && previousKey != key {
-						e.sameGroup[i] = false
-					}
 				}
 			}
 			previousKey = key
@@ -1241,20 +1225,25 @@ func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column
 	return err
 }
 
-func (e *vecGroupChecker) getOneGroup() (begin, end int) {
+func (e *vecGroupChecker) getNextGroup() (begin, end int) {
 	if e.curGroupID == 0 {
 		begin = 0
 	} else {
-		begin = e.groupRowsIndex[e.curGroupID-1]
+		begin = e.groupOffset[e.curGroupID-1]
 	}
-	end = e.groupRowsIndex[e.curGroupID]
+	end = e.groupOffset[e.curGroupID]
 	e.curGroupID++
 	return begin, end
 }
 
+func (e *vecGroupChecker) isExhausted() bool {
+	return e.curGroupID >= e.groupCount
+}
+
 func (e *vecGroupChecker) reset() {
-	if e.groupRowsIndex != nil {
-		e.groupRowsIndex = e.groupRowsIndex[:0]
+	e.curGroupID = 0
+	if e.groupOffset != nil {
+		e.groupOffset = e.groupOffset[:0]
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]
