@@ -324,7 +324,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errDuplicateColumn.GenWithStack("column specified twice - %s", name)
+			return errDuplicateColumn.GenWithStackByArgs(name)
 		}
 
 		m[name.L] = struct{}{}
