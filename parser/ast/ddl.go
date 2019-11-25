@@ -1692,7 +1692,11 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 	case TableOptionCharset:
 		ctx.WriteKeyWord("DEFAULT CHARACTER SET ")
 		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(n.StrValue)
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WriteKeyWord(n.StrValue)
+		}
 	case TableOptionCollate:
 		ctx.WriteKeyWord("DEFAULT COLLATE ")
 		ctx.WritePlain("= ")
@@ -2110,9 +2114,16 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 			n.Options[0].Tp == TableOptionCharset &&
 			n.Options[1].Tp == TableOptionCollate:
 			ctx.WriteKeyWord("CONVERT TO CHARACTER SET ")
-			ctx.WriteKeyWord(n.Options[0].StrValue)
+			if n.Options[0].Default {
+				ctx.WriteKeyWord("DEFAULT")
+			} else {
+				ctx.WriteKeyWord(n.Options[0].StrValue)
+			}
 			ctx.WriteKeyWord(" COLLATE ")
 			ctx.WriteKeyWord(n.Options[1].StrValue)
+		case n.Options[0].Tp == TableOptionCharset &&
+			n.Options[0].Default:
+			ctx.WriteKeyWord("CONVERT TO CHARACTER SET DEFAULT")
 		default:
 			for i, opt := range n.Options {
 				if i != 0 {

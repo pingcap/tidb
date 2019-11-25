@@ -1328,6 +1328,17 @@ AlterTableSpec:
 		}
 		$$ = op
 	}
+|	"CONVERT" "TO" CharsetKw "DEFAULT" OptCollate
+	{
+		op := &ast.AlterTableSpec{
+			Tp: ast.AlterTableOption,
+			Options:[]*ast.TableOption{{Tp: ast.TableOptionCharset, Default: true}},
+		}
+		if $5 != "" {
+			op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $5.(string)})
+		}
+		$$ = op
+	}
 |	"ADD" ColumnKeywordOpt IfNotExists ColumnDef ColumnPosition
 	{
 		$$ = &ast.AlterTableSpec{
