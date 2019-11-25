@@ -140,6 +140,16 @@ func (impl *TiDBTopNImpl) CalcCost(outCount float64, children ...memo.Implementa
 	return impl.cost
 }
 
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *TiDBTopNImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	topN := impl.plan.(*plannercore.PhysicalTopN)
+	topN.SetChildren(children[0].GetPlan())
+	// If the topN.ByItems contains ScalarFunctions, we need to inject Projections
+	// below and above TopN for the them.
+	impl.plan = plannercore.InjectProjBelowSort(topN, topN.ByItems)
+	return impl
+}
+
 // NewTiDBTopNImpl creates a new TiDBTopNImpl.
 func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
 	return &TiDBTopNImpl{baseImpl{plan: topN}}

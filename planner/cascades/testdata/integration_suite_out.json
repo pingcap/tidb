@@ -301,6 +301,23 @@
         "Result": [
           "3"
         ]
+      },
+      {
+        "SQL": "select b from t order by a + b limit 3",
+        "Plan": [
+          "Projection_9 3.00 root Column#2",
+          "└─Projection_14 3.00 root Column#2, Column#1",
+          "  └─TopN_10 3.00 root Column#4:asc, offset:0, count:3",
+          "    └─Projection_15 10000.00 root Column#2, Column#1, plus(Column#1, Column#2)",
+          "      └─Projection_11 10000.00 root Column#2, Column#1",
+          "        └─TableReader_12 10000.00 root data:TableScan_13",
+          "          └─TableScan_13 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "11",
+          "22",
+          "33"
+        ]
       }
     ]
   },
