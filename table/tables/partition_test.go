@@ -274,13 +274,13 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	c.Assert(pe.Column.ID, Equals, int64(1))
 
 	ranges := []string{
-		"or(lt(test.t.a, 4), isnull(test.t.a))",
-		"and(lt(test.t.a, 7), ge(test.t.a, 4))",
-		"and(1, ge(test.t.a, 7))",
+		"or(lt(test.t1.id, 4), isnull(test.t1.id))",
+		"and(lt(test.t1.id, 7), ge(test.t1.id, 4))",
+		"and(1, ge(test.t1.id, 7))",
 	}
 	upperBounds := []string{
-		"lt(test.t.a, 4)",
-		"lt(test.t.a, 7)",
+		"lt(test.t1.id, 4)",
+		"lt(test.t1.id, 7)",
 		"1",
 	}
 	for i, expr := range pe.Ranges {

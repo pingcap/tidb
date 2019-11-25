@@ -31,7 +31,7 @@ Projection_6	3333.33	root	test.access_path_selection.a, test.access_path_selecti
     └─TableScan_11	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select max(_tidb_rowid) from access_path_selection;
 id	count	task	operator info
-StreamAgg_13	1.00	root	funcs:max(Column#3)->Column#4
+StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)->Column#4
 └─Limit_17	1.00	root	offset:0, count:1
   └─TableReader_27	1.00	root	data:Limit_26
     └─Limit_26	1.00	cop[tikv]	offset:0, count:1
