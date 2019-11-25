@@ -33,6 +33,9 @@ const (
 	Invalid = "invalid"
 	// PendingVerify means the bind info needs to be verified.
 	PendingVerify = "pending verify"
+	// Rejected means that the bind has been rejected after verify process.
+	// We can retry it after certain time has passed.
+	Rejected = "rejected"
 )
 
 // Binding stores the basic bind hint info.
