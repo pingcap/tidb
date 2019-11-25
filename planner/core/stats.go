@@ -225,7 +225,7 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
+func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	for i, expr := range is.AccessConds {
 		is.AccessConds[i] = expression.PushDownNot(nil, expr)
 	}

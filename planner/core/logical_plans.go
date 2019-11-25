@@ -531,7 +531,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	for _, path := range ds.possibleAccessPaths {
 		if !path.isTablePath {
 			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
-			// If index columns can cover all of the needed columns, we can use a TableGather + IndexScan.
+			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
 			if isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
