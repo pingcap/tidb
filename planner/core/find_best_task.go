@@ -1001,7 +1001,7 @@ func (s *IndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *prope
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          ds.Columns,
+		Columns:          s.Columns,
 		Index:            s.Index,
 		IdxCols:          s.idxCols,
 		IdxColLens:       s.idxColLens,
