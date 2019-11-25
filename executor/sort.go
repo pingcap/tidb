@@ -52,9 +52,14 @@ type SortExec struct {
 
 	memTracker *memory.Tracker
 
-	rowChunksInDisk *chunk.ListInDisk
-	exceeded        uint32
-	spilled         uint32
+	rowChunksInDisk   *chunk.ListInDisk
+	rowPtrsInDisk     []chunk.RowPtr
+	partitionList     []*chunk.ListInDisk
+	partitionRowPtrs  [][]chunk.RowPtr
+	finalChunksInDisk *chunk.ListInDisk
+	finalRowPtrs      []chunk.RowPtr
+	exceeded          uint32
+	spilled           uint32
 }
 
 // Close implements the Executor Close interface.
@@ -76,6 +81,11 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.exceeded = 0
 	e.spilled = 0
 	e.rowChunksInDisk = nil
+	e.rowPtrsInDisk = nil
+	e.partitionList = nil
+	e.partitionRowPtrs = nil
+	e.finalChunksInDisk = nil
+	e.finalRowPtrs = nil
 	return e.children[0].Open(ctx)
 }
 
@@ -87,25 +97,76 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.initPointers()
-		e.initCompareFuncs()
-		e.buildKeyColumns()
-		sort.Slice(e.rowPtrs, e.keyColumnsLess)
-		e.fetched = true
-	}
-	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		rowPtr := e.rowPtrs[e.Idx]
 		if e.alreadySpilled() {
-			row, err := e.rowChunksInDisk.GetRow(rowPtr)
+			err = e.externalSorting()
+			if err != nil {
+				return err
+			}
+			e.fetched = true
+		} else {
+			e.initPointers()
+			e.initCompareFuncs()
+			e.buildKeyColumns()
+			sort.Slice(e.rowPtrs, e.keyColumnsLess)
+			e.fetched = true
+		}
+	}
+
+	if e.alreadySpilled() {
+		for !req.IsFull() && e.Idx < len(e.finalRowPtrs) {
+			rowPtr := e.finalRowPtrs[e.Idx]
+			row, err := e.finalChunksInDisk.GetRow(rowPtr)
 			if err != nil {
 				return err
 			}
 			req.AppendRow(row)
-		} else {
-			req.AppendRow(e.rowChunks.GetRow(rowPtr))
+			e.Idx++
 		}
-		e.Idx++
+	} else {
+		for !req.IsFull() && e.Idx < len(e.rowPtrs) {
+			rowPtr := e.rowPtrs[e.Idx]
+			req.AppendRow(e.rowChunks.GetRow(rowPtr))
+			e.Idx++
+		}
 	}
+	return nil
+}
+
+func (e *SortExec) externalSorting() (err error) {
+	e.initCompareFuncs()
+	e.buildKeyColumns()
+	e.rowPtrsInDisk = e.initPointersForListInDisk(e.rowChunksInDisk)
+	e.initPartitionListAndRowPtrs()
+	// partition sort
+	// the part num will be adjusted in the next pr.
+	for i := 0; i < 1; i++ {
+		e.rowChunks, err = e.partitionListInDisk(e.rowChunksInDisk, e.rowPtrsInDisk)
+		if err != nil {
+			return err
+		}
+		e.initPointers()
+		sort.Slice(e.rowPtrs, e.keyColumnsLess)
+		err = e.restoreToDisk()
+		if err != nil {
+			return err
+		}
+	}
+	// merge sort
+	// merge sort will be implemented in the next pr.
+	e.finalChunksInDisk = e.partitionList[0]
+	e.finalRowPtrs = e.initPointersForListInDisk(e.finalChunksInDisk)
+	return nil
+}
+
+func (e *SortExec) initPartitionListAndRowPtrs() {
+	e.partitionList = make([]*chunk.ListInDisk, 0)
+	e.partitionRowPtrs = make([][]chunk.RowPtr, 0)
+}
+
+func (e *SortExec) restoreToDisk() (err error) {
+	listInDisk, err := e.spillToDiskByRowPtr()
+	e.partitionList = append(e.partitionList, listInDisk)
+	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
 	return nil
 }
 
@@ -133,7 +194,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		} else {
 			e.rowChunks.Add(chk)
 			if atomic.LoadUint32(&e.exceeded) == 0 {
-				err := e.spillToDisk()
+				e.rowChunksInDisk, err = e.spillToDisk()
 				if err != nil {
 					return err
 				}
@@ -147,24 +208,26 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 }
 
 func (e *SortExec) initPointers() {
-	if !e.alreadySpilled() {
-		e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
-		e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
-		for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-			rowChk := e.rowChunks.GetChunk(chkIdx)
-			for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-				e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-			}
+	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
+	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
+		rowChk := e.rowChunks.GetChunk(chkIdx)
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
-	} else {
-		e.rowPtrs = make([]chunk.RowPtr, 0)
-		for chkIdx := 0; chkIdx < e.rowChunksInDisk.NumChunks(); chkIdx++ {
-			for rowIdx := 0; rowIdx < e.rowChunksInDisk.NumRowsOfChunk(chkIdx); rowIdx++ {
-				e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-			}
-		}
-		e.memTracker.Consume(int64(8 * len(e.rowPtrs)))
 	}
+	e.memTracker.Consume(int64(8 * len(e.rowPtrs)))
+}
+
+func (e *SortExec) initPointersForListInDisk(disk *chunk.ListInDisk) []chunk.RowPtr {
+	rowPtrsInDisk := make([]chunk.RowPtr, 0)
+	for chkIdx := 0; chkIdx < disk.NumChunks(); chkIdx++ {
+		for rowIdx := 0; rowIdx < disk.NumRowsOfChunk(chkIdx); rowIdx++ {
+			rowPtrsInDisk = append(rowPtrsInDisk, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+	e.memTracker.Consume(int64(8 * len(e.rowPtrsInDisk)))
+	return rowPtrsInDisk
 }
 
 func (e *SortExec) initCompareFuncs() {
@@ -201,39 +264,62 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	var rowI, rowJ chunk.Row
-	var err error
-	if e.alreadySpilled() {
-		rowI, err = e.rowChunksInDisk.GetRow(e.rowPtrs[i])
-		if err != nil {
-			panic("read Row fail")
-		}
-		rowJ, err = e.rowChunksInDisk.GetRow(e.rowPtrs[j])
-		if err != nil {
-			panic("read Row fail")
-		}
-	} else {
-		rowI = e.rowChunks.GetRow(e.rowPtrs[i])
-		rowJ = e.rowChunks.GetRow(e.rowPtrs[j])
-	}
+	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
+	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
 	return e.lessRow(rowI, rowJ)
+}
+
+func (e *SortExec) partitionListInDisk(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) (*chunk.List, error) {
+	if len(rowPtrs) == 0 {
+		return nil, nil
+	}
+	rowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	for _, rowPtr := range rowPtrs {
+		rowPtr, err := disk.GetRow(rowPtr)
+		if err != nil {
+			return nil, err
+		}
+		rowChunks.AppendRow(rowPtr)
+	}
+	return rowChunks, nil
 }
 
 func (e *SortExec) alreadySpilled() bool { return e.rowChunksInDisk != nil }
 
 func (e *SortExec) alreadySpilledSafe() bool { return atomic.LoadUint32(&e.spilled) == 1 }
 
-func (e *SortExec) spillToDisk() (err error) {
+func (e *SortExec) spillToDisk() (disk *chunk.ListInDisk, err error) {
 	N := e.rowChunks.NumChunks()
-	e.rowChunksInDisk = chunk.NewListInDisk(e.retFieldTypes)
+	rowChunksInDisk := chunk.NewListInDisk(e.retFieldTypes)
 	for i := 0; i < N; i++ {
 		chk := e.rowChunks.GetChunk(i)
-		err = e.rowChunksInDisk.Add(chk)
+		err = rowChunksInDisk.Add(chk)
 		if err != nil {
-			return
+			return nil, err
 		}
 	}
-	return
+	return rowChunksInDisk, nil
+}
+
+func (e *SortExec) spillToDiskByRowPtr() (disk *chunk.ListInDisk, err error) {
+	rowChunksInDisk := chunk.NewListInDisk(e.retFieldTypes)
+	chk := newFirstChunk(e)
+	for _, rowPtr := range e.rowPtrs {
+		chk.AppendRow(e.rowChunks.GetRow(rowPtr))
+		if chk.IsFull() {
+			err := rowChunksInDisk.Add(chk)
+			if err != nil {
+				return nil, err
+			}
+			chk = newFirstChunk(e)
+		}
+	}
+	if chk.NumRows() != 0 {
+		if err := rowChunksInDisk.Add(chk); err != nil {
+			return nil, err
+		}
+	}
+	return rowChunksInDisk, nil
 }
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
