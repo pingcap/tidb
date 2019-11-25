@@ -162,7 +162,7 @@ func BenchmarkMatchSpecial(b *testing.B) {
 
 	patChars, patTypes := CompilePattern(pattern, escape)
 
-	b.StartTimer()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		match := DoMatch(target, patChars, patTypes)
 		if match {
