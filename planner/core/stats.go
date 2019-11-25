@@ -14,8 +14,6 @@
 package core
 
 import (
-	"math"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -25,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"math"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -235,19 +234,16 @@ func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		is.Ranges = ranger.FullRange()
 	}
 	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
-	path := is.Path
-	ds := is.Source
-	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.index)
-	path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
-	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
-		// TODO: DO NOT use ds.schema anymore, since it could be different from IndexScan's schema.
-		handleCol := ds.getPKIsHandleCol()
+
+	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
+	is.fullIdxCols, is.fullIdxColLens = expression.IndexInfo2Cols(is.Columns, is.schema.Columns, is.Index)
+	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.idxCols) {
+		handleCol := is.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.idxCols = append(path.idxCols, handleCol)
-			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
+			is.idxCols = append(is.idxCols, handleCol)
+			is.idxColLens = append(is.idxColLens, types.UnspecifiedLength)
 		}
 	}
-	// TODO: Fulfill the accessPath for skyline pruning.
 	return is.stats, nil
 }
 

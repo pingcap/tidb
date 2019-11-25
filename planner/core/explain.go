@@ -527,7 +527,7 @@ func (p *TableScan) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *IndexScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	index := p.Path.index
+	index := p.Index
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {

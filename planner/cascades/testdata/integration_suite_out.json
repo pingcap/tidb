@@ -323,7 +323,7 @@
       {
         "SQL": "select a from t order by b",
         "Plan": [
-          "Projection_11 10000.00 root Column#5",
+          "Projection_11 10000.00 root Column#1",
           "└─Projection_13 10000.00 root Column#1, Column#2",
           "  └─IndexReader_16 10000.00 root index:IndexScan_17",
           "    └─IndexScan_17 10000.00 cop[tikv] table:t, index:b, range:[NULL,+inf], keep order:true, stats:pseudo"
@@ -350,7 +350,7 @@
       {
         "SQL": "select a from t order by c",
         "Plan": [
-          "Projection_9 10000.00 root Column#5",
+          "Projection_9 10000.00 root Column#1",
           "└─Projection_11 10000.00 root Column#1, Column#3",
           "  └─IndexReader_13 10000.00 root index:IndexScan_14",
           "    └─IndexScan_14 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo"

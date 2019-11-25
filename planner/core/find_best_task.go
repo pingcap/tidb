@@ -14,8 +14,6 @@
 package core
 
 import (
-	"math"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -32,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
+	"math"
 )
 
 const (
@@ -997,15 +996,14 @@ func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.S
 // GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
 func (s *IndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
 	ds := s.Source
-	path := s.Path
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
 		Columns:          ds.Columns,
-		Index:            path.index,
-		IdxCols:          path.idxCols,
-		IdxColLens:       path.idxColLens,
+		Index:            s.Index,
+		IdxCols:          s.idxCols,
+		IdxColLens:       s.idxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
 		dataSourceSchema: ds.schema,
@@ -1013,7 +1011,7 @@ func (s *IndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *prope
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
-	is.initSchema(path.index, path.fullIdxCols, s.IsDoubleRead)
+	is.initSchema(s.Index, s.fullIdxCols, s.IsDoubleRead)
 	return is
 }
 

@@ -428,11 +428,20 @@ type TableScan struct {
 // IndexScan is the logical index scan operator for TiKV.
 type IndexScan struct {
 	logicalSchemaProducer
+	// DataSource should be read-only here.
 	Source       *DataSource
-	Path         *accessPath
 	IsDoubleRead bool
-	AccessConds  expression.CNFExprs
-	Ranges       []*ranger.Range
+
+	EqCondCount int
+	AccessConds expression.CNFExprs
+	Ranges      []*ranger.Range
+
+	Index          *model.IndexInfo
+	Columns        []*model.ColumnInfo
+	fullIdxCols    []*expression.Column
+	fullIdxColLens []int
+	idxCols        []*expression.Column
+	idxColLens     []int
 }
 
 // MatchIndexProp checks if the indexScan can match the required property.
@@ -440,12 +449,11 @@ func (p *IndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool)
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
-	path := p.Path
 	if !prop.IsEmpty() {
-		for i, col := range path.idxCols {
+		for i, col := range p.idxCols {
 			if col.Equal(nil, prop.Items[0].Col) {
-				return matchIndicesProp(path.idxCols[i:], path.idxColLens[i:], prop.Items)
-			} else if i >= path.eqCondCount {
+				return matchIndicesProp(p.idxCols[i:], p.idxColLens[i:], prop.Items)
+			} else if i >= p.EqCondCount {
 				break
 			}
 		}
@@ -500,8 +508,16 @@ func (ds *DataSource) buildTableGather() LogicalPlan {
 }
 
 func (ds *DataSource) buildIndexGather(path *accessPath) LogicalPlan {
-	is := IndexScan{Source: ds, Path: path, IsDoubleRead: false}.Init(ds.ctx, ds.blockOffset)
+	is := IndexScan{
+		Source:       ds,
+		IsDoubleRead: false,
+		Index:        path.index,
+	}.Init(ds.ctx, ds.blockOffset)
+
+	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
+	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
+
 	tg := TableGather{Source: ds, IsIndexGather: true}.Init(ds.ctx, ds.blockOffset)
 	tg.SetSchema(ds.Schema())
 	tg.SetChildren(is)
@@ -769,22 +785,30 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 	return false
 }
 
-func (ds *DataSource) getPKIsHandleCol() *expression.Column {
-	if !ds.tableInfo.PKIsHandle {
+func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Schema, pkIsHandle bool) *expression.Column {
+	if !pkIsHandle {
 		// If the PKIsHandle is false, return the ExtraHandleColumn.
-		for i, col := range ds.Columns {
+		for i, col := range cols {
 			if col.ID == model.ExtraHandleID {
-				return ds.schema.Columns[i]
+				return schema.Columns[i]
 			}
 		}
 		return nil
 	}
-	for i, col := range ds.Columns {
+	for i, col := range cols {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			return ds.schema.Columns[i]
+			return schema.Columns[i]
 		}
 	}
 	return nil
+}
+
+func (ds *DataSource) getPKIsHandleCol() *expression.Column {
+	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
+}
+
+func (is *IndexScan) getPKIsHandleCol() *expression.Column {
+	return getPKIsHandleColFromSchema(is.Columns, is.schema, is.Source.tableInfo.PKIsHandle)
 }
 
 func (ds *DataSource) getHandleCol() *expression.Column {
