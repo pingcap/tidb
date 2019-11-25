@@ -328,12 +328,12 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Sort_6 100000000.00 root Column#1:asc, Column#3:asc",
+		"Sort_6 100000000.00 root test.t.a:asc, test.t.a:asc",
 		"└─MergeJoin_9 100000000.00 root inner join",
 		"  ├─TableReader_11 10000.00 root data:TableScan_10",
-		"  │ └─TableScan_10 10000.00 cop[tikv] table:t1, mapping:a->#1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  │ └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_13 10000.00 root data:TableScan_12",
-		"    └─TableScan_12 10000.00 cop[tikv] table:t2, mapping:a->#3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -350,11 +350,11 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"Projection_7 10000.00 root Column#7",
-		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(Column#1, Column#4), ge(Column#5, Column#2)",
-		"  ├─TableReader_10 10000.00 root data:TableScan_9",
-		"  │ └─TableScan_9 10000.00 cop[tikv] table:t, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
+		"  ├─TableReader_10 10000.00 root data:TabteScan_9",
+		"  │ └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_12 10000.00 root data:TableScan_11",
-		"    └─TableScan_11 10000.00 cop[tikv] table:s, mapping:a->#4,b->#5, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableScan_11 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",

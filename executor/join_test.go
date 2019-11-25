@@ -1055,11 +1055,11 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table s")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
-		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:Column#2, inner key:Column#3",
+		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:test.t.a, inner key:test.s.a",
 		"├─TableReader_30 100.00 root data:TableScan_29",
-		"│ └─TableScan_29 100.00 cop[tikv] table:t, mapping:pk->#1,a->#2, range:[-inf,+inf], keep order:true",
+		"│ └─TableScan_29 100.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true",
 		"└─TableReader_22 1.00 root data:TableScan_21",
-		"  └─TableScan_21 1.00 cop[tikv] table:s, mapping:a->#3, range: decided by [Column#2], keep order:false",
+		"  └─TableScan_21 1.00 cop[tikv] table:s, range: decided by [test.t.a], keep order:false",
 	))
 	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
@@ -1082,12 +1082,12 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 	tk.MustExec("set @@tidb_index_join_batch_size=32;")
 
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
-		"IndexHashJoin_35 12487.50 root inner join, inner:IndexReader_27, outer key:Column#1, inner key:Column#3",
+		"IndexHashJoin_35 12487.50 root inner join, inner:IndexReader_27, outer key:test.t.a, inner key:test.s.a",
 		"├─IndexReader_37 9990.00 root index:IndexScan_36",
-		"│ └─IndexScan_36 9990.00 cop[tikv] table:t, mapping:a->#1, index:a, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"│ └─IndexScan_36 9990.00 cop[tikv] table:t, index:a, range:[-inf,+inf], keep order:true, stats:pseudo",
 		"└─IndexReader_27 1.25 root index:Selection_26",
-		"  └─Selection_26 1.25 cop[tikv] not(isnull(Column#3))",
-		"    └─IndexScan_25 1.25 cop[tikv] table:s, mapping:a->#3, index:a, range: decided by [eq(Column#3, Column#1)], keep order:false, stats:pseudo"))
+		"  └─Selection_26 1.25 cop[tikv] not(isnull(test.s.a))",
+		"    └─IndexScan_25 1.25 cop[tikv] table:s, index:a, range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
 }
 
@@ -1101,11 +1101,11 @@ func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_20 10000.00 root left outer join, left key:Column#1, right key:Column#3, left cond:[ne(Column#1, 3)]",
+		"MergeJoin_20 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
 		"├─TableReader_12 10000.00 root data:TableScan_11",
-		"│ └─TableScan_11 10000.00 cop[tikv] table:t1, mapping:a->#1,b->#2, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"│ └─TableScan_11 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
 		"└─TableReader_14 6666.67 root data:TableScan_13",
-		"  └─TableScan_13 6666.67 cop[tikv] table:t2, mapping:a->#3,b->#4, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
+		"  └─TableScan_13 6666.67 cop[tikv] table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1")

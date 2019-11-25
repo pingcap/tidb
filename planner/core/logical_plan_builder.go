@@ -2550,6 +2550,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
 			RetType:  &col.FieldType,
+			OrigName: fmt.Sprintf("%v.%v.%v", dbName, tableInfo.Name, col.Name),
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {

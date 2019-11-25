@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -40,18 +39,6 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		tblName = p.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	buffer.WriteString(", mapping:")
-	for i := range p.schema.Columns {
-		if i > 0 {
-			buffer.WriteString(",")
-		}
-		colInfo := findColumnInfoByID(p.Table.Cols(), p.schema.Columns[i].ID)
-		name := model.ExtraHandleName.L
-		if colInfo != nil {
-			name = colInfo.Name.L
-		}
-		fmt.Fprintf(buffer, "%v->#%d", name, p.schema.Columns[i].UniqueID)
-	}
 	if p.isPartition {
 		if pi := p.Table.GetPartitionInfo(); pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
@@ -105,13 +92,6 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		tblName = p.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	buffer.WriteString(", mapping:")
-	for i := range p.Columns {
-		if i > 0 {
-			buffer.WriteString(",")
-		}
-		fmt.Fprintf(buffer, "%v->#%d", p.Columns[i].Name.L, p.schema.Columns[i].UniqueID)
-	}
 	if p.isPartition {
 		if pi := p.Table.GetPartitionInfo(); pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
