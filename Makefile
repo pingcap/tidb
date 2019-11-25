@@ -126,11 +126,11 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest gogenerate
+test: test_part_1 test_part_2
 
-check_test_chunk_1: checklist check explaintest
+test_part_1: checklist explaintest
 
-check_test_chunk_2: checkdep gotest gogenerate
+test_part_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
