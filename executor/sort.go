@@ -52,18 +52,46 @@ type SortExec struct {
 
 	memTracker *memory.Tracker
 
-	rowChunksInDisk   *chunk.ListInDisk
-	rowPtrsInDisk     []chunk.RowPtr
-	partitionList     []*chunk.ListInDisk
-	partitionRowPtrs  [][]chunk.RowPtr
+	// rowChunksInDisk is the chunks to store row values in disk.
+	rowChunksInDisk *chunk.ListInDisk
+	// rowPtrsInDisk store the disk-chunk index and row index for each row.
+	rowPtrsInDisk []chunk.RowPtr
+	// partitionList is the chunks to store row values in disk for partitions.
+	partitionList []*chunk.ListInDisk
+	// partitionRowPtrs store the disk-chunk index and row index for each row for partitions.
+	partitionRowPtrs [][]chunk.RowPtr
+	// finalChunksInDisk store the final result in disk.
 	finalChunksInDisk *chunk.ListInDisk
-	finalRowPtrs      []chunk.RowPtr
-	exceeded          uint32
-	spilled           uint32
+	// finalRowPtrs store the disk-chunk index and row index for final result.
+	finalRowPtrs []chunk.RowPtr
+	// exceeded indicates that records have exceeded memQuota during
+	// adding this chunk and we should spill now.
+	exceeded uint32
+	// spilled indicates that records have spilled out into disk.
+	spilled uint32
 }
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
+	if e.rowChunksInDisk != nil {
+		if err := e.rowChunksInDisk.Close(); err != nil {
+			return err
+		}
+	}
+	if e.partitionList != nil {
+		for _, chunkInDisk := range e.partitionList {
+			if chunkInDisk != nil {
+				if err := e.finalChunksInDisk.Close(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if e.finalChunksInDisk != nil {
+		if err := e.finalChunksInDisk.Close(); err != nil {
+			return err
+		}
+	}
 	e.memTracker = nil
 	return e.children[0].Close()
 }
@@ -140,13 +168,13 @@ func (e *SortExec) externalSorting() (err error) {
 	// partition sort
 	// the part num will be adjusted in the next pr.
 	for i := 0; i < 1; i++ {
-		e.rowChunks, err = e.partitionListInDisk(e.rowChunksInDisk, e.rowPtrsInDisk)
+		e.rowChunks, err = e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk)
 		if err != nil {
 			return err
 		}
 		e.initPointers()
 		sort.Slice(e.rowPtrs, e.keyColumnsLess)
-		err = e.restoreToDisk()
+		err = e.restorePartitionToDisk()
 		if err != nil {
 			return err
 		}
@@ -154,6 +182,7 @@ func (e *SortExec) externalSorting() (err error) {
 	// merge sort
 	// merge sort will be implemented in the next pr.
 	e.finalChunksInDisk = e.partitionList[0]
+	// get final result
 	e.finalRowPtrs = e.initPointersForListInDisk(e.finalChunksInDisk)
 	return nil
 }
@@ -163,7 +192,7 @@ func (e *SortExec) initPartitionListAndRowPtrs() {
 	e.partitionRowPtrs = make([][]chunk.RowPtr, 0)
 }
 
-func (e *SortExec) restoreToDisk() (err error) {
+func (e *SortExec) restorePartitionToDisk() (err error) {
 	listInDisk, err := e.spillToDiskByRowPtr()
 	e.partitionList = append(e.partitionList, listInDisk)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
@@ -193,6 +222,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		} else {
 			e.rowChunks.Add(chk)
+			// In this pr, it must use external sorting
+			// the check should be modified before we merge this pr.
 			if atomic.LoadUint32(&e.exceeded) == 0 {
 				e.rowChunksInDisk, err = e.spillToDisk()
 				if err != nil {
@@ -216,7 +247,6 @@ func (e *SortExec) initPointers() {
 			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	e.memTracker.Consume(int64(8 * len(e.rowPtrs)))
 }
 
 func (e *SortExec) initPointersForListInDisk(disk *chunk.ListInDisk) []chunk.RowPtr {
@@ -269,7 +299,7 @@ func (e *SortExec) keyColumnsLess(i, j int) bool {
 	return e.lessRow(rowI, rowJ)
 }
 
-func (e *SortExec) partitionListInDisk(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) (*chunk.List, error) {
+func (e *SortExec) readPartition(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) (*chunk.List, error) {
 	if len(rowPtrs) == 0 {
 		return nil, nil
 	}
@@ -284,8 +314,10 @@ func (e *SortExec) partitionListInDisk(disk *chunk.ListInDisk, rowPtrs []chunk.R
 	return rowChunks, nil
 }
 
+// alreadySpilled indicates that records have spilled out into disk.
 func (e *SortExec) alreadySpilled() bool { return e.rowChunksInDisk != nil }
 
+// alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
 func (e *SortExec) alreadySpilledSafe() bool { return atomic.LoadUint32(&e.spilled) == 1 }
 
 func (e *SortExec) spillToDisk() (disk *chunk.ListInDisk, err error) {
