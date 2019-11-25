@@ -25,13 +25,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -68,82 +66,6 @@ type executor interface {
 	// ExecDetails returns its and its children's execution details.
 	// The order is same as DAGRequest.Executors, which children are in front of parents.
 	ExecDetails() []*execDetail
-}
-
-type memTableScanExec struct {
-	tableName  string
-	columnIDs  []int64
-	sctx       *mock.Context
-	src        executor
-	execDetail *execDetail
-	rows       [][]types.Datum
-	cursor     int
-}
-
-func (e *memTableScanExec) SetSrcExec(exec executor) {
-	e.src = exec
-}
-
-func (e *memTableScanExec) GetSrcExec() executor {
-	return e.src
-}
-
-func (e *memTableScanExec) ExecDetails() []*execDetail {
-	var suffix []*execDetail
-	if e.src != nil {
-		suffix = e.src.ExecDetails()
-	}
-	return append(suffix, e.execDetail)
-}
-
-func (e *memTableScanExec) ResetCounts() {
-}
-
-func (e *memTableScanExec) Counts() []int64 {
-	return nil
-}
-
-func (e *memTableScanExec) Cursor() ([]byte, bool) {
-	return nil, false
-}
-
-// GetClusterMemTableRows used to get the cluster memory table data.
-var GetClusterMemTableRows func(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error)
-
-func (e *memTableScanExec) Next(ctx context.Context) (values [][]byte, err error) {
-	defer func(begin time.Time) {
-		e.execDetail.update(begin, values)
-	}(time.Now())
-	if e.rows == nil && GetClusterMemTableRows != nil {
-		e.sctx = mock.NewContext()
-		rows, err := GetClusterMemTableRows(e.sctx, e.tableName)
-		if err != nil {
-			return nil, err
-		}
-		e.rows = rows
-	}
-	var row []types.Datum
-	if e.cursor < len(e.rows) {
-		row = make([]types.Datum, len(e.columnIDs))
-		for i := range e.columnIDs {
-			// For mem-table, the column offset should equal to column id -1 .
-			offset := int(e.columnIDs[i] - 1)
-			row[i] = e.rows[e.cursor][offset]
-		}
-		e.cursor++
-	}
-	if len(row) == 0 {
-		return nil, nil
-	}
-	values = make([][]byte, len(row))
-	for i, d := range row {
-		handleData, err1 := codec.EncodeValue(e.sctx.GetSessionVars().StmtCtx, nil, d)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		values[i] = handleData
-	}
-	return values, nil
 }
 
 type tableScanExec struct {

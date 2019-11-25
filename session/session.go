@@ -861,7 +861,8 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 	}
 }
 
-func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+// CreateSessionWithDomainFunc return a factory of create session.
+func CreateSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
 		se, err := createSessionWithDomain(store, dom)
 		if err != nil {

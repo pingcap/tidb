@@ -193,7 +193,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 		return nil, nil
 	}
 
-	if infoschema.IsClusterTable(ds.table.Meta().Name.O) {
+	if infoschema.IsClusterMemTable(ds.DBName.L, ds.table.Meta().Name.O) {
 		return nil, nil
 	}
 
@@ -1060,16 +1060,16 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	if ds.preferStoreType&preferTiKV != 0 {
 		ts.StoreType = kv.TiKV
 	}
+	if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.O) {
+		ts.StoreType = kv.TiDBMem
+		ts.Init(ds.ctx, ds.blockOffset)
+		ts.tp = plancodec.TypeMemTableScan
+	}
 	if ts.StoreType == kv.TiFlash {
 		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
 		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
-	}
-	if infoschema.IsMemoryDB(ds.DBName.L) && infoschema.IsClusterTable(ds.tableInfo.Name.O) {
-		ts.StoreType = kv.TiDBMem
-		ts.Init(ds.ctx, ds.blockOffset)
-		ts.tp = plancodec.TypeMemTableScan
 	}
 
 	ts.SetSchema(ds.schema.Clone())

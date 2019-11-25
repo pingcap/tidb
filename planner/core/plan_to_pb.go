@@ -107,6 +107,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 func (p *PhysicalTableScan) toMemTableScanPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := p.Columns
 	tsExec := &tipb.MemTableScan{
+		DbName:    p.DBName.L,
 		TableName: p.Table.Name.L,
 		Columns:   model.ColumnsToProto(columns, p.Table.PKIsHandle),
 	}
@@ -194,12 +195,12 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 // Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
 // TODO: Support more kinds of physical plan.
 func SupportStreaming(p PhysicalPlan) bool {
-	switch p.(type) {
+	switch x := p.(type) {
 	case *PhysicalIndexScan, *PhysicalSelection:
 		return true
 	case *PhysicalTableScan:
-		tp := p.(*PhysicalTableScan).StoreType
-		return tp != kv.TiDBMem
+		// TODO: remove this after TiDB coprocessor support stream.
+		return x.StoreType != kv.TiDBMem
 	}
 	return false
 }

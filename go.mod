@@ -77,4 +77,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20191113035853-d105d125134d
+replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20191123122604-9629df9f8934

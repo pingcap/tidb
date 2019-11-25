@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -61,13 +60,13 @@ func init() {
 		tableNameToColumns[clusterTableName] = cols
 		clusterTableMap[clusterTableName] = struct{}{}
 	}
-	// This is used for avoid circle import, use for memTableReader in TiDB RPC server.
-	mocktikv.GetClusterMemTableRows = getClusterMemTableRows
-	mocktikv.IsClusterTable = IsClusterTable
 }
 
-// IsClusterTable used to check whether the table is a cluster memory table.
-func IsClusterTable(tableName string) bool {
+// IsClusterMemTable used to check whether the table is a cluster memory table.
+func IsClusterMemTable(dbName, tableName string) bool {
+	if !IsMemoryDB(dbName) {
+		return false
+	}
 	tableName = strings.ToUpper(tableName)
 	_, ok := clusterTableMap[tableName]
 	return ok

@@ -169,3 +169,13 @@ func Zone(loc *time.Location) (string, int64) {
 
 	return name, int64(offset)
 }
+
+// ConstructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func ConstructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return LoadLocation(name)
+	}
+	return time.FixedZone("", offset), nil
+}

@@ -98,8 +98,8 @@ type SessionManager interface {
 
 var globalSessionManager SessionManager
 
-// SetglobalSessionManager sets the global session manager.
-func SetglobalSessionManager(sm SessionManager) {
+// SetGlobalSessionManager sets the global session manager.
+func SetGlobalSessionManager(sm SessionManager) {
 	globalSessionManager = sm
 }
 

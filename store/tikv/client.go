@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
@@ -287,8 +288,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	// req.GetRegionId() == 0 means its a TiDB RPC request, TiDB RPC server not support stream now.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.GetRegionId() != 0 {
+	// TiDB RPC server not support stream now.
+	// TODO: remove this store type check after TiDB RPC Server support stream.
+	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.StoreTp != kv.TiDBMem {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}

@@ -73,7 +73,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
-		sysFactory := createSessionWithDomainFunc(store)
+		sysFactory := CreateSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {

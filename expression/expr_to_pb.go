@@ -186,12 +186,32 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	}
 }
 
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.Tp),
+		Flag:    uint(ft.Flag),
+		Flen:    int(ft.Flen),
+		Decimal: int(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: protoToCollation(ft.Collate),
+	}
+}
+
 func collationToProto(c string) int32 {
 	v, ok := mysql.CollationNames[c]
 	if ok {
 		return int32(v)
 	}
 	return int32(mysql.DefaultCollationID)
+}
+
+func protoToCollation(c int32) string {
+	v, ok := mysql.Collations[uint8(c)]
+	if ok {
+		return v
+	}
+	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {

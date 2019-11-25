@@ -145,6 +145,7 @@ type Request struct {
 	req  interface{}
 	kvrpcpb.Context
 	ReplicaReadSeed uint32
+	StoreTp         kv.StoreType
 }
 
 // NewRequest returns new kv rpc request.

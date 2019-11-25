@@ -723,6 +723,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		HandleTime:     true,
 		ScanDetail:     true,
 	})
+	req.StoreTp = task.storeType
 	startTime := time.Now()
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task)
 	if err != nil {
@@ -909,7 +910,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
-		if rpcCtx != nil && rpcCtx.Region.id == 0 {
+		if rpcCtx != nil && task.storeType == kv.TiDBMem {
 			resp.err = errors.Errorf("error: %v", regionErr)
 			worker.sendToRespCh(resp, ch, true)
 			return nil, nil

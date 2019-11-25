@@ -251,7 +251,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 			}
 			ds.Columns = append(ds.Columns, handleColInfo)
 			ds.schema.Append(handleCol)
-		} else if infoschema.IsClusterTable(ds.tableInfo.Name.O) && len(originColumns) > 0 {
+		} else if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.L) && len(originColumns) > 0 {
 			// use the first line.
 			handleCol = originSchemaColumns[0]
 			handleColInfo = originColumns[0]

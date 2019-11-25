@@ -27,10 +27,8 @@ github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142/go.mod h1:F5haX7
 github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f h1:lBNOc5arjvs8E5mO2tbpBpLoyyu8B6e44T7hJy6potg=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
-github.com/crazycs520/tipb v0.0.0-20191111013048-53b1a1863e54 h1:cxz4vBFBrwOZGznSSKk6ZinXm9vyEL7uNp3DoARx+ng=
-github.com/crazycs520/tipb v0.0.0-20191111013048-53b1a1863e54/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
-github.com/crazycs520/tipb v0.0.0-20191113035853-d105d125134d h1:p0fS1QpUna9sWVdMRPtLhVJVbH7jCtB2RQURR3qoEQY=
-github.com/crazycs520/tipb v0.0.0-20191113035853-d105d125134d/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
+github.com/crazycs520/tipb v0.0.0-20191123122604-9629df9f8934 h1:H7ugY6DGpwC48hxiOR1l+vDG8U4Wk2YLsNWJMvzArrA=
+github.com/crazycs520/tipb v0.0.0-20191123122604-9629df9f8934/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
 github.com/creack/pty v1.1.7/go.mod h1:lj5s0c3V2DBrqTV7llrYr5NG6My20zk30Fl46Y7DoTY=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 h1:iwZdTE0PVqJCos1vaoKsclOGD3ADKpshg3SRtYBbwso=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548/go.mod h1:e6NPNENfs9mPDVNRekM7lKScauxd5kXTr1Mfyig6TDM=

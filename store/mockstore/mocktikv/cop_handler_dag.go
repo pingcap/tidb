@@ -93,7 +93,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
-	if len(req.Ranges) == 0 && req.Context.GetRegionId() != 0 {
+	if len(req.Ranges) == 0 {
 		return nil, nil, nil, errors.New("request range is null")
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
@@ -128,11 +128,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
-	if name != "" {
-		return timeutil.LoadLocation(name)
-	}
-
-	return time.FixedZone("", offset), nil
+	return timeutil.ConstructTimeZone(name, offset)
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -167,8 +163,6 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildTopN(ctx, curr)
 	case tipb.ExecType_TypeLimit:
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
-	case tipb.ExecType_TypeMemTableScan:
-		currExec, err = h.buildMemTableScan(ctx, curr)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
@@ -188,27 +182,6 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		src = curr
 	}
 	return src, nil
-}
-
-// IsClusterTable used to check whether the table is a cluster memory table.
-var IsClusterTable func(tableName string) bool
-
-func (h *rpcHandler) buildMemTableScan(ctx *dagContext, executor *tipb.Executor) (*memTableScanExec, error) {
-	memTblScan := executor.MemTblScan
-	if IsClusterTable != nil && !IsClusterTable(memTblScan.TableName) {
-		return nil, errors.Errorf("table %s is not a tidb memory table", memTblScan.TableName)
-	}
-	columns := memTblScan.Columns
-	ctx.evalCtx.setColumnInfo(columns)
-	ids := make([]int64, len(columns))
-	for i, col := range columns {
-		ids[i] = col.ColumnId
-	}
-	return &memTableScanExec{
-		tableName:  memTblScan.TableName,
-		columnIDs:  ids,
-		execDetail: new(execDetail),
-	}, nil
 }
 
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
