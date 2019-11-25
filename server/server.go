@@ -83,13 +83,11 @@ func init() {
 }
 
 var (
-	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
-	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType         = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
-	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
-	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
+	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
+	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
+	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
+	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
