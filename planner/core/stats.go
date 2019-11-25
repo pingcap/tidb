@@ -153,7 +153,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) *property.S
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
 	}
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
@@ -203,7 +203,7 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
+		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
 	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
@@ -228,7 +228,7 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(nil, expr)
+		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
 	}
 	is.stats = is.Source.deriveStatsByFilter(is.AccessConds)
 	if len(is.AccessConds) == 0 {
