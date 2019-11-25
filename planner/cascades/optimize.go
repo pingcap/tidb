@@ -196,7 +196,7 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
 	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
-		pattern := GetPattern(rule.ID())
+		pattern := rule.GetPattern()
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}

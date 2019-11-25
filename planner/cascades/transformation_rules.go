@@ -23,10 +23,7 @@ import (
 
 // Transformation defines the interface for the transformation rules.
 type Transformation interface {
-	// ID returns the unique TransformationID of the transformation rule.
-	ID() TransformationID
-	// GetPattern creates the pattern of the transformation rule. All of the patterns should be
-	// cached after initializing the package. So this method should never be called after that.
+	// GetPattern gets the cached pattern of the rule.
 	GetPattern() *memo.Pattern
 	// Match is used to check whether the GroupExpr satisfies all the requirements of the transformation rule.
 	//
@@ -45,80 +42,52 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-// TransformationID is the unique ID of a Transformation. When we want to add
-// a new Transformation rule, we should first add its ID here, and create
-// the rule in the defaultTransformationMap below.
-type TransformationID int
-
-const (
-	rulePushSelDownTableScan TransformationID = iota
-	rulePushSelDownTableGather
-	rulePushSelDownSort
-	rulePushSelDownProjection
-	rulePushSelDownAggregation
-	ruleEnumeratePaths
-	rulePushAggDownGather
-	ruleTransformLimitToTopN
-	// ruleUnsupported is used for recording the number of rules.
-	// It should always be the last TransformationID.
-	ruleUnsupported
-)
-
 var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
-		&PushSelDownTableScan{},
-		&PushSelDownTableGather{},
-		&PushSelDownSort{},
-		&PushSelDownProjection{},
-		&PushSelDownAggregation{},
+		NewRulePushSelDownTableScan(),
+		NewRulePushSelDownTableGather(),
+		NewRulePushSelDownSort(),
+		NewRulePushSelDownProjection(),
+		NewRulePushSelDownAggregation(),
 	},
 	memo.OperandDataSource: {
-		&EnumeratePaths{},
+		NewRuleEnumeratePaths(),
 	},
 	memo.OperandAggregation: {
-		&PushAggDownGather{},
+		NewRulePushAggDownGather(),
 	},
 	memo.OperandLimit: {
-		&TransformLimitToTopN{},
+		NewRuleTransformLimitToTopN(),
 	},
 }
 
-var patternMap []*memo.Pattern
-
-// init initializes the patternMap when initializing the cascades package.
-func init() {
-	patternMap = make([]*memo.Pattern, ruleUnsupported)
-	for _, rules := range defaultTransformationMap {
-		for _, rule := range rules {
-			patternMap[rule.ID()] = rule.GetPattern()
-		}
-	}
+type baseRule struct {
+	pattern *memo.Pattern
 }
 
-// GetPattern returns the Pattern of the given TransformationID.
-func GetPattern(id TransformationID) *memo.Pattern {
-	return patternMap[id]
+// Match implements Implementation Interface.
+func (r *baseRule) Match(expr *memo.ExprIter) bool {
+	return true
+}
+
+// GetPattern implements Implementation Interface.
+func (r *baseRule) GetPattern() *memo.Pattern {
+	return r.pattern
 }
 
 // PushSelDownTableScan pushes the selection down to TableScan.
 type PushSelDownTableScan struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *PushSelDownTableScan) ID() TransformationID {
-	return rulePushSelDownTableScan
-}
-
-// GetPattern implements Transformation interface. The pattern of this rule is `Selection -> TableScan`.
-func (r *PushSelDownTableScan) GetPattern() *memo.Pattern {
+// NewRulePushSelDownTableScan creates a new Transformation PushSelDownTableScan.
+// The pattern of this rule is: `Selection -> TableScan`
+func NewRulePushSelDownTableScan() Transformation {
+	rule := &PushSelDownTableScan{}
 	ts := memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOrTiFlash)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash, ts)
-	return p
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownTableScan) Match(expr *memo.ExprIter) bool {
-	return true
+	rule.pattern = p
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -161,25 +130,19 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 // PushSelDownTableGather pushes the selection down to child of TableGather.
 type PushSelDownTableGather struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *PushSelDownTableGather) ID() TransformationID {
-	return rulePushSelDownTableGather
-}
-
-// GetPattern implements Transformation interface. The pattern of this rule
-// is `Selection -> TableGather -> Any`
-func (r *PushSelDownTableGather) GetPattern() *memo.Pattern {
+// NewRulePushSelDownTableGather creates a new Transformation PushSelDownTableGather.
+// The pattern of this rule is `Selection -> TableGather -> Any`.
+func NewRulePushSelDownTableGather() Transformation {
 	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
 	tg := memo.BuildPattern(memo.OperandTableGather, memo.EngineTiDBOnly, any)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
-	return p
-}
 
-// Match implements Transformation interface.
-func (r *PushSelDownTableGather) Match(expr *memo.ExprIter) bool {
-	return true
+	rule := &PushSelDownTableGather{}
+	rule.pattern = p
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -222,21 +185,15 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 
 // EnumeratePaths converts DataSource to table scan and index scans.
 type EnumeratePaths struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *EnumeratePaths) ID() TransformationID {
-	return ruleEnumeratePaths
-}
-
-// GetPattern implements Transformation interface. The pattern of this rule is `DataSource`.
-func (r *EnumeratePaths) GetPattern() *memo.Pattern {
-	return memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
-}
-
-// Match implements Transformation interface.
-func (r *EnumeratePaths) Match(expr *memo.ExprIter) bool {
-	return true
+// NewRuleEnumeratePaths creates a new Transformation EnumeratePaths.
+// The pattern of this rule is: `DataSource`.
+func NewRuleEnumeratePaths() Transformation {
+	rule := &EnumeratePaths{}
+	rule.pattern = memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -254,21 +211,19 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 // PushAggDownGather splits Aggregation to two stages, final and partial1,
 // and pushed the partial Aggregation down to the child of TableGather.
 type PushAggDownGather struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *PushAggDownGather) ID() TransformationID {
-	return rulePushAggDownGather
-}
-
-// GetPattern implements Transformation interface. The pattern of this rule
-// is `Aggregation -> TableGather`.
-func (r *PushAggDownGather) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+// NewRulePushAggDownGather creates a new Transformation PushAggDownGather.
+// The pattern of this rule is: `Aggregation -> TableGather`.
+func NewRulePushAggDownGather() Transformation {
+	rule := &PushAggDownGather{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandAggregation,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandTableGather, memo.EngineTiDBOnly),
 	)
+	return rule
 }
 
 // Match implements Transformation interface.
@@ -344,26 +299,19 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 
 // PushSelDownSort pushes the Selection down to the child of Sort.
 type PushSelDownSort struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *PushSelDownSort) ID() TransformationID {
-	return rulePushSelDownSort
-}
-
-// GetPattern implements Transformation interface. The pattern of this rule
-// is `Selection -> Sort`.
-func (r *PushSelDownSort) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+// NewRulePushSelDownSort creates a new Transformation PushSelDownSort.
+// The pattern of this rule is: `Selection -> Sort`.
+func NewRulePushSelDownSort() Transformation {
+	rule := &PushSelDownSort{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownSort) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -384,25 +332,19 @@ func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 
 // PushSelDownProjection pushes the Selection down to the child of Projection.
 type PushSelDownProjection struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *PushSelDownProjection) ID() TransformationID {
-	return rulePushSelDownProjection
-}
-
-// GetPattern implements Transformation interface.
-func (r *PushSelDownProjection) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+// NewRulePushSelDownProjection creates a new Transformation PushSelDownProjection.
+// The pattern of this rule is: `Selection -> Projection`.
+func NewRulePushSelDownProjection() Transformation {
+	rule := &PushSelDownProjection{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownProjection) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -449,26 +391,19 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 
 // PushSelDownAggregation pushes Selection down to the child of Aggregation.
 type PushSelDownAggregation struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *PushSelDownAggregation) ID() TransformationID {
-	return rulePushSelDownAggregation
-}
-
-// GetPattern implements Transformation interface.
+// NewRulePushSelDownAggregation creates a new Transformation PushSelDownAggregation.
 // The pattern of this rule is `Selection -> Aggregation`.
-func (r *PushSelDownAggregation) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+func NewRulePushSelDownAggregation() Transformation {
+	rule := &PushSelDownAggregation{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineAll,
 		memo.NewPattern(memo.OperandAggregation, memo.EngineAll),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownAggregation) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -539,26 +474,19 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 
 // TransformLimitToTopN transforms Limit+Sort to TopN.
 type TransformLimitToTopN struct {
+	baseRule
 }
 
-// ID implements Transformation interface.
-func (r *TransformLimitToTopN) ID() TransformationID {
-	return ruleTransformLimitToTopN
-}
-
-// GetPattern implements Transformation interface.
+// NewRuleTransformLimitToTopN creates a new Transformation TransformLimitToTopN.
 // The pattern of this rule is `Limit -> Sort`.
-func (r *TransformLimitToTopN) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+func NewRuleTransformLimitToTopN() Transformation {
+	rule := &TransformLimitToTopN{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandLimit,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *TransformLimitToTopN) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
