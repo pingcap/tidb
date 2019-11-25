@@ -20,6 +20,22 @@
         ]
       },
       {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_float = t2.v_int",
+        "Explain": [
+          "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
+          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(Column#2, Column#15)]",
+          "  ├─TableReader_24 10000.00 root data:TableScan_23",
+          "  │ └─TableScan_23 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_25 10000.00 root Column#8, Column#9, Column#10, Column#11, Column#12, Column#13, cast(Column#8)",
+          "    └─TableReader_27 10000.00 root data:TableScan_26",
+          "      └─TableScan_26 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01 1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01",
+          "2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02 2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02"
+        ]
+      },
+      {
         "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_int",
         "Explain": [
           "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
@@ -30,6 +46,22 @@
           "    └─IndexLookUp_9 1.25 root ",
           "      ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_int, range: decided by [eq(Column#8, Column#4)], keep order:false, stats:pseudo",
           "      └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01 1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01",
+          "2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02 2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_int",
+        "Explain": [
+          "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
+          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(Column#4, Column#15)]",
+          "  ├─TableReader_24 10000.00 root data:TableScan_23",
+          "  │ └─TableScan_23 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_25 10000.00 root Column#8, Column#9, Column#10, Column#11, Column#12, Column#13, cast(Column#8)",
+          "    └─TableReader_27 10000.00 root data:TableScan_26",
+          "      └─TableScan_26 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Res": [
           "1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01 1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01",
@@ -55,6 +87,23 @@
         ]
       },
       {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_string = t2.v_int",
+        "Explain": [
+          "Projection_7 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
+          "└─HashLeftJoin_22 12500.00 root inner join, inner:Projection_27, equal:[eq(Column#15, Column#16)]",
+          "  ├─Projection_24 10000.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, cast(Column#3)",
+          "  │ └─TableReader_26 10000.00 root data:TableScan_25",
+          "  │   └─TableScan_25 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_27 10000.00 root Column#8, Column#9, Column#10, Column#11, Column#12, Column#13, cast(Column#8)",
+          "    └─TableReader_29 10000.00 root data:TableScan_28",
+          "      └─TableScan_28 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01 1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01",
+          "2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02 2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02"
+        ]
+      },
+      {
         "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_datetime = t2.v_int",
         "Explain": [
           "Projection_7 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
@@ -70,6 +119,20 @@
         "Res": null
       },
       {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_datetime = t2.v_int",
+        "Explain": [
+          "Projection_7 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
+          "└─HashLeftJoin_22 12500.00 root inner join, inner:Projection_27, equal:[eq(Column#15, Column#16)]",
+          "  ├─Projection_24 10000.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, cast(Column#5)",
+          "  │ └─TableReader_26 10000.00 root data:TableScan_25",
+          "  │   └─TableScan_25 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_27 10000.00 root Column#8, Column#9, Column#10, Column#11, Column#12, Column#13, cast(Column#8)",
+          "    └─TableReader_29 10000.00 root data:TableScan_28",
+          "      └─TableScan_28 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": null
+      },
+      {
         "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_time = t2.v_int",
         "Explain": [
           "Projection_7 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
@@ -81,6 +144,23 @@
           "    └─IndexLookUp_10 1.25 root ",
           "      ├─IndexScan_8 1.25 cop[tikv] table:t2, index:v_int, range: decided by [eq(Column#8, Column#15)], keep order:false, stats:pseudo",
           "      └─TableScan_9 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01 1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01",
+          "2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02 2 2 2 2.0000000000 2019-11-25 00:00:02 00:00:02"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_time = t2.v_int",
+        "Explain": [
+          "Projection_7 12500.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, Column#8, Column#9, Column#10, Column#11, Column#12, Column#13",
+          "└─HashLeftJoin_22 12500.00 root inner join, inner:Projection_27, equal:[eq(Column#15, Column#16)]",
+          "  ├─Projection_24 10000.00 root Column#1, Column#2, Column#3, Column#4, Column#5, Column#6, cast(Column#6)",
+          "  │ └─TableReader_26 10000.00 root data:TableScan_25",
+          "  │   └─TableScan_25 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_27 10000.00 root Column#8, Column#9, Column#10, Column#11, Column#12, Column#13, cast(Column#8)",
+          "    └─TableReader_29 10000.00 root data:TableScan_28",
+          "      └─TableScan_28 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Res": [
           "1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01 1 1 1.00 1.0000000000 2019-11-25 00:00:01 00:00:01",
