@@ -71,7 +71,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.ToSeconds: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	ast.MicroSecond: {},
+	ast.MicroSecond: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
+	},
 	ast.Now: {
 		{retEvalType: types.ETDatetime},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
@@ -123,11 +125,31 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
 		},
 	},
-	ast.TimestampDiff:    {},
+	ast.TimestampDiff: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDatetime, types.ETDatetime},
+			geners:        []dataGenerator{&unitStrGener{}, nil, nil}},
+	},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
 	ast.AddDate:          {},
-	ast.SubTime:          {},
+	ast.SubTime: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {
+				Tp:      mysql.TypeString,
+				Flen:    types.UnspecifiedLength,
+				Decimal: types.UnspecifiedLength,
+				Flag:    mysql.BinaryFlag,
+			}},
+			geners: []dataGenerator{
+				&timeStrGener{},
+				&timeStrGener{},
+			},
+		},
+	},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
 		// arg1 has BinaryFlag here.
@@ -147,6 +169,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.Week: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
 	},
 	ast.Month: {
@@ -187,6 +210,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.UTCTimestamp: {
 		{retEvalType: types.ETTimestamp},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
+	},
+	ast.UnixTimestamp: {
+		{retEvalType: types.ETInt},
 	},
 	ast.UTCTime: {
 		{retEvalType: types.ETDuration},

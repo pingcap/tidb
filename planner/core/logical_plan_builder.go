@@ -429,6 +429,17 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferTiFlash(alias) {
 		ds.preferStoreType |= preferTiFlash
 	}
+	if hintInfo.ifPreferTiKV(alias) {
+		if ds.preferStoreType != 0 {
+			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
+				alias.dbName.L, alias.tblName.L)
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.preferStoreType = 0
+			return
+		}
+		ds.preferStoreType |= preferTiKV
+	}
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -2101,7 +2112,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
 		indexHintList                                                         []indexHintInfo
-		tiflashTables                                                         []hintTableInfo
+		tiflashTables, tikvTables                                             []hintTableInfo
 		aggHints                                                              aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2158,6 +2169,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			if hint.StoreType.L == HintTiFlash {
 				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
+			if hint.StoreType.L == HintTiKV {
+				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2167,7 +2181,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
 		hashJoinTables:            hashJoinTables,
 		indexHintList:             indexHintList,
-		flashTables:               tiflashTables,
+		tiflashTables:             tiflashTables,
+		tikvTables:                tikvTables,
 		aggHints:                  aggHints,
 	})
 }
@@ -2978,7 +2993,9 @@ func (b *PlanBuilder) buildUpdateLists(
 	error error,
 ) {
 	b.curClause = fieldList
-	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
+	// modifyColumns indicates which columns are in set list,
+	// and if it is set to `DEFAULT`
+	modifyColumns := make(map[string]bool, p.Schema().Len())
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
@@ -2989,7 +3006,13 @@ func (b *PlanBuilder) buildUpdateLists(
 		}
 		name := p.OutputNames()[idx]
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
-		modifyColumns[columnFullName] = struct{}{}
+		// We save a flag for the column in map `modifyColumns`
+		// This flag indicated if assign keyword `DEFAULT` to the column
+		if _, ok := extractDefaultExpr(assign.Expr); ok {
+			modifyColumns[columnFullName] = true
+		} else {
+			modifyColumns[columnFullName] = false
+		}
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -3007,7 +3030,9 @@ func (b *PlanBuilder) buildUpdateLists(
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
-			if _, ok := modifyColumns[columnFullName]; ok {
+			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+			if isDefault, ok := modifyColumns[columnFullName]; ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -3035,6 +3060,10 @@ func (b *PlanBuilder) buildUpdateLists(
 		var newExpr expression.Expression
 		var np LogicalPlan
 		if i < len(list) {
+			// If assign `DEFAULT` to column, fill the `defaultExpr.Name` before rewrite expression
+			if expr, ok := extractDefaultExpr(assign.Expr); ok {
+				expr.Name = assign.Column
+			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
 		} else {
 			// rewrite with generation expression
@@ -3072,6 +3101,17 @@ func (b *PlanBuilder) buildUpdateLists(
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}
 	return newList, p, allAssignmentsAreConstant, nil
+}
+
+// extractDefaultExpr extract a `DefaultExpr` without any parameter from a `ExprNode`,
+// return the `DefaultExpr` and whether it's extracted successfully.
+// Note: the SQL function `DEFAULT(a)` is not the same with keyword `DEFAULT`,
+// SQL function `DEFAULT(a)` will return `false`.
+func extractDefaultExpr(node ast.ExprNode) (*ast.DefaultExpr, bool) {
+	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
+		return expr, true
+	}
+	return nil, false
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {

@@ -90,7 +90,7 @@ func TestSingle(t *testing.T) {
 	if isOwner {
 		t.Fatalf("expect false, got isOwner:%v", isOwner)
 	}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	ownerID, _ := manager.GetOwnerID(goctx.Background())
 	// The error is ok to be not nil since we canceled the manager.
 	if ownerID != "" {
