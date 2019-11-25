@@ -49,6 +49,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.flushBindings()
 	case plannercore.OpCaptureBindings:
 		e.captureBindings()
+	case plannercore.OpEvolveBindings:
+		return e.evolveBindings()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -103,4 +105,8 @@ func (e *SQLBindExec) flushBindings() error {
 
 func (e *SQLBindExec) captureBindings() {
 	domain.GetDomain(e.ctx).BindHandle().CaptureBaselines()
+}
+
+func (e *SQLBindExec) evolveBindings() error {
+	return domain.GetDomain(e.ctx).BindHandle().HandleEvolvePlanTask(e.ctx)
 }
