@@ -1492,16 +1492,13 @@ func (b *builtinSubDurationAndDurationSig) vecEvalDuration(input *chunk.Chunk, r
 		if result.IsNull(i) {
 			continue
 		}
-		// get arg0 & arg1
-		arg0 := arg0s[i]
-		arg1 := arg1s[i]
 		// calculate
-		output, err := types.AddDuration(arg0, -arg1)
+		output, err := types.SubInt64(int64(arg0s[i]), int64(arg1s[i]))
 		if err != nil {
 			return err
 		}
 		// commit result
-		resultSlice[i] = output
+		resultSlice[i] = time.Duration(output)
 	}
 	return nil
 }
