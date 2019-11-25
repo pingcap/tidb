@@ -2416,6 +2416,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
 }
 
@@ -2536,7 +2537,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
-	for _, col := range columns {
+	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -2549,7 +2550,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
 			RetType:  &col.FieldType,
-			OrigName: fmt.Sprintf("%v.%v.%v", dbName, tableInfo.Name, col.Name),
+			OrigName: names[i].String(),
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
