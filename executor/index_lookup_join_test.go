@@ -36,6 +36,22 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 		rs.Next(context.Background(), req)
 	}
 	rs.Close()
+
+	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
+	c.Assert(err, IsNil)
+	req = rs.NewChunk()
+	for i := 0; i < 5; i++ {
+		rs.Next(context.Background(), req)
+	}
+	rs.Close()
+
+	rs, err = tk.Exec("select /*+ INL_MERGE_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
+	c.Assert(err, IsNil)
+	req = rs.NewChunk()
+	for i := 0; i < 5; i++ {
+		rs.Next(context.Background(), req)
+	}
+	rs.Close()
 }
 
 func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
