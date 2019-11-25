@@ -1120,7 +1120,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 		`2 <nil> <nil>`,
 		`1 0 0`,
 	))
-  
+
 	tk.MustExec("drop table if exists t,s")
 	tk.MustExec("create table t(a int primary key auto_increment, b time)")
 	tk.MustExec("create table s(a int, b time)")
