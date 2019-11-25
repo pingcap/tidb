@@ -157,7 +157,16 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.TimestampLiteral: {},
 	ast.SubDate:          {},
-	ast.AddDate:          {},
+	ast.AddDate: {
+		{
+			retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				nil,
+				nil,
+				&constStrGener{"MICROSECOND"},
+			},
+		},
+	},
 	ast.SubTime: {
 		{
 			retEvalType:   types.ETString,
