@@ -101,7 +101,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(snapIs.SchemaMetaVersion(), Equals, is.SchemaMetaVersion())
 
 	// for schemaValidator
-	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer
+	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts := ver.Ver
