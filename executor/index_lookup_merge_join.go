@@ -224,17 +224,27 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	imw := &innerMergeWorker{
-		innerMergeCtx:         e.innerMergeCtx,
-		outerMergeCtx:         e.outerMergeCtx,
-		taskCh:                taskCh,
-		ctx:                   e.ctx,
-		indexRanges:           copiedRanges,
-		nextColCompareFilters: e.lastColHelper,
-		keyOff2IdxOff:         e.keyOff2IdxOff,
-		joiner:                e.joiners[workID],
-		joinChkResourceCh:     e.joinChkResourceCh[workID],
-		retFieldTypes:         e.retFieldTypes,
-		maxChunkSize:          e.maxChunkSize,
+		innerMergeCtx:     e.innerMergeCtx,
+		outerMergeCtx:     e.outerMergeCtx,
+		taskCh:            taskCh,
+		ctx:               e.ctx,
+		indexRanges:       copiedRanges,
+		keyOff2IdxOff:     e.keyOff2IdxOff,
+		joiner:            e.joiners[workID],
+		joinChkResourceCh: e.joinChkResourceCh[workID],
+		retFieldTypes:     e.retFieldTypes,
+		maxChunkSize:      e.maxChunkSize,
+	}
+	if e.lastColHelper != nil {
+		// nextCwf.TmpConstant needs to be reset for every individual
+		// inner worker to avoid data race when the inner workers is running
+		// concurrently.
+		nextCwf := *e.lastColHelper
+		nextCwf.TmpConstant = make([]*expression.Constant, len(e.lastColHelper.TmpConstant))
+		for i := range e.lastColHelper.TmpConstant {
+			nextCwf.TmpConstant[i] = &expression.Constant{RetType: nextCwf.TargetCol.RetType}
+		}
+		imw.nextColCompareFilters = &nextCwf
 	}
 	return imw
 }
