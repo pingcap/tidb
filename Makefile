@@ -126,7 +126,12 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest gogenerate
+# Split tests for CI to run `make test` parallelly.
+test: test_part_1 test_part_2
+
+test_part_1: checklist explaintest
+
+test_part_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
