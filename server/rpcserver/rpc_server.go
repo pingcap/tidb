@@ -41,12 +41,6 @@ func CreateTiDBRPCServer(security config.Security) *grpc.Server {
 	if s == nil {
 		s = grpc.NewServer()
 	}
-	diagnosticspb.RegisterDiagnosticsServer(s, &tidbRPCServer{})
+	diagnosticspb.RegisterDiagnosticsServer(s, &diagnostics.DiagnoseServer{})
 	return s
-}
-
-// tidbRPCServer is TiDB RPC Server. It is use for:
-// 1. diagnostics RPC services.
-type tidbRPCServer struct {
-	diagnostics.DiagnoseServer
 }
