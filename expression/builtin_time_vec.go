@@ -1203,11 +1203,56 @@ func (b *builtinToSecondsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinSubDurationAndStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
+		return err
+	}
+	buf0 := result
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.MergeNulls(buf1)
+	arg0s := buf0.GoDurations()
+	resultSlice := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		// get arg0 & arg1
+		arg0 := arg0s[i]
+		arg1 := buf1.GetString(i)
+		// calculate
+		if !isDuration(arg1) {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		arg1Duration, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				result.SetNull(i, true) // fixed: true
+				continue
+			}
+			return err
+		}
+		output, err := types.AddDuration(arg0, -arg1Duration.Duration)
+		if err != nil {
+			return err
+		}
+		// commit result
+		resultSlice[i] = output
+	}
+	return nil
 }
 
 func (b *builtinSubDateAndStringSig) vectorized() bool {
