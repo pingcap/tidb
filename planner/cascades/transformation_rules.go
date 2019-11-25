@@ -49,6 +49,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushSelDownSort(),
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
+		NewRulePushSelDownJoin(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
@@ -507,21 +508,19 @@ func (r *TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 // PushSelDownJoin pushes Selection through Join.
 type PushSelDownJoin struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface.
+// NewRulePushSelDownJoin creates a new Transformation PushSelDownJoin.
 // The pattern of this rule is `Selection -> Join`.
-func (r *PushSelDownJoin) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+func NewRulePushSelDownJoin() Transformation {
+	rule := &PushSelDownJoin{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
