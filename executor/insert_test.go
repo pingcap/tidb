@@ -816,4 +816,6 @@ func (s *testSuite3) TestInsertCastFloat(c *C) {
 	tk.MustExec(`create table t (a int)`)
 	tk.MustExec(`insert into t values (ifnull('',0)+0)`)
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("0"))
+	_, err := tk.Exec(`insert into t values ('')`)
+	c.Assert(err, NotNil)
 }
