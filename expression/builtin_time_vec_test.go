@@ -173,6 +173,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 				&timeStrGener{},
 			},
 		},
+		// builtinSubTimeStringNullSig
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
+		},
 	},
 	ast.AddTime: {
 		// builtinAddStringAndStringSig, a special case written by hand.
@@ -266,6 +272,19 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			geners:        []dataGenerator{&timeStrGener{}, &constStrGener{"%y-%m-%d"}},
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&timeStrGener{NullRation: 0.3}, nil},
+			constants:     []*Constant{nil, {Value: types.NewDatum("%Y-%m-%d"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&timeStrGener{}, nil},
+			// "%y%m%d" is wrong format, STR_TO_DATE should be failed for all rows
+			constants: []*Constant{nil, {Value: types.NewDatum("%y%m%d"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 	ast.GetFormat: {
