@@ -940,7 +940,8 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 		return err
 	}
 
-	isUnsigned := mysql.HasUnsignedFlag(b.tp.Flag) || mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsignedTp := mysql.HasUnsignedFlag(b.tp.Flag)
+	isUnsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	nums := buf.Int64s()
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
@@ -953,9 +954,9 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 		}
 
 		*dec = types.MyDecimal{}
-		if !isUnsigned {
+		if !isUnsignedTp && !isUnsignedArgs0 {
 			dec.FromInt(nums[i])
-		} else if b.inUnion && nums[i] < 0 {
+		} else if b.inUnion && !isUnsignedArgs0 && nums[i] < 0 {
 			dec.FromUint(0)
 		} else {
 			dec.FromUint(uint64(nums[i]))
