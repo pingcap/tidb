@@ -111,7 +111,6 @@ func (l *List) Add(chk *Chunk) {
 	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
-	return
 }
 
 func (l *List) allocChunk() (chk *Chunk) {

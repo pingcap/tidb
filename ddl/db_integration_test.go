@@ -809,7 +809,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 }
 
-func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database if not exists test")
@@ -1874,7 +1874,7 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	tk.MustGetErrCode(dropIndexSQL, mysql.ErrWrongAutoKey)
 }
 
-func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *C) {
+func (s *testIntegrationSuite4) TestInsertIntoGeneratedColumnWithDefaultExpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -1929,18 +1929,14 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
 	tk.MustGetErrCode("insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
 
-	tk.MustExec("drop table t1")
-	tk.MustExec("drop table t2")
-	tk.MustExec("drop table t3")
-	tk.MustExec("drop table t4")
-	tk.MustExec("drop table t5")
+	tk.MustExec("drop table t1, t2, t3, t4, t5")
 }
 
 func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 
 	// In generated columns expression, these items are not allowed:
 	// 1. Blocked function (for full function list, please visit https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc)
