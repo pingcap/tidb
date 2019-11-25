@@ -15,9 +15,10 @@ package executor_test
 
 import (
 	"context"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
@@ -141,4 +142,78 @@ func (s *testSuite5) TestIndexJoinPartitionTable(c *C) {
 	tk.MustExec("create table t(a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
 	tk.MustExec("insert into t values(1, 27, 2)")
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
+}
+
+type testSuite9 struct {
+	*baseTestSuite
+
+	is       infoschema.InfoSchema
+	testData testutil.TestData
+}
+
+func (s *testSuite9) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "index_join_test")
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite9) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testSuite9) SetUpTest(c *C) {
+	var err error
+	s.store, s.domain, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s testSuite9) TestIndexJoinHavingExprInInnerJoinKeys(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1(
+						v_int int, 
+						v_float float, 
+						v_string varchar(20), 
+						v_decimal decimal(40, 10), 
+						v_datetime datetime, 
+						v_time time);`)
+	tk.MustExec(`create table t2(
+						v_int int, 
+						v_float float, 
+						v_string varchar(20), 
+						v_decimal decimal(40, 10), 
+						v_datetime datetime, 
+						v_time time,
+						key(v_int),
+						key(v_float),
+						key(v_string),
+						key(v_decimal),
+						key(v_datetime),
+						key(v_time));`)
+	tk.MustExec(`insert into t1 values 
+		(1, 1.0, "1.00", 1, cast(time(1) as datetime), time(1)),
+		(2, 2.0, "2", 2, cast(time(2) as datetime), time(2));`)
+	tk.MustExec(`insert into t2 values 
+		(1, 1.0, "1.00", 1, cast(time(1) as datetime), time(1)),
+		(2, 2.0, "2", 2, cast(time(2) as datetime), time(2));`)
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Explain []string
+		Res     []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, test := range input {
+		rRes := tk.MustQuery(input[i])
+		rExplain := tk.MustQuery("explain " + input[i])
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Explain = s.testData.ConvertRowsToStrings(rExplain.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(rRes.Rows())
+		})
+
+		rRes.Check(testkit.Rows(output[i].Res...))
+		rExplain.Check(testkit.Rows(output[i].Explain...))
+	}
 }

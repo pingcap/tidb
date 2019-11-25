@@ -487,7 +487,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	return res, false, err
 }
 
-func (b *builtinCastIntAsIntSig) supportReverseEval() bool {
+func (b *builtinCastIntAsRealSig) supportReverseEval() bool {
 	return true
 }
 

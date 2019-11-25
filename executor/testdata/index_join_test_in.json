@@ -1,0 +1,13 @@
+[
+  {
+    "name": "TestIndexJoinHavingExprInInnerJoinKeys",
+    "cases": [
+      // test cast int as other types
+      "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_float = t2.v_int",
+      "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_int",
+      "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_string = t2.v_int",
+      "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_datetime = t2.v_int",
+      "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_time = t2.v_int"
+    ]
+  }
+]

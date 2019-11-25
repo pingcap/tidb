@@ -2266,7 +2266,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 			if err != nil {
 				return nil, err
 			}
-			ran.HighVal[i], err = expr.ReverseEval(ran.HighVal[i], expression.Floor, key)
+			ran.HighVal[i], err = expr.ReverseEval(ran.HighVal[i], expression.Ceiling, key)
 			if err != nil {
 				return nil, err
 			}

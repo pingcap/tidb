@@ -608,9 +608,9 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
-	// Because we can't keep order for union scan, if there is a union scan in inner task,
-	// we can't construct index merge join.
-	if us == nil {
+	// 1. Because we can't keep order for union scan, if there is a union scan in inner task, we can't construct index merge join.
+	// 2. When inner child is projection, that indicates there are some expression as inner join keys, in this case, we can't keep order for inner child.
+	if us == nil && proj == nil {
 		innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, outerIdx, proj)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	}
