@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -92,7 +93,7 @@ func (s *testClusterTableSuite) SetUpSuite(c *C) {
 func setUpRPCService(c *C, addr string) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
-	server := rpcserver.CreateTiDBRPCServer()
+	server := rpcserver.CreateTiDBRPCServer(config.GetGlobalConfig().Security)
 	go func() {
 		err = server.Serve(lis)
 		c.Assert(err, IsNil)

@@ -16,20 +16,31 @@ package rpcserver
 import (
 	"github.com/crazycs520/diagnostics"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // CreateTiDBRPCServer creates a TiDB rpc server.
-func CreateTiDBRPCServer() *grpc.Server {
+func CreateTiDBRPCServer(security config.Security) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
 		}
 	}()
 
-	s := grpc.NewServer()
+	var s *grpc.Server
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err == nil {
+			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
+		}
+	}
+	if s == nil {
+		s = grpc.NewServer()
+	}
 	diagnosticspb.RegisterDiagnosticsServer(s, &tidbRPCServer{})
 	return s
 }
