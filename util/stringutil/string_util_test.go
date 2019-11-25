@@ -62,7 +62,7 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		{`' '`, ` `, true},
 		{"'\\a汉字'", "a汉字", true},
 		{"'\\a\x90'", "a\x90", true},
-		{`"\aèàø»"`, `aèàø»`, true},
+		{"\"\\a\x18èàø»\x05\"", "a\x18èàø»\x05", true},
 	}
 
 	for _, t := range table {
