@@ -66,12 +66,12 @@ type baseRule struct {
 	pattern *memo.Pattern
 }
 
-// Match implements Implementation Interface.
+// Match implements Transformation Interface.
 func (r *baseRule) Match(expr *memo.ExprIter) bool {
 	return true
 }
 
-// GetPattern implements Implementation Interface.
+// GetPattern implements Transformation Interface.
 func (r *baseRule) GetPattern() *memo.Pattern {
 	return r.pattern
 }
