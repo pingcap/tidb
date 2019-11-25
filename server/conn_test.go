@@ -486,7 +486,7 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		status: connStatusShutdown,
+		status: connStatusWaitShutdown,
 		ctx:    tc,
 	}
 	c.Assert(cc.ShutdownOrNotify(), IsFalse)
