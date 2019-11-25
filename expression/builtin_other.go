@@ -144,7 +144,7 @@ type builtinInIntSig struct {
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -154,13 +154,13 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
 		}
 	}
 	if count < b.threshold {
@@ -176,7 +176,7 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
 	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg)
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
