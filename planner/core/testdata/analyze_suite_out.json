@@ -47,13 +47,13 @@
         ],
         "Plan": [
           "Limit_17 1.00 root offset:0, count:1",
-          "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:Column#1, inner key:Column#8",
+          "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:Column#1, inner key:Column#5",
           "  ├─TopN_29 1.00 root Column#1:asc, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root index:TopN_36",
           "  │   └─TopN_36 1.00 cop[tikv] Column#1:asc, offset:0, count:1",
           "  │     └─IndexScan_35 6.00 cop[tikv] table:t1, index:b, c, range:[-inf,6], keep order:false",
           "  └─IndexReader_68 1.04 root index:IndexScan_67",
-          "    └─IndexScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(Column#8, Column#1)], keep order:true"
+          "    └─IndexScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(Column#5, Column#1)], keep order:true"
         ]
       },
       {
@@ -142,13 +142,13 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
         ],
         "Plan": [
-          "IndexMergeJoin_14 12475.01 root inner join, inner:IndexReader_12, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
+          "IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:Column#1, inner key:Column#5, other cond:eq(Column#3, Column#7), gt(Column#6, minus(Column#2, 1)), lt(Column#6, plus(Column#2, 1))",
           "├─TableReader_19 9980.01 root data:Selection_18",
           "│ └─Selection_18 9980.01 cop[tikv] not(isnull(Column#1)), not(isnull(Column#3))",
           "│   └─TableScan_17 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─IndexReader_12 1.25 root index:Selection_11",
-          "  └─Selection_11 1.25 cop[tikv] not(isnull(Column#5)), not(isnull(Column#7))",
-          "    └─IndexScan_10 1.25 cop[tikv] table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:true, stats:pseudo"
+          "└─IndexReader_8 1.25 root index:Selection_7",
+          "  └─Selection_7 1.25 cop[tikv] not(isnull(Column#5)), not(isnull(Column#7))",
+          "    └─IndexScan_6 1.25 cop[tikv] table:t2, index:a, b, c, range: decided by [eq(Column#5, Column#1) gt(Column#6, minus(Column#2, 1)) lt(Column#6, plus(Column#2, 1))], keep order:false, stats:pseudo"
         ]
       },
       {
