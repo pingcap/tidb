@@ -583,25 +583,25 @@ func (col *Column) SupportReverseEval() bool {
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (c *Column) ReverseEval(res types.Datum, rType RoundingType, col *Column) (val types.Datum, err error) {
-	switch col.RetType.EvalType() {
+func (col *Column) ReverseEval(res types.Datum, rType RoundingType, c *Column) (val types.Datum, err error) {
+	switch c.RetType.EvalType() {
 	case types.ETInt:
-		ret, err := c.ReverseEvalInt(res, rType)
+		ret, err := col.ReverseEvalInt(res, rType)
 		return types.NewIntDatum(ret), err
 	case types.ETReal:
-		ret, err := c.ReverseEvalReal(res, rType)
+		ret, err := col.ReverseEvalReal(res, rType)
 		return types.NewFloat64Datum(ret), err
 	case types.ETString:
-		ret, err := c.ReverseEvalString(res, rType)
+		ret, err := col.ReverseEvalString(res, rType)
 		return types.NewStringDatum(ret), err
 	case types.ETDecimal:
-		ret, err := c.ReverseEvalDecimal(res, rType)
+		ret, err := col.ReverseEvalDecimal(res, rType)
 		return types.NewDecimalDatum(ret), err
 	case types.ETTimestamp:
-		ret, err := c.ReverseEvalTime(res, rType)
+		ret, err := col.ReverseEvalTime(res, rType)
 		return types.NewTimeDatum(ret), err
 	case types.ETDuration:
-		ret, err := c.ReverseEvalDuration(res, rType)
+		ret, err := col.ReverseEvalDuration(res, rType)
 		return types.NewDurationDatum(ret), err
 	}
 	return types.Datum{}, errors.Errorf("unknown evaluation type for Column in ReverseEval")
