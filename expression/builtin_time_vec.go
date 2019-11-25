@@ -2112,6 +2112,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				result.SetNull(i, true)
 			}
 		}
+		return nil
 	}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
