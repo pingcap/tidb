@@ -2024,10 +2024,14 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 			continue
 		}
 		addr := srv.statusAddr
-		if _, ok := ipMap[addr]; ok {
+		ip := addr
+		if idx := strings.Index(addr, ":"); idx != -1 {
+			ip = addr[:idx]
+		}
+		if _, ok := ipMap[ip]; ok {
 			continue
 		}
-		ipMap[addr] = struct{}{}
+		ipMap[ip] = struct{}{}
 
 		items, err := getServerInfoByGRPC(srv.statusAddr, diagnosticspb.ServerInfoType_LoadInfo)
 		if err != nil {
