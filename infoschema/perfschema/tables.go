@@ -14,14 +14,27 @@
 package perfschema
 
 import (
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/profile"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
@@ -33,6 +46,7 @@ const (
 	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
 	tableNameTiDBProfileBlock                = "tidb_profile_block"
 	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
+	tableNameTiKVProfileCPU                  = "tikv_profile_cpu"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -109,6 +123,8 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("block")
 	case tableNameTiDBProfileGoroutines:
 		fullRows, err = (&profile.Collector{}).Goroutines()
+	case tableNameTiKVProfileCPU:
+		fullRows, err = dataForTiKVProfileCPU(ctx)
 	}
 	if err != nil {
 		return
@@ -147,4 +163,104 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 		}
 	}
 	return nil
+}
+
+func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
+	sql := "SELECT status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO WHERE type = 'tikv'"
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	failpoint.Inject("mockTiKVNodeStatusAddress", func(val failpoint.Value) {
+		// The cluster topology is injected by `failpoint` expression and
+		// there is no extra checks for it. (let the test fail if the expression invalid)
+		if s := val.(string); len(s) > 0 {
+			fields := []*types.FieldType{
+				{
+					Charset: mysql.UTF8Charset,
+					Collate: mysql.UTF8DefaultCollation,
+					Tp:      mysql.TypeVarchar,
+					Flen:    64,
+					Flag:    64,
+				},
+			}
+			data := chunk.New(fields, 0, 3)
+			for i, col := range strings.Split(s, ",") {
+				data.AppendString(i, col)
+			}
+			iter := chunk.NewIterator4Chunk(data)
+			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+				rows = append(rows, r)
+			}
+			// erase the error message
+			err = nil
+		}
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	type result struct {
+		addr string
+		rows [][]types.Datum
+		err  error
+	}
+
+	var finalRows [][]types.Datum
+	wg := sync.WaitGroup{}
+	ch := make(chan result, len(rows))
+	for _, row := range rows {
+		statusAddr := row.GetString(0)
+		if len(statusAddr) == 0 {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", statusAddr))
+			continue
+		}
+
+		wg.Add(1)
+		go func(address string) {
+			util.WithRecovery(func() {
+				defer wg.Done()
+				interval := profile.CPUProfileInterval / time.Second
+				url := fmt.Sprintf("http://%s/debug/pprof/profile?seconds=%d", statusAddr, interval)
+				req, err := http.NewRequest(http.MethodGet, url, nil)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				req.Header.Add("Content-Type", "application/protobuf")
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				defer resp.Body.Close()
+				collector := profile.Collector{}
+				rows, err := collector.ProfileReaderToDatums(resp.Body)
+				if err != nil {
+					ch <- result{err: errors.Trace(err)}
+					return
+				}
+				ch <- result{addr: address, rows: rows}
+			}, nil)
+		}(statusAddr)
+	}
+
+	wg.Wait()
+	close(ch)
+
+	// Keep the original order to make the result more stable
+	var results []result
+	for result := range ch {
+		if result.err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
+		results = append(results, result)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].addr < results[j].addr })
+	for _, result := range results {
+		addr := types.NewStringDatum(result.addr)
+		for _, row := range result.rows {
+			// Insert the node address in front of rows
+			finalRows = append(finalRows, append([]types.Datum{addr}, row...))
+		}
+	}
+	return finalRows, nil
 }
