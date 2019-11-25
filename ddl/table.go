@@ -918,8 +918,8 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 	tblInfo.State = model.StateNone
 
-	// Check the old db and old table exist.
-	_, err := getTableInfo(t, job.TableID, schemaID)
+	// Check the old DB and old table exist.
+	_, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

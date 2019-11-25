@@ -29,22 +29,22 @@ type repairInfo struct {
 // RepairInfo indicates the repaired table info.
 var RepairInfo repairInfo
 
-// InRepairMode get whether TiDB is in repairMode.
-func (r *repairInfo) GetRepairMode() bool {
+// InRepairMode indicates whether TiDB is in repairMode.
+func (r *repairInfo) InRepairMode() bool {
 	return r.repairMode.Load().(bool)
 }
 
-// InRepairMode set whether TiDB is in repairMode.
+// SetRepairMode sets whether TiDB is in repairMode.
 func (r *repairInfo) SetRepairMode(mode bool) {
 	r.repairMode.Store(mode)
 }
 
-// InRepairMode tet the simple repaired table list.
+// GetRepairTableList gets repairing table list.
 func (r *repairInfo) GetRepairTableList() []string {
 	return r.repairTableList.Load().([]string)
 }
 
-// InRepairMode set the simple repaired table list.
+// SetRepairTableList sets repairing table list.
 func (r *repairInfo) SetRepairTableList(list []string) {
 	for i, one := range list {
 		list[i] = strings.ToLower(one)
@@ -62,34 +62,34 @@ func (r *repairInfo) GetRepairCleanFunc() func(a, b string) {
 	return r.RemoveFromRepairList
 }
 
-// FetchRepairedTableList fetch the repaired table list from meta.
-func (r *repairInfo) FetchRepairedTableList(di *model.DBInfo, tbl *model.TableInfo) bool {
-	if r.repairMode.Load().(bool) {
-		isRepair := false
-		ls := r.repairTableList.Load().([]string)
-		for _, tn := range ls {
-			// Use dbName and tableName to specified a table.
-			if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
-				isRepair = true
-				break
-			}
+// CheckAndFetchRepairedTable fetches the repairing table list from meta, true indicates fetch success.
+func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.TableInfo) bool {
+	if !r.repairMode.Load().(bool) {
+		return false
+	}
+	isRepair := false
+	ls := r.repairTableList.Load().([]string)
+	for _, tn := range ls {
+		// Use dbName and tableName to specify a table.
+		if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
+			isRepair = true
+			break
 		}
-		if isRepair {
-			mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
-			// Record the repaired table in Map.
-			if repairedDB, ok := mp[di.ID]; ok {
-				repairedDB.Tables = append(repairedDB.Tables, tbl)
-			} else {
-				// Shallow copy the DBInfo.
-				repairedDB := di.Copy()
-				// Clean the tables and set repaired table.
-				repairedDB.Tables = []*model.TableInfo{}
-				repairedDB.Tables = append(repairedDB.Tables, tbl)
-				mp[di.ID] = repairedDB
-			}
-			r.repairDBInfoMap.Store(mp)
-			return true
+	}
+	if isRepair {
+		mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
+		// Record the repaired table in Map.
+		if repairedDB, ok := mp[di.ID]; ok {
+			repairedDB.Tables = append(repairedDB.Tables, tbl)
+		} else {
+			// Shallow copy the DBInfo.
+			repairedDB := di.Copy()
+			// Clean the tables and set repaired table.
+			repairedDB.Tables = []*model.TableInfo{tbl}
+			mp[di.ID] = repairedDB
 		}
+		r.repairDBInfoMap.Store(mp)
+		return true
 	}
 	return false
 }
@@ -98,11 +98,12 @@ func (r *repairInfo) FetchRepairedTableList(di *model.DBInfo, tbl *model.TableIn
 func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLowerName string) *model.TableInfo {
 	mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
 	for _, db := range mp {
-		if db.Name.L == schemaLowerName {
-			for _, t := range db.Tables {
-				if t.Name.L == tableLowerName {
-					return t
-				}
+		if db.Name.L != schemaLowerName {
+			continue
+		}
+		for _, t := range db.Tables {
+			if t.Name.L == tableLowerName {
+				return t
 			}
 		}
 	}
@@ -143,6 +144,9 @@ func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string
 			break
 		}
 	}
+	if len(mpCopy) == 0 {
+		r.repairMode.Store(false)
+	}
 	r.repairDBInfoMap.Store(mpCopy)
 }
 
@@ -174,5 +178,5 @@ func init() {
 	RepairInfo = repairInfo{}
 	RepairInfo.repairMode.Store(false)
 	RepairInfo.repairTableList.Store([]string{})
-	RepairInfo.repairDBInfoMap.Store(make(map[int64]*model.DBInfo, 0))
+	RepairInfo.repairDBInfoMap.Store(make(map[int64]*model.DBInfo))
 }

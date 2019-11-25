@@ -2057,6 +2057,7 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	c.Assert(err, IsNil)
 
 	// Test whether repair table name is case sensitive.
+	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
 	s.tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
 	err = domain.GetDomain(s.s).Reload()
@@ -2067,6 +2068,7 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	c.Assert(repairTable.Meta().Name.O, Equals, "otHeR_tAbLe")
 
 	// Test memory and system database is not for repair.
+	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.xxx"})
 	_, err = s.tk.Exec("admin repair table performance_schema.xxx CREATE TABLE yyy (a int);")
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: memory or System database is not for repair")
@@ -2168,7 +2170,7 @@ func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 		"partition p90 values less than (90)," +
 		"partition p100 values less than (100));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Some old partition id has lost")
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p100 has lost")
 
 	// Test for some partition changed the condition.
 	_, err = s.tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
@@ -2177,7 +2179,7 @@ func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 		"partition p50 values less than (50)," +
 		"partition p90 values less than (90));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Some old partition id has lost")
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p20 has lost")
 
 	// Test for some partition changed the partition name.
 	_, err = s.tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
@@ -2186,7 +2188,7 @@ func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 		"partition pNew values less than (50)," +
 		"partition p90 values less than (90));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Some old partition id has lost")
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p20 has lost")
 
 	originTableInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 	s.tk.MustExec("admin repair table origin create table origin_rename (a bigint not null) partition by RANGE(a) (" +
@@ -2206,6 +2208,7 @@ func (s *testDBSuite6) TestRepairTableWithPartition(c *C) {
 
 	// Test hash partition.
 	s.tk.MustExec("drop table if exists origin")
+	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.origin"})
 	s.tk.MustExec("create table origin (a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
 	// Make sure the table schema is latest.

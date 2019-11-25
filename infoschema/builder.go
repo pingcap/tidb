@@ -193,7 +193,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		)
 	}
 	// Check whether tableInfo should be added to repairInfo.
-	if domainutil.RepairInfo.GetRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.FetchRepairedTableList(dbInfo, tblInfo) {
+	if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
 		return nil
 	}
 

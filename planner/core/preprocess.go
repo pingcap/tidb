@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"math"
 	"strings"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 )
 
@@ -524,7 +524,7 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 	// Check create table stmt whether it's is in REPAIR MODE.
-	if !domainutil.RepairInfo.GetRepairMode() {
+	if !domainutil.RepairInfo.InRepairMode() {
 		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
 		return
 	}
@@ -751,7 +751,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 		// Create stmt is not in repair stmt, check the table not in repair list.
-		if domainutil.RepairInfo.GetRepairMode() {
+		if domainutil.RepairInfo.InRepairMode() {
 			p.checkNotInRepair(tn)
 		}
 		return
@@ -785,15 +785,11 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 	if dbInfo == nil {
 		return
 	}
-	var found bool
 	for _, t := range dbInfo.Tables {
 		if t.Name.L == tn.Name.L {
-			found = true
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
 			break
 		}
-	}
-	if found {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
 	}
 }
 

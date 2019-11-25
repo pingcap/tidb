@@ -3945,7 +3945,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
 		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
 	}
-	// Cause DDL is passed nil here, it is necessary to specify the table.id and partition.id manually.
+	// Cause DDL is passed nil here, it is necessary to specify the table.ID and partition.id manually.
 	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
@@ -3956,17 +3956,20 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	newTableInfo.ID = oldTableInfo.ID
 	// If any old partitionInfo has lost, that means the partition ID lost too, so did the data, repair failed.
 	if newTableInfo.Partition != nil {
+		if oldTableInfo.Partition == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
+		}
+		if newTableInfo.Partition.Type != oldTableInfo.Partition.Type {
+			return ErrRepairTableFail.GenWithStackByArgs("Partition type should be same")
+		}
 		// Check whether partitionType is hash partition.
-		if newTableInfo.Partition.Type == oldTableInfo.Partition.Type && newTableInfo.Partition.Type == model.PartitionTypeHash {
+		if newTableInfo.Partition.Type == model.PartitionTypeHash {
 			if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
 				return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be same")
 			}
 		}
 		for i, new := range newTableInfo.Partition.Definitions {
 			found := false
-			if oldTableInfo.Partition == nil {
-				return ErrRepairTableFail.GenWithStackByArgs("Some old partition id has lost")
-			}
 			for _, old := range oldTableInfo.Partition.Definitions {
 				if new.Name.L == old.Name.L && stringSliceEqual(new.LessThan, old.LessThan) {
 					newTableInfo.Partition.Definitions[i].ID = old.ID
@@ -3975,7 +3978,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 				}
 			}
 			if !found {
-				return ErrRepairTableFail.GenWithStackByArgs("Some old partition id has lost")
+				return ErrRepairTableFail.GenWithStackByArgs("Partition " + new.Name.L + " has lost")
 			}
 		}
 	}
@@ -3991,22 +3994,16 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 			}
 		}
 		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("Some old index id has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + new.Name.L + " has lost")
 		}
 	}
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, new := range newTableInfo.Columns {
-		found := false
-		for _, old := range oldTableInfo.Columns {
-			if new.Name.L == old.Name.L {
-				newTableInfo.Columns[i].ID = old.ID
-				found = true
-				break
-			}
+		old := getColumnInfoByName(oldTableInfo, new.Name.L)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + new.Name.L + " has lost")
 		}
-		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("Some old column id has lost")
-		}
+		newTableInfo.Columns[i].ID = old.ID
 	}
 
 	newTableInfo.State = model.StatePublic
@@ -4037,9 +4034,10 @@ func stringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	if (a == nil) != (b == nil) {
-		return false
+	if len(a) == 0 {
+		return true
 	}
+	// Accelerate the compare by eliminate index bound check.
 	b = b[:len(a)]
 	for i, v := range a {
 		if v != b[i] {
@@ -4053,12 +4051,13 @@ func columnSliceEqual(a, b []*model.IndexColumn) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	if (a == nil) != (b == nil) {
-		return false
+	if len(a) == 0 {
+		return true
 	}
+	// Accelerate the compare by eliminate index bound check.
 	b = b[:len(a)]
 	for i, v := range a {
-		if v.Name != b[i].Name {
+		if v.Name.L != b[i].Name.L {
 			return false
 		}
 	}
