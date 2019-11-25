@@ -19,74 +19,73 @@ import (
 )
 
 const (
-	codeUnsupportedType  terror.ErrCode = 1
-	codeAnalyzeMissIndex                = 2
-	codeUnsupported                     = 3
-	codeStmtNotFound                    = 4
-	codeWrongParamCount                 = 5
-	codeSchemaChanged                   = 6
-
-	codeNotSupportedYet                 = mysql.ErrNotSupportedYet
-	codeWrongUsage                      = mysql.ErrWrongUsage
-	codeAmbiguous                       = mysql.ErrNonUniq
-	codeUnknown                         = mysql.ErrUnknown
-	codeUnknownColumn                   = mysql.ErrBadField
-	codeUnknownTable                    = mysql.ErrUnknownTable
-	codeWrongArguments                  = mysql.ErrWrongArguments
-	codeBadGeneratedColumn              = mysql.ErrBadGeneratedColumn
-	codeFieldNotInGroupBy               = mysql.ErrFieldNotInGroupBy
-	codeBadTable                        = mysql.ErrBadTable
-	codeKeyDoesNotExist                 = mysql.ErrKeyDoesNotExist
-	codeOperandColumns                  = mysql.ErrOperandColumns
-	codeInvalidWildCard                 = mysql.ErrParse
-	codeInvalidGroupFuncUse             = mysql.ErrInvalidGroupFuncUse
-	codeIllegalReference                = mysql.ErrIllegalReference
-	codeNoDB                            = mysql.ErrNoDB
-	codeUnknownExplainFormat            = mysql.ErrUnknownExplainFormat
-	codeWrongGroupField                 = mysql.ErrWrongGroupField
-	codeDupFieldName                    = mysql.ErrDupFieldName
-	codeNonUpdatableTable               = mysql.ErrNonUpdatableTable
-	codeInternal                        = mysql.ErrInternal
-	codeMixOfGroupFuncAndFields         = mysql.ErrMixOfGroupFuncAndFields
-	codeNonUniqTable                    = mysql.ErrNonuniqTable
-	codeWrongNumberOfColumnsInSelect    = mysql.ErrWrongNumberOfColumnsInSelect
-	codeWrongValueCountOnRow            = mysql.ErrWrongValueCountOnRow
-	codeTablenameNotAllowedHere         = mysql.ErrTablenameNotAllowedHere
-	codePrivilegeCheckFail              = mysql.ErrUnknown
-	codeWindowInvalidWindowFuncUse      = mysql.ErrWindowInvalidWindowFuncUse
-	codeWindowInvalidWindowFuncAliasUse = mysql.ErrWindowInvalidWindowFuncAliasUse
-	codeWindowNoSuchWindow              = mysql.ErrWindowNoSuchWindow
-	codeWindowCircularityInWindowGraph  = mysql.ErrWindowCircularityInWindowGraph
-	codeWindowNoChildPartitioning       = mysql.ErrWindowNoChildPartitioning
-	codeWindowNoInherentFrame           = mysql.ErrWindowNoInherentFrame
-	codeWindowNoRedefineOrderBy         = mysql.ErrWindowNoRedefineOrderBy
-	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
-	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
-	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
-	codeDBaccessDenied                  = mysql.ErrDBaccessDenied
-	codeTableaccessDenied               = mysql.ErrTableaccessDenied
-	codeSpecificAccessDenied            = mysql.ErrSpecificAccessDenied
-	codeViewNoExplain                   = mysql.ErrViewNoExplain
-	codeWindowFrameStartIllegal         = mysql.ErrWindowFrameStartIllegal
-	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
-	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
-	codeWindowRangeFrameOrderType       = mysql.ErrWindowRangeFrameOrderType
-	codeWindowRangeFrameTemporalType    = mysql.ErrWindowRangeFrameTemporalType
-	codeWindowRangeFrameNumericType     = mysql.ErrWindowRangeFrameNumericType
-	codeWindowRangeBoundNotConstant     = mysql.ErrWindowRangeBoundNotConstant
-	codeWindowRowsIntervalUse           = mysql.ErrWindowRowsIntervalUse
-	codeWindowFunctionIgnoresFrame      = mysql.ErrWindowFunctionIgnoresFrame
-	codeUnsupportedOnGeneratedColumn    = mysql.ErrUnsupportedOnGeneratedColumn
+	codeUnsupportedType                 terror.ErrCode = mysql.ErrUnsupportedType
+	codeAnalyzeMissIndex                               = mysql.ErrAnalyzeMissIndex
+	codeUnsupported                                    = mysql.ErrCartesianProductUnsupported
+	codeStmtNotFound                                   = mysql.ErrPreparedStmtNotFound
+	codeWrongParamCount                                = mysql.ErrWrongParamCount
+	codeSchemaChanged                                  = mysql.ErrSchemaChanged
+	codeNotSupportedYet                                = mysql.ErrNotSupportedYet
+	codeWrongUsage                                     = mysql.ErrWrongUsage
+	codeAmbiguous                                      = mysql.ErrNonUniq
+	codeUnknown                                        = mysql.ErrUnknown
+	codeUnknownColumn                                  = mysql.ErrBadField
+	codeUnknownTable                                   = mysql.ErrUnknownTable
+	codeWrongArguments                                 = mysql.ErrWrongArguments
+	codeBadGeneratedColumn                             = mysql.ErrBadGeneratedColumn
+	codeFieldNotInGroupBy                              = mysql.ErrFieldNotInGroupBy
+	codeBadTable                                       = mysql.ErrBadTable
+	codeKeyDoesNotExist                                = mysql.ErrKeyDoesNotExist
+	codeOperandColumns                                 = mysql.ErrOperandColumns
+	codeInvalidWildCard                                = mysql.ErrParse
+	codeInvalidGroupFuncUse                            = mysql.ErrInvalidGroupFuncUse
+	codeIllegalReference                               = mysql.ErrIllegalReference
+	codeNoDB                                           = mysql.ErrNoDB
+	codeUnknownExplainFormat                           = mysql.ErrUnknownExplainFormat
+	codeWrongGroupField                                = mysql.ErrWrongGroupField
+	codeDupFieldName                                   = mysql.ErrDupFieldName
+	codeNonUpdatableTable                              = mysql.ErrNonUpdatableTable
+	codeInternal                                       = mysql.ErrInternal
+	codeMixOfGroupFuncAndFields                        = mysql.ErrMixOfGroupFuncAndFields
+	codeNonUniqTable                                   = mysql.ErrNonuniqTable
+	codeWrongNumberOfColumnsInSelect                   = mysql.ErrWrongNumberOfColumnsInSelect
+	codeWrongValueCountOnRow                           = mysql.ErrWrongValueCountOnRow
+	codeTablenameNotAllowedHere                        = mysql.ErrTablenameNotAllowedHere
+	codePrivilegeCheckFail                             = mysql.ErrUnknown
+	codeWindowInvalidWindowFuncUse                     = mysql.ErrWindowInvalidWindowFuncUse
+	codeWindowInvalidWindowFuncAliasUse                = mysql.ErrWindowInvalidWindowFuncAliasUse
+	codeWindowNoSuchWindow                             = mysql.ErrWindowNoSuchWindow
+	codeWindowCircularityInWindowGraph                 = mysql.ErrWindowCircularityInWindowGraph
+	codeWindowNoChildPartitioning                      = mysql.ErrWindowNoChildPartitioning
+	codeWindowNoInherentFrame                          = mysql.ErrWindowNoInherentFrame
+	codeWindowNoRedefineOrderBy                        = mysql.ErrWindowNoRedefineOrderBy
+	codeWindowDuplicateName                            = mysql.ErrWindowDuplicateName
+	codeErrTooBigPrecision                             = mysql.ErrTooBigPrecision
+	codePartitionClauseOnNonpartitioned                = mysql.ErrPartitionClauseOnNonpartitioned
+	codeDBaccessDenied                                 = mysql.ErrDBaccessDenied
+	codeTableaccessDenied                              = mysql.ErrTableaccessDenied
+	codeSpecificAccessDenied                           = mysql.ErrSpecificAccessDenied
+	codeViewNoExplain                                  = mysql.ErrViewNoExplain
+	codeWindowFrameStartIllegal                        = mysql.ErrWindowFrameStartIllegal
+	codeWindowFrameEndIllegal                          = mysql.ErrWindowFrameEndIllegal
+	codeWindowFrameIllegal                             = mysql.ErrWindowFrameIllegal
+	codeWindowRangeFrameOrderType                      = mysql.ErrWindowRangeFrameOrderType
+	codeWindowRangeFrameTemporalType                   = mysql.ErrWindowRangeFrameTemporalType
+	codeWindowRangeFrameNumericType                    = mysql.ErrWindowRangeFrameNumericType
+	codeWindowRangeBoundNotConstant                    = mysql.ErrWindowRangeBoundNotConstant
+	codeWindowRowsIntervalUse                          = mysql.ErrWindowRowsIntervalUse
+	codeWindowFunctionIgnoresFrame                     = mysql.ErrWindowFunctionIgnoresFrame
+	codeUnsupportedOnGeneratedColumn                   = mysql.ErrUnsupportedOnGeneratedColumn
 )
 
 // error definitions.
 var (
-	ErrUnsupportedType             = terror.ClassOptimizer.New(codeUnsupportedType, "Unsupported type %T")
-	ErrAnalyzeMissIndex            = terror.ClassOptimizer.New(codeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
-	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(codeUnsupported, "Cartesian product is unsupported")
-	ErrStmtNotFound                = terror.ClassOptimizer.New(codeStmtNotFound, "Prepared statement not found")
-	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, "Wrong parameter count")
-	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
+	ErrUnsupportedType             = terror.ClassOptimizer.New(codeUnsupportedType, mysql.MySQLErrName[mysql.ErrUnsupportedType])
+	ErrAnalyzeMissIndex            = terror.ClassOptimizer.New(codeAnalyzeMissIndex, mysql.MySQLErrName[mysql.ErrAnalyzeMissIndex])
+	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(codeUnsupported, mysql.MySQLErrName[mysql.ErrCartesianProductUnsupported])
+	ErrStmtNotFound                = terror.ClassOptimizer.New(codeStmtNotFound, mysql.MySQLErrName[mysql.ErrPreparedStmtNotFound])
+	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, mysql.MySQLErrName[mysql.ErrWrongParamCount])
+	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, mysql.MySQLErrName[mysql.ErrSchemaChanged])
 	ErrTablenameNotAllowedHere     = terror.ClassOptimizer.New(codeTablenameNotAllowedHere, "Table '%s' from one of the %ss cannot be used in %s")
 
 	ErrNotSupportedYet                 = terror.ClassOptimizer.New(codeNotSupportedYet, mysql.MySQLErrName[mysql.ErrNotSupportedYet])
@@ -147,6 +146,12 @@ var (
 
 func init() {
 	mysqlErrCodeMap := map[terror.ErrCode]uint16{
+		codeUnsupportedType:              mysql.ErrUnsupportedType,
+		codeAnalyzeMissIndex:             mysql.ErrAnalyzeMissIndex,
+		codeUnsupported:                  mysql.ErrCartesianProductUnsupported,
+		codeStmtNotFound:                 mysql.ErrPreparedStmtNotFound,
+		codeWrongParamCount:              mysql.ErrWrongParamCount,
+		codeSchemaChanged:                mysql.ErrSchemaChanged,
 		codeNotSupportedYet:              mysql.ErrNotSupportedYet,
 		codeWrongUsage:                   mysql.ErrWrongUsage,
 		codeAmbiguous:                    mysql.ErrNonUniq,
