@@ -982,15 +982,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(tblSchema.Clone())
 	ts.ExpandVirtualColumn()
-	for _, col := range ts.schema.Columns {
-		if col.VirtualExpr != nil {
-			expr, err := col.VirtualExpr.ResolveIndices(ts.schema)
-			if err != nil {
-				return nil, err
-			}
-			col.VirtualExpr = expr
-		}
-	}
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
 		is.physicalTableID = pid
@@ -1006,6 +997,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.HandleIdx = pkOffset
 	is.initSchema(idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	err := rootT.p.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
 	return rootT.p, nil
 }
 
