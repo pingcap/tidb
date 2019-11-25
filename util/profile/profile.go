@@ -15,7 +15,9 @@ package profile
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -79,27 +81,27 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 	if p == nil {
 		return nil, errors.Errorf("cannot retrieve %s profile", name)
 	}
+	debug := 0
+	if name == "goroutine" {
+		debug = 2
+	}
 	buffer := &bytes.Buffer{}
-	if err := p.WriteTo(buffer, 0); err != nil {
+	if err := p.WriteTo(buffer, debug); err != nil {
 		return nil, err
+	}
+	if name == "goroutine" {
+		return c.ParseGoroutines(buffer)
 	}
 	return c.ProfileReaderToDatums(buffer)
 }
 
-// Goroutines returns the groutine list which alive in runtime
-func (c *Collector) Goroutines() ([][]types.Datum, error) {
-	p := pprof.Lookup("goroutine")
-	if p == nil {
-		return nil, errors.Errorf("cannot retrieve goroutine profile")
-	}
-
-	buffer := bytes.Buffer{}
-	err := p.WriteTo(&buffer, 2)
+// ParseGoroutines returns the groutine list for given string representation
+func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
+	content, err := ioutil.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
-
-	goroutines := strings.Split(buffer.String(), "\n\n")
+	goroutines := strings.Split(string(content), "\n\n")
 	var rows [][]types.Datum
 	for _, goroutine := range goroutines {
 		colIndex := strings.Index(goroutine, ":")
@@ -109,6 +111,7 @@ func (c *Collector) Goroutines() ([][]types.Datum, error) {
 
 		headers := strings.SplitN(strings.TrimSpace(goroutine[len("goroutine")+1:colIndex]), " ", 2)
 		if len(headers) != 2 {
+			fmt.Println(string(content))
 			return nil, errors.Errorf("incompatible goroutine headers: %s", goroutine[len("goroutine")+1:colIndex])
 		}
 		id, err := strconv.Atoi(strings.TrimSpace(headers[0]))
