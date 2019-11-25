@@ -760,7 +760,7 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 	return hasOldPartitionData
 }
 
-func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
+func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
@@ -1250,7 +1250,7 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddPrimaryKey(c *C) {
 	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
 }
 
-func (s *testIntegrationSuite3) TestPartitionCancelAddIndex(c *C) {
+func (s *testIntegrationSuite4) TestPartitionCancelAddIndex(c *C) {
 	idxName := "idx1"
 	addIdxSQL := "create unique index c3_index on t1 (c1)"
 	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
@@ -1449,22 +1449,34 @@ func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
 	tk.MustExec("insert into t1 values (0,0);")
 	tk.MustExec(fmt.Sprintf("alter table t1 add %s idx(a)", key))
 	tk.MustExec("admin check table t1;")
-
 }
 
 func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 	idxName1 := "idx1"
+
+	f := func(end int, isPK bool) string {
+		dml := fmt.Sprintf("insert into partition_add_idx values")
+		for i := 0; i < end; i++ {
+			dVal := 1988 + rand.Intn(30)
+			if isPK {
+				dVal = 1518 + i
+			}
+			dml += fmt.Sprintf("(%d, '%d-01-01')", i, dVal)
+			if i != end-1 {
+				dml += ","
+			}
+		}
+		return dml
+	}
+	var dml string
 	if key == "primary key" {
 		idxName1 = "primary"
 		// For the primary key, hired must be unique.
-		for i := 0; i < 500; i++ {
-			tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1518+i))
-		}
+		dml = f(500, true)
 	} else {
-		for i := 0; i < 500; i++ {
-			tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
-		}
+		dml = f(500, false)
 	}
+	tk.MustExec(dml)
 
 	tk.MustExec(fmt.Sprintf("alter table partition_add_idx add %s idx1 (hired)", key))
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
