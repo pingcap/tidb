@@ -14,6 +14,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"math"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {

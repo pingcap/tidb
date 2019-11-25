@@ -14,6 +14,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
-	"math"
 )
 
 const (
