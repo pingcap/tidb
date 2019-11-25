@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -2032,7 +2034,6 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 			continue
 		}
 		ipMap[ip] = struct{}{}
-
 		items, err := getServerInfoByGRPC(srv.statusAddr, diagnosticspb.ServerInfoType_LoadInfo)
 		if err != nil {
 			return nil, err
@@ -2062,7 +2063,16 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 }
 
 func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+	conn, err := grpc.Dial(address, opt)
 	if err != nil {
 		return nil, err
 	}

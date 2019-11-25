@@ -52,7 +52,7 @@ import (
 )
 
 var _ = Suite(&testTableSuite{})
-var _ = Suite(&testClusterTableSuite{&testTableSuite{}, nil})
+var _ = SerialSuites(&testClusterTableSuite{testTableSuite: &testTableSuite{}})
 
 type testTableSuite struct {
 	store kv.Storage
@@ -78,12 +78,15 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 
 type testClusterTableSuite struct {
 	*testTableSuite
-	rpcserver *grpc.Server
+	rpcserver  *grpc.Server
+	httpServer *httptest.Server
+	mockAddr   string
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
 	s.rpcserver = setUpRPCService(c, "0.0.0.0:10080")
+	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
 }
 
 func setUpRPCService(c *C, addr string) *grpc.Server {
@@ -97,11 +100,70 @@ func setUpRPCService(c *C, addr string) *grpc.Server {
 	return server
 }
 
+func setUpMockPDHTTPSercer() (*httptest.Server, string) {
+	// mock PD http server
+	router := mux.NewRouter()
+	server := httptest.NewServer(router)
+	// mock store stats stat
+	mockAddr := strings.TrimPrefix(server.URL, "http://")
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
+		return &helper.StoresStat{
+			Count: 1,
+			Stores: []helper.StoreStat{
+				{
+					Store: helper.StoreBaseStat{
+						ID:            1,
+						Address:       "127.0.0.1:20160",
+						State:         0,
+						StateName:     "Up",
+						Version:       "4.0.0-alpha",
+						StatusAddress: mockAddr,
+						GitHash:       "mock-tikv-githash",
+					},
+				},
+			},
+		}, nil
+	}))
+	// mock PD API
+	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+		return struct {
+			GitHash string `json:"git_hash"`
+		}{GitHash: "mock-pd-githash"}, nil
+	}))
+	var mockConfig = func() (map[string]interface{}, error) {
+		configuration := map[string]interface{}{
+			"key1": "value1",
+			"key2": map[string]string{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+			},
+			"key3": map[string]interface{}{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+				"key4": map[string]string{
+					"nest3": "n-value4",
+					"nest4": "n-value5",
+				},
+			},
+		}
+		return configuration, nil
+	}
+	// pd config
+	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	// TiDB/TiKV config
+	router.Handle("/config", fn.Wrap(mockConfig))
+	return server, mockAddr
+}
+
 func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	s.testTableSuite.TearDownSuite(c)
 	if s.rpcserver != nil {
 		s.rpcserver.Stop()
 		s.rpcserver = nil
+	}
+	if s.httpServer != nil {
+		s.httpServer.Close()
 	}
 }
 
@@ -661,45 +723,11 @@ func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
 func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
 
-func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
+func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.tidb_cluster_info")
 	c.Assert(err, NotNil)
-	// mocktikv cannot retrieve cluster info
-	c.Assert(err.Error(), Equals, "pd unavailable")
-
-	// mock PD http server
-	router := mux.NewRouter()
-	server := httptest.NewServer(router)
-	defer server.Close()
-	// mock store stats stat
-	mockAddr := strings.TrimPrefix(server.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return &helper.StoresStat{
-			Count: 1,
-			Stores: []helper.StoreStat{
-				{
-					Store: helper.StoreBaseStat{
-						ID:            1,
-						Address:       "127.0.0.1:20160",
-						State:         0,
-						StateName:     "Up",
-						Version:       "4.0.0-alpha",
-						StatusAddress: mockAddr,
-						GitHash:       "mock-tikv-githash",
-					},
-				},
-			},
-		}, nil
-	}))
-	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
-		return struct {
-			GitHash string `json:"git_hash"`
-		}{GitHash: "mock-pd-githash"}, nil
-	}))
-
+	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(tikv.Storage),
 		mockAddr,
@@ -719,28 +747,6 @@ func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
-	var mockConfig = func() (map[string]interface{}, error) {
-		configuration := map[string]interface{}{
-			"key1": "value1",
-			"key2": map[string]string{
-				"nest1": "n-value1",
-				"nest2": "n-value2",
-			},
-			"key3": map[string]interface{}{
-				"nest1": "n-value1",
-				"nest2": "n-value2",
-				"key4": map[string]string{
-					"nest3": "n-value4",
-					"nest4": "n-value5",
-				},
-			},
-		}
-		return configuration, nil
-	}
-	// pd config
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
-	// TiDB/TiKV config
-	router.Handle("/config", fn.Wrap(mockConfig))
 	tk.MustQuery("select * from information_schema.tidb_cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
 		"pd 127.0.0.1:11080 key2.nest1 n-value1",
@@ -815,5 +821,33 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
-	tk.MustQuery("select * from information_schema.TIDB_CLUSTER_LOAD;")
+	re := tk.MustQuery("select * from information_schema.TIDB_CLUSTER_LOAD;")
+	rows := re.Rows()
+	c.Assert(len(rows), Greater, 0)
+
+	// Currently only TiDB implement this.
+	// TODO: fix me after tikv/pd server support this.
+	typeMap := map[string]struct{}{
+		"tidb": struct{}{},
+	}
+	addrMap := map[string]struct{}{
+		"127.0.0.1:10080": struct{}{},
+	}
+	nameMap := map[string]struct{}{
+		"cpu":  struct{}{},
+		"mem":  struct{}{},
+		"net":  struct{}{},
+		"disk": struct{}{},
+	}
+	for _, row := range rows {
+		tp := row[0].(string)
+		addr := row[1].(string)
+		name := row[2].(string)
+		delete(typeMap, tp)
+		delete(addrMap, addr)
+		delete(nameMap, name)
+	}
+	c.Assert(len(typeMap), Equals, 0)
+	c.Assert(len(addrMap), Equals, 0)
+	c.Assert(len(nameMap), Equals, 0)
 }
