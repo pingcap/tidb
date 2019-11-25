@@ -2084,7 +2084,7 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	}()
 
 	cli := diagnosticspb.NewDiagnosticsClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
 	if err != nil {
