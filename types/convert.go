@@ -629,7 +629,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if (sc.InDeleteStmt || sc.InSelectStmt || sc.InUpdateStmt) && s == "" {
+	if (sc.InDeleteStmt || sc.InSelectStmt || sc.InUpdateStmt || sc.InInsertStmt) && s == "" {
 		return "0", nil
 	}
 
