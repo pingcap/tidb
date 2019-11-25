@@ -351,7 +351,7 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"Projection_7 10000.00 root Column#7",
 		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
-		"  ├─TableReader_10 10000.00 root data:TabteScan_9",
+		"  ├─TableReader_10 10000.00 root data:TableScan_9",
 		"  │ └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_12 10000.00 root data:TableScan_11",
 		"    └─TableScan_11 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
