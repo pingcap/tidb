@@ -115,6 +115,7 @@ message Local {
 message Global {
     Component component = 1;
 }
+```
 
 These two types are used to distinguish whether the configuration is shared by
 components. For example, the label configuration of TiKV is individual for each
@@ -153,8 +154,9 @@ configuration items need to have an independent version variable.
 
 The following lists how version works In common scenarios:
 
-- New cluster. Both TiDB and TiKV use the default configuration and send it to
-PD to complete the registration. The registration needs to establish the mapping
+- New cluster.
+    Both TiDB and TiKV use the default configuration and send it to PD to
+complete the registration. The registration needs to establish the mapping
 relationship between the component ID, version and local configuration. For
 customized requirements, such as modifying the size of block cache. It needs
 external tools to help modify them. After that, the global and local versions
@@ -165,16 +167,17 @@ local version. If the local version is smaller than the version carried by the
 response, the corresponding configuration options will be overwritten or merged
 and the version will be updated at the same time.
 
-- Add a new component or restart the component. The initialization of
-configuration calls the *Create* method. After receiving the request, PD first
-registers or queries the component ID. By comparing the version carried by the
-request with the version stored in PD, it determines whether to return the
-configuration of the component in the response. After receiving the reply, TiDB
-or TiKV decides whether to update the configuration or not after comparing with
-the version stored in the component.
+- Add a new component or restart the component.
+    The initialization of configuration calls the *Create* method. After
+receiving the request, PD first registers or queries the component ID. By
+comparing the version carried by the request with the version stored in PD, it
+determines whether to return the configuration of the component in the response.
+After receiving the reply, TiDB or TiKV decides whether to update the
+configuration or not after comparing with the version stored in the component.
 
-- Delete the node. PD can directly delete the corresponding component ID, the
-associated set of local configuration items and the version.
+- Delete the node.
+    PD can directly delete the corresponding component ID, the associated set of
+local configuration items and the version.
 
 ### Appendix
 
