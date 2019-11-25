@@ -674,5 +674,14 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	}
 	e.joinChkResourceCh = nil
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		concurrency := len(e.resultCh)
+		if concurrency > 1 {
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
+		} else {
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+		}
+	}
 	return e.baseExecutor.Close()
 }

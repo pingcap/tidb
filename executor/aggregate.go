@@ -226,11 +226,23 @@ func (e *HashAggExec) Close() error {
 	}
 	e.executed = false
 
-	// len(e.partialWorkers) == len(e.finalWorkers)
-	concurrency := len(e.partialWorkers)
-	if e.runtimeStats != nil && concurrency > 0 {
+	if e.runtimeStats != nil {
+		var partialInfo, finalInfo string
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyInfo(fmt.Sprintf("PartialConcurrency:%d, FinalConcurrency:%d", concurrency, concurrency))
+		partialConcurrency := len(e.partialWorkers)
+		if partialConcurrency > 1 {
+			partialInfo = fmt.Sprintf("PartialConcurrency:%d", partialConcurrency)
+		} else {
+			partialInfo = fmt.Sprintf("PartialConcurrency: OFF")
+		}
+
+		finalConcurrency := len(e.finalWorkers)
+		if finalConcurrency > 1 {
+			finalInfo = fmt.Sprintf("FinalConcurrency:%d", finalConcurrency)
+		} else {
+			finalInfo = fmt.Sprintf("FinalConcurrency: OFF")
+		}
+		rootStats.SetConcurrencyInfo(fmt.Sprintf("%s, %s", partialInfo, finalInfo))
 	}
 	return e.baseExecutor.Close()
 }

@@ -292,16 +292,20 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		}
 		e.taskCh = nil
 	}
+	if e.runtimeStats != nil {
+		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
+		concurrency := len(e.joinChkResourceCh)
+		if concurrency > 1 {
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
+		} else {
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+		}
+	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
 
-	concurrency := len(e.joiners)
-	if e.runtimeStats != nil && concurrency > 0 {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
-	}
 	return e.baseExecutor.Close()
 }
 

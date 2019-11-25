@@ -259,9 +259,13 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
-	if e.runtimeStats != nil && e.numWorkers > 0 {
+	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", e.numWorkers))
+		if e.numWorkers > 1 {
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", e.numWorkers))
+		} else {
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+		}
 	}
 	return e.baseExecutor.Close()
 }
