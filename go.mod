@@ -7,7 +7,7 @@ require (
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
-	github.com/crazycs520/diagnostics v0.0.0-20191122092833-e0ec26a5cf54
+	github.com/crazycs520/diagnostics v0.0.0-20191125083103-abca736a0084
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
 	github.com/dgryski/go-farm v0.0.0-20190104051053-3adb47b1fb0f
@@ -77,4 +77,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
+replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20161104095106-5ebf485998c8
