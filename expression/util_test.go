@@ -501,7 +501,7 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 	}
 	return json.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) ReverseEval(res types.Datum, rType RoundingType, col *Column) (val types.Datum, err error) {
+func (m *MockExpr) ReverseEval(res types.Datum, rType RoundingType, colType *types.EvalType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
 func (m *MockExpr) ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {

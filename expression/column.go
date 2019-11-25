@@ -583,8 +583,8 @@ func (col *Column) SupportReverseEval() bool {
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (col *Column) ReverseEval(res types.Datum, rType RoundingType, c *Column) (val types.Datum, err error) {
-	switch c.RetType.EvalType() {
+func (col *Column) ReverseEval(res types.Datum, rType RoundingType, colType types.EvalType) (val types.Datum, err error) {
+	switch colType {
 	case types.ETInt:
 		ret, err := col.ReverseEvalInt(res, rType)
 		return types.NewIntDatum(ret), err
