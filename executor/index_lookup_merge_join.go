@@ -690,7 +690,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		if concurrency > 1 {
 			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
 		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
 		}
 	}
 	return e.baseExecutor.Close()

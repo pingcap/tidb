@@ -233,14 +233,14 @@ func (e *HashAggExec) Close() error {
 		if partialConcurrency > 1 {
 			partialInfo = fmt.Sprintf("PartialConcurrency:%d", partialConcurrency)
 		} else {
-			partialInfo = fmt.Sprintf("PartialConcurrency: OFF")
+			partialInfo = fmt.Sprintf("PartialConcurrency:OFF")
 		}
 
 		finalConcurrency := len(e.finalWorkers)
 		if finalConcurrency > 1 {
 			finalInfo = fmt.Sprintf("FinalConcurrency:%d", finalConcurrency)
 		} else {
-			finalInfo = fmt.Sprintf("FinalConcurrency: OFF")
+			finalInfo = fmt.Sprintf("FinalConcurrency:OFF")
 		}
 		rootStats.SetConcurrencyInfo(fmt.Sprintf("%s, %s", partialInfo, finalInfo))
 	}

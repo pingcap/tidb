@@ -299,7 +299,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		if concurrency > 1 {
 			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
 		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
 		}
 	}
 	for i := range e.joinChkResourceCh {

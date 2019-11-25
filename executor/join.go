@@ -133,7 +133,7 @@ func (e *HashJoinExec) Close() error {
 		if concurrency > 1 {
 			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
 		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
 		}
 	}
 	err := e.baseExecutor.Close()

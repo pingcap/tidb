@@ -264,7 +264,7 @@ func (e *ProjectionExec) Close() error {
 		if e.numWorkers > 1 {
 			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", e.numWorkers))
 		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency: OFF"))
+			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
 		}
 	}
 	return e.baseExecutor.Close()
