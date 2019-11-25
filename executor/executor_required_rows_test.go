@@ -770,6 +770,91 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 	}
 }
 
+func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression.Expression, inputs []*chunk.Chunk) {
+	chkNum := len(chkRows)
+	inputs = make([]*chunk.Chunk, chkNum)
+	fts := make([]*types.FieldType, 1)
+	fts[0] = types.NewFieldType(mysql.TypeLonglong)
+	for i := 0; i < chkNum; i++ {
+		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
+	}
+
+	cnt := 0
+	val := 0
+	for i := 0; i < chkNum; i++ {
+		col := inputs[i].Column(0)
+		col.ResizeInt64(chkRows[i], false)
+		i64s := col.Int64s()
+		for j := 0; j < chkRows[i]; j++ {
+			if cnt == sameNum {
+				val++
+				cnt = 0
+			}
+			i64s[j] = int64(val)
+			cnt++
+		}
+	}
+
+	expr = make([]expression.Expression, 1)
+	expr[0] = &expression.Column{
+		RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: mysql.MaxIntWidth},
+		Index:   0,
+	}
+	return
+}
+
+func (s *testExecSuite) TestVecGroupChecker(c *C) {
+	testCases := []struct {
+		chunkRows      []int
+		expectedGroups int
+		expectedFlag   []bool
+		sameNum        int
+	}{
+		{
+			chunkRows:      []int{1024, 1},
+			expectedGroups: 1025,
+			expectedFlag:   []bool{false, false},
+			sameNum:        1,
+		},
+		{
+			chunkRows:      []int{1024, 1},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        1025,
+		},
+		{
+			chunkRows:      []int{1, 1},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        2,
+		},
+		{
+			chunkRows:      []int{1, 1},
+			expectedGroups: 2,
+			expectedFlag:   []bool{false, false},
+			sameNum:        1,
+		},
+	}
+
+	ctx := mock.NewContext()
+	for _, testCase := range testCases {
+		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum)
+		groupChecker := newVecGroupChecker(ctx, ctx.GetSessionVars().StmtCtx, expr)
+		groupNum := 0
+		for i, inputChk := range inputChks {
+			flag, err := groupChecker.splitChunk(inputChk)
+			c.Assert(err, IsNil)
+			c.Assert(flag, Equals, testCase.expectedFlag[i])
+			if flag {
+				groupNum += groupChecker.groupRowsNum - 1
+			} else {
+				groupNum += groupChecker.groupRowsNum
+			}
+		}
+		c.Assert(groupNum, Equals, testCase.expectedGroups)
+	}
+}
+
 func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
 	if joinType == plannercore.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
