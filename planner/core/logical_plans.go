@@ -807,8 +807,8 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
 }
 
-func (is *IndexScan) getPKIsHandleCol() *expression.Column {
-	return getPKIsHandleColFromSchema(is.Columns, is.schema, is.Source.tableInfo.PKIsHandle)
+func (p *IndexScan) getPKIsHandleCol() *expression.Column {
+	return getPKIsHandleColFromSchema(p.Columns, p.schema, p.Source.tableInfo.PKIsHandle)
 }
 
 func (ds *DataSource) getHandleCol() *expression.Column {
