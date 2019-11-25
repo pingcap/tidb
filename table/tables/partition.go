@@ -229,6 +229,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
+	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 	if col, ok := exprs[0].(*expression.Column); ok {
 		column = col
 	}

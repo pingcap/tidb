@@ -14,7 +14,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -143,6 +142,27 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
+	if pi.Type == model.PartitionTypeHash {
+		if table, ok := ds.table.(partitionTable); ok {
+			pe := table.PartitionExpr().Expr
+			val, ok := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
+			if ok {
+				idx := val % int64(pi.Num)
+				newDataSource := *ds
+				newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+				newDataSource.isPartition = true
+				newDataSource.physicalTableID = pi.Definitions[idx].ID
+				// There are many expression nodes in the plan tree use the original datasource
+				// id as FromID. So we set the id of the newDataSource with the original one to
+				// avoid traversing the whole plan tree to update the references.
+				newDataSource.id = ds.id
+				newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
+				children = append(children, &newDataSource)
+				return children[0], nil
+			}
+		}
+	}
+
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
 		pruned, err := s.canBePruned(ds.SCtx(), col, expr, filterConds)
