@@ -991,6 +991,7 @@ import (
 	SubPartitionOpt			"SubPartition option"
 	SubPartitionNumOpt		"SubPartition NUM option"
 	Symbol				"Constraint Symbol"
+	TableAliasRefList		"table alias reference list"
 	TableAsName			"table alias name"
 	TableAsNameOpt 			"table alias name optional"
 	TableElement			"table definition element"
@@ -1000,6 +1001,7 @@ import (
 	TableLock			"Table name and lock type"
 	TableLockList			"Table lock list"
 	TableName			"Table name"
+	TableNameOptWild		"Table name with optional wildcard"
 	TableNameList			"Table name list"
 	TableNameListOpt		"Table name list opt"
 	TableOption			"create table option"
@@ -1053,6 +1055,7 @@ import (
 	OptLeadLagInfo		"Optional LEAD/LAG info"
 	OptNullTreatment	"Optional NULL treatment"
 	OptPartitionClause	"Optional PARTITION clause"
+	OptWild			"Optional Wildcard"
 	OptWindowOrderByClause	"Optional ORDER BY clause in WINDOW"
 	OptWindowFrameClause	"Optional FRAME clause in WINDOW"
 	OptWindowingClause	"Optional OVER clause"
@@ -3670,7 +3673,7 @@ DeleteFromStmt:
 
 		$$ = x
 	}
-|	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
+|	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional TableAliasRefList "FROM" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
@@ -3691,7 +3694,7 @@ DeleteFromStmt:
 		$$ = x
 	}
 
-|	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
+|	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableAliasRefList "USING" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
@@ -5981,10 +5984,6 @@ TableName:
 	{
 		$$ = &ast.TableName{Schema:model.NewCIStr($1),	Name:model.NewCIStr($3)}
 	}
-|	Identifier '.' '*'
-	{
-		$$ = &ast.TableName{Name:model.NewCIStr($1)}
-	}
 
 TableNameList:
 	TableName
@@ -5995,6 +5994,35 @@ TableNameList:
 |	TableNameList ',' TableName
 	{
 		$$ = append($1.([]*ast.TableName), $3.(*ast.TableName))
+	}
+
+TableNameOptWild:
+	Identifier OptWild
+	{
+		$$ = &ast.TableName{Name:model.NewCIStr($1)}
+	}
+|	Identifier '.' Identifier OptWild
+	{
+		$$ = &ast.TableName{Schema:model.NewCIStr($1),	Name:model.NewCIStr($3)}
+	}
+
+TableAliasRefList:
+	TableNameOptWild
+	{
+		tbl := []*ast.TableName{$1.(*ast.TableName)}
+		$$ = tbl
+	}
+|	TableAliasRefList ',' TableNameOptWild
+	{
+		$$ = append($1.([]*ast.TableName), $3.(*ast.TableName))
+	}
+
+OptWild:
+	%prec empty
+	{
+	}
+|	'.' '*'
+	{
 	}
 
 QuickOptional:
