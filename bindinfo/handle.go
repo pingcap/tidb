@@ -492,11 +492,10 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 
 func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := c[hash]
-	if bindRecords != nil {
-		for _, bindRecord := range bindRecords {
-			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
-				return bindRecord
-			}
+
+	for _, bindRecord := range bindRecords {
+		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+			return bindRecord
 		}
 	}
 	return nil
@@ -534,7 +533,7 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs t
 		return sql
 	}
 	for i, sql := range bindingSQLs {
-		bindingSQLs[i] = fmt.Sprintf(`%s`, expression.Quote(sql))
+		bindingSQLs[i] = expression.Quote(sql)
 	}
 	return sql + fmt.Sprintf(` and bind_sql in (%s)`, strings.Join(bindingSQLs, ","))
 }
