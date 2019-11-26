@@ -16,7 +16,6 @@ package domain
 import (
 	"context"
 	"crypto/tls"
-	"github.com/pingcap/tidb/meta"
 	"math"
 	"testing"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
