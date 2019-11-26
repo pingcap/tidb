@@ -686,7 +686,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		concurrency := len(e.resultCh)
+		concurrency := cap(e.resultCh)
 		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	return e.baseExecutor.Close()

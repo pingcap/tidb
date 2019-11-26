@@ -328,13 +328,14 @@ type concurrencyInfo struct {
 
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
-	mu sync.Mutex
 	// executor's Next() called times.
 	loop int32
 	// executor consume time.
 	consume int64
 	// executor return row count.
 	rows int64
+
+	mu sync.Mutex
 	// executor concurrency information
 	concurrency []concurrencyInfo
 }
@@ -429,6 +430,8 @@ func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 }
 
 func (e *RuntimeStats) String() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 	if len(e.concurrency) > 0 {
 		for _, concurrency := range e.concurrency {

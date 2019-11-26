@@ -129,7 +129,7 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		concurrency := len(e.joiners)
+		concurrency := cap(e.joiners)
 		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	err := e.baseExecutor.Close()

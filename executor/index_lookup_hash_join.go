@@ -294,7 +294,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		concurrency := len(e.joinChkResourceCh)
+		concurrency := cap(e.joinChkResourceCh)
 		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	for i := range e.joinChkResourceCh {

@@ -232,8 +232,8 @@ func (e *HashAggExec) Close() error {
 			partialConcurrency = 0
 			finalConcurrency = 0
 		} else {
-			partialConcurrency = len(e.partialWorkers)
-			finalConcurrency = len(e.finalWorkers)
+			partialConcurrency = cap(e.partialWorkers)
+			finalConcurrency = cap(e.finalWorkers)
 		}
 		rootStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
 		rootStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
