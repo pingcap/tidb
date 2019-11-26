@@ -147,10 +147,10 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
+		setSystemEndian(dagReq)
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
-	SetSystemEndian(dagReq)
 }
 
 func canUseChunkRPC(ctx sessionctx.Context) bool {
@@ -177,25 +177,24 @@ func checkAlignment() bool {
 	return supportedAlignment
 }
 
-// SetSystemEndian sets the system endian for the DAGRequest.
-func SetSystemEndian(dagReq *tipb.DAGRequest) {
+var systemEndian tipb.Endian
+
+// setSystemEndian sets the system endian for the DAGRequest.
+func setSystemEndian(dagReq *tipb.DAGRequest) {
 	dagReq.TidbSystemEndian = GetSystemEndian()
 }
 
-var systemEndian *tipb.Endian
-
 // GetSystemEndian gets the system endian.
 func GetSystemEndian() tipb.Endian {
-	if systemEndian != nil {
-		return *systemEndian
-	}
-	systemEndian = new(tipb.Endian)
+	return systemEndian
+}
+
+func init() {
 	var i int = 0x0100
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
-		*systemEndian = tipb.Endian_BigEndian
+		systemEndian = tipb.Endian_BigEndian
 	} else {
-		*systemEndian = tipb.Endian_LittleEndian
+		systemEndian = tipb.Endian_LittleEndian
 	}
-	return *systemEndian
 }
