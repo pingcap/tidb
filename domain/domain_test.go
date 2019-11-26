@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/meta"
 	"math"
 	"testing"
 	"time"
@@ -267,7 +268,7 @@ func (*testSuite) TestT(c *C) {
 	m, err := dom.GetSnapshotMeta(snapTS)
 	c.Assert(err, IsNil)
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(err.Error(), Equals, "[meta:1049]database doesn't exist")
+	c.Assert(meta.ErrDBExists.Equal(err), IsTrue)
 	c.Assert(tblInfo1, IsNil)
 	m, err = dom.GetSnapshotMeta(currSnapTS)
 	c.Assert(err, IsNil)
