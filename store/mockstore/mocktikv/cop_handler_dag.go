@@ -203,6 +203,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		colIDs:         ctx.evalCtx.colIDs,
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
+		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		execDetail:     new(execDetail),
 	}
@@ -241,6 +242,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		colsLen:        len(columns),
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
+		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
 		execDetail:     new(execDetail),

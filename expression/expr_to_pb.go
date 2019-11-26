@@ -306,10 +306,17 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 	switch sf.FuncName.L {
 	case
-		// logical functions.
+		// op functions.
 		ast.LogicAnd,
 		ast.LogicOr,
+		ast.LogicXor,
 		ast.UnaryNot,
+		ast.And,
+		ast.Or,
+		ast.Xor,
+		ast.BitNeg,
+		ast.LeftShift,
+		ast.RightShift,
 
 		// compare functions.
 		ast.LT,
@@ -331,15 +338,46 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Mul,
 		ast.Div,
 		ast.Abs,
+
+		// math functions.
 		ast.Ceil,
 		ast.Ceiling,
 		ast.Floor,
+		ast.Sqrt,
+		ast.Sign,
+		ast.Ln,
+		ast.Log,
+		ast.Log2,
+		ast.Log10,
+		ast.Exp,
+		ast.Sin,
+		ast.Asin,
+		ast.Cos,
+		ast.Acos,
+		ast.Tan,
+		ast.Atan,
+		ast.Atan2,
+		ast.Cot,
+		ast.Radians,
+		ast.Degrees,
+		ast.CRC32,
 
 		// control flow functions.
 		ast.Case,
 		ast.If,
 		ast.Ifnull,
 		ast.Coalesce,
+
+		// string functions.
+		ast.Length,
+		ast.BitLength,
+		ast.Concat,
+		ast.Locate,
+		ast.ASCII,
+		ast.Reverse,
+		ast.LTrim,
+		ast.RTrim,
+		ast.Left,
 
 		// json functions.
 		ast.JSONType,

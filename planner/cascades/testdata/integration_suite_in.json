@@ -39,5 +39,12 @@
       "select b from t order by b limit 3",
       "select a from t order by a limit 1 offset 2"
     ]
+  },
+  {
+    "name": "TestJoin",
+    "cases": [
+      "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
+      "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200"
+    ]
   }
 ]
