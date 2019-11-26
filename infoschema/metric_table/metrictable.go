@@ -1,7 +1,6 @@
 package metric_table
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -77,7 +76,6 @@ func (def *metricTableDef) genPromQL(labels []string) string {
 	if strings.Contains(promQL, promQRangeDurationKey) {
 		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(def.rangeDuration, 10)+"s", -1)
 	}
-	fmt.Printf("gen promQL: %v\n\n", promQL)
 	return promQL
 }
 

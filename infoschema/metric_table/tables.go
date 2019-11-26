@@ -67,7 +67,10 @@ func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Colum
 		return nil, errors.Errorf("can not find metric table: %v", vt.meta.Name.L)
 	}
 
-	metricAddr := getMetricAddr()
+	metricAddr, err := getMetricAddr(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// TODO: Get query range from plan instead of use default range.
 	queryRange := getDefaultQueryRange()
 	queryValue, err := queryMetric(metricAddr, tblDef, queryRange)

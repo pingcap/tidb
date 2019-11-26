@@ -1,7 +1,6 @@
 package metric_table
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/pingcap/parser/charset"
@@ -36,7 +35,6 @@ func Init() {
 			Tables:  metricTables,
 		}
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
-		fmt.Printf("---------\n register metric tables\n\n")
 	}
 	once.Do(initOnce)
 }
