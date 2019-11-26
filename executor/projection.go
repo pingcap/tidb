@@ -261,10 +261,10 @@ func (e *ProjectionExec) Close() error {
 	}
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		if e.numWorkers > 1 {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", e.numWorkers))
+		if e.isUnparallelExec() {
+			rootStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
 		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
+			rootStats.SetConcurrencyInfo("Concurrency", 0)
 		}
 	}
 	return e.baseExecutor.Close()

@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"hash"
 	"hash/fnv"
 	"sync"
@@ -296,11 +295,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
 		concurrency := len(e.joinChkResourceCh)
-		if concurrency > 1 {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
-		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
-		}
+		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])

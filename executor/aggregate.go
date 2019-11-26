@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/cznic/mathutil"
@@ -227,22 +226,17 @@ func (e *HashAggExec) Close() error {
 	e.executed = false
 
 	if e.runtimeStats != nil {
-		var partialInfo, finalInfo string
+		var partialConcurrency, finalConcurrency int
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
-		partialConcurrency := len(e.partialWorkers)
-		if partialConcurrency > 1 {
-			partialInfo = fmt.Sprintf("PartialConcurrency:%d", partialConcurrency)
+		if e.isUnparallelExec {
+			partialConcurrency = 0
+			finalConcurrency = 0
 		} else {
-			partialInfo = fmt.Sprintf("PartialConcurrency:OFF")
+			partialConcurrency = len(e.partialWorkers)
+			finalConcurrency = len(e.finalWorkers)
 		}
-
-		finalConcurrency := len(e.finalWorkers)
-		if finalConcurrency > 1 {
-			finalInfo = fmt.Sprintf("FinalConcurrency:%d", finalConcurrency)
-		} else {
-			finalInfo = fmt.Sprintf("FinalConcurrency:OFF")
-		}
-		rootStats.SetConcurrencyInfo(fmt.Sprintf("%s, %s", partialInfo, finalInfo))
+		rootStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		rootStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
 	}
 	return e.baseExecutor.Close()
 }

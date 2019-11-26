@@ -245,7 +245,10 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows), ""})
+		&RuntimeStats{loop: int32(*summary.NumIterations),
+			consume:     int64(*summary.TimeProcessedNs),
+			rows:        int64(*summary.NumProducedRows),
+			concurrency: make(map[string]int)})
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -320,6 +323,7 @@ type RuntimeStatsColl struct {
 
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
+	mu sync.Mutex
 	// executor's Next() called times.
 	loop int32
 	// executor consume time.
@@ -327,7 +331,7 @@ type RuntimeStats struct {
 	// executor return row count.
 	rows int64
 	// executor concurrency information
-	concurrency string
+	concurrency map[string]int
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -413,15 +417,22 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 // SetConcurrencyInfo sets the concurrency information.
-func (e *RuntimeStats) SetConcurrencyInfo(concurrencyInfo string) {
-	var val atomic.Value
-	val.Store(concurrencyInfo)
-	e.concurrency = val.Load().(string)
+func (e *RuntimeStats) SetConcurrencyInfo(concurrencyName string, concurrencyNum int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.concurrency[concurrencyName] = concurrencyNum
 }
 
 func (e *RuntimeStats) String() string {
+	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 	if len(e.concurrency) > 0 {
-		return fmt.Sprintf("time:%v, loops:%d, rows:%d, %s", time.Duration(e.consume), e.loop, e.rows, e.concurrency)
+		for concurrencyName, concurrencyNum := range e.concurrency {
+			if concurrencyNum > 0 {
+				result += fmt.Sprintf(", %s:%d", concurrencyName, concurrencyNum)
+			} else {
+				result += fmt.Sprintf(", %s:OFF", concurrencyName)
+			}
+		}
 	}
-	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
+	return result
 }

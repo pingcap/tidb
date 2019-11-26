@@ -682,11 +682,7 @@ func (e *IndexLookUpJoin) Close() error {
 	if e.runtimeStats != nil {
 		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
 		concurrency := len(e.resultCh)
-		if concurrency > 1 {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:%d", concurrency))
-		} else {
-			rootStats.SetConcurrencyInfo(fmt.Sprintf("Concurrency:OFF"))
-		}
+		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	return e.baseExecutor.Close()
 }
