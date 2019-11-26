@@ -1004,11 +1004,11 @@ type vecGroupChecker struct {
 	ctx          sessionctx.Context
 	GroupByItems []expression.Expression
 
-	// groupOffset holds the index of the last row in each group of the current chunk
+	// groupOffset holds the offset of the last row in each group of the current chunk
 	groupOffset []int
-	// groupCount is the number of groups in the current chunk
+	// groupCount is the count of groups in the current chunk
 	groupCount int
-	// curGroupID is the group obtained by the next call to getNextGroup
+	// curGroupID records the group id of the next group to be consumed
 	curGroupID int
 
 	// previousLastGroupKey is the groupKey of the last group of the previous chunk
@@ -1022,7 +1022,7 @@ type vecGroupChecker struct {
 	firstRowDatums []types.Datum
 	lastRowDatums  []types.Datum
 
-	// sameGroup is used to check whether two adjacent rows belong to the same group
+	// sameGroup is used to check whether the current row belongs to the same group as the previous row
 	sameGroup []bool
 }
 
@@ -1061,7 +1061,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 	}
 
 	for _, item := range e.GroupByItems {
-		err = e.checkOneGroupByItem(item, chk, numRows)
+		err = e.checkGroupByItem(item, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -1100,7 +1100,9 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 	return areSameGroup, nil
 }
 
-func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+// checkGroupByItem evaluates the chunk according to the expression item.
+// And check whether the chunk into groups according to the evaluation results
+func (e *vecGroupChecker) checkGroupByItem(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
 	col, err := expression.GetColumn(eType, numRows)
