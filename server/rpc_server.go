@@ -23,8 +23,8 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-// CreateTiDBRPCServer creates a TiDB rpc server.
-func CreateTiDBRPCServer(security config.Security) *grpc.Server {
+// NewRPCServer creates a new rpc server.
+func NewRPCServer(security config.Security) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))

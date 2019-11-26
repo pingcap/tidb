@@ -93,7 +93,7 @@ func (s *testClusterTableSuite) SetUpSuite(c *C) {
 func setUpRPCService(c *C, addr string) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
-	srv := server.CreateTiDBRPCServer(config.GetGlobalConfig().Security)
+	srv := server.NewRPCServer(config.GetGlobalConfig().Security)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
