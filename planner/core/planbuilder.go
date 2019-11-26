@@ -858,6 +858,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
 	case ast.AdminPluginDisable:
 		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+	case ast.AdminFlushBindings:
+		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+	case ast.AdminCaptureBindings:
+		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+	case ast.AdminEvolveBindings:
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
