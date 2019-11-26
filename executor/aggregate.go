@@ -1087,7 +1087,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 			areSameGroup = false
 		}
 	}
-	e.previousLastGroupKey = string(hack.String(e.lastGroupKey))
+	e.previousLastGroupKey = string(e.lastGroupKey)
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
