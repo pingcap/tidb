@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -78,7 +77,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	values := types.MakeDatums(1, 2)
 	mockCtx := mock.NewContext()
-	_, err = index.Create(mockCtx, txn, values, 1, table.WithAssertion(txn))
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
 	it, err := index.SeekFirst(txn)
@@ -100,7 +99,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn, values, 1, nil)
+	err = index.Delete(sc, txn, values, 1)
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)
@@ -110,7 +109,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
-	_, err = index.Create(mockCtx, txn, values, 0, table.WithAssertion(txn))
+	_, err = index.Create(mockCtx, txn, values, 0)
 	c.Assert(err, IsNil)
 
 	_, err = index.SeekFirst(txn)
@@ -161,10 +160,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(mockCtx, txn, values, 1, table.WithAssertion(txn))
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(mockCtx, txn, values, 2, table.WithAssertion(txn))
+	_, err = index.Create(mockCtx, txn, values, 2)
 	c.Assert(err, NotNil)
 
 	it, err = index.SeekFirst(txn)
@@ -196,7 +195,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	// Test the function of Next when the value of unique key is nil.
 	values2 := types.MakeDatums(nil, nil)
-	_, err = index.Create(mockCtx, txn, values2, 2, table.WithAssertion(txn))
+	_, err = index.Create(mockCtx, txn, values2, 2)
 	c.Assert(err, IsNil)
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -235,7 +234,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 
 	mockCtx := mock.NewContext()
 	values := types.MakeDatums("abc", "def")
-	_, err = index.Create(mockCtx, txn, values, 1, table.WithAssertion(txn))
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
 	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
