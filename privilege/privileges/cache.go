@@ -38,7 +38,6 @@ var (
 	userTablePrivilegeMask = computePrivMask(mysql.AllGlobalPrivs)
 	dbTablePrivilegeMask   = computePrivMask(mysql.AllDBPrivs)
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
-	columnPrivMask         = computePrivMask(mysql.AllColumnPrivs)
 )
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
