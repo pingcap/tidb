@@ -242,9 +242,9 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 func (s *testSuite3) TestGrantUnexistObject(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'unexist'@'%';")
-	_, err := tk.Exec("grant select, update on unkown_db.* to unexist;")
+	_, err := tk.Exec("grant select, update on unknown_db.* to unexist;")
 	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
-	_, err = tk.Exec("grant select, update on unkown_db.unknown_table to unexist;")
+	_, err = tk.Exec("grant select, update on unknown_db.unknown_table to unexist;")
 	c.Assert(meta.ErrTableNotExists.Equal(err), IsTrue)
 	tk.MustExec("DROP USER 'unexist'@'%';")
 }
