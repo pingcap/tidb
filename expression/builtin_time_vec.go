@@ -1227,9 +1227,8 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		// calculate
 		if !isDuration(buf1.GetString(i)) {
-			result.SetNull(i, true) // fixed: true
+			result.SetNull(i, true)
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
@@ -1237,7 +1236,7 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
-				result.SetNull(i, true) // fixed: true
+				result.SetNull(i, true)
 				continue
 			}
 			return err
@@ -1246,7 +1245,6 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 		if err != nil {
 			return err
 		}
-		// commit result
 		resultSlice[i] = time.Duration(output)
 	}
 	return nil
