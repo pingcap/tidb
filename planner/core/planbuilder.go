@@ -937,7 +937,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 			col.VirtualExpr = expr
 		}
 	}
-
 	for _, idxCol := range idx.Columns {
 		for i, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
@@ -950,7 +949,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 			}
 		}
 	}
-
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
 	tblSchema := schema.Clone()
