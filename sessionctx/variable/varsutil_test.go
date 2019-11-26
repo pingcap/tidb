@@ -476,7 +476,6 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableStmtSummary, "a", true},
 		{TiDBEnableStmtSummary, "-1", true},
 		{TiDBEnableStmtSummary, "", false},
-		{TiDBStmtSummaryRefreshInterval, "0", true},
 		{TiDBStmtSummaryRefreshInterval, "a", true},
 		{TiDBStmtSummaryRefreshInterval, "", false},
 	}
