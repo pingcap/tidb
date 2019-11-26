@@ -1120,14 +1120,13 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 		vals := col.Int64s()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+			switch e.sameGroup[i] {
+			case !previousIsNull && !isNull:
+				if vals[i] != vals[i-1] {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && vals[i] != vals[i-1] {
-						e.sameGroup[i] = false
-					}
 				}
+			case isNull != previousIsNull:
+				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
 		}
@@ -1137,14 +1136,13 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 		vals := col.Float64s()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+			switch e.sameGroup[i] {
+			case !previousIsNull && !isNull:
+				if vals[i] != vals[i-1] {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && vals[i] != vals[i-1] {
-						e.sameGroup[i] = false
-					}
 				}
+			case isNull != previousIsNull:
+				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
 		}
@@ -1154,14 +1152,13 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 		vals := col.Decimals()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+			switch e.sameGroup[i] {
+			case !previousIsNull && !isNull:
+				if vals[i].Compare(&vals[i-1]) != 0 {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && vals[i].Compare(&vals[i-1]) != 0 {
-						e.sameGroup[i] = false
-					}
 				}
+			case isNull != previousIsNull:
+				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
 		}
@@ -1171,14 +1168,13 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 		vals := col.Times()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+			switch e.sameGroup[i] {
+			case !previousIsNull && !isNull:
+				if vals[i].Compare(vals[i-1]) != 0 {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && vals[i].Compare(vals[i-1]) != 0 {
-						e.sameGroup[i] = false
-					}
 				}
+			case isNull != previousIsNull:
+				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
 		}
@@ -1188,14 +1184,13 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 		vals := col.GoDurations()
 		for i := 1; i < numRows; i++ {
 			isNull := col.IsNull(i)
-			if e.sameGroup[i] {
-				if isNull != previousIsNull {
+			switch e.sameGroup[i] {
+			case !previousIsNull && !isNull:
+				if vals[i] != vals[i-1] {
 					e.sameGroup[i] = false
-				} else {
-					if !previousIsNull && vals[i] != vals[i-1] {
-						e.sameGroup[i] = false
-					}
 				}
+			case isNull != previousIsNull:
+				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
 		}
