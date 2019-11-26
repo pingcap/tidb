@@ -101,7 +101,7 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
 	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
-	tableTiDBClusterLoadInfo                = "TIDB_CLUSTER_LOAD"
+	tableTiDBClusterLoad                    = "TIDB_CLUSTER_LOAD"
 	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
@@ -687,13 +687,13 @@ var tableTiDBClusterConfigCols = []columnInfo{
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
-var tableTiDBClusterLoadInfoCols = []columnInfo{
+var tableTiDBClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
-	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2318,7 +2318,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
 	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
-	tableTiDBClusterLoadInfo:                tableTiDBClusterLoadInfoCols,
+	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
@@ -2424,7 +2424,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
-	case tableTiDBClusterLoadInfo:
+	case tableTiDBClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
