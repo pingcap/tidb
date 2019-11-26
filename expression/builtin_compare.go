@@ -2431,11 +2431,13 @@ func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, r
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	ret := compareStringWithTrim(arg0, lhsArg.GetType(), arg1, rhsArg.GetType())
+	ret := compareStringWithTrim(arg0, arg1, lhsArg.GetType(), rhsArg.GetType())
 	return int64(ret), false, nil
 }
 
-func compareStringWithTrim(lhs string, lhsFt *types.FieldType, rhs string, rhsFt *types.FieldType) int {
+// Accroding to https://dev.mysql.com/doc/refman/8.0/en/char.html,
+// we need to trim trialing space when compare non-binary strings.
+func compareStringWithTrim(lhs string, rhs string, lhsFt *types.FieldType, rhsFt *types.FieldType) int {
 	if lhsFt.Collate != charset.CollationBin {
 		lhs = strings.TrimRight(lhs, " ")
 	}

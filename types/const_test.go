@@ -284,6 +284,7 @@ func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
 	r.Check(testkit.Rows("1"))
 	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
 	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	// FIXME: MySQL returns 1 10 here.
 	r.Check(testkit.Rows("1 2"))
 }
 
