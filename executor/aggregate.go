@@ -835,7 +835,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		if err = e.fetchChild(ctx, chk); err != nil {
 			return err
 		}
-		if !e.executed && !chk.IsFull() {
+		if !e.executed {
 			_, err := e.groupChecker.splitIntoGroups(e.childResult)
 			if err != nil {
 				return err
