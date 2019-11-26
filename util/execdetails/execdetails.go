@@ -313,9 +313,9 @@ func (rrs *ReaderRuntimeStats) String() string {
 	sort.Slice(rrs.procKeys, func(i, j int) bool {
 		return rrs.procKeys[i] < rrs.procKeys[j]
 	})
-	kMax := rrs.procKeys[size-1]
-	kP95 := rrs.procKeys[size*19/20]
-	return fmt.Sprintf("rpc num: %v, rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95, kMax, kP95)
+	keyMax := rrs.procKeys[size-1]
+	keyP95 := rrs.procKeys[size*19/20]
+	return fmt.Sprintf("rpc num: %v, rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
