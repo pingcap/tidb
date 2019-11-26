@@ -15,13 +15,13 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/meta"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -239,7 +239,7 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
 }
 
-func (s *testSuite3) TestGrantUnexistObject(c *C)  {
+func (s *testSuite3) TestGrantUnexistObject(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'unexist'@'%';")
 	_, err := tk.Exec("grant select, update on unkown_db.* to unexist;")
