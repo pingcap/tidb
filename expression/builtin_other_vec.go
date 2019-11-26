@@ -81,12 +81,21 @@ func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 func (b *builtinBitCountSig) vectorized() bool {
 	return true
 }
-
 func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
-		if err != nil && types.ErrOverflow.Equal(err) {
-			return err
+		if types.ErrOverflow.Equal(err) {
+			result.ResizeInt64(n, false)
+			i64s := result.Int64s()
+			for i := 0; i < n; i++ {
+				res, isNull, err := b.evalInt(input.GetRow(i))
+				if err != nil {
+					return err
+				}
+				result.SetNull(i, isNull)
+				i64s[i] = res
+			}
+			return nil
 		}
 		return err
 	}
@@ -97,12 +106,11 @@ func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 		i64s[i] = i64s[i] - ((i64s[i] >> 1) & 0x5555555555555555)
 		i64s[i] = (i64s[i] & 0x3333333333333333) + ((i64s[i] >> 2) & 0x3333333333333333)
-		i64s[i] = (i64s[i] + (i64s[i] >> 4)) & 0x0f0f0f0f0f0f0f0f
+		i64s[i] = (i64s[i]& 0x0f0f0f0f0f0f0f0f)+ ((i64s[i] >> 4) & 0x0f0f0f0f0f0f0f0f)
 		i64s[i] = i64s[i] + (i64s[i] >> 8)
 		i64s[i] = i64s[i] + (i64s[i] >> 16)
 		i64s[i] = i64s[i] + (i64s[i] >> 32)
 		i64s[i] = i64s[i] & 0x7f
-
 	}
 	return nil
 }
