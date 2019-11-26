@@ -1856,15 +1856,15 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			result.AppendNull()
 			continue
 		}
-		str, err := ds[i].DateFormat(buf0.GetString(i))
-		if err != nil {
-			return err
-		}
 		if buf0.GetString(i) == "0" {
 			result.AppendString("0")
 			continue
 		}
 		if ds[i].InvalidZero() {
+			str, err := ds[i].DateFormat(buf0.GetString(i))
+			if err != nil {
+				return err
+			}
 			result.AppendString("")
 			flag := 1
 			if err := handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(ds[i].String())); err != nil {
