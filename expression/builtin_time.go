@@ -2924,6 +2924,28 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 	return nil
 }
 
+func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+	n := input.NumRows()
+	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(unit)
+	dates := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		dateTp := mysql.TypeDate
+		if dates[i].Type == mysql.TypeDatetime || dates[i].Type == mysql.TypeTimestamp || types.IsClockUnit(unit.GetString(i)) {
+			dateTp = mysql.TypeDatetime
+		}
+		dates[i].Type = dateTp
+	}
+	return nil
+}
+
 func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)

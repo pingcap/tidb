@@ -265,6 +265,46 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&intervalUnitStrGener{nullRation: 0.05},
 			},
 		},
+		// builtinAddDateDatetimeStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinAddDateDatetimeIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinAddDateDatetimeRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinAddDateDatetimeDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
 	},
 }
 

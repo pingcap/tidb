@@ -438,7 +438,7 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 	defer b.bufAllocator.put(dateCol)
-	if err := b.vecGetDateFrom{{.TypeA.TypeName}}(&b.baseBuiltinFunc, input, unitCol, dateCol); err != nil {
+	if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unitCol, dateCol); err != nil {
 		return err
 	}
 
@@ -447,7 +447,7 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFrom{{.TypeB.TypeName}}(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	if err := b.vecGetIntervalFrom{{.TypeB.ETName}}(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
 		return err
 	}
 
@@ -527,8 +527,10 @@ func (g gener) gen() interface{} {
 {{ define "strOrIntDateGener" }}
 	{{- if eq .TypeA.ETName "String"}}
 		&dateStrGener{NullRation: 0.2},
-	{{- else }}
+	{{- else if eq .TypeA.ETName "Int"}}
 		&dateTimeIntGener{nullRation: 0.2},
+	{{- else }}
+		&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 	{{- end }}
 {{ end }}
 
@@ -680,6 +682,10 @@ var addDataSigsTmpl = []sig{
 	{SigName: "builtinAddDateIntIntSig", TypeA: TypeInt, TypeB: TypeInt, Output: TypeDatetime},
 	{SigName: "builtinAddDateIntRealSig", TypeA: TypeInt, TypeB: TypeReal, Output: TypeDatetime},
 	{SigName: "builtinAddDateIntDecimalSig", TypeA: TypeInt, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinAddDateDatetimeStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinAddDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime},
+	{SigName: "builtinAddDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime},
+	{SigName: "builtinAddDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime},
 }
 
 type sig struct {
