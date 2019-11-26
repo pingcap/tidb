@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -39,6 +41,11 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+)
+
+var (
+	transactionDurationInternalRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionDurationGeneralRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
 )
 
 // SimpleExec represents simple statement executor.
@@ -602,7 +609,13 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 		return err
 	}
 	if txn.Valid() {
-		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
+		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+		if sessVars.InRestrictedSQL {
+			transactionDurationInternalRollback.Observe(duration)
+		} else {
+			transactionDurationGeneralRollback.Observe(duration)
+		}
+		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()
 	}
 	return nil
@@ -633,9 +646,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return err1
 		}
 		if exists {
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			if !s.IfNotExists {
-				return errors.New("Duplicate user")
+				return ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
+			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
 		pwd, ok := spec.EncodedPassword()
@@ -684,10 +700,8 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			return err
 		}
 		if !exists {
-			failedUsers = append(failedUsers, spec.User.String())
-			// TODO: Make this error as a warning.
-			// if s.IfExists {
-			// }
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
+			failedUsers = append(failedUsers, user)
 			continue
 		}
 		pwd := ""
@@ -715,7 +729,13 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return err
 		}
-		return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
+		if !s.IfExists {
+			return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
+		}
+		for _, user := range failedUsers {
+			err := infoschema.ErrUserDropExists.GenWithStackByArgs(user)
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		}
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil

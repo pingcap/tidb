@@ -31,13 +31,16 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -70,7 +73,7 @@ func (s *Server) startHTTPServer() {
 
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
-	router.Handle("/metrics", prometheus.Handler()).Name("Metrics")
+	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
@@ -87,6 +90,11 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
+
+	// HTTP path for get the TiDB config
+	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
+		return config.GetGlobalConfig(), nil
+	}))
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
@@ -256,16 +264,43 @@ func (s *Server) startHTTPServer() {
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.setupStatuServerAndRPCServer(addr, serverMux)
+}
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		err = s.statusServer.ListenAndServe()
-	}
-
+func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		return
+	}
+	m := cmux.New(l)
+	// Match connections in order:
+	// First HTTP, and otherwise grpc.
+	httpL := m.Match(cmux.HTTP1Fast())
+	grpcL := m.Match(cmux.Any())
+
+	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.grpcServer = NewRPCServer(s.cfg.Security)
+
+	go util.WithRecovery(func() {
+		err := s.grpcServer.Serve(grpcL)
+		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+	}, nil)
+
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		go util.WithRecovery(func() {
+			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	} else {
+		go util.WithRecovery(func() {
+			err := s.statusServer.Serve(httpL)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	}
+	err = m.Serve()
+	if err != nil {
+		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
 }
 

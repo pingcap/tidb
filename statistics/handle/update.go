@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -227,7 +228,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.StatsCache.Load().(StatsCache)[id]
+	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -367,7 +368,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.Tp == statistics.PkType {
 			err = h.DumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.StatsCache.Load().(StatsCache)[fb.PhysicalID]
+			t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
 			if ok {
 				err = h.DumpFeedbackForIndex(fb, t)
 			}
@@ -446,7 +447,8 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 			newTblStats.Columns[fb.Hist.ID] = &newCol
 		}
-		h.UpdateTableStats([]*statistics.Table{newTblStats}, nil)
+		oldCache := h.statsCache.Load().(statsCache)
+		h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
 	}
 }
 
@@ -477,7 +479,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	h.UpdateTableStats(tbls, nil)
+	oldCache := h.statsCache.Load().(statsCache)
+	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -564,12 +567,17 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 
 func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.mu.Lock()
-	h.mu.ctx.GetSessionVars().BatchDelete = true
-	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	h.mu.ctx.GetSessionVars().BatchDelete = false
-	h.mu.Unlock()
-	return errors.Trace(err)
+	defer h.mu.Unlock()
+	hasData := true
+	for hasData {
+		sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d limit 10000", tableID, histID, isIndex)
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		hasData = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	}
+	return nil
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
@@ -604,21 +612,6 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 	return false
 }
 
-// withinTimePeriod tests whether `now` is between `start` and `end`.
-func withinTimePeriod(start, end, now time.Time) bool {
-	// Converts to UTC and only keeps the hour and minute info.
-	start, end, now = start.UTC(), end.UTC(), now.UTC()
-	start = time.Date(0, 0, 0, start.Hour(), start.Minute(), 0, 0, time.UTC)
-	end = time.Date(0, 0, 0, end.Hour(), end.Minute(), 0, 0, time.UTC)
-	now = time.Date(0, 0, 0, now.Hour(), now.Minute(), 0, 0, time.UTC)
-	// for cases like from 00:00 to 06:00
-	if end.Sub(start) >= 0 {
-		return now.Sub(start) >= 0 && now.Sub(end) <= 0
-	}
-	// for cases like from 22:00 to 06:00
-	return now.Sub(end) <= 0 || now.Sub(start) >= 0
-}
-
 // NeedAnalyzeTable checks if we need to analyze the table:
 // 1. If the table has never been analyzed, we need to analyze it when it has
 //    not been modified for a while.
@@ -641,7 +634,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
+	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
 }
 
 const (
@@ -680,11 +673,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	if end == "" {
 		end = variable.DefAutoAnalyzeEndTime
 	}
-	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
+	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
 	if err != nil {
 		return s, s, errors.Trace(err)
 	}
-	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
+	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
 	return s, e, err
 }
 
@@ -859,7 +852,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return
 	}
@@ -900,7 +893,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return nil
 	}
@@ -929,7 +922,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
+		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	q.Expected = int64(expected)

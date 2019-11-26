@@ -96,3 +96,51 @@ func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo
 func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
 	return &TiDBHashAggImpl{baseImpl{plan: agg}}
 }
+
+// TiKVHashAggImpl is the implementation of PhysicalHashAgg in TiKV layer.
+type TiKVHashAggImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false)
+	agg.cost = selfCost + children[0].GetCost()
+	return agg.cost
+}
+
+// NewTiKVHashAggImpl creates a new TiKVHashAggImpl.
+func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
+	return &TiKVHashAggImpl{baseImpl{plan: agg}}
+}
+
+// LimitImpl is the implementation of PhysicalLimit. Since PhysicalLimit on different
+// engines have the same behavior, and we don't calculate the cost of `Limit`, we only
+// have one Implementation for it.
+type LimitImpl struct {
+	baseImpl
+}
+
+// NewLimitImpl creates a new LimitImpl.
+func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
+	return &LimitImpl{baseImpl{plan: limit}}
+}
+
+// TiDBTopNImpl is the implementation of PhysicalTopN in TiDB layer.
+type TiDBTopNImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *TiDBTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	topN := impl.plan.(*plannercore.PhysicalTopN)
+	childCount := children[0].GetPlan().Stats().RowCount
+	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
+	return impl.cost
+}
+
+// NewTiDBTopNImpl creates a new TiDBTopNImpl.
+func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
+	return &TiDBTopNImpl{baseImpl{plan: topN}}
+}

@@ -104,7 +104,9 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
+	lineNum := 0
 	for {
+		lineNum++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
@@ -116,7 +118,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
+			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], lineNum)
 			if err != nil {
 				return rows, err
 			}
@@ -137,7 +139,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						err = st.setFieldValue(tz, field, fieldValues[i+1])
+						err = st.setFieldValue(tz, field, fieldValues[i+1], lineNum)
 						if err != nil {
 							return rows, err
 						}
@@ -145,7 +147,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
+				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), lineNum)
 				if err != nil {
 					return rows, err
 				}
@@ -235,7 +237,7 @@ type slowQueryTuple struct {
 	plan               string
 }
 
-func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
+func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int) error {
 	var err error
 	switch field {
 	case variable.SlowLogTimeStr:
@@ -334,7 +336,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.sql = value
 	}
 	if err != nil {
-		return errors.Wrap(err, "parse slow log failed `"+field+"` error")
+		return errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
 	}
 	return nil
 }

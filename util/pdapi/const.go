@@ -22,4 +22,5 @@ const (
 	Stores         = "/pd/api/v1/stores"
 	ClusterVersion = "/pd/api/v1/config/cluster-version"
 	Status         = "/pd/api/v1/status"
+	Config         = "/pd/api/v1/config"
 )

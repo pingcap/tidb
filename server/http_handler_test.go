@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -739,15 +740,16 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
 	form = make(url.Values)
-	form.Set("log_level", "info")
+	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
-	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.InfoLevel)
-	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
+	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
+	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
 	form = make(url.Values)
@@ -877,8 +879,20 @@ func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
 func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
+	resp, err := http.Get("http://127.0.0.1:10090/debug/zip?seconds=1")
 	c.Assert(err, IsNil)
-	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	out, err := os.Create("/tmp/tidb_debug.zip")
+	c.Assert(err, IsNil)
+	_, err = io.Copy(out, resp.Body)
+	c.Assert(err, IsNil)
+	fileInfo, err := out.Stat()
+	c.Assert(err, IsNil)
+	c.Assert(fileInfo.Size(), Greater, int64(0))
+	err = out.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove("/tmp/tidb_debug.zip")
+	c.Assert(err, IsNil)
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 }
