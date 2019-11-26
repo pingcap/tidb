@@ -19,12 +19,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -217,8 +217,7 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 		go func(address string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				interval := profile.CPUProfileInterval / time.Second
-				url := fmt.Sprintf("http://%s/debug/pprof/profile?seconds=%d", statusAddr, interval)
+				url := fmt.Sprintf("http://%s/debug/pprof/profile?seconds=5&frequency=5", statusAddr)
 				req, err := http.NewRequest(http.MethodGet, url, nil)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
@@ -230,7 +229,9 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 					ch <- result{err: errors.Trace(err)}
 					return
 				}
-				defer resp.Body.Close()
+				defer func() {
+					terror.Log(resp.Body.Close())
+				}()
 				collector := profile.Collector{}
 				rows, err := collector.ProfileReaderToDatums(resp.Body)
 				if err != nil {
@@ -249,7 +250,7 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 	var results []result
 	for result := range ch {
 		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 			continue
 		}
 		results = append(results, result)

@@ -2118,7 +2118,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	var results []result
 	for result := range ch {
 		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 			continue
 		}
 		results = append(results, result)
