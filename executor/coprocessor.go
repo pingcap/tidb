@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -52,9 +53,6 @@ func HandleCopDAGRequest(ctx context.Context, sctx sessionctx.Context, req *copr
 }
 
 func buildDAGExecutor(sctx sessionctx.Context, req *coprocessor.Request) (Executor, *tipb.DAGRequest, error) {
-	if len(req.Ranges) == 0 && req.Context.GetRegionId() != 0 {
-		return nil, nil, errors.New("request range is null")
-	}
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -124,12 +122,9 @@ func encodeChunk(selResp *tipb.SelectResponse, chk *chunk.Chunk, colTypes []*typ
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
 	encoder := chunk.NewCodec(respColTypes)
-	if chk.NumRows() > 0 {
-		chunks = append(chunks, tipb.Chunk{})
-		cur := &chunks[len(chunks)-1]
-		cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
-		chk.Reset()
-	}
+	chunks = append(chunks, tipb.Chunk{})
+	cur := &chunks[len(chunks)-1]
+	cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
 	selResp.Chunks = chunks
 	selResp.EncodeType = tipb.EncodeType_TypeChunk
 	return nil

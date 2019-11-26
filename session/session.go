@@ -861,10 +861,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 	}
 }
 
-// CreateSessionWithDomainFunc return a factory of create session.
-func CreateSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+// createSessionWithDomainFunc return a factory of create session.
+func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
-		se, err := createSessionWithDomain(store, dom)
+		se, err := CreateSessionWithDomain(store, dom)
 		if err != nil {
 			return nil, err
 		}
@@ -1711,11 +1711,11 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
-// createSessionWithDomain creates a new Session and binds it with a Domain.
+// CreateSessionWithDomain creates a new Session and binds it with a Domain.
 // We need this because when we start DDL in Domain, the DDL need a session
 // to change some system tables. But at that time, we have been already in
 // a lock context, which cause we can't call createSesion directly.
-func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
+func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
 		parser:      parser.New(),

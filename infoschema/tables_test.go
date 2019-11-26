@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -87,17 +86,14 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = setUpRPCService(c, "0.0.0.0:10080")
+	s.rpcserver = setUpRPCService(c, "0.0.0.0:10080", s.dom)
 	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
-	// For redirection the cop task.
-	mocktikv.TiDBRPCServerCoprocessorHandler = server.HandleCopDAGRequest
-	server.SetGlobalDomain(s.dom)
 }
 
-func setUpRPCService(c *C, addr string) *grpc.Server {
+func setUpRPCService(c *C, addr string, dom *domain.Domain) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
-	srv := server.NewRPCServer(config.GetGlobalConfig().Security)
+	srv := server.NewRPCServer(config.GetGlobalConfig().Security, dom)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)

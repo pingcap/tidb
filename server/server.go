@@ -33,6 +33,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/pingcap/tidb/domain"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -110,6 +111,7 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	dom               *domain.Domain
 
 	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -137,6 +139,11 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
+}
+
+// SetDomain use to set the server domain.
+func (s *Server) SetDomain(dom *domain.Domain) {
+	s.dom = dom
 }
 
 // newConn creates a new *clientConn from a net.Conn.

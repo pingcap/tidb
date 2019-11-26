@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -34,8 +35,10 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+var globalDomain *domain.Domain
+
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(security config.Security) *grpc.Server {
+func NewRPCServer(security config.Security, dom *domain.Domain) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
@@ -52,6 +55,9 @@ func NewRPCServer(security config.Security) *grpc.Server {
 	if s == nil {
 		s = grpc.NewServer()
 	}
+	globalDomain = dom
+	// For redirection the cop task.
+	mocktikv.TiDBRPCServerCoprocessorHandler = HandleCopDAGRequest
 	diagnosticspb.RegisterDiagnosticsServer(s, &rpcServer{})
 	return s
 }
@@ -92,16 +98,14 @@ func HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coproce
 }
 
 func createSession() (session.Session, error) {
-	createSessionFunc := session.CreateSessionWithDomainFunc(globalDomain.Store())
-	re, err := createSessionFunc(globalDomain)
+	se, err := session.CreateSessionWithDomain(globalDomain.Store(), globalDomain)
 	if err != nil {
 		return nil, err
 	}
-	se := re.(session.Session)
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
 	se.GetSessionVars().TxnCtx.InfoSchema = is
-	se.GetSessionVars().InRestrictedSQL = true
+	//se.GetSessionVars().InRestrictedSQL = true
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
 	se.GetSessionVars().HashAggPartialConcurrency = 1
@@ -109,11 +113,4 @@ func createSession() (session.Session, error) {
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
 	se.SetSessionManager(util.GetglobalSessionManager())
 	return se, nil
-}
-
-var globalDomain *domain.Domain
-
-// SetGlobalDomain uses to set global domain, it's for avoid cycle import.
-func SetGlobalDomain(do *domain.Domain) {
-	globalDomain = do
 }
