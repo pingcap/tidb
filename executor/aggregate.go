@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -1079,14 +1080,14 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 		areSameGroup = false
 	} else {
 		groupKey0 := e.previousLastGroupKey
-		groupKey1 := string(e.firstGroupKey)
+		groupKey1 := string(hack.String(e.firstGroupKey))
 		if groupKey0 == groupKey1 {
 			areSameGroup = true
 		} else {
 			areSameGroup = false
 		}
 	}
-	e.previousLastGroupKey = string(e.lastGroupKey)
+	e.previousLastGroupKey = string(hack.String(e.lastGroupKey))
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
@@ -1156,7 +1157,7 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && vals[i].Compare(&vals[i-1]) == 0 {
+					if !previousIsNull && vals[i].Compare(&vals[i-1]) != 0 {
 						e.sameGroup[i] = false
 					}
 				}
@@ -1173,7 +1174,7 @@ func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *c
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && vals[i].Compare(vals[i-1]) == 0 {
+					if !previousIsNull && vals[i].Compare(vals[i-1]) != 0 {
 						e.sameGroup[i] = false
 					}
 				}
