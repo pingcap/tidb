@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -268,7 +267,7 @@ func (*testSuite) TestT(c *C) {
 	m, err := dom.GetSnapshotMeta(snapTS)
 	c.Assert(err, IsNil)
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(err.Error(), Equals, meta.ErrDBNotExists.Error())
+	c.Assert(err.Error(), Equals, "[meta:1049]database doesn't exist")
 	c.Assert(tblInfo1, IsNil)
 	m, err = dom.GetSnapshotMeta(currSnapTS)
 	c.Assert(err, IsNil)
