@@ -111,6 +111,7 @@ type twoPhaseCommitter struct {
 	connID    uint64 // connID is used for log.
 	cleanWg   sync.WaitGroup
 	detail    unsafe.Pointer
+	txnSize   int
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -281,6 +282,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	if len(keys) == 0 {
 		return nil
 	}
+	c.txnSize = size
 
 	for _, pair := range txn.assertions {
 		mutation, ok := mutations[string(pair.key)]
@@ -551,6 +553,12 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			if bytes.Equal(c.primary(), batch.keys[0]) {
+				// After writing primary key, if the size of the transaction is large than 4M, start the ttlManager.
+				if c.txnSize > 4*1024*1024 {
+					c.run(c, nil)
+				}
+			}
 			return nil
 		}
 		var locks []*Lock
