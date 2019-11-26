@@ -81,7 +81,7 @@ func (e *SortExec) Close() error {
 	if e.partitionList != nil {
 		for _, chunkInDisk := range e.partitionList {
 			if chunkInDisk != nil {
-				if err := e.finalChunksInDisk.Close(); err != nil {
+				if err := chunkInDisk.Close(); err != nil {
 					return err
 				}
 			}
@@ -92,6 +92,9 @@ func (e *SortExec) Close() error {
 			return err
 		}
 	}
+	e.rowChunksInDisk = nil
+	e.partitionList = nil
+	e.finalChunksInDisk = nil
 	e.memTracker = nil
 	return e.children[0].Close()
 }
@@ -168,7 +171,7 @@ func (e *SortExec) externalSorting() (err error) {
 	// partition sort
 	// the part num will be adjusted in the next pr.
 	for i := 0; i < 1; i++ {
-		e.rowChunks, err = e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk)
+		err = e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk)
 		if err != nil {
 			return err
 		}
@@ -181,8 +184,12 @@ func (e *SortExec) externalSorting() (err error) {
 	}
 	// merge sort
 	// merge sort will be implemented in the next pr.
-	e.finalChunksInDisk = e.partitionList[0]
-	// get final result
+	err = e.readPartition(e.partitionList[0], e.partitionRowPtrs[0])
+	if err != nil {
+		return err
+	}
+	e.initPointers()
+	e.finalChunksInDisk, err = e.spillToDiskByRowPtr()
 	e.finalRowPtrs = e.initPointersForListInDisk(e.finalChunksInDisk)
 	return nil
 }
@@ -299,19 +306,20 @@ func (e *SortExec) keyColumnsLess(i, j int) bool {
 	return e.lessRow(rowI, rowJ)
 }
 
-func (e *SortExec) readPartition(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) (*chunk.List, error) {
+func (e *SortExec) readPartition(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) error {
 	if len(rowPtrs) == 0 {
-		return nil, nil
+		e.rowChunks = nil
+		return nil
 	}
-	rowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	for _, rowPtr := range rowPtrs {
 		rowPtr, err := disk.GetRow(rowPtr)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		rowChunks.AppendRow(rowPtr)
+		e.rowChunks.AppendRow(rowPtr)
 	}
-	return rowChunks, nil
+	return nil
 }
 
 // alreadySpilled indicates that records have spilled out into disk.
