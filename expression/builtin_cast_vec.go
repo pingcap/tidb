@@ -111,8 +111,11 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 		}
 		if !hasUnsignedFlag0 && !hasUnsignedFlag1 {
 			rs[i] = float64(i64s[i])
-			// Special case: In union statement, if output is unsigned, but input is signed, input value < 0, then result = 0
 		} else if b.inUnion && !hasUnsignedFlag1 && i64s[i] < 0 {
+			// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
+			// NOTE: the following expressions are equal (so choose the more efficient one):
+			// `b.inUnion && hasUnsignedFlag0 && !hasUnsignedFlag1 && i64s[i] < 0`
+			// `b.inUnion && !hasUnsignedFlag1 && i64s[i] < 0`
 			rs[i] = 0
 		} else {
 			// recall that, int to float is different from uint to float
