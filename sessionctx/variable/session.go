@@ -308,7 +308,7 @@ type SessionVars struct {
 	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
-	// DiskFactor is the disk cost of storing one tuple.
+	// DiskFactor is the IO cost of reading/writing one tuple to temporary disk.
 	DiskFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
