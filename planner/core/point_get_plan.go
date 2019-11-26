@@ -239,6 +239,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	case *ast.SelectStmt:
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
+		return nil
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
 			return fp
 		}
