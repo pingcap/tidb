@@ -579,60 +579,15 @@ func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
 func (col *Column) SupportReverseEval() bool {
-	return true
+	switch col.RetType.Tp {
+	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return true
+	}
+	return false
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (col *Column) ReverseEval(res types.Datum, rType RoundingType, colType types.EvalType) (val types.Datum, err error) {
-	switch colType {
-	case types.ETInt:
-		ret, err := col.ReverseEvalInt(res, rType)
-		return types.NewIntDatum(ret), err
-	case types.ETReal:
-		ret, err := col.ReverseEvalReal(res, rType)
-		return types.NewFloat64Datum(ret), err
-	case types.ETString:
-		ret, err := col.ReverseEvalString(res, rType)
-		return types.NewStringDatum(ret), err
-	case types.ETDecimal:
-		ret, err := col.ReverseEvalDecimal(res, rType)
-		return types.NewDecimalDatum(ret), err
-	case types.ETTimestamp:
-		ret, err := col.ReverseEvalTime(res, rType)
-		return types.NewTimeDatum(ret), err
-	case types.ETDuration:
-		ret, err := col.ReverseEvalDuration(res, rType)
-		return types.NewDurationDatum(ret), err
-	}
-	return types.Datum{}, errors.Errorf("unknown evaluation type for Column in ReverseEval")
-}
-
-// ReverseEvalInt evaluates the only one column int value with given function result.
-func (col *Column) ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
-	return res.GetInt64(), nil
-}
-
-// ReverseEvalReal evaluates the only one column real value with given function result.
-func (col *Column) ReverseEvalReal(res types.Datum, rType RoundingType) (val float64, err error) {
-	return res.GetFloat64(), nil
-}
-
-// ReverseEvalString evaluates the only one column string value with given function result.
-func (col *Column) ReverseEvalString(res types.Datum, rType RoundingType) (val string, err error) {
-	return res.GetString(), nil
-}
-
-// ReverseEvalDecimal evaluates the only one column decimal value with given function result.
-func (col *Column) ReverseEvalDecimal(res types.Datum, rType RoundingType) (val *types.MyDecimal, err error) {
-	return res.GetMysqlDecimal(), nil
-}
-
-// ReverseEvalTime evaluates the only one column time value with given function result.
-func (col *Column) ReverseEvalTime(res types.Datum, rType RoundingType) (val types.Time, err error) {
-	return res.GetMysqlTime(), errors.Errorf("Constant.ReverseEvalTime() should never be called, please contact the TiDB team for help")
-}
-
-// ReverseEvalDuration evaluates the only one column duration value with given function result.
-func (col *Column) ReverseEvalDuration(res types.Datum, rType RoundingType) (val types.Duration, err error) {
-	return res.GetMysqlDuration(), errors.Errorf("Constant.ReverseEvalDuration() should never be called, please contact the TiDB team for help")
+func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	return changeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
 }

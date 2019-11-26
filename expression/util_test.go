@@ -501,28 +501,9 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 	}
 	return json.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) ReverseEval(res types.Datum, rType RoundingType, colType types.EvalType) (val types.Datum, err error) {
+func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
-func (m *MockExpr) ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error) {
-	return 0, m.err
-}
-func (m *MockExpr) ReverseEvalReal(res types.Datum, rType RoundingType) (val float64, err error) {
-	return 0, m.err
-}
-func (m *MockExpr) ReverseEvalString(res types.Datum, rType RoundingType) (val string, err error) {
-	return "", m.err
-}
-func (m *MockExpr) ReverseEvalDecimal(res types.Datum, rType RoundingType) (val *types.MyDecimal, err error) {
-	return nil, m.err
-}
-func (m *MockExpr) ReverseEvalTime(res types.Datum, rType RoundingType) (val types.Time, err error) {
-	return types.Time{}, m.err
-}
-func (m *MockExpr) ReverseEvalDuration(res types.Datum, rType RoundingType) (val types.Duration, err error) {
-	return types.Duration{}, m.err
-}
-
 func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }

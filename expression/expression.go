@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -74,25 +75,7 @@ type ReverseExpr interface {
 	SupportReverseEval() bool
 
 	// ReverseEval evaluates the only one column value with given function result.
-	ReverseEval(res types.Datum, rType RoundingType, colType types.EvalType) (val types.Datum, err error)
-
-	// ReverseEvalInt evaluates the only one column int value with given function result.
-	ReverseEvalInt(res types.Datum, rType RoundingType) (val int64, err error)
-
-	// ReverseEvalReal evaluates the only one column real value with given function result.
-	ReverseEvalReal(res types.Datum, rType RoundingType) (val float64, err error)
-
-	// ReverseEvalString evaluates the only one column string value with given function result.
-	ReverseEvalString(res types.Datum, rType RoundingType) (val string, err error)
-
-	// ReverseEvalDecimal evaluates the only one column decimal value with given function result.
-	ReverseEvalDecimal(res types.Datum, rType RoundingType) (val *types.MyDecimal, err error)
-
-	// ReverseEvalTime evaluates the only one column time value with given function result.
-	ReverseEvalTime(res types.Datum, rType RoundingType) (val types.Time, err error)
-
-	// ReverseEvalDuration evaluates the only one column duration value with given function result.
-	ReverseEvalDuration(res types.Datum, rType RoundingType) (val types.Duration, err error)
+	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error)
 }
 
 // Expression represents all scalar expression in SQL.
@@ -724,4 +707,95 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		RetType:  f.getRetTp(),
 	}
 	return FoldConstant(sf), nil
+}
+
+func getDatumBound(retType *types.FieldType, rType RoundingType) types.Datum {
+	if rType == Ceiling {
+		switch retType.Tp {
+		case mysql.TypeShort:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				return types.NewUintDatum(math.MaxUint16)
+			}
+			return types.NewIntDatum(math.MaxInt16)
+		case mysql.TypeLong:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				return types.NewUintDatum(math.MaxUint32)
+			}
+			return types.NewIntDatum(math.MaxInt32)
+		case mysql.TypeLonglong:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				return types.NewUintDatum(math.MaxUint64)
+			}
+			return types.NewIntDatum(math.MaxInt64)
+		case mysql.TypeFloat:
+			return types.NewFloat32Datum(math.MaxFloat32)
+		case mysql.TypeDouble:
+			return types.NewFloat64Datum(math.MaxFloat64)
+		case mysql.TypeNewDecimal:
+			return types.NewDecimalDatum(types.NewMaxOrMinDec(false, retType.Flen, retType.Decimal))
+		}
+	}
+	switch retType.Tp {
+	case mysql.TypeShort:
+		if mysql.HasUnsignedFlag(retType.Flag) {
+			return types.NewUintDatum(0)
+		}
+		return types.NewIntDatum(math.MinInt16)
+	case mysql.TypeLong:
+		if mysql.HasUnsignedFlag(retType.Flag) {
+			return types.NewUintDatum(0)
+		}
+		return types.NewIntDatum(math.MinInt32)
+	case mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(retType.Flag) {
+			return types.NewUintDatum(0)
+		}
+		return types.NewIntDatum(math.MinInt64)
+	case mysql.TypeFloat:
+		return types.NewFloat32Datum(-math.MaxFloat32)
+	case mysql.TypeDouble:
+		return types.NewFloat64Datum(-math.MaxFloat64)
+	case mysql.TypeNewDecimal:
+		return types.NewDecimalDatum(types.NewMaxOrMinDec(true, retType.Flen, retType.Decimal))
+	}
+	return types.Datum{}
+}
+
+func changeReverseResultByUpperLowerBound(
+	sc *stmtctx.StatementContext,
+	retType *types.FieldType,
+	res types.Datum,
+	rType RoundingType) (types.Datum, error) {
+	d, err := res.ConvertTo(sc, retType)
+	if terror.ErrorEqual(err, types.ErrOverflow) {
+		return d, nil
+	}
+	if err != nil {
+		return d, err
+	}
+	resRetType := types.FieldType{}
+	switch res.Kind() {
+	case types.KindInt64:
+		resRetType.Tp = mysql.TypeLonglong
+	case types.KindUint64:
+		resRetType.Tp = mysql.TypeLonglong
+		resRetType.Flag |= mysql.UniqueFlag
+	case types.KindFloat32:
+		resRetType.Tp = mysql.TypeFloat
+	case types.KindFloat64:
+		resRetType.Tp = mysql.TypeDouble
+	case types.KindMysqlDecimal:
+		resRetType.Tp = mysql.TypeNewDecimal
+		resRetType.Flen = int(res.GetMysqlDecimal().GetDigitsFrac() + res.GetMysqlDecimal().GetDigitsInt())
+		resRetType.Decimal = int(res.GetMysqlDecimal().GetDigitsInt())
+	}
+	bound := getDatumBound(&resRetType, rType)
+	cmp, err := d.CompareDatum(sc, &bound)
+	if err != nil {
+		return d, err
+	}
+	if cmp == 0 {
+		d = getDatumBound(retType, rType)
+	}
+	return d, nil
 }

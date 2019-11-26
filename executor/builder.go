@@ -2262,11 +2262,11 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 			idx := v.Schema().ColumnIndex(key)
 			expr := v.Exprs[idx]
 			var err error
-			ran.LowVal[i], err = expr.ReverseEval(ran.LowVal[i], expression.Floor, key.RetType.EvalType())
+			ran.LowVal[i], err = expr.ReverseEval(builder.ctx.GetSessionVars().StmtCtx, ran.LowVal[i], expression.Floor)
 			if err != nil {
 				return nil, err
 			}
-			ran.HighVal[i], err = expr.ReverseEval(ran.HighVal[i], expression.Ceiling, key.RetType.EvalType())
+			ran.HighVal[i], err = expr.ReverseEval(builder.ctx.GetSessionVars().StmtCtx, ran.HighVal[i], expression.Ceiling)
 			if err != nil {
 				return nil, err
 			}
