@@ -164,11 +164,35 @@ func (b *builtinGreatestIntSig) vectorized() bool {
 }
 
 func (b *builtinGEIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfGE(result.Int64s())
+	return nil
 }
 
 func (b *builtinLeastRealSig) vectorized() bool {
@@ -355,11 +379,42 @@ func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinNullEQIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	result.ResizeInt64(n, false)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		isNull0 := buf0.IsNull(i)
+		isNull1 := buf1.IsNull(i)
+		if isNull0 && isNull1 {
+			i64s[i] = 1
+		} else if isNull0 || isNull1 || i64s[i] != 0 {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
 }
 
 func (b *builtinIntervalIntSig) vectorized() bool {
@@ -540,6 +595,17 @@ func vecResOfGT(res []int64) {
 	}
 }
 
+func vecResOfGE(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] >= 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
+}
+
 //vecCompareInt is vectorized CompareInt()
 func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	switch {
@@ -555,11 +621,54 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 }
 
 func (b *builtinGreatestTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dst)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dst.ResizeTime(n, false)
+	dstTimes := dst.Times()
+	for i := 0; i < n; i++ {
+		dstTimes[i] = types.ZeroDatetime
+	}
+	var argTime types.Time
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) || dst.IsNull(i) {
+				dst.SetNull(i, true)
+				continue
+			}
+			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				continue
+			}
+			if argTime.Compare(dstTimes[i]) > 0 {
+				dstTimes[i] = argTime
+			}
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if dst.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(dstTimes[i].String())
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestRealSig) vectorized() bool {

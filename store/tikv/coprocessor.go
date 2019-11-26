@@ -30,12 +30,15 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -65,6 +68,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 	}
+	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
@@ -218,24 +222,54 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
+	var tableStart, tableEnd kv.Key
+	if req.StoreType == kv.TiFlash {
+		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
+		fullRange := ranger.FullIntRange(false)
+		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
+		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
+	}
 
 	var tasks []*copTask
-	appendTask := func(region RegionVerID, ranges *copRanges) {
-		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
-		// to make sure the message can be sent successfully.
-		rLen := ranges.len()
-		for i := 0; i < rLen; {
-			nextI := mathutil.Min(i+rangesPerTask, rLen)
+	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+		if req.StoreType == kv.TiKV {
+			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+			// to make sure the message can be sent successfully.
+			rLen := ranges.len()
+			for i := 0; i < rLen; {
+				nextI := mathutil.Min(i+rangesPerTask, rLen)
+				tasks = append(tasks, &copTask{
+					region: regionWithRangeInfo.Region,
+					ranges: ranges.slice(i, nextI),
+					// Channel buffer is 2 for handling region split.
+					// In a common case, two region split tasks will not be blocked.
+					respChan:  make(chan *copResponse, 2),
+					cmdType:   cmdType,
+					storeType: req.StoreType,
+				})
+				i = nextI
+			}
+		} else if req.StoreType == kv.TiFlash {
+			left, right := regionWithRangeInfo.StartKey, regionWithRangeInfo.EndKey
+			if bytes.Compare(tableStart, left) >= 0 {
+				left = tableStart
+			}
+			if bytes.Compare(tableEnd, right) <= 0 || len(right) == 0 {
+				right = tableEnd
+			}
+			fullRange := kv.KeyRange{StartKey: left, EndKey: right}
 			tasks = append(tasks, &copTask{
-				region: region,
-				ranges: ranges.slice(i, nextI),
+				region: regionWithRangeInfo.Region,
+				// TiFlash only support full range scan for the region, ignore the real ranges
+				// does not affect the correctness because we already merge the access range condition
+				// into filter condition in `getOriginalPhysicalTableScan`
+				ranges: &copRanges{mid: []kv.KeyRange{fullRange}},
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
-			i = nextI
 		}
 	}
 
@@ -257,7 +291,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	return tasks, nil
 }
 
-func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges)) error {
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
@@ -274,7 +308,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			fn(loc.Region, ranges)
+			fn(loc, ranges)
 			break
 		}
 
@@ -286,7 +320,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 				StartKey: r.StartKey,
 				EndKey:   loc.EndKey,
 			}
-			fn(loc.Region, taskRanges)
+			fn(loc, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
@@ -296,7 +330,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		} else {
 			// rs[i] is not in the region.
 			taskRanges := ranges.slice(0, i)
-			fn(loc.Region, taskRanges)
+			fn(loc, taskRanges)
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
@@ -309,7 +343,7 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 	ranges := copRanges{mid: keyRanges}
 
 	var ret []kv.KeyRange
-	appendRange := func(region RegionVerID, ranges *copRanges) {
+	appendRange := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 		for i := 0; i < ranges.len(); i++ {
 			ret = append(ret, ranges.at(i))
 		}
@@ -356,6 +390,8 @@ type copIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
+
+	minCommitTSPushed
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -367,6 +403,7 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
+	clientHelper
 
 	memTracker *memory.Tracker
 
@@ -473,6 +510,12 @@ func (it *copIterator) open(ctx context.Context) {
 			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
+			clientHelper: clientHelper{
+				LockResolver:      it.store.lockResolver,
+				RegionCache:       it.store.regionCache,
+				minCommitTSPushed: &it.minCommitTSPushed,
+				Client:            it.store.client,
+			},
 
 			memTracker: it.memTracker,
 
@@ -644,7 +687,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	})
 
-	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
 		Tp:     worker.req.Tp,
 		Data:   worker.req.Data,
@@ -657,12 +699,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ScanDetail:     true,
 	})
 	startTime := time.Now()
-	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, task.storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
-	task.storeAddr = sender.storeAddr
+	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
@@ -675,6 +717,68 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Handles the response for non-streaming copTask.
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil, costTime)
+}
+
+type minCommitTSPushed struct {
+	data map[uint64]struct{}
+	sync.RWMutex
+}
+
+func (m *minCommitTSPushed) Update(from []uint64) {
+	m.Lock()
+	for _, v := range from {
+		m.data[v] = struct{}{}
+	}
+	m.Unlock()
+}
+
+func (m *minCommitTSPushed) Get() []uint64 {
+	m.RLock()
+	defer m.RUnlock()
+	if len(m.data) == 0 {
+		return nil
+	}
+
+	ret := make([]uint64, 0, len(m.data))
+	for k := range m.data {
+		ret = append(ret, k)
+	}
+	return ret
+}
+
+// clientHelper wraps LockResolver and RegionRequestSender.
+// It's introduced to support the new lock resolving pattern in the large transaction.
+// In the large transaction protocol, sending requests and resolving locks are
+// context-dependent. For example, when a send request meets a secondary lock, we'll
+// call ResolveLock, and if the lock belongs to a large transaction, we may retry
+// the request. If there is no context information about the resolved locks, we'll
+// meet the secondary lock again and run into a deadloop.
+type clientHelper struct {
+	*LockResolver
+	*RegionCache
+	*minCommitTSPushed
+	Client
+}
+
+// ResolveLocks wraps the ResolveLocks function and store the resolved result.
+func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
+	msBeforeTxnExpired, resolvedLocks, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	if err != nil {
+		return msBeforeTxnExpired, err
+	}
+	if len(resolvedLocks) > 0 {
+		ch.minCommitTSPushed.Update(resolvedLocks)
+		return 0, nil
+	}
+	return msBeforeTxnExpired, nil
+}
+
+// SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
+func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, string, error) {
+	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
+	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
+	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
+	return resp, ctx, sender.storeAddr, err
 }
 
 const (
@@ -786,7 +890,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, worker.req.StartTs, []*Lock{NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}

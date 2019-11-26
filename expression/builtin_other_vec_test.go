@@ -18,14 +18,23 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
-	ast.In:       {},
-	ast.SetVar:   {},
-	ast.GetVar:   {},
+	ast.SetVar: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+	},
+	ast.GetVar: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
 	ast.BitCount: {},
-	ast.GetParam: {},
+	ast.GetParam: {
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt},
+			geners: []dataGenerator{&rangeInt64Gener{0, 10}},
+		},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFunc(c *C) {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -462,6 +463,48 @@ func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
 	tk.MustQuery("select * from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("test t 0 PRIMARY 1 a <nil>  0", "test t 1 k1 1 b <nil>  1"))
 }
 
+func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP DATABASE IF EXISTS `sharding_info_test_db`")
+	tk.MustExec("CREATE DATABASE `sharding_info_test_db`")
+
+	assertShardingInfo := func(tableName string, expectInfo interface{}) {
+		querySQL := fmt.Sprintf("select tidb_row_id_sharding_info from information_schema.tables where table_schema = 'sharding_info_test_db' and table_name = '%s'", tableName)
+		info := tk.MustQuery(querySQL).Rows()[0][0]
+		if expectInfo == nil {
+			c.Assert(info, Equals, "<nil>")
+		} else {
+			c.Assert(info, Equals, expectInfo)
+		}
+	}
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t1` (a int)")
+	assertShardingInfo("t1", "NOT_SHARDED")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t2` (a int key)")
+	assertShardingInfo("t2", "NOT_SHARDED(PK_IS_HANDLE)")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t3` (a int) SHARD_ROW_ID_BITS=4")
+	assertShardingInfo("t3", "SHARD_BITS=4")
+
+	tk.MustExec("CREATE VIEW `sharding_info_test_db`.`tv` AS select 1")
+	assertShardingInfo("tv", nil)
+
+	testFunc := func(dbName string, expectInfo interface{}) {
+		dbInfo := model.DBInfo{Name: model.NewCIStr(dbName)}
+		tableInfo := model.TableInfo{}
+
+		info := infoschema.GetShardingInfo(&dbInfo, &tableInfo)
+		c.Assert(info, Equals, expectInfo)
+	}
+
+	testFunc("information_schema", nil)
+	testFunc("mysql", nil)
+	testFunc("performance_schema", nil)
+	testFunc("uucc", "NOT_SHARDED")
+
+	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
+}
+
 func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Prepare slow log file.
@@ -597,6 +640,7 @@ func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 	// mock store stats stat
+	mockAddr := strings.TrimPrefix(server.URL, "http://")
 	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
 		return &helper.StoresStat{
 			Count: 1,
@@ -608,7 +652,7 @@ func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
 						State:         0,
 						StateName:     "Up",
 						Version:       "4.0.0-alpha",
-						StatusAddress: "127.0.0.1:20160",
+						StatusAddress: mockAddr,
 						GitHash:       "mock-tikv-githash",
 					},
 				},
@@ -623,16 +667,74 @@ func (s *testTableSuite) TestTiDBClusterInfo(c *C) {
 		}{GitHash: "mock-pd-githash"}, nil
 	}))
 
-	pdAddr := strings.TrimPrefix(server.URL, "http://")
 	store := &mockStore{
 		s.store.(tikv.Storage),
-		pdAddr,
+		mockAddr,
 	}
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select * from information_schema.tidb_cluster_info").Check(testkit.Rows(
-		"1 tidb tidb-0 :4000 :10080 5.7.25-TiDB-None None",
-		"2 pd pd-0 "+pdAddr+" "+pdAddr+" 4.0.0-alpha mock-pd-githash",
-		"3 tikv tikv-0 127.0.0.1:20160 127.0.0.1:20160 4.0.0-alpha mock-tikv-githash",
+		"tidb :4000 :10080 5.7.25-TiDB-None None",
+		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
+		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
+	))
+
+	instances := []string{
+		"pd,127.0.0.1:11080," + mockAddr,
+		"tidb,127.0.0.1:11080," + mockAddr,
+		"tikv,127.0.0.1:11080," + mockAddr,
+	}
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
+	var mockConfig = func() (map[string]interface{}, error) {
+		configuration := map[string]interface{}{
+			"key1": "value1",
+			"key2": map[string]string{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+			},
+			"key3": map[string]interface{}{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+				"key4": map[string]string{
+					"nest3": "n-value4",
+					"nest4": "n-value5",
+				},
+			},
+		}
+		return configuration, nil
+	}
+	// pd config
+	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	// TiDB/TiKV config
+	router.Handle("/config", fn.Wrap(mockConfig))
+	tk.MustQuery("select * from information_schema.tidb_cluster_config").Check(testkit.Rows(
+		"pd 127.0.0.1:11080 key1 value1",
+		"pd 127.0.0.1:11080 key2.nest1 n-value1",
+		"pd 127.0.0.1:11080 key2.nest2 n-value2",
+		"pd 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"pd 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"pd 127.0.0.1:11080 key3.nest1 n-value1",
+		"pd 127.0.0.1:11080 key3.nest2 n-value2",
+		"tidb 127.0.0.1:11080 key1 value1",
+		"tidb 127.0.0.1:11080 key2.nest1 n-value1",
+		"tidb 127.0.0.1:11080 key2.nest2 n-value2",
+		"tidb 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"tidb 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"tidb 127.0.0.1:11080 key3.nest1 n-value1",
+		"tidb 127.0.0.1:11080 key3.nest2 n-value2",
+		"tikv 127.0.0.1:11080 key1 value1",
+		"tikv 127.0.0.1:11080 key2.nest1 n-value1",
+		"tikv 127.0.0.1:11080 key2.nest2 n-value2",
+		"tikv 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
+		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
+	))
+	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.tidb_cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
+		"pd key3.key4.nest4 n-value5",
+		"tidb key3.key4.nest4 n-value5",
+		"tikv key3.key4.nest4 n-value5",
 	))
 }
 
@@ -652,4 +754,18 @@ func (s *testTableSuite) TestReloadDropDatabase(c *C) {
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableNotExists, err), IsTrue)
 	_, ok := is.TableByID(t2.Meta().ID)
 	c.Assert(ok, IsFalse)
+}
+
+func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tbl.Meta().TiFlashReplica.Available = true
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1"))
 }

@@ -186,6 +186,8 @@ func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
 func GenHintsFromPhysicalPlan(p Plan) string {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
+	case *Explain:
+		return GenHintsFromPhysicalPlan(pp.TargetPlan)
 	case *Update:
 		hints = genHintsFromPhysicalPlan(pp.SelectPlan, typeUpdate)
 	case *Delete:
@@ -245,13 +247,15 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	for _, child := range children {
-		if child.SelectBlockOffset() == -1 {
+		blockOffset := child.SelectBlockOffset()
+		if blockOffset == -1 {
 			continue
 		}
 		var dbName, tableName *model.CIStr
 		if child.SelectBlockOffset() != parentOffset {
 			hintTable := sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
-			dbName, tableName = &hintTable.DBName, &hintTable.TableName
+			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
 			dbName, tableName = extractTableAsName(child)
 		}
@@ -259,7 +263,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 			continue
 		}
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
+			QBName:   generateQBName(nodeType, blockOffset),
 			HintName: model.NewCIStr(joinType),
 			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
 		})
@@ -313,7 +317,9 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 	case *PhysicalIndexJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), HintINLMJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+	case *PhysicalIndexHashJoin:
+		res = append(res, getJoinHints(p.SCtx(), HintINLHJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
 }

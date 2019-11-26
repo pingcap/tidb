@@ -70,6 +70,7 @@ type Config struct {
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
@@ -88,6 +89,8 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// AlterPrimaryKey is used to control alter primary key feature.
+	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -221,11 +224,12 @@ type Security struct {
 // This is needed only because logging hasn't been set up at the time we parse the config file.
 // This should all be ripped out once strict config checking is made the default behavior.
 type ErrConfigValidationFailed struct {
-	err string
+	confFile       string
+	UndecodedItems []string
 }
 
 func (e *ErrConfigValidationFailed) Error() string {
-	return e.err
+	return fmt.Sprintf("config file %s contained unknown configuration options: %s", e.confFile, strings.Join(e.UndecodedItems, ", "))
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -369,11 +373,14 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
-	// EnableArrow indicate the data encode in arrow format.
-	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
+	// EnableChunkRPC indicate the data encode in chunk format for coprocessor requests.
+	EnableChunkRPC bool `toml:"enable-chunk-rpc" json:"enable-chunk-rpc"`
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
+	// If a store has been up to the limit, it will return error for successive request to
+	// prevent the store occupying too much token in dispatching level.
+	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
 }
 
 // Binlog is the config for binlog.
@@ -426,7 +433,9 @@ var defaultConf = Config{
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
+	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
+	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
@@ -499,9 +508,10 @@ var defaultConf = Config{
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
 
-		EnableArrow: true,
+		EnableChunkRPC: true,
 
 		RegionCacheTTL: 600,
+		StoreLimit:     0,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
@@ -637,7 +647,7 @@ func (c *Config) Load(confFile string) error {
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())
 		}
-		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+		err = &ErrConfigValidationFailed{confFile, undecodedItems}
 	}
 
 	return err

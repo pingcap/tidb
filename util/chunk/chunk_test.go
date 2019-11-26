@@ -100,7 +100,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	row := chk.GetRow(0)
 	c.Assert(row.GetFloat32(0), check.Equals, f32Val)
 	c.Assert(row.GetTime(2).Compare(tVal), check.Equals, 0)
-	// fsp no longer maintain in arrow
+	// fsp is no longer maintained in chunk
 	c.Assert(row.GetDuration(3, 0).Duration, check.DeepEquals, durVal.Duration)
 	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
 	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
