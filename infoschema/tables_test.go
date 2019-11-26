@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/server/rpcserver"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -93,12 +93,12 @@ func (s *testClusterTableSuite) SetUpSuite(c *C) {
 func setUpRPCService(c *C, addr string) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
-	server := rpcserver.CreateTiDBRPCServer(config.GetGlobalConfig().Security)
+	srv := server.CreateTiDBRPCServer(config.GetGlobalConfig().Security)
 	go func() {
-		err = server.Serve(lis)
+		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	return server
+	return srv
 }
 
 func setUpMockPDHTTPSercer() (*httptest.Server, string) {
@@ -829,16 +829,16 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	// Currently only TiDB implement this.
 	// TODO: fix me after tikv/pd server support this.
 	typeMap := map[string]struct{}{
-		"tidb": struct{}{},
+		"tidb": {},
 	}
 	addrMap := map[string]struct{}{
-		"127.0.0.1:10080": struct{}{},
+		"127.0.0.1:10080": {},
 	}
 	nameMap := map[string]struct{}{
-		"cpu":  struct{}{},
-		"mem":  struct{}{},
-		"net":  struct{}{},
-		"disk": struct{}{},
+		"cpu":  {},
+		"mem":  {},
+		"net":  {},
+		"disk": {},
 	}
 	for _, row := range rows {
 		tp := row[0].(string)
