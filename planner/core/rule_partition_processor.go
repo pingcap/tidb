@@ -145,7 +145,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi.Type == model.PartitionTypeHash {
 		if table, ok := ds.table.(partitionTable); ok {
 			pe := table.PartitionExpr().Expr
-			val, ok := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
+			val, ok := expression.FastLocateHashPartition2(ds.SCtx(), filterConds, pe)
 			if ok {
 				idx := val % int64(pi.Num)
 				newDataSource := *ds

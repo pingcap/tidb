@@ -23,8 +23,6 @@ import (
 
 type hashPartitionPruner struct {
 	unionSet    *disjointset.IntSet // unionSet stores the relations like col_i = col_j
-	visited     []bool
-	columns     []*Column
 	constantMap []*Constant
 	conditions  []Expression
 	colMapper   map[int64]int
@@ -41,12 +39,11 @@ func (p *hashPartitionPruner) insertCol(col *Column) {
 	if !ok {
 		p.numColumn += 1
 		p.colMapper[col.UniqueID] = len(p.colMapper)
-		p.columns = append(p.columns, col)
 	}
 }
 
 func (p *hashPartitionPruner) reduceColumnEQ() bool {
-	p.unionSet = disjointset.NewIntSet(len(p.columns))
+	p.unionSet = disjointset.NewIntSet(p.numColumn)
 	for i := range p.conditions {
 		if fun, ok := p.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -81,7 +78,13 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 }
 
 func (p *hashPartitionPruner) reduceConstantEQ() {
-
+	for _, con := range p.conditions {
+		col, cond := validEqualCond(con)
+		if col != nil {
+			id := p.getColID(col)
+			p.constantMap[id] = cond
+		}
+	}
 }
 
 func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bool) {
@@ -128,27 +131,26 @@ func newHashPartitionPruner() *hashPartitionPruner {
 	return pruner
 }
 
-func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) {
-	/*
-		p.ctx = ctx
-		cols := make([]*Column, 0, len(conds))
-		for _, cond := range conds {
-			p.conditions = append(p.conditions, SplitCNFItems(cond)...)
-			cols = append(cols, ExtractColumns(cond)...)
-		}
-		cols = append(cols, ExtractColumns(piExpr)...)
-		for _, col := range cols {
-			p.insertCol(col)
-		}
-		p.constantMap = make([]*Constant, 0, p.numColumn)
+func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool) {
+	p.ctx = ctx
+	cols := make([]*Column, 0, len(conds))
+	for _, cond := range conds {
+		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
+		cols = append(cols, ExtractColumns(cond)...)
+	}
+	cols = append(cols, ExtractColumns(piExpr)...)
+	for _, col := range cols {
+		p.insertCol(col)
+	}
+	p.constantMap = make([]*Constant, p.numColumn, p.numColumn)
+	p.reduceConstantEQ()
+	ok := p.reduceColumnEQ()
+	if !ok {
+		return 0, false
+	}
+	return p.tryEvalPartitionExpr(piExpr)
+}
 
-		ok := p.reduceColumnEQ()
-		if !ok {
-			return 0, false
-		}
-		return p.tryEvalPartitionExpr(piExpr)
-	*/
-	//solver := &propConstSolver{}
-	//solver.colMapper = make(map[int64]int)
-
+func FastLocateHashPartition2(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool) {
+	return newHashPartitionPruner().solve(ctx, conds, piExpr)
 }
