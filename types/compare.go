@@ -111,9 +111,9 @@ func CompareFloat64(x, y float64) int {
 	return 1
 }
 
-// CompareFloat64Fixed returns an integer comparing the float64 x to y.
+// CompareFloat64WithEps returns an integer comparing the float64 x to y.
 // It treat two float64 is equal if the difference of them less than eps.
-func CompareFloat64Fixed(x, y, eps float64) int {
+func CompareFloat64WithEps(x, y, eps float64) int {
 	if x == y || math.Abs(x-y) < eps {
 		return 0
 	}

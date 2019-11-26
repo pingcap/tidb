@@ -2460,7 +2460,7 @@ func approximateCompareReal(lhs float64, lhsFt *types.FieldType, rhs float64, rh
 			decimal = rhsDecimal
 		}
 		eps := 5.0 / math.Pow10(decimal+1)
-		return types.CompareFloat64Fixed(lhs, rhs, eps)
+		return types.CompareFloat64WithEps(lhs, rhs, eps)
 	}
 	return types.CompareFloat64(lhs, rhs)
 }
