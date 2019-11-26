@@ -426,8 +426,6 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-var indexLookupDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexLookupDistSQLTracker")
-
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
