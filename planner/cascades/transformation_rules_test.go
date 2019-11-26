@@ -75,12 +75,12 @@ func testGroupToString(input []string, output []struct {
 }
 
 func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
-			rulePushAggDownGather,
+			NewRulePushAggDownGather(),
 		},
 		memo.OperandDataSource: {
-			ruleEnumeratePaths,
+			NewRuleEnumeratePaths(),
 		},
 	})
 	defer func() {
@@ -96,17 +96,17 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandSelection: {
-			rulePushSelDownTableScan,
-			rulePushSelDownTableGather,
-			rulePushSelDownSort,
-			rulePushSelDownProjection,
-			rulePushSelDownAggregation,
-			rulePushSelDownJoin,
+			NewRulePushSelDownTableScan(),
+			NewRulePushSelDownTableGather(),
+			NewRulePushSelDownSort(),
+			NewRulePushSelDownProjection(),
+			NewRulePushSelDownAggregation(),
+			NewRulePushSelDownJoin(),
 		},
 		memo.OperandDataSource: {
-			ruleEnumeratePaths,
+			NewRuleEnumeratePaths(),
 		},
 	})
 	defer func() {
@@ -122,12 +122,12 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
-			ruleTransformLimitToTopN,
+			NewRuleTransformLimitToTopN(),
 		},
 		memo.OperandDataSource: {
-			ruleEnumeratePaths,
+			NewRuleEnumeratePaths(),
 		},
 	})
 	var input []string
