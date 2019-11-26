@@ -78,4 +78,4 @@ go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
 
-replace github.com/pingcap/parser => github.com/ichn-hu/parser v0.0.0-20191126032523-c86a2b0ecc85
+replace github.com/pingcap/parser => github.com/ichn-hu/parser v0.0.0-20191126084014-f9d587cb1115
