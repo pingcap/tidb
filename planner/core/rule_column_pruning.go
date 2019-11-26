@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -218,7 +217,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
-	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
+	if ds.schema.Len() == 0 {
 		if handleCol == nil {
 			handleCol = ds.newExtraHandleSchemaCol()
 			handleColInfo = model.NewExtraHandleColInfo()
