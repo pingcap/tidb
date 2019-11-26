@@ -670,6 +670,7 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	binloginfo.DisableSkipBinlogFlag()
+	binloginfo.WaitBinlogRecover()
 }
 
 type tableFlashReplicaInfo struct {

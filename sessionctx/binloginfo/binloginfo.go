@@ -118,6 +118,35 @@ func DisableSkipBinlogFlag() {
 	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
 }
 
+// SkipBinlog gets the skipBinlog flag.
+func SkipBinlog() bool {
+	return atomic.LoadUint32(&skipBinlog) > 0
+}
+
+var committerCounter int32
+
+// WaitBinlogRecover returns when all committing transaction finished.
+func WaitBinlogRecover() {
+	logutil.BgLogger().Warn("[binloginfo] start waiting for binlog recovering")
+	for {
+		if atomic.LoadInt32(&committerCounter) == 0 {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+}
+
+// AddOneCommitter adds one committer to committerCounter.
+func AddOneCommitter() {
+	atomic.AddInt32(&committerCounter, 1)
+}
+
+// RemoveOneCommitter removes one committer from committerCounter.
+func RemoveOneCommitter() {
+	atomic.AddInt32(&committerCounter, -1)
+}
+
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
 // up and find config.Binlog.IgnoreError is true.
 func SetIgnoreError(on bool) {

@@ -1022,12 +1022,24 @@ func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte
 }
 
 func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {
+	skip := binloginfo.SkipBinlog()
+	if skip {
+		binloginfo.AddOneCommitter()
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	defer func() {
+		if skip {
+			wg.Wait()
+			binloginfo.RemoveOneCommitter()
+		}
+	}()
 	err := c.execute(ctx)
 	if err != nil {
-		c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0)
+		c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0, &wg)
 	} else {
 		c.txn.commitTS = c.commitTS
-		c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
+		c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS), &wg)
 	}
 	return errors.Trace(err)
 }
@@ -1181,7 +1193,7 @@ func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan error {
 	return ch
 }
 
-func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.BinlogType, commitTS int64) {
+func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.BinlogType, commitTS int64, wg *sync.WaitGroup) {
 	if !c.shouldWriteBinlog() {
 		return
 	}
@@ -1197,6 +1209,7 @@ func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.Bin
 				zap.Error(err))
 		}
 		logutil.Eventf(ctx, "finish write finish binlog")
+		wg.Done()
 	}()
 }
 

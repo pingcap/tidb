@@ -237,6 +237,15 @@ func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	defer resp.Body.Close()
 }
 
+func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover"))
+	defer resp.Body.Close()
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
 func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
