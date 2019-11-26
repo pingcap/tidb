@@ -1098,10 +1098,10 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if timeNum > MaxDuration && timeNum < 10000000000 {
 			// mysql return max in no strict sql mode.
 			ret.SetValue(Duration{Duration: MaxTime, Fsp: 0})
-			return ret, ErrInvalidTimeFormat.GenWithStack("Incorrect time value: '%s'", timeStr)
+			return ret, ErrWrongValue.GenWithStackByArgs(TimeStr, timeStr)
 		}
 		if timeNum < -MaxDuration {
-			return ret, ErrInvalidTimeFormat.GenWithStack("Incorrect time value: '%s'", timeStr)
+			return ret, ErrWrongValue.GenWithStackByArgs(TimeStr, timeStr)
 		}
 		t, err := ParseDuration(sc, timeStr, fsp)
 		ret.SetValue(t)
@@ -1195,10 +1195,10 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 				if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
 					// fix https://github.com/pingcap/tidb/issues/3895
 					// fix https://github.com/pingcap/tidb/issues/5532
-					sc.AppendWarning(ErrTruncated)
+					sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 					err = nil
 				} else {
-					err = sc.HandleTruncate(ErrTruncated)
+					err = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 				}
 			}
 		}
