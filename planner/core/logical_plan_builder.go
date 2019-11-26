@@ -197,7 +197,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			if name.Hidden {
 				continue
 			}
-			name.OrigTblName = name.TblName
 			if x.AsName.L != "" {
 				name.TblName = x.AsName
 			}
@@ -582,7 +581,7 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -592,16 +591,21 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
-func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
+func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, joinTp ast.JoinType, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	if joinTp == ast.LeftJoin {
+		resetNotNullFlag(rsc, 0, rsc.Len())
+	} else if joinTp == ast.RightJoin {
+		resetNotNullFlag(lsc, 0, lsc.Len())
+	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
-	if rightJoin {
+	if joinTp == ast.RightJoin {
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -721,19 +725,18 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
-	if origField.AsName.L != "" {
-		colName = origField.AsName
+	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+	if origField.AsName.L == "" {
+		colName = colNameField.Name.Name
 	} else {
-		colName = origColName
+		colName = origField.AsName
 	}
 	if tblName.L == "" {
 		tblName = name.TblName
+	} else {
+		tblName = colNameField.Name.Table
 	}
-	if dbName.L == "" {
-		dbName = name.DBName
-	}
-	return colName, origColName, tblName, name.OrigTblName, name.DBName
+	return
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -2544,6 +2547,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			DBName:      dbName,
 			TblName:     tableInfo.Name,
 			ColName:     col.Name,
+			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
 		})
 		newCol := &expression.Column{
