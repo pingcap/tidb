@@ -150,6 +150,7 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
+	SetSystemEndian(dagReq)
 }
 
 func canUseChunkRPC(ctx sessionctx.Context) bool {
@@ -159,22 +160,21 @@ func canUseChunkRPC(ctx sessionctx.Context) bool {
 	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
-	if !supportedAlignment() {
+	if !checkAlignment() {
 		return false
 	}
 	return true
 }
 
-// supportedAlignment checks the alignment in current system environment.
+var supportedAlignment = !(unsafe.Sizeof(types.MysqlTime{}) != 16 ||
+	unsafe.Sizeof(types.Time{}) != 20 ||
+	unsafe.Sizeof(types.MyDecimal{}) != 40)
+
+// checkAlignment checks the alignment in current system environment.
 // The alignment is influenced by system, machine and Golang version.
 // Using this function can guarantee the alignment is we want.
-func supportedAlignment() bool {
-	if unsafe.Sizeof(types.MysqlTime{}) != 16 ||
-		unsafe.Sizeof(types.Time{}) != 20 ||
-		unsafe.Sizeof(types.MyDecimal{}) != 40 {
-		return false
-	}
-	return true
+func checkAlignment() bool {
+	return supportedAlignment
 }
 
 // SetSystemEndian sets the system endian for the DAGRequest.
@@ -182,12 +182,20 @@ func SetSystemEndian(dagReq *tipb.DAGRequest) {
 	dagReq.TidbSystemEndian = GetSystemEndian()
 }
 
+var systemEndian *tipb.Endian
+
 // GetSystemEndian gets the system endian.
 func GetSystemEndian() tipb.Endian {
+	if systemEndian != nil {
+		return *systemEndian
+	}
+	systemEndian = new(tipb.Endian)
 	var i int = 0x0100
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
-		return tipb.Endian_BigEndian
+		*systemEndian = tipb.Endian_BigEndian
+	} else {
+		*systemEndian = tipb.Endian_LittleEndian
 	}
-	return tipb.Endian_LittleEndian
+	return *systemEndian
 }

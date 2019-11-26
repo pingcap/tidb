@@ -1708,7 +1708,6 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 
 	distsql.SetEncodeType(b.ctx, dagReq)
-	distsql.SetSystemEndian(dagReq)
 	return dagReq, streaming, err
 }
 

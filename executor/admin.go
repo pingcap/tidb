@@ -147,7 +147,6 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 		return nil, err
 	}
 	distsql.SetEncodeType(e.ctx, dagReq)
-	distsql.SetSystemEndian(dagReq)
 	return dagReq, nil
 }
 
@@ -252,7 +251,6 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
 	distsql.SetEncodeType(e.ctx, dagReq)
-	distsql.SetSystemEndian(dagReq)
 	return dagReq, nil
 }
 
@@ -688,7 +686,6 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
 	distsql.SetEncodeType(e.ctx, dagReq)
-	distsql.SetSystemEndian(dagReq)
 	return dagReq, nil
 }
 
