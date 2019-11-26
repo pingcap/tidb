@@ -14,8 +14,8 @@
 package server
 
 import (
-	"github.com/crazycs520/diagnostics"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -41,6 +41,6 @@ func NewRPCServer(security config.Security) *grpc.Server {
 	if s == nil {
 		s = grpc.NewServer()
 	}
-	diagnosticspb.RegisterDiagnosticsServer(s, &diagnostics.DiagnoseServer{})
+	diagnosticspb.RegisterDiagnosticsServer(s, &sysutil.DiagnoseServer{})
 	return s
 }

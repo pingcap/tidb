@@ -2084,6 +2084,7 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	}()
 
 	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	// FIXME: use session context instead of context.Background().
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
