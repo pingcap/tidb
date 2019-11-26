@@ -45,11 +45,12 @@ import (
 var _ = Suite(&testStateChangeSuite{})
 
 type testStateChangeSuite struct {
-	lease time.Duration
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	p     *parser.Parser
+	lease  time.Duration
+	store  kv.Storage
+	dom    *domain.Domain
+	se     session.Session
+	p      *parser.Parser
+	preSQL string
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
@@ -83,6 +84,10 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
+	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
+	// Using same `tk` in different goroutines may lead to data race.
+	tkInternal := testkit.NewTestKit(c, s.store)
+	tkInternal.MustExec("use test")
 
 	var checkErr error
 	testCases := []struct {
@@ -111,14 +116,26 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			currTestCaseOffset++
 		}
 		if job.SchemaState != model.StatePublic {
-			var result *testkit.Result
-			tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+			var result sqlexec.RecordSet
+			tbl2 := testGetTableByName(c, tkInternal.Se, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
-				result = tk.MustQuery("show create table t2")
+				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
+				result, checkErr = tkInternal.Exec("show create table t2")
+				if checkErr != nil {
+					return
+				}
 			} else {
-				result = tk.MustQuery("show create table t")
+				result, checkErr = tkInternal.Exec("show create table t")
+				if checkErr != nil {
+					return
+				}
 			}
-			got := result.Rows()[0][1]
+			req := result.NewChunk()
+			checkErr = result.Next(context.Background(), req)
+			if checkErr != nil {
+				return
+			}
+			got := req.GetRow(0).GetString(1)
 			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
@@ -453,7 +470,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify charset from utf8 to binary")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: cannot modify enum type column's to type int(11)")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -745,6 +762,16 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
+	sql1 := "ALTER TABLE t add primary key index_b(b);"
+	sql2 := "ALTER TABLE t add primary key index_b(c);"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1068]Multiple primary key defined")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
@@ -775,6 +802,20 @@ func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelDropPrimaryKey(c *C) {
+	s.preSQL = "ALTER TABLE t add primary key index_b(c);"
+	defer func() {
+		s.preSQL = ""
+	}()
+	sql1 := "alter table t drop primary key;"
+	sql2 := "alter table t drop primary key;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]index PRIMARY doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
@@ -793,6 +834,10 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	c.Assert(err, IsNil)
+	if len(s.preSQL) != 0 {
+		_, err := s.se.Execute(context.Background(), s.preSQL)
+		c.Assert(err, IsNil)
+	}
 	defer s.se.Execute(context.Background(), "drop table t")
 
 	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")

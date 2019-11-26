@@ -234,7 +234,7 @@ func decodePlanInfo(str string) (*planInfo, error) {
 				return nil, errors.Errorf("decode plan: %v error, invalid plan id: %v", str, v)
 			}
 			planID, err := strconv.Atoi(ids[0])
-			if err != err {
+			if err != nil {
 				return nil, errors.Errorf("decode plan: %v, plan id: %v, error: %v", str, v, err)
 			}
 			p.fields = append(p.fields, PhysicalIDToTypeString(planID)+idSeparator+ids[1])

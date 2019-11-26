@@ -16,7 +16,7 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -86,7 +86,7 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 	var conf Config
 	configFile := "log_config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
-	configFile = path.Join(path.Dir(localFile), configFile)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
@@ -155,7 +155,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.TiKVClient.RegionCacheTTL = 600
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
-	configFile = path.Join(path.Dir(localFile), configFile)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
@@ -175,6 +175,7 @@ unrecognized-option-test = true
 	_, err = f.WriteString(`
 token-limit = 0
 enable-table-lock = true
+alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
@@ -201,6 +202,7 @@ max-sql-length=1024
 
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
+	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
@@ -216,7 +218,7 @@ max-sql-length=1024
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
-	configFile = path.Join(path.Dir(localFile), "config.toml.example")
+	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
 
 	// Make sure the example config is the same as default config.
@@ -235,7 +237,7 @@ max-sql-length=1024
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = path.Join(path.Dir(localFile), certFile)
+	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -261,7 +263,7 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	c.Assert(f.Sync(), IsNil)
 
 	keyFile := "key.pem"
-	keyFile = path.Join(path.Dir(localFile), keyFile)
+	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
