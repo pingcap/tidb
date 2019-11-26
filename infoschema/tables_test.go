@@ -871,4 +871,8 @@ func (s *testClusterTableSuite) TestSelectClusterMemTable(c *C) {
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from `TIDB_CLUSTER_PROCESSLIST`")
+	tk.MustQuery("select query_time, conn_id from `TIDB_CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
+	tk.MustQuery("select digest, count(*) from `TIDB_CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 }
