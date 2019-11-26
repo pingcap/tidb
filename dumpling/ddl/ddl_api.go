@@ -463,7 +463,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 		return defaultVal, nil
 	}
 	if vv, ok := defaultVal.(string); ok {
-		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
 				return defaultVal, errors.Trace(err)
@@ -2754,7 +2754,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 				break
 			}
 		}
-		if containColumn == false {
+		if !containColumn {
 			continue
 		}
 		if columns == nil {
@@ -3919,7 +3919,7 @@ type lockTablesArg struct {
 // extractCollateFromOption take collates(may multiple) in option into consideration
 // when handle charset and collate of a column, rather than handling it separately.
 func extractCollateFromOption(def *ast.ColumnDef) []string {
-	specifiedCollates := make([]string, 0, 0)
+	var specifiedCollates []string
 	for i := 0; i < len(def.Options); i++ {
 		op := def.Options[i]
 		if op.Tp == ast.ColumnOptionCollate {
