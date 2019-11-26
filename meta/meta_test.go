@@ -97,6 +97,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = t.CreateDatabase(dbInfo)
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[meta:1007]database already exists")
 
 	v, err := t.GetDatabase(1)
 	c.Assert(err, IsNil)
@@ -131,6 +132,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = t.CreateTableOrView(1, tbInfo)
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[meta:1050]table already exists")
 
 	tbInfo.Name = model.NewCIStr("tt")
 	err = t.UpdateTable(1, tbInfo)
@@ -193,11 +195,13 @@ func (s *testSuite) TestMeta(c *C) {
 	nonExistentID := int64(1234)
 	_, err = t.GenAutoTableID(currentDBID, nonExistentID, 10)
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[meta:1146]table doesn't exist")
 	// Fail to update auto ID.
 	// The current database ID doesn't exist.
 	currentDBID = nonExistentID
 	_, err = t.GenAutoTableID(currentDBID, tid, 10)
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[meta:1049]database doesn't exist")
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
@@ -290,6 +294,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(1))
 	_, err = snapMeta.GenGlobalID()
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[structure:5]write on snapshot")
 }
 
 func (s *testSuite) TestDDL(c *C) {

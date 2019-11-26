@@ -72,9 +72,9 @@ var (
 	// ErrDBNotExists is the error for db not exists.
 	ErrDBNotExists = terror.ClassMeta.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
+	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
+	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
 )
 
 // Meta is for handling meta information in a transaction.
@@ -194,7 +194,7 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v == nil {
-		err = ErrDBNotExists
+		err = ErrDBNotExists.GenWithStack("database doesn't exist")
 	}
 	return errors.Trace(err)
 }
@@ -202,7 +202,7 @@ func (m *Meta) checkDBExists(dbKey []byte) error {
 func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v != nil {
-		err = ErrDBExists
+		err = ErrDBExists.GenWithStack("database already exists")
 	}
 	return errors.Trace(err)
 }
@@ -210,7 +210,7 @@ func (m *Meta) checkDBNotExists(dbKey []byte) error {
 func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err == nil && v == nil {
-		err = ErrTableNotExists
+		err = ErrTableNotExists.GenWithStack("table doesn't exist")
 	}
 	return errors.Trace(err)
 }
@@ -218,7 +218,7 @@ func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err == nil && v != nil {
-		err = ErrTableExists
+		err = ErrTableExists.GenWithStack("table already exists")
 	}
 	return errors.Trace(err)
 }
