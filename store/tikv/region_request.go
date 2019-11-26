@@ -113,10 +113,11 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
+	seed := req.ReplicaReadSeed
 	for {
 		switch sType {
 		case kv.TiKV:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
 		case kv.TiDBMem:
@@ -157,7 +158,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, &seed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -277,7 +278,7 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regionErr *errorpb.Error) (retry bool, err error) {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (retry bool, err error) {
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
@@ -313,6 +314,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.BgLogger().Debug("tikv reports `EpochNotMatch` retry later",
 			zap.Stringer("EpochNotMatch", epochNotMatch),
 			zap.Stringer("ctx", ctx))
+		if seed != nil {
+			*seed = *seed + 1
+		}
 		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
 		return false, errors.Trace(err)
 	}

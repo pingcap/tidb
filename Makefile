@@ -126,7 +126,12 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest gogenerate
+# Split tests for CI to run `make test` parallelly.
+test: test_part_1 test_part_2
+
+test_part_1: checklist explaintest
+
+test_part_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -155,7 +160,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=error; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 

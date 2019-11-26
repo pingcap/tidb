@@ -17,7 +17,6 @@ package mock
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -43,7 +42,6 @@ type Context struct {
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
 	sessionVars *variable.SessionVars
-	mux         sync.Mutex // fix data race in ddl test.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	sm          util.SessionManager

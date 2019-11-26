@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/rpcserver"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -281,8 +280,7 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 	grpcL := m.Match(cmux.Any())
 
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = rpcserver.CreateTiDBRPCServer()
-	//s.grpcServer = mocktikv.CreateTiDBRPCServer()
+	s.grpcServer = NewRPCServer(s.cfg.Security)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)

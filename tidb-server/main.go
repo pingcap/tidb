@@ -17,8 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/rpcserver"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"os"
 	"runtime"
 	"strconv"
@@ -50,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util/logutil"
@@ -227,7 +226,7 @@ func registerStores() {
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = kvstore.Register("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
-	mocktikv.TiDBRPCServerCoprocessorHandler = rpcserver.HandleCopDAGRequest
+	mocktikv.TiDBRPCServerCoprocessorHandler = server.HandleCopDAGRequest
 }
 
 func registerMetrics() {
@@ -432,6 +431,9 @@ func overrideConfig() {
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
+	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = cfg.Host
+	}
 	var err error
 	if actualFlags[nmPort] {
 		var p int
@@ -587,7 +589,7 @@ func createServer() {
 	terror.MustNil(err, closeDomainAndStorage)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
-	rpcserver.SetGlobalDomain(dom)
+	server.SetGlobalDomain(dom)
 }
 
 func serverShutdown(isgraceful bool) {

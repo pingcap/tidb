@@ -1309,7 +1309,11 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	tableCharset, tableCollate := findTableOptionCharsetAndCollate(s.Options)
+	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
+	if err != nil {
+		return nil, err
+	}
+
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, dbCharset, dbCollate)
 	if err != nil {
@@ -1326,6 +1330,8 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tbInfo.Collate = tableCollate
+	tbInfo.Charset = tableCharset
 
 	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
@@ -1348,7 +1354,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		tbInfo.Partition = pi
 	}
 
-	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1759,32 +1764,6 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, 
 	return
 }
 
-func findTableOptionCharsetAndCollate(options []*ast.TableOption) (tableCharset, tableCollate string) {
-	var findCnt int
-	for i := len(options) - 1; i >= 0; i-- {
-		op := options[i]
-		if len(tableCharset) == 0 && op.Tp == ast.TableOptionCharset {
-			// find the last one.
-			tableCharset = op.StrValue
-			findCnt++
-			if findCnt == 2 {
-				break
-			}
-			continue
-		}
-		if len(tableCollate) == 0 && op.Tp == ast.TableOptionCollate {
-			// find the last one.
-			tableCollate = op.StrValue
-			findCnt++
-			if findCnt == 2 {
-				break
-			}
-			continue
-		}
-	}
-	return tableCharset, tableCollate
-}
-
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1793,10 +1772,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
-		case ast.TableOptionCharset:
-			tbInfo.Charset = op.StrValue
-		case ast.TableOptionCollate:
-			tbInfo.Collate = op.StrValue
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
@@ -1815,7 +1790,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
 		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
 	}
-
 	return nil
 }
 
@@ -1829,40 +1803,37 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
-	charsets := make([]string, 0, len(options))
-	collates := make([]string, 0, len(options))
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			charsets = append(charsets, opt.StrValue)
+			info, err := charset.GetCharsetDesc(opt.StrValue)
+			if err != nil {
+				return "", "", err
+			}
+			if len(chs) == 0 {
+				chs = info.Name
+			} else if chs != info.Name {
+				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
+			}
+			if len(coll) == 0 {
+				coll = info.DefaultCollation
+			}
 		case ast.TableOptionCollate:
-			collates = append(collates, opt.StrValue)
-		}
-	}
-
-	if len(charsets) > 1 {
-		return "", "", ErrConflictingDeclarations.GenWithStackByArgs(charsets[0], charsets[1])
-	}
-	if len(charsets) == 1 {
-		if charsets[0] == "" {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
-		}
-		ca = charsets[0]
-	}
-	if len(collates) != 0 {
-		for i := range collates {
-			if collates[i] == "" {
-				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
+			info, err := charset.GetCollationByName(opt.StrValue)
+			if err != nil {
+				return "", "", err
 			}
-			if len(ca) != 0 && !charset.ValidCharsetAndCollation(ca, collates[i]) {
-				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(collates[i], ca)
+			if len(chs) == 0 {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
+			coll = info.Name
 		}
-		co = collates[len(collates)-1]
 	}
 	return
 }
@@ -2467,10 +2438,49 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
-	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
-		return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	switch origin.Tp {
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		switch to.Tp {
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		default:
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch to.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		default:
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeEnum:
+		if origin.Tp != to.Tp {
+			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		if len(to.Elems) < len(origin.Elems) {
+			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		for index, originElem := range origin.Elems {
+			toElem := to.Elems[index]
+			if originElem != toElem {
+				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+		}
+	case mysql.TypeNewDecimal:
+		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
+			return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+		}
+	default:
+		if origin.Tp != to.Tp {
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	}
+
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -2479,9 +2489,6 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	if err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate); err != nil {
-		return errors.Trace(err)
-	}
 
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
@@ -2489,43 +2496,9 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	switch origin.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch to.Tp {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return nil
-		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch to.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return nil
-		}
-	case mysql.TypeEnum:
-		if origin.Tp == to.Tp {
-			if len(to.Elems) < len(origin.Elems) {
-				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
-			for index, originElem := range origin.Elems {
-				toElem := to.Elems[index]
-				if originElem != toElem {
-					msg := fmt.Sprintf("can't change enum value %s to %s", originElem, toElem)
-					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-				}
-			}
-			return nil
-		}
-		msg := fmt.Sprintf("can't change enum type to %s", to.String())
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	default:
-		if origin.Tp == to.Tp {
-			return nil
-		}
-	}
-	msg := fmt.Sprintf(":type not match, before: %v, after: %v", origin.Tp, to.Tp)
-	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+
+	err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate)
+	return errors.Trace(err)
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
@@ -3611,7 +3584,8 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
 
 		}
-		if indexInfo == nil {
+		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+		if indexInfo == nil && !t.Meta().PKIsHandle {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
 		}
 		if t.Meta().PKIsHandle {

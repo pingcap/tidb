@@ -11,13 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rpcserver
+package server
 
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/sysutil"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
@@ -27,35 +31,43 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
-var globalDomain *domain.Domain
-
-// SetGlobalDomain uses to set global domain, it's for avoid cycle import.
-func SetGlobalDomain(do *domain.Domain) {
-	globalDomain = do
-}
-
-// CreateTiDBRPCServer creates a TiDB rpc server.
-func CreateTiDBRPCServer() *grpc.Server {
+// NewRPCServer creates a new rpc server.
+func NewRPCServer(security config.Security) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in RPC server", zap.Any("stack", v))
+			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
 		}
 	}()
-	s := grpc.NewServer()
-	srv := &tidbRPCServer{}
-	tikvpb.RegisterTikvServer(s, srv)
+
+	var s *grpc.Server
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err == nil {
+			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
+		}
+	}
+	if s == nil {
+		s = grpc.NewServer()
+	}
+	diagnosticspb.RegisterDiagnosticsServer(s, &rpcServer{})
 	return s
 }
 
-// tidbRPCServer is TiDB RPC Server, it reuse the TikvServer interface, but only support the Coprocessor interface now.
-type tidbRPCServer struct {
+// rpcServer is TiDB RPC Server, it reuse the TikvServer interface, but only support the Coprocessor interface now.
+// rpcServer contains below 2 services:
+// 1. Diagnose service, it's used for SQL diagnose.
+// 2. Coprocessor service, it reuse the TikvServer interface, but only support the Coprocessor interface now.
+// Coprocessor service will handle the cop task from other TiDB server. Currently, it's only use for read the cluster memory table.
+type rpcServer struct {
+	sysutil.DiagnoseServer
 	tikvpb.TikvServer
 }
 
 // Coprocessor implements the TiKVServer interface.
-func (c *tidbRPCServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (resp *coprocessor.Response, err error) {
+func (c *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (resp *coprocessor.Response, err error) {
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
@@ -63,12 +75,8 @@ func (c *tidbRPCServer) Coprocessor(ctx context.Context, in *coprocessor.Request
 			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
 		}
 	}()
-	resp = c.handleCopDAGRequest(ctx, in)
+	resp = HandleCopDAGRequest(ctx, in)
 	return resp, nil
-}
-
-func (c *tidbRPCServer) handleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
-	return HandleCopDAGRequest(ctx, req)
 }
 
 // HandleCopDAGRequest handles the cop dag request. It's export for mockTiKV to redirect request.
@@ -101,4 +109,11 @@ func createSession() (session.Session, error) {
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
 	se.SetSessionManager(util.GetglobalSessionManager())
 	return se, nil
+}
+
+var globalDomain *domain.Domain
+
+// SetGlobalDomain uses to set global domain, it's for avoid cycle import.
+func SetGlobalDomain(do *domain.Domain) {
+	globalDomain = do
 }
