@@ -52,7 +52,6 @@ func (x *ecbEncrypter) CryptBlocks(dst, src []byte) {
 		src = src[x.blockSize:]
 		dst = dst[x.blockSize:]
 	}
-	return
 }
 
 // newECBEncrypter creates an AES encrypter with ecb mode.
