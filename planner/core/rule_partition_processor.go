@@ -14,7 +14,7 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/errors"
+	"errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -98,7 +98,37 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi == nil {
 		return ds, nil
 	}
+	partitionDefs := ds.table.Meta().Partition.Definitions
 
+	filterConds := ds.allConds
+
+	if pi.Type == model.PartitionTypeHash {
+		if table, ok := ds.table.(partitionTable); ok {
+			pExpr, err:= table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
+			if err != nil {
+				return nil, err
+			}
+			pe := pExpr.Expr
+			val, ok := expression.FastLocateHashPartition2(ds.SCtx(), filterConds, pe)
+			if ok {
+				idx := val % int64(pi.Num)
+				newDataSource := *ds
+				newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+				newDataSource.isPartition = true
+				newDataSource.physicalTableID = pi.Definitions[idx].ID
+				// There are many expression nodes in the plan tree use the original datasource
+				// id as FromID. So we set the id of the newDataSource with the original one to
+				// avoid traversing the whole plan tree to update the references.
+				newDataSource.id = ds.id
+				newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
+				pl := &newDataSource
+				return pl, nil
+			}
+		}
+	}
+
+	// Rewrite data source to union all partitions, during which we may prune some
+	// partitions according to the filter conditions pushed to the DataSource.
 	var partitionExprs []expression.Expression
 	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {
@@ -112,13 +142,10 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
-	partitionDefs := ds.table.Meta().Partition.Definitions
 
-	filterConds := ds.allConds
 	// do preSolve with filter exprs for situations like
 	// where c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 and c3 = c1 - 10
 	// no need to do partition pruning work for "alwaysFalse" filter results
-	/*
 	if len(partitionExprs) > 3 {
 		sctx := ds.SCtx()
 		filterConds = expression.PropagateConstant(sctx, filterConds)
@@ -139,32 +166,8 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 			return tableDual, nil
 		}
 	}
-	*/
 
-	// Rewrite data source to union all partitions, during which we may prune some
-	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
-	if pi.Type == model.PartitionTypeHash {
-		if table, ok := ds.table.(partitionTable); ok {
-			pe := table.PartitionExpr().Expr
-			val, ok := expression.FastLocateHashPartition2(ds.SCtx(), filterConds, pe)
-			if ok {
-				idx := val % int64(pi.Num)
-				newDataSource := *ds
-				newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
-				newDataSource.isPartition = true
-				newDataSource.physicalTableID = pi.Definitions[idx].ID
-				// There are many expression nodes in the plan tree use the original datasource
-				// id as FromID. So we set the id of the newDataSource with the original one to
-				// avoid traversing the whole plan tree to update the references.
-				newDataSource.id = ds.id
-				newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
-				children = append(children, &newDataSource)
-				return children[0], nil
-			}
-		}
-	}
-
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
 		pruned, err := s.canBePruned(ds.SCtx(), col, expr, filterConds)
