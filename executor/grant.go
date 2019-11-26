@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -137,6 +138,9 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // checkAndInitDBPriv checks if DB scope privilege entry exists in mysql.DB.
 // If unexists, insert a new one.
 func checkAndInitDBPriv(ctx sessionctx.Context, dbName string, is infoschema.InfoSchema, user string, host string) error {
+	if !checkIfDBExist(dbName, is) {
+		return meta.ErrDBNotExists.FastGen("Database '%s' doesn't exist", dbName)
+	}
 	ok, err := dbUserExists(ctx, user, host, dbName)
 	if err != nil {
 		return err
@@ -151,6 +155,9 @@ func checkAndInitDBPriv(ctx sessionctx.Context, dbName string, is infoschema.Inf
 // checkAndInitTablePriv checks if table scope privilege entry exists in mysql.Tables_priv.
 // If unexists, insert a new one.
 func checkAndInitTablePriv(ctx sessionctx.Context, dbName, tblName string, is infoschema.InfoSchema, user string, host string) error {
+	if !checkIfTableExist(dbName, tblName, is) {
+		return meta.ErrTableNotExists.FastGen("Table '%s.%s' doesn't exist", dbName, tblName)
+	}
 	ok, err := tableUserExists(ctx, user, host, dbName, tblName)
 	if err != nil {
 		return err
@@ -188,6 +195,20 @@ func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast
 		}
 	}
 	return nil
+}
+
+func checkIfDBExist(dbName string, is infoschema.InfoSchema) bool {
+	ifExist := is.SchemaExists(model.NewCIStr(dbName))
+	return ifExist
+}
+
+func checkIfTableExist(dbName string, tableName string, is infoschema.InfoSchema) bool {
+	schema, ok := is.SchemaByName(model.NewCIStr(dbName))
+	if ok {
+		ok = is.TableExists(schema.Name, model.NewCIStr(tableName))
+		return ok
+	}
+	return false
 }
 
 // initDBPrivEntry inserts a new row into mysql.DB with empty privilege.

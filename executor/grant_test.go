@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -236,4 +237,14 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
 	tk.MustExec(`REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';`)
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
+}
+
+func (s *testSuite3) TestGrantUnexistObject(c *C)  {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'unexist'@'%';")
+	_, err := tk.Exec("grant select, update on unkown_db.* to unexist;")
+	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
+	_, err = tk.Exec("grant select, update on unkown_db.unknown_table to unexist;")
+	c.Assert(meta.ErrTableNotExists.Equal(err), IsTrue)
+	tk.MustExec("DROP USER 'unexist'@'%';")
 }
