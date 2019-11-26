@@ -680,9 +680,8 @@ func (e *IndexLookUpJoin) Close() error {
 	e.workerWg.Wait()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
 		concurrency := cap(e.resultCh)
-		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	return e.baseExecutor.Close()
 }

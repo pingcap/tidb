@@ -227,7 +227,6 @@ func (e *HashAggExec) Close() error {
 
 	if e.runtimeStats != nil {
 		var partialConcurrency, finalConcurrency int
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
 		if e.isUnparallelExec {
 			partialConcurrency = 0
 			finalConcurrency = 0
@@ -235,8 +234,8 @@ func (e *HashAggExec) Close() error {
 			partialConcurrency = cap(e.partialWorkers)
 			finalConcurrency = cap(e.finalWorkers)
 		}
-		rootStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
-		rootStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		e.runtimeStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		e.runtimeStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
 	}
 	return e.baseExecutor.Close()
 }

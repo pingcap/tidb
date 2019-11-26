@@ -293,9 +293,8 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		e.taskCh = nil
 	}
 	if e.runtimeStats != nil {
-		rootStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.baseExecutor.id.String())
 		concurrency := cap(e.joinChkResourceCh)
-		rootStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
