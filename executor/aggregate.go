@@ -997,18 +997,32 @@ func (e *groupChecker) reset() {
 	}
 }
 
+// vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
+// It is usually used for streamAgg
 type vecGroupChecker struct {
-	ctx                  sessionctx.Context
-	GroupByItems         []expression.Expression
-	groupOffset          []int
-	groupCount           int
-	curGroupID           int
+	ctx          sessionctx.Context
+	GroupByItems []expression.Expression
+
+	// groupOffset holds the index of the last row in each group of the current chunk
+	groupOffset []int
+	// groupCount is the number of groups in the current chunk
+	groupCount int
+	// curGroupID is the group obtained by the next call to getNextGroup
+	curGroupID int
+
+	// previousLastGroupKey is the groupKey of the last group of the previous chunk
 	previousLastGroupKey string
-	firstGroupKey        []byte
-	lastGroupKey         []byte
-	firstRowDatums       []types.Datum
-	lastRowDatums        []types.Datum
-	sameGroup            []bool
+	// firstGroupKey and lastGroupKey are used to store the groupKey of the first and last group of the current chunk
+	firstGroupKey []byte
+	lastGroupKey  []byte
+
+	// firstRowDatums and lastRowDatums store the results of the expression evaluation for the first and last rows of the current chunk in datum
+	// They are used to encode to get firstGroupKey and lastGroupKey
+	firstRowDatums []types.Datum
+	lastRowDatums  []types.Datum
+
+	// sameGroup is used to check whether two adjacent rows belong to the same group
+	sameGroup []bool
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
@@ -1026,37 +1040,27 @@ func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *
 // the return value areSameGroup means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, err error) {
+	// The numRows can not be zero. `FetchChild` is called before `splitIntoGroups` is called.
+	// if numRows == 0, it will be returned in `fetchChild`. See `fetchChild` for more details.
 	numRows := chk.NumRows()
+
 	e.reset()
+	e.curGroupID = 0
 	if len(e.GroupByItems) == 0 {
 		e.groupOffset = append(e.groupOffset, numRows)
 		return true, nil
 	}
 
-	if len(e.sameGroup) < numRows {
-		e.sameGroup = make([]bool, numRows)
+	if cap(e.sameGroup) < numRows {
+		e.sameGroup = make([]bool, 0, numRows)
 	}
-	if numRows != 0 {
-		e.sameGroup[0] = false
-	}
+	e.sameGroup = append(e.sameGroup, false)
 	for i := 1; i < numRows; i++ {
-		e.sameGroup[i] = true
+		e.sameGroup = append(e.sameGroup, true)
 	}
 
 	for _, item := range e.GroupByItems {
-		tp := item.GetType()
-		eType := tp.EvalType()
-		col, err := expression.GetColumn(eType, numRows)
-		if err != nil {
-			return false, err
-		}
-		defer expression.PutColumn(col)
-		err = expression.VecEval(e.ctx, item, chk, col)
-		if err != nil {
-			return false, err
-		}
-
-		err = e.checkOneColumn(eType, col, numRows)
+		err = e.checkOneGroupByItem(item, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -1094,7 +1098,19 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 	return areSameGroup, nil
 }
 
-func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column, numRows int) (err error) {
+func (e *vecGroupChecker) checkOneGroupByItem(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+	tp := item.GetType()
+	eType := tp.EvalType()
+	col, err := expression.GetColumn(eType, numRows)
+	if err != nil {
+		return err
+	}
+	defer expression.PutColumn(col)
+	err = expression.VecEval(e.ctx, item, chk, col)
+	if err != nil {
+		return err
+	}
+
 	previousIsNull := col.IsNull(0)
 	var firstRowDatum, lastRowDatum types.Datum
 	switch eType {
@@ -1140,7 +1156,7 @@ func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && vals[i] != vals[i-1] {
+					if !previousIsNull && vals[i].Compare(&vals[i-1]) == 0 {
 						e.sameGroup[i] = false
 					}
 				}
@@ -1157,7 +1173,7 @@ func (e *vecGroupChecker) checkOneColumn(eType types.EvalType, col *chunk.Column
 				if isNull != previousIsNull {
 					e.sameGroup[i] = false
 				} else {
-					if !previousIsNull && vals[i] != vals[i-1] {
+					if !previousIsNull && vals[i].Compare(vals[i-1]) == 0 {
 						e.sameGroup[i] = false
 					}
 				}
@@ -1241,7 +1257,6 @@ func (e *vecGroupChecker) isExhausted() bool {
 }
 
 func (e *vecGroupChecker) reset() {
-	e.curGroupID = 0
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
 	}
