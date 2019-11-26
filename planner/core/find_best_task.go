@@ -1071,7 +1071,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
 		ts.AccessCondition = nil
 	}
-
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

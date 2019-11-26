@@ -2,8 +2,6 @@ package executor
 
 import (
 	"context"
-	"time"
-
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -95,17 +93,14 @@ func buildDAG(sctx sessionctx.Context, executors []*tipb.Executor) (Executor, er
 }
 
 func fillUpData4SelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, sctx sessionctx.Context, chk *chunk.Chunk, tps []*types.FieldType) error {
+	var err error
 	switch dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
-		return encodeDefault(sctx, selResp, chk, tps, dagReq.OutputOffsets)
+		err = encodeDefault(sctx, selResp, chk, tps, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
-		loc := sctx.GetSessionVars().StmtCtx.TimeZone
-		err := encodeChunk(selResp, chk, tps, dagReq.OutputOffsets, loc)
-		if err != nil {
-			return err
-		}
+		err = encodeChunk(selResp, chk, tps, dagReq.OutputOffsets)
 	}
-	return nil
+	return err
 }
 
 func buildResp(selResp *tipb.SelectResponse, err error) *coprocessor.Response {
@@ -122,7 +117,7 @@ func buildResp(selResp *tipb.SelectResponse, err error) *coprocessor.Response {
 	return resp
 }
 
-func encodeChunk(selResp *tipb.SelectResponse, chk *chunk.Chunk, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+func encodeChunk(selResp *tipb.SelectResponse, chk *chunk.Chunk, colTypes []*types.FieldType, colOrdinal []uint32) error {
 	chunks := selResp.Chunks
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
@@ -141,7 +136,7 @@ func encodeChunk(selResp *tipb.SelectResponse, chk *chunk.Chunk, colTypes []*typ
 }
 
 func encodeDefault(sctx sessionctx.Context, selResp *tipb.SelectResponse, chk *chunk.Chunk, tps []*types.FieldType, colOrdinal []uint32) error {
-	var chunks []tipb.Chunk
+	chunks := selResp.Chunks
 	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow := make([]byte, 0)
 		row := chk.GetRow(i)

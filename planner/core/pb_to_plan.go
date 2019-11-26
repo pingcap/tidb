@@ -53,7 +53,7 @@ func (b *pbPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error)
 	if err != nil {
 		return nil, err
 	}
-	columns, err := convertColumnInfo(tbl.Meta(), memTbl)
+	columns, err := b.convertColumnInfo(tbl.Meta(), memTbl)
 	if err != nil {
 		return nil, err
 	}
@@ -69,21 +69,19 @@ func (b *pbPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error)
 
 func (b *pbPlanBuilder) buildMemTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
-	tps := make([]*types.FieldType, 0, len(columns))
 	for _, col := range tblInfo.Columns {
 		for _, colInfo := range columns {
-			tps = append(tps, colInfo.FieldType.Clone())
-			if col.ID == colInfo.ID {
-				newCol := &expression.Column{
-					UniqueID: b.sctx.GetSessionVars().AllocPlanColumnID(),
-					ID:       col.ID,
-					RetType:  &col.FieldType,
-				}
-				schema.Append(newCol)
+			if col.ID != colInfo.ID {
+				continue
 			}
+			newCol := &expression.Column{
+				UniqueID: b.sctx.GetSessionVars().AllocPlanColumnID(),
+				ID:       col.ID,
+				RetType:  &col.FieldType,
+			}
+			schema.Append(newCol)
 		}
 	}
-	b.tps = tps
 	return schema
 }
 
@@ -173,13 +171,15 @@ func (b *pbPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggF
 	return aggFuncs, groupBys, nil
 }
 
-func convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb.MemTableScan) ([]*model.ColumnInfo, error) {
+func (b *pbPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb.MemTableScan) ([]*model.ColumnInfo, error) {
 	columns := make([]*model.ColumnInfo, 0, len(memTbl.Columns))
+	tps := make([]*types.FieldType, 0, len(memTbl.Columns))
 	for _, col := range memTbl.Columns {
 		found := false
 		for _, colInfo := range tblInfo.Columns {
 			if col.ColumnId == colInfo.ID {
 				columns = append(columns, colInfo)
+				tps = append(tps, colInfo.FieldType.Clone())
 				found = true
 				break
 			}
@@ -188,5 +188,6 @@ func convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb.MemTableScan) ([]*
 			return nil, errors.Errorf("Column ID %v of table %v.%v not found", col.ColumnId, "information_schema", memTbl.TableName)
 		}
 	}
+	b.tps = tps
 	return columns, nil
 }
