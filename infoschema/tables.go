@@ -2246,9 +2246,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
 	for _, result := range results {
-		for _, row := range result.rows {
-			finalRows = append(finalRows, row)
-		}
+		finalRows = append(finalRows, result.rows...)
 	}
 	return finalRows, nil
 }
@@ -2333,7 +2331,6 @@ func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Tab
 type infoschemaTable struct {
 	meta *model.TableInfo
 	cols []*table.Column
-	rows [][]types.Datum
 }
 
 // schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
