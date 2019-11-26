@@ -67,8 +67,6 @@ var (
 )
 
 var (
-	errInvalidTableKey = terror.ClassMeta.New(codeInvalidTableKey, "invalid table meta key")
-	errInvalidDBKey    = terror.ClassMeta.New(codeInvalidDBKey, "invalid db key")
 
 	// ErrDBExists is the error for db exists.
 	ErrDBExists = terror.ClassMeta.New(codeDatabaseExists, "database already exists")
