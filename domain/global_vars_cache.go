@@ -64,7 +64,6 @@ func (gvc *GlobalVariableCache) Disable() {
 	gvc.Lock()
 	defer gvc.Unlock()
 	gvc.disable = true
-	return
 }
 
 // checkEnableServerGlobalVar processes variables that acts in server and global level.

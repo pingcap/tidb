@@ -754,12 +754,12 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 // admin error codes.
 const (
-	codeDataNotEqual       terror.ErrCode = 1
-	codeRepeatHandle                      = 2
-	codeInvalidColumnState                = 3
-	codeDDLJobNotFound                    = 4
-	codeCancelFinishedJob                 = 5
-	codeCannotCancelDDLJob                = 6
+	codeDataNotEqual terror.ErrCode = iota + 1
+	codeRepeatHandle
+	codeInvalidColumnState
+	codeDDLJobNotFound
+	codeCancelFinishedJob
+	codeCannotCancelDDLJob
 )
 
 var (
