@@ -14,6 +14,8 @@
 package admin_test
 
 import (
+	"testing"
+	
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -22,7 +24,6 @@ import (
 	. "github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"testing"
 )
 
 func TestT(t *testing.T) {
