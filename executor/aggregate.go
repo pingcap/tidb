@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -1012,7 +1012,7 @@ type vecGroupChecker struct {
 	curGroupID int
 
 	// previousLastGroupKey is the groupKey of the last group of the previous chunk
-	previousLastGroupKey string
+	previousLastGroupKey []byte
 	// firstGroupKey and lastGroupKey are used to store the groupKey of the first and last group of the current chunk
 	firstGroupKey []byte
 	lastGroupKey  []byte
@@ -1079,15 +1079,16 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 	if len(e.previousLastGroupKey) == 0 {
 		areSameGroup = false
 	} else {
-		groupKey0 := e.previousLastGroupKey
-		groupKey1 := string(hack.String(e.firstGroupKey))
-		if groupKey0 == groupKey1 {
+		if bytes.Equal(e.previousLastGroupKey, e.firstGroupKey) {
 			areSameGroup = true
 		} else {
 			areSameGroup = false
 		}
 	}
-	e.previousLastGroupKey = string(e.lastGroupKey)
+	if cap(e.previousLastGroupKey) < len(e.lastGroupKey) {
+		e.previousLastGroupKey = make([]byte, len(e.lastGroupKey))
+	}
+	copy(e.previousLastGroupKey, e.lastGroupKey)
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
