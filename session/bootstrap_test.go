@@ -76,7 +76,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE test;")
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (id int)")
-	unsetStoreBootstrap(store.UUID())
+	unsetStoreBootstrapped(store.UUID())
 	se.Close()
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
@@ -229,7 +229,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
 		variable.TiDBDistSQLScanConcurrency))
 	mustExecSQL(c, se1, `commit;`)
-	unsetStoreBootstrap(store.UUID())
+	unsetStoreBootstrapped(store.UUID())
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	req = r.NewChunk()
@@ -270,7 +270,7 @@ func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
 	mustExecSQL(c, se, "USE mysql;")
 	mustExecSQL(c, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
 	mustExecSQL(c, se, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	unsetStoreBootstrap(store.UUID())
+	unsetStoreBootstrapped(store.UUID())
 	se.Close()
 
 	// Do some clean up, BootstrapSession will not create a new domain otherwise.

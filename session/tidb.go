@@ -118,14 +118,15 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
-func setStoreBootstrap(storeUUID string) {
+func setStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	storeBootstrapped[storeUUID] = true
 }
 
-// used for test
-func unsetStoreBootstrap(storeUUID string) {
+// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
+// currently this function only used for test.
+func unsetStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	delete(storeBootstrapped, storeUUID)
