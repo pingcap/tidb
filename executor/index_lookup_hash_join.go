@@ -301,7 +301,6 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
-
 	return e.baseExecutor.Close()
 }
 

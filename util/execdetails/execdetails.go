@@ -246,9 +246,8 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
 		&RuntimeStats{loop: int32(*summary.NumIterations),
-			consume:     int64(*summary.TimeProcessedNs),
-			rows:        int64(*summary.NumProducedRows),
-			concurrency: make(map[string]int)})
+			consume: int64(*summary.TimeProcessedNs),
+			rows:    int64(*summary.NumProducedRows)})
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -321,6 +320,12 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
+// concurrencyInfo is used to save the concurrency information of the executor operator
+type concurrencyInfo struct {
+	concurrencyName string
+	concurrencyNum  int
+}
+
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
 	mu sync.Mutex
@@ -331,7 +336,7 @@ type RuntimeStats struct {
 	// executor return row count.
 	rows int64
 	// executor concurrency information
-	concurrency map[string]int
+	concurrency []concurrencyInfo
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -417,20 +422,20 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 // SetConcurrencyInfo sets the concurrency information.
-func (e *RuntimeStats) SetConcurrencyInfo(concurrencyName string, concurrencyNum int) {
+func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.concurrency[concurrencyName] = concurrencyNum
+	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
 }
 
 func (e *RuntimeStats) String() string {
 	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 	if len(e.concurrency) > 0 {
-		for concurrencyName, concurrencyNum := range e.concurrency {
-			if concurrencyNum > 0 {
-				result += fmt.Sprintf(", %s:%d", concurrencyName, concurrencyNum)
+		for _, concurrency := range e.concurrency {
+			if concurrency.concurrencyNum > 0 {
+				result += fmt.Sprintf(", %s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
 			} else {
-				result += fmt.Sprintf(", %s:OFF", concurrencyName)
+				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
 			}
 		}
 	}
