@@ -112,14 +112,21 @@ var statusListener = func(_ BinlogStatus) error {
 	return nil
 }
 
+// EnableSkipBinlogFlag enables the skipBinlog flag.
+// NOTE: it is used *ONLY* for test.
+func EnableSkipBinlogFlag() {
+	atomic.StoreUint32(&skipBinlog, 1)
+	logutil.BgLogger().Warn("[binloginfo] enable the skipBinlog flag")
+}
+
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 0)
 	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
 }
 
-// SkipBinlog gets the skipBinlog flag.
-func SkipBinlog() bool {
+// IsBinlogSkipped gets the skipBinlog flag.
+func IsBinlogSkipped() bool {
 	return atomic.LoadUint32(&skipBinlog) > 0
 }
 
@@ -135,6 +142,18 @@ func WaitBinlogRecover() {
 		time.Sleep(time.Second)
 	}
 	logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+}
+
+// CommitterCount returns the number of alive committers.
+// NOTE: it is used *ONLY* for test.
+func CommitterCount() int32 {
+	return atomic.LoadInt32(&committerCounter)
+}
+
+// ResetCommitterCounter is used to reset the committerCounter.
+func ResetCommitterCounter() {
+	atomic.StoreInt32(&committerCounter, 0)
+	logutil.BgLogger().Warn("[binloginfo] committerCounter is reset to 0")
 }
 
 // AddOneCommitter adds one committer to committerCounter.

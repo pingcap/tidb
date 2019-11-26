@@ -1022,7 +1022,7 @@ func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte
 }
 
 func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {
-	skip := binloginfo.SkipBinlog()
+	skip := binloginfo.IsBinlogSkipped()
 	if skip {
 		binloginfo.AddOneCommitter()
 	}

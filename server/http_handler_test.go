@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -240,10 +241,26 @@ func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
+	binloginfo.EnableSkipBinlogFlag()
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover"))
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	binloginfo.AddOneCommitter()
+	c.Assert(binloginfo.CommitterCount(), Equals, int32(1))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=reset"))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.CommitterCount(), Equals, int32(0))
+
+	binloginfo.EnableSkipBinlogFlag()
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=nowait"))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
