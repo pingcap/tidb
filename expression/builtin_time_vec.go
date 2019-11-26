@@ -800,11 +800,13 @@ func (b *builtinAddDateDatetimeRealSig) vecEvalTime(input *chunk.Chunk, result *
 }
 
 func (b *builtinSubTimeDurationNullSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubTimeDurationNullSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeGoDuration(n, true)
+	return nil
 }
 
 func (b *builtinStrToDateDateSig) vectorized() bool {
