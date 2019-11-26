@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -842,6 +843,33 @@ func (s *testRegionCacheSuite) TestFollowerReadFallback(c *C) {
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
+}
+
+func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
+	// 3 nodes and no.1 is region1 leader.
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.ChangeLeader(s.region1, s.peer1)
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+
+	reqSend := NewRegionRequestSender(s.cache, nil)
+
+	// follower read failed on store2
+	followReqSeed := uint32(0)
+	ctxFollower1, err := s.cache.GetRPCContext(s.bo, loc1.Region, kv.ReplicaReadFollower, followReqSeed)
+	c.Assert(err, IsNil)
+	c.Assert(ctxFollower1.Peer.Id, Equals, s.peer2)
+	c.Assert(ctxFollower1.Store.storeID, Equals, s.store2)
+
+	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
+	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(followReqSeed, Equals, uint32(1))
 }
 
 func createSampleRegion(startKey, endKey []byte) *Region {
