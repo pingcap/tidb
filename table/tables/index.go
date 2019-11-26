@@ -197,7 +197,6 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	for _, fn := range opts {
 		fn(&opt)
 	}
-	ss := opt.AssertionProto
 	vars := sctx.GetSessionVars()
 	writeBufs := vars.GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
@@ -230,9 +229,6 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 			value[0] = kv.UnCommitIndexKVFlag
 		}
 		err = rm.Set(key, value)
-		if ss != nil {
-			ss.SetAssertion(key, kv.None)
-		}
 		return 0, err
 	}
 
@@ -245,9 +241,6 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 			value = append(value, kv.UnCommitIndexKVFlag)
 		}
 		err = rm.Set(key, value)
-		if ss != nil {
-			ss.SetAssertion(key, kv.None)
-		}
 		return 0, err
 	}
 
@@ -266,9 +259,6 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if kv.IsErrNotFound(err) {
 		v := EncodeHandle(h)
 		err = rm.Set(key, v)
-		if ss != nil {
-			ss.SetAssertion(key, kv.NotExist)
-		}
 		return 0, err
 	}
 
@@ -280,21 +270,12 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error {
 	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
 	err = m.Delete(key)
-	if ss != nil {
-		switch c.idxInfo.State {
-		case model.StatePublic:
-			// If the index is in public state, delete this index means it must exists.
-			ss.SetAssertion(key, kv.Exist)
-		default:
-			ss.SetAssertion(key, kv.None)
-		}
-	}
 	return err
 }
 
