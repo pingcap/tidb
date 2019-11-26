@@ -306,6 +306,129 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			},
 		},
 	},
+
+	ast.SubDate: {
+		// builtinSubDateStringStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateStringIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateStringRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateStringDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateIntStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateIntIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateIntRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateIntDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateDatetimeStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateDatetimeIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateDatetimeRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+		// builtinSubDateDatetimeDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+			},
+		},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeEvalOneVecGenerated(c *C) {

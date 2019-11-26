@@ -1059,6 +1059,8 @@ func removeTestOptions(args []string) []string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "builtin") {
 			argList = append(argList, arg)
+		} else if _, ok := funcs[arg]; ok {
+			argList = append(argList, arg)
 		}
 	}
 	return argList
@@ -1109,7 +1111,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if !testAll && testFunc[baseFuncName] != true {
+			if !testAll && (testFunc[baseFuncName] != true && testFunc[funcName] != true) {
 				continue
 			}
 			// do not forget to implement the vectorized method.
@@ -1329,7 +1331,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if !testAll && testFunc[baseFuncName] != true {
+			if !testAll && testFunc[baseFuncName] != true && testFunc[funcName] != true {
 				continue
 			}
 

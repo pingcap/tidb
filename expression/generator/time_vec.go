@@ -419,8 +419,8 @@ func (b *{{.SigName}}) vectorized() bool {
 {{ end }}{{/* range */}}
 `))
 
-var addDate = template.Must(template.New("").Parse(`
-{{ range . }}
+var addOrSubDate = template.Must(template.New("").Parse(`
+{{ range .Sigs }}
 func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
@@ -460,7 +460,11 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 			continue
 		}
 
-		date, isNull, err := b.add(b.ctx, orgDates[i], intervalCol.GetString(i), unitCol.GetString(i))
+		{{- if eq $.FuncName "AddDate" }}
+			date, isNull, err := b.add(b.ctx, orgDates[i], intervalCol.GetString(i), unitCol.GetString(i))
+		{{- else }}
+			date, isNull, err := b.sub(b.ctx, orgDates[i], intervalCol.GetString(i), unitCol.GetString(i))
+		{{- end }}
 		if err != nil {
 			return err
 		}
@@ -524,7 +528,7 @@ func (g gener) gen() interface{} {
 	return result
 }
 
-{{ define "strOrIntDateGener" }}
+{{ define "datetimeGener" }}
 	{{- if eq .TypeA.ETName "String"}}
 		&dateStrGener{NullRation: 0.2},
 	{{- else if eq .TypeA.ETName "Int"}}
@@ -532,6 +536,33 @@ func (g gener) gen() interface{} {
 	{{- else }}
 		&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 	{{- end }}
+{{ end }}
+
+{{ define "addOrSubDateCase" }}
+	{{ range .Sigs }} // {{ .SigName }}
+		{
+			retEvalType: types.ET{{ .Output.ETName }},
+			{{- if eq .TestTypeA "" }}
+			childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}, types.ETString},
+			{{- else }}
+			childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}, types.ETString},
+			{{- end }}
+			{{- if ne .FieldTypeA "" }}
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
+			{{- end }}
+			geners: []dataGenerator{
+				{{- if eq .TestTypeA "" }}
+				{{- template "datetimeGener" . -}}
+				gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+				{{- else }}
+				{{- template "datetimeGener" . -}}
+				gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
+				&intervalUnitStrGener{nullRation: 0.05},
+				{{- end }}
+			},
+		},
+	{{ end }}
 {{ end }}
 
 {{/* Add more test cases here if we have more functions in this file */}}
@@ -601,30 +632,12 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 	{{ end }}
 	{{- if eq .FuncName "AddDate" }}
 		ast.AddDate: {
-		{{ range .Sigs }} // {{ .SigName }}
-			{
-				retEvalType: types.ET{{ .Output.ETName }},
-				{{- if eq .TestTypeA "" }}
-				childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}, types.ETString},
-				{{- else }}
-				childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}, types.ETString},
-				{{- end }}
-				{{- if ne .FieldTypeA "" }}
-				childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
-				{{- end }}
-				geners: []dataGenerator{
-					{{- if eq .TestTypeA "" }}
-					{{- template "strOrIntDateGener" . -}}
-					gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
-					&intervalUnitStrGener{nullRation: 0.05},
-					{{- else }}
-					{{- template "strOrIntDateGener" . -}}
-					gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
-					&intervalUnitStrGener{nullRation: 0.05},
-					{{- end }}
-				},
-			},
-		{{ end }}
+			{{- template "addOrSubDateCase" . -}}
+		},
+	{{ end }}
+	{{- if eq .FuncName "SubDate" }}
+		ast.SubDate: {
+			{{- template "addOrSubDateCase" . -}}
 		},
 	{{ end }}
 {{ end }}
@@ -688,6 +701,21 @@ var addDataSigsTmpl = []sig{
 	{SigName: "builtinAddDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime},
 }
 
+var subDataSigsTmpl = []sig{
+	{SigName: "builtinSubDateStringStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinSubDateStringIntSig", TypeA: TypeString, TypeB: TypeInt, Output: TypeDatetime},
+	{SigName: "builtinSubDateStringRealSig", TypeA: TypeString, TypeB: TypeReal, Output: TypeDatetime},
+	{SigName: "builtinSubDateStringDecimalSig", TypeA: TypeString, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinSubDateIntStringSig", TypeA: TypeInt, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinSubDateIntIntSig", TypeA: TypeInt, TypeB: TypeInt, Output: TypeDatetime},
+	{SigName: "builtinSubDateIntRealSig", TypeA: TypeInt, TypeB: TypeReal, Output: TypeDatetime},
+	{SigName: "builtinSubDateIntDecimalSig", TypeA: TypeInt, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinSubDateDatetimeStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinSubDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime},
+	{SigName: "builtinSubDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime},
+	{SigName: "builtinSubDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime},
+}
+
 type sig struct {
 	SigName                string
 	TypeA, TypeB, Output   TypeContext
@@ -710,6 +738,7 @@ var tmplVal = struct {
 		{FuncName: "AddTime", Sigs: addTimeSigsTmpl},
 		{FuncName: "TimeDiff", Sigs: timeDiffSigsTmpl},
 		{FuncName: "AddDate", Sigs: addDataSigsTmpl},
+		{FuncName: "SubDate", Sigs: subDataSigsTmpl},
 	},
 }
 
@@ -723,7 +752,11 @@ func generateDotGo(fileName string) error {
 	if err != nil {
 		return err
 	}
-	err = addDate.Execute(w, addDataSigsTmpl)
+	err = addOrSubDate.Execute(w, function{FuncName: "AddDate", Sigs: addDataSigsTmpl})
+	if err != nil {
+		return err
+	}
+	err = addOrSubDate.Execute(w, function{FuncName: "SubDate", Sigs: subDataSigsTmpl})
 	if err != nil {
 		return err
 	}
