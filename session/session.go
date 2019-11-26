@@ -416,10 +416,12 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				commitRetryLimit = 0
 			}
 		}
+		// If the transaction is batched, it should not retry any more.
+		isBatched := s.GetSessionVars().TxnCtx.IsBatched
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && !isBatched && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -429,7 +431,17 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
+		} else {
+			logutil.Logger(ctx).Warn("can not retry txn",
+				zap.String("label", s.getSQLLabel()),
+				zap.Error(err),
+				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
+				zap.Bool("IsPessimistic", isPessimistic),
+				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),
+				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
+				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
+
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()

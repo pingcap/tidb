@@ -115,6 +115,8 @@ type TransactionContext struct {
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
+
+	IsBatched bool
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
