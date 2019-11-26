@@ -86,7 +86,7 @@ var StmtSummaryByDigestMap = newStmtSummaryByDigestMap()
 type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	sync.Mutex
-	// Each summary is summarized between [beginTime, beginTime + interval]
+	// Each summary is summarized between [beginTime, beginTime + interval].
 	beginTime int64
 	// basic
 	schemaName    string

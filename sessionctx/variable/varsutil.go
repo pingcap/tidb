@@ -633,14 +633,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if value == "" {
 			return "", nil
 		}
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v <= 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
