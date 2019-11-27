@@ -361,7 +361,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 	if first.schemaName != second.schemaName ||
-		strings.ToLower(first.stmtType) != strings.ToLower(second.stmtType) ||
+		!strings.EqualFold(first.stmtType, second.stmtType) ||
 		first.digest != second.digest ||
 		first.normalizedSQL != second.normalizedSQL ||
 		first.sampleSQL != second.sampleSQL ||
