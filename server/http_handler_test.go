@@ -249,13 +249,13 @@ func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
 
-	binloginfo.AddOneCommitter()
-	c.Assert(binloginfo.CommitterCount(), Equals, int32(1))
+	binloginfo.AddOneSkippedCommitter()
+	c.Assert(binloginfo.SkippedCommitterCount(), Equals, int32(1))
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=reset"))
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(binloginfo.CommitterCount(), Equals, int32(0))
+	c.Assert(binloginfo.SkippedCommitterCount(), Equals, int32(0))
 
 	binloginfo.EnableSkipBinlogFlag()
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=nowait"))

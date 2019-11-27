@@ -674,7 +674,7 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if op := req.FormValue(qOperation); len(op) > 0 {
 		if op == "reset" {
-			binloginfo.ResetCommitterCounter()
+			binloginfo.ResetSkippedCommitterCounter()
 		} else if op == "nowait" {
 			binloginfo.DisableSkipBinlogFlag()
 		}

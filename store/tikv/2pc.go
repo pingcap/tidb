@@ -1049,7 +1049,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 		c.txn.commitTS = c.commitTS
 		if binlogSkipped {
-			binloginfo.RemoveOneCommitter()
+			binloginfo.RemoveOneSkippedCommitter()
 		} else {
 			if err != nil {
 				c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0)
@@ -1181,7 +1181,7 @@ func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo
 		wr := binInfo.WriteBinlog(c.store.clusterID)
 		if wr.Skipped() {
 			binInfo.Data.PrewriteValue = nil
-			binloginfo.AddOneCommitter()
+			binloginfo.AddOneSkippedCommitter()
 		}
 		logutil.Eventf(ctx, "finish prewrite binlog")
 		ch <- wr

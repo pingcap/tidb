@@ -130,13 +130,13 @@ func IsBinlogSkipped() bool {
 	return atomic.LoadUint32(&skipBinlog) > 0
 }
 
-var committerCounter int32
+var skippedCommitterCounter int32
 
 // WaitBinlogRecover returns when all committing transaction finished.
 func WaitBinlogRecover() {
 	logutil.BgLogger().Warn("[binloginfo] start waiting for binlog recovering")
 	for {
-		if atomic.LoadInt32(&committerCounter) == 0 {
+		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
 			break
 		}
 		time.Sleep(time.Second)
@@ -144,26 +144,26 @@ func WaitBinlogRecover() {
 	logutil.BgLogger().Warn("[binloginfo] binlog recovered")
 }
 
-// CommitterCount returns the number of alive committers.
+// SkippedCommitterCount returns the number of alive committers whick skipped the binlog writing.
 // NOTE: it is used *ONLY* for test.
-func CommitterCount() int32 {
-	return atomic.LoadInt32(&committerCounter)
+func SkippedCommitterCount() int32 {
+	return atomic.LoadInt32(&skippedCommitterCounter)
 }
 
-// ResetCommitterCounter is used to reset the committerCounter.
-func ResetCommitterCounter() {
-	atomic.StoreInt32(&committerCounter, 0)
-	logutil.BgLogger().Warn("[binloginfo] committerCounter is reset to 0")
+// ResetSkippedCommitterCounter is used to reset the skippedCommitterCounter.
+func ResetSkippedCommitterCounter() {
+	atomic.StoreInt32(&skippedCommitterCounter, 0)
+	logutil.BgLogger().Warn("[binloginfo] skippedCommitterCounter is reset to 0")
 }
 
-// AddOneCommitter adds one committer to committerCounter.
-func AddOneCommitter() {
-	atomic.AddInt32(&committerCounter, 1)
+// AddOneSkippedCommitter adds one committer to skippedCommitterCounter.
+func AddOneSkippedCommitter() {
+	atomic.AddInt32(&skippedCommitterCounter, 1)
 }
 
-// RemoveOneCommitter removes one committer from committerCounter.
-func RemoveOneCommitter() {
-	atomic.AddInt32(&committerCounter, -1)
+// RemoveOneSkippedCommitter removes one committer from skippedCommitterCounter.
+func RemoveOneSkippedCommitter() {
+	atomic.AddInt32(&skippedCommitterCounter, -1)
 }
 
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
