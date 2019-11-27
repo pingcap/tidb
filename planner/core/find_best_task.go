@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -183,33 +182,16 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	return bestTask, nil
 }
 
-// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task.
-func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task task, err error) {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
 	if !prop.IsEmpty() {
-		return nil, nil
+		return invalidTask, nil
 	}
-	if !infoschema.IsMemoryDB(ds.DBName.L) {
-		return nil, nil
-	}
-
 	memTable := PhysicalMemTable{
-		DBName:      ds.DBName,
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-	}.Init(ds.ctx, ds.stats, ds.blockOffset)
-	memTable.SetSchema(ds.schema)
-
-	// Stop to push down these conditions.
-	var retPlan PhysicalPlan = memTable
-	if len(ds.pushedDownConds) > 0 {
-		sel := PhysicalSelection{
-			Conditions: ds.pushedDownConds,
-		}.Init(ds.ctx, ds.stats, ds.blockOffset)
-		sel.SetChildren(memTable)
-		retPlan = sel
-	}
-	return &rootTask{p: retPlan}, nil
+		DBName: p.dbName,
+		Table:  p.tableInfo,
+	}.Init(p.ctx, p.stats, p.blockOffset)
+	memTable.SetSchema(p.schema)
+	return &rootTask{p: memTable}, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -302,7 +284,7 @@ func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.Physica
 	return candidate
 }
 
-func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
+func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.PhysicalProperty, isSingleScan bool) *candidatePath {
 	candidate := &candidatePath{path: path}
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
@@ -318,7 +300,7 @@ func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.Physica
 		}
 	}
 	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
-	candidate.isSingleScan = isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
+	candidate.isSingleScan = isSingleScan
 	return candidate
 }
 
@@ -343,15 +325,18 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		var currentCandidate *candidatePath
 		if path.isTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
-		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced || isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle) {
-			// We will use index to generate physical plan if any of the following conditions is satisfied:
-			// 1. This path's access cond is not nil.
-			// 2. We have a non-empty prop to match.
-			// 3. This index is forced to choose.
-			// 4. The needed columns are all covered by index columns(and handleCol).
-			currentCandidate = ds.getIndexCandidate(path, prop)
 		} else {
-			continue
+			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle)
+			if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced || coveredByIdx {
+				// We will use index to generate physical plan if any of the following conditions is satisfied:
+				// 1. This path's access cond is not nil.
+				// 2. We have a non-empty prop to match.
+				// 3. This index is forced to choose.
+				// 4. The needed columns are all covered by index columns(and handleCol).
+				currentCandidate = ds.getIndexCandidate(path, prop, coveredByIdx)
+			} else {
+				continue
+			}
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
@@ -417,10 +402,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	}()
 
 	t, err = ds.tryToGetDualTask()
-	if err != nil || t != nil {
-		return t, err
-	}
-	t, err = ds.tryToGetMemTask(prop)
 	if err != nil || t != nil {
 		return t, err
 	}

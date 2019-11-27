@@ -62,8 +62,6 @@ var (
 	// SyncerSessionTTL is the etcd session's TTL in seconds.
 	// and it's an exported variable for testing.
 	SyncerSessionTTL = 90
-	// ddlLogCtx uses for log.
-	ddlLogCtx = context.Background()
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.

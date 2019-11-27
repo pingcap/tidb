@@ -14,37 +14,44 @@
 package expression
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&decimalJSONGener{}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString},
+			geners:        []dataGenerator{&numStrGener{rangeInt64Gener{math.MinInt64 + 1, 0}}},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString},
+			geners:        []dataGenerator{&numStrGener{rangeInt64Gener{0, math.MaxInt64}}},
+		},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString},
-			geners: []dataGenerator{&realStrGener{rangeRealGener{begin: -100000.0, end: 100000.0, nullRation: 0.5}}},
-		},
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString},
-			constants: []*Constant{{Value: types.NewBinaryLiteralDatum([]byte("TiDB")), RetType: types.NewFieldType(mysql.TypeVarString)}},
-		},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{nullRation: 0.5}}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime},
 			geners: []dataGenerator{&dateTimeGenerWithFsp{
 				defaultGener: defaultGener{nullRation: 0.2, eType: types.ETDatetime},
@@ -86,6 +93,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&jsonTimeGener{},
 			}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 	},
 }
 

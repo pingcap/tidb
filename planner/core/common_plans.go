@@ -481,6 +481,12 @@ const (
 	OpSQLBindCreate SQLBindOpType = iota
 	// OpSQLBindDrop represents the operation to drop a SQL bind.
 	OpSQLBindDrop
+	// OpFlushBindings is used to flush plan bindings.
+	OpFlushBindings
+	// OpCaptureBindings is used to capture plan bindings.
+	OpCaptureBindings
+	// OpEvolveBindings is used to evolve plan binding.
+	OpEvolveBindings
 )
 
 // SQLBindPlan represents a plan for SQL bind.
