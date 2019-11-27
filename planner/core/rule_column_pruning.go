@@ -15,13 +15,13 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/infoschema"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -221,20 +221,16 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 {
-		if !infoschema.IsMemoryDB(ds.DBName.L) {
-			if handleCol == nil {
-				handleCol = ds.newExtraHandleSchemaCol()
-				handleColInfo = model.NewExtraHandleColInfo()
-			}
-			ds.Columns = append(ds.Columns, handleColInfo)
-			ds.schema.Append(handleCol)
-		} else if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.L) && len(originColumns) > 0 {
+		if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.L) && len(originColumns) > 0 {
 			// use the first line.
 			handleCol = originSchemaColumns[0]
 			handleColInfo = originColumns[0]
-			ds.Columns = append(ds.Columns, handleColInfo)
-			ds.schema.Append(handleCol)
+		} else if handleCol == nil {
+			handleCol = ds.newExtraHandleSchemaCol()
+			handleColInfo = model.NewExtraHandleColInfo()
 		}
+		ds.Columns = append(ds.Columns, handleColInfo)
+		ds.schema.Append(handleCol)
 	}
 	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
 		ds.handleCol = nil

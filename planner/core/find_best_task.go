@@ -184,37 +184,17 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	return bestTask, nil
 }
 
-// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task.
-func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task task, err error) {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
 	if !prop.IsEmpty() {
-		return nil, nil
+		return invalidTask, nil
 	}
-	if !infoschema.IsMemoryDB(ds.DBName.L) {
-		return nil, nil
-	}
-
-	if infoschema.IsClusterMemTable(ds.DBName.L, ds.table.Meta().Name.O) {
-		return nil, nil
-	}
-
 	memTable := PhysicalMemTable{
-		DBName:      ds.DBName,
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-	}.Init(ds.ctx, ds.stats, ds.blockOffset)
-	memTable.SetSchema(ds.schema)
-
-	// Stop to push down these conditions.
-	var retPlan PhysicalPlan = memTable
-	if len(ds.pushedDownConds) > 0 {
-		sel := PhysicalSelection{
-			Conditions: ds.pushedDownConds,
-		}.Init(ds.ctx, ds.stats, ds.blockOffset)
-		sel.SetChildren(memTable)
-		retPlan = sel
-	}
-	return &rootTask{p: retPlan}, nil
+		DBName:  p.dbName,
+		Table:   p.tableInfo,
+		Columns: p.tableInfo.Columns,
+	}.Init(p.ctx, p.stats, p.blockOffset)
+	memTable.SetSchema(p.schema)
+	return &rootTask{p: memTable}, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -425,10 +405,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	}()
 
 	t, err = ds.tryToGetDualTask()
-	if err != nil || t != nil {
-		return t, err
-	}
-	t, err = ds.tryToGetMemTask(prop)
 	if err != nil || t != nil {
 		return t, err
 	}
