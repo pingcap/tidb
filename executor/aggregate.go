@@ -1085,10 +1085,11 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			isFirstGroupSameAsPrev = false
 		}
 	}
-	if length := len(e.lastGroupKey); len(e.lastGroupKeyOfPrevChk) >= length {
+	length := len(e.lastGroupKey)
+	if len(e.lastGroupKeyOfPrevChk) >= length {
 		e.lastGroupKeyOfPrevChk = e.lastGroupKeyOfPrevChk[:length]
 	} else {
-		e.lastGroupKeyOfPrevChk = make([]byte, len(e.lastGroupKey))
+		e.lastGroupKeyOfPrevChk = make([]byte, length)
 	}
 	copy(e.lastGroupKeyOfPrevChk, e.lastGroupKey)
 
