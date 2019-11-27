@@ -676,6 +676,10 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 		num[i] = buf[i].Decimals()
 	}
 
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isUnsigned := isLHSUnsigned || isRHSUnsigned
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf[0], buf[1])
 	i64s := result.Int64s()
@@ -704,10 +708,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			return err
 		}
 
-		isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-		isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-		if isLHSUnsigned || isRHSUnsigned {
+		if isUnsigned {
 			val, err := c.ToUint()
 			// err returned by ToUint may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 			if err == types.ErrOverflow {
