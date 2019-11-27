@@ -2435,7 +2435,7 @@ func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, r
 	return int64(ret), false, nil
 }
 
-// Accroding to https://dev.mysql.com/doc/refman/8.0/en/char.html,
+// According to https://dev.mysql.com/doc/refman/8.0/en/char.html,
 // we need to trim trialing space when compare non-binary strings.
 func compareStringWithTrim(lhs string, rhs string, lhsFt *types.FieldType, rhsFt *types.FieldType) int {
 	if lhsFt.Collate != charset.CollationBin {
