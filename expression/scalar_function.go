@@ -332,7 +332,7 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	if sf.FuncName.L == ast.In {
-		var args []Expression = nil
+		var args []Expression
 		switch reflect.TypeOf(sf.Function) {
 		case reflect.TypeOf(&builtinInIntSig{}):
 			inFunc, _ := sf.Function.(*builtinInIntSig)
