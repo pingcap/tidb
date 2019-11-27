@@ -423,7 +423,7 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 // SetConcurrencyInfo sets the concurrency information.
-// When the num <= 0, it means the exector operator is not executed concurrently.
+// When the num <= 0, it means the exector operator is not executed parallel.
 func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
