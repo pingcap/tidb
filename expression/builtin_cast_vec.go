@@ -1046,12 +1046,38 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinCastRealAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	f64s := buf.Float64s()
+	ds := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		dr, _, _, err := convertStringToDuration(sc, strconv.FormatFloat(f64s[i], 'f', -1, 64), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		ds[i] = dr
+	}
+	return nil
 }
+
 
 func (b *builtinCastTimeAsDurationSig) vectorized() bool {
 	return true
