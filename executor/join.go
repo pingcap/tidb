@@ -70,11 +70,10 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 
-	memTracker     *memory.Tracker // track memory usage.
-	diskTracker    *disk.Tracker   // track disk usage.
-	alreadySpilled bool
-	prepared       bool
-	isOuterJoin    bool
+	memTracker  *memory.Tracker // track memory usage.
+	diskTracker *disk.Tracker   // track disk usage.
+	prepared    bool
+	isOuterJoin bool
 
 	outerMatchedStatus []*bitmap.ConcurrentBitmap
 	useOuterToBuild    bool
@@ -144,7 +143,6 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.alreadySpilled = false
 	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
@@ -680,6 +678,8 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
+	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
@@ -703,11 +703,6 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 				}
 				err = e.rowContainer.PutChunkSelected(chk, selected)
 			}
-		}
-		if !e.alreadySpilled && e.rowContainer.alreadySpilled() {
-			e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-			e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
-			e.alreadySpilled = e.rowContainer.alreadySpilled()
 		}
 		if err != nil {
 			return err

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -123,9 +124,10 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		sc:   sCtx.GetSessionVars().StmtCtx,
 		hCtx: hCtx,
 
-		hashTable:  newRowHashMap(estCount),
-		memTracker: initList.GetMemTracker(),
-		records:    initList,
+		hashTable:   newRowHashMap(estCount),
+		memTracker:  initList.GetMemTracker(),
+		diskTracker: disk.NewTracker(stringutil.StringerStr("hashRowContainer"), -1),
+		records:     initList,
 	}
 
 	return c
@@ -175,7 +177,7 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 func (c *hashRowContainer) spillToDisk() (err error) {
 	N := c.records.NumChunks()
 	c.recordsInDisk = chunk.NewListInDisk(c.hCtx.allTypes)
-	c.diskTracker = c.recordsInDisk.GetDiskTracker()
+	c.recordsInDisk.GetDiskTracker().AttachTo(c.diskTracker)
 	for i := 0; i < N; i++ {
 		chk := c.records.GetChunk(i)
 		err = c.recordsInDisk.Add(chk)
