@@ -255,7 +255,7 @@ func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
 
 	binloginfo.AddOneSkippedCommitter()
 	c.Assert(binloginfo.SkippedCommitterCount(), Equals, int32(1))
