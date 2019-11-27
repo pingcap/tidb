@@ -976,8 +976,8 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)
 	// Remove unnecessary FirstRow.
 	p.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx, finalAggFuncs, finalGbyItems, p.AggFuncs, p.GroupByItems, partialSchema)
-	if copTaskType == kv.TiDBMem {
-		// For partial agg of TiDBMem cop task, since TiDBMem coprocessor reuse the TiDB executor,
+	if copTaskType == kv.TiDB {
+		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
 		// so we need add `firstrow` aggregation function to output the group by value.
 		aggFuncs, err := genFirstRowAggForGroupBy(p.ctx, p.GroupByItems)

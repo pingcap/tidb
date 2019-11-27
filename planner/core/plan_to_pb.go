@@ -92,7 +92,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := p.Columns
-	if p.StoreType == kv.TiDBMem {
+	if p.StoreType == kv.TiDB {
 		return p.toMemTableScanPB(ctx)
 	}
 	tsExec := &tipb.TableScan{
@@ -200,7 +200,7 @@ func SupportStreaming(p PhysicalPlan) bool {
 		return true
 	case *PhysicalTableScan:
 		// TODO: remove this after TiDB coprocessor support stream.
-		return x.StoreType != kv.TiDBMem
+		return x.StoreType != kv.TiDB
 	}
 	return false
 }

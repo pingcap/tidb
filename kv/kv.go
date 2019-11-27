@@ -226,16 +226,16 @@ const (
 	TiKV StoreType = iota
 	// TiFlash means the type of a store is TiFlash.
 	TiFlash
-	// TiDBMem means the data is in the memory of all TiDB servers.
-	TiDBMem
+	// TiDB means the type of a store is TiDB.
+	TiDB
 )
 
 // Name returns the name of store type.
 func (t StoreType) Name() string {
 	if t == TiFlash {
 		return "tiflash"
-	} else if t == TiDBMem {
-		return "tidbs_mem"
+	} else if t == TiDB {
+		return "tidb"
 	}
 	return "tikv"
 }

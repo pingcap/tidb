@@ -384,7 +384,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 // Init initializes PhysicalTableReader.
 func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
 	tp := plancodec.TypeTableReader
-	if p.StoreType == kv.TiDBMem {
+	if p.StoreType == kv.TiDB {
 		tp = plancodec.TypeClusterMemTableReader
 	}
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
