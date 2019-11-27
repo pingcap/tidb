@@ -413,3 +413,9 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
     ```
+
+1. Resume the binlog writing when Pump is recovered.
+
+    ```shell
+    curl http://{TiDBIP}:10080/binlog/recover
+    ```
