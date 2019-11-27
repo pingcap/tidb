@@ -106,7 +106,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash && len(filterConds) > 0 {
 		if table, ok := ds.table.(partitionTable); ok {
-			pExpr, err:= table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
+			pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
 			if err != nil {
 				return nil, err
 			}
