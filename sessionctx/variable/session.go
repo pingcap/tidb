@@ -595,11 +595,8 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+// GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
-	if s.StmtCtx.HasEnableIndexMergeHint {
-		return s.StmtCtx.EnableIndexMerge
-	}
 	return s.enableIndexMerge
 }
 

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -121,6 +122,7 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
+	c.Assert(txn.Delete(kv.Key("y")), IsNil) // store data is affected by other tests.
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
@@ -204,4 +206,33 @@ func (s *testSnapshotSuite) TestLockNotFoundPrint(c *C) {
 		"key: [116, 128, 0, 0, 0, 0, 0, 50, 137, 95, 105, 128, 0, 0, 0, 0,0 ,0, 1, 1, 67, 49, 57, 48, 57, 50, 57, 48, 255, 48, 48, 48, 48, 48, 52, 56, 54, 255, 50, 53, 53, 50, 51, 0, 0, 0, 252] }))"
 	key := prettyLockNotFoundKey(msg)
 	c.Assert(key, Equals, "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}")
+}
+
+func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
+	txn := s.beginTxn(c)
+	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
+	c.Assert(txn.Set(kv.Key("y"), []byte("y")), IsNil)
+	ctx := context.Background()
+	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	committer.lockTTL = txnLockTTL(txn.startTime, 10<<20)
+	c.Assert(committer.prewriteKeys(bo, committer.keys), IsNil)
+
+	txn1 := s.beginTxn(c)
+	// txn1 is not blocked by txn in the large txn protocol.
+	_, err = txn1.Get(ctx, kv.Key("x"))
+	c.Assert(kv.IsErrNotFound(errors.Trace(err)), IsTrue)
+
+	res, err := txn1.BatchGet(ctx, []kv.Key{kv.Key("x"), kv.Key("y"), kv.Key("z")})
+	c.Assert(err, IsNil)
+	c.Assert(res, HasLen, 0)
+
+	// Commit txn, check the final commit ts is pushed.
+	committer.commitTS = txn.StartTS() + 1
+	c.Assert(committer.commitKeys(bo, committer.keys), IsNil)
+	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(status.IsCommitted(), IsTrue)
+	c.Assert(status.CommitTS(), Greater, txn1.StartTS())
 }
