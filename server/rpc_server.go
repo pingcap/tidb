@@ -35,8 +35,7 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-var globalDomain *domain.Domain
-var globalsessionManager util.SessionManager
+var rpcSrv *rpcServer
 
 // NewRPCServer creates a new rpc server.
 func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
@@ -56,17 +55,17 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 	if s == nil {
 		s = grpc.NewServer()
 	}
-	globalDomain = dom
-	globalsessionManager = sm
+	rpcSrv = &rpcServer{
+		dom: dom,
+		sm:  sm,
+	}
 	// For redirection the cop task.
-	mocktikv.TiDBRPCServerCoprocessorHandler = HandleCopDAGRequest
-	srv := &rpcServer{}
-	diagnosticspb.RegisterDiagnosticsServer(s, srv)
-	tikvpb.RegisterTikvServer(s, srv)
+	mocktikv.TiDBRPCServerCoprocessorHandler = rpcSrv.handleCopRequest
+	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
+	tikvpb.RegisterTikvServer(s, rpcSrv)
 	return s
 }
 
-// rpcServer is TiDB RPC Server, it reuse the TikvServer interface, but only support the Coprocessor interface now.
 // rpcServer contains below 2 services:
 // 1. Diagnose service, it's used for SQL diagnose.
 // 2. Coprocessor service, it reuse the TikvServer interface, but only support the Coprocessor interface now.
@@ -74,10 +73,12 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 type rpcServer struct {
 	sysutil.DiagnoseServer
 	tikvpb.TikvServer
+	dom *domain.Domain
+	sm  util.SessionManager
 }
 
 // Coprocessor implements the TiKVServer interface.
-func (c *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (resp *coprocessor.Response, err error) {
+func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (resp *coprocessor.Response, err error) {
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
@@ -85,14 +86,14 @@ func (c *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
 		}
 	}()
-	resp = HandleCopDAGRequest(ctx, in)
+	resp = s.handleCopRequest(ctx, in)
 	return resp, nil
 }
 
-// HandleCopDAGRequest handles the cop dag request. It's export for mockTiKV to redirect request.
-func HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+// handleCopRequest handles the cop dag request.
+func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	se, err := createSession()
+	se, err := rpcSrv.createSession()
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -103,8 +104,8 @@ func HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coproce
 	return h.HandleCopDAGRequest(ctx, req)
 }
 
-func createSession() (session.Session, error) {
-	se, err := session.CreateSessionWithDomain(globalDomain.Store(), globalDomain)
+func (s *rpcServer) createSession() (session.Session, error) {
+	se, err := session.CreateSessionWithDomain(s.dom.Store(), s.dom)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +119,6 @@ func createSession() (session.Session, error) {
 	se.GetSessionVars().HashAggPartialConcurrency = 1
 	se.GetSessionVars().HashAggFinalConcurrency = 1
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
-	se.SetSessionManager(globalsessionManager)
+	se.SetSessionManager(s.sm)
 	return se, nil
 }

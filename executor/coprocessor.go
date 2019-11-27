@@ -30,15 +30,17 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-type coprocessorDAGHandler struct {
+// CoprocessorDAGHandler uses to handle cop dag request.
+type CoprocessorDAGHandler struct {
 	sctx    sessionctx.Context
 	resp    *coprocessor.Response
 	selResp *tipb.SelectResponse
 	dagReq  *tipb.DAGRequest
 }
 
-func NewCoprocessorDAGHandler(sctx sessionctx.Context, resp *coprocessor.Response) *coprocessorDAGHandler {
-	return &coprocessorDAGHandler{
+// NewCoprocessorDAGHandler creates a new CoprocessorDAGHandler.
+func NewCoprocessorDAGHandler(sctx sessionctx.Context, resp *coprocessor.Response) *CoprocessorDAGHandler {
+	return &CoprocessorDAGHandler{
 		sctx:    sctx,
 		resp:    resp,
 		selResp: &tipb.SelectResponse{},
@@ -46,7 +48,7 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context, resp *coprocessor.Respons
 }
 
 // HandleCopDAGRequest handles the coprocessor request.
-func (h *coprocessorDAGHandler) HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+func (h *CoprocessorDAGHandler) HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return h.buildResp(err)
@@ -76,7 +78,7 @@ func (h *coprocessorDAGHandler) HandleCopDAGRequest(ctx context.Context, req *co
 	return h.buildResp(err)
 }
 
-func (h *coprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -99,7 +101,7 @@ func (h *coprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	return e, nil
 }
 
-func (h *coprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
 	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	bp := core.NewPBPlanBuilder(h.sctx, is)
 	plan, err := bp.BuildPhysicalPlanFromPB(executors)
@@ -110,7 +112,7 @@ func (h *coprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, 
 	return b.build(plan), nil
 }
 
-func (h *coprocessorDAGHandler) fillUpData4SelectResponse(chk *chunk.Chunk, tps []*types.FieldType) error {
+func (h *CoprocessorDAGHandler) fillUpData4SelectResponse(chk *chunk.Chunk, tps []*types.FieldType) error {
 	var err error
 	switch h.dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
@@ -124,7 +126,7 @@ func (h *coprocessorDAGHandler) fillUpData4SelectResponse(chk *chunk.Chunk, tps 
 	return err
 }
 
-func (h *coprocessorDAGHandler) buildResp(err error) *coprocessor.Response {
+func (h *CoprocessorDAGHandler) buildResp(err error) *coprocessor.Response {
 	resp := h.resp
 	if err != nil {
 		resp.OtherError = err.Error()
@@ -139,7 +141,7 @@ func (h *coprocessorDAGHandler) buildResp(err error) *coprocessor.Response {
 	return resp
 }
 
-func (h *coprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) error {
+func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) error {
 	colOrdinal := h.dagReq.OutputOffsets
 	chunks := h.selResp.Chunks
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
@@ -154,7 +156,7 @@ func (h *coprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.
 	return nil
 }
 
-func (h *coprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) error {
+func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) error {
 	colOrdinal := h.dagReq.OutputOffsets
 	chunks := h.selResp.Chunks
 	for i := 0; i < chk.NumRows(); i++ {
@@ -175,7 +177,7 @@ func (h *coprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 
 const rowsPerChunk = 64
 
-func (h *coprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
+func (h *CoprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 	if rowCnt%rowsPerChunk == 0 {
 		chunks = append(chunks, tipb.Chunk{})
 	}
