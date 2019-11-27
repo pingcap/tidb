@@ -113,9 +113,6 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
-func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
-func (t *mockTxn) ConfirmAssertions(succ bool)                   {}
-
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{
