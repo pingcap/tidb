@@ -221,7 +221,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 {
-		if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.L) && len(originColumns) > 0 {
+		if infoschema.IsClusterTable(ds.table.Type()) && len(originColumns) > 0 {
 			// use the first line.
 			handleCol = originSchemaColumns[0]
 			handleColInfo = originColumns[0]

@@ -1247,7 +1247,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
-		isVirtualTable: tb.Type() == table.VirtualTable,
+		isVirtualTable: tb.Type() != table.NormalTable,
 	}
 	return e
 }

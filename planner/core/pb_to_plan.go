@@ -58,13 +58,13 @@ func (b *pbPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 
 func (b *pbPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	memTbl := e.MemTblScan
-	if !infoschema.IsClusterMemTable(memTbl.DbName, memTbl.TableName) {
-		return nil, errors.Errorf("table %s is not a tidb memory table", memTbl.TableName)
-	}
 	dbName := model.NewCIStr(memTbl.DbName)
 	tbl, err := b.is.TableByName(dbName, model.NewCIStr(memTbl.TableName))
 	if err != nil {
 		return nil, err
+	}
+	if !infoschema.IsClusterTable(tbl.Type()) {
+		return nil, errors.Errorf("table %s is not a tidb memory table", memTbl.TableName)
 	}
 	columns, err := b.convertColumnInfo(tbl.Meta(), memTbl)
 	if err != nil {

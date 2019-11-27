@@ -2325,12 +2325,17 @@ func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Tab
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
-	return &infoschemaTable{meta: meta, cols: columns}, nil
+	tp := table.VirtualTable
+	if isClusterTableByName(util.InformationSchemaName, meta.Name.L) {
+		tp = table.ClusterTable
+	}
+	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
 }
 
 type infoschemaTable struct {
 	meta *model.TableInfo
 	cols []*table.Column
+	tp   table.Type
 }
 
 // schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
@@ -2575,7 +2580,7 @@ func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 
 // Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
-	return table.VirtualTable
+	return it.tp
 }
 
 // VirtualTable is a dummy table.Table implementation.

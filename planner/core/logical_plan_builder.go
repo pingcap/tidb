@@ -2477,7 +2477,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
-	if tbl.Type() == table.VirtualTable && !infoschema.IsClusterMemTable(dbName.L, tableInfo.Name.L) {
+	if tbl.Type() == table.VirtualTable {
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 

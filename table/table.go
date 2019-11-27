@@ -38,6 +38,8 @@ const (
 	NormalTable Type = iota
 	// VirtualTable , store no data, just extract data from the memory struct.
 	VirtualTable
+	// ClusterTable , contain the `VirtualTable` in the all cluster tidb nodes.
+	ClusterTable
 )
 
 const (

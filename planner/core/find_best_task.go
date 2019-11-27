@@ -1036,7 +1036,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	if ds.preferStoreType&preferTiKV != 0 {
 		ts.StoreType = kv.TiKV
 	}
-	if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.L) {
+	if infoschema.IsClusterTable(ds.table.Type()) {
 		ts.StoreType = kv.TiDB
 		ts.tp = plancodec.TypeMemTableScan
 	}
