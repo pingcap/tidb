@@ -468,11 +468,11 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 		}
 	}
 	var minCommitTS uint64
-	if c.forUpdateTS > 0 {
-		minCommitTS = c.forUpdateTS + 1
-	} else {
-		minCommitTS = c.startTS + 1
-	}
+	// if c.forUpdateTS > 0 {
+	// 	minCommitTS = c.forUpdateTS + 1
+	// } else {
+	// 	minCommitTS = c.startTS + 1
+	// }
 
 	failpoint.Inject("mockZeroCommitTS", func(val failpoint.Value) {
 		// Should be val.(uint64) but failpoint doesn't support that.

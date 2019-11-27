@@ -273,6 +273,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 }
 
 func (s *testLockSuite) TestCheckTxnStatus(c *C) {
+	c.Skip("skip for jepsen")
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
