@@ -15,8 +15,10 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -252,4 +254,13 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func (s *testIntegrationSuite) TestErrNoDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test")
+	_, err := tk.Exec("grant select on test1111 to test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	tk.MustExec("use test")
+	tk.MustExec("grant select on test1111 to test@'%'")
 }
