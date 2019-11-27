@@ -168,6 +168,8 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	return res, ok, false
 }
 
+
+// FastLocateHashPartition is used to get hash partition quickly.
 func FastLocateHashPartition(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool, bool) {
 	return newHashPartitionPruner().solve(ctx, conds, piExpr)
 }
