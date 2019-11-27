@@ -321,7 +321,7 @@ func (g *jsonStringGener) gen() interface{} {
 	return j.String()
 }
 
-type decimalStringGener struct {}
+type decimalStringGener struct{}
 
 func (g *decimalStringGener) gen() interface{} {
 	return strconv.FormatFloat(rand.Float64(), 'E', -1, 64)

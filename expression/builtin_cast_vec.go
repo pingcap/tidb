@@ -1429,8 +1429,8 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 			continue
 		}
 		dec := new(types.MyDecimal)
-		if err:= stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
-				return err
+		if err := stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
+			return err
 		}
 		res[i] = *dec
 	}
