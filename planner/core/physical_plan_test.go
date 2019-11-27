@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
@@ -947,6 +948,55 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Best = core.ToString(p)
+			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
+			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if output[i].HasWarn {
+			c.Assert(warnings, HasLen, 1, comment)
+		} else {
+			c.Assert(warnings, HasLen, 0, comment)
+		}
+		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+	}
+}
+
+func (s *testPlanSuite) TestIndexMergeHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Best    string
+		HasWarn bool
+		Hints   string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	ctx := context.Background()
+	for i, test := range input {
+		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		stmt, err := s.ParseOneStmt(test, "", "")
+		c.Assert(err, IsNil, comment)
+		sctx := se.(sessionctx.Context)
+		err = executor.ResetContextOfStmt(sctx, stmt)
+		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {

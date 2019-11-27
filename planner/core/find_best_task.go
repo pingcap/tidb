@@ -408,6 +408,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
+
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.partialIndexPaths != nil {
@@ -450,6 +451,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			t = idxTask
 		}
 	}
+
 	return
 }
 
