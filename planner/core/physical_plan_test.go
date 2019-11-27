@@ -454,7 +454,7 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 	c.Assert(err, IsNil)
 
 	sql := "select * from t where a in (1, 10, 20)"
-	expect := "TableReader(Table(t))->Sel([in(Column#1, 1, 10, 20)])"
+	expect := "TableReader(Table(t))->Sel([in(test.t.a, 1, 10, 20)])"
 
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
@@ -523,7 +523,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Index Join + Union Scan + Union All is not supported now.
 		{
 			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(Column#1,Column#14)",
+			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(test.t.a,test.t.a)",
 		},
 	}
 	for i, tt := range tests {
@@ -834,49 +834,43 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
 	c.Assert(err, IsNil)
 
-	tests := []struct {
-		sql     string
-		best    string
-		warning string
-	}{
-		{
-			sql:  "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
-			best: "TableReader(Table(t)->HashAgg)->HashAgg",
-		},
-		{
-			sql:  "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
-			best: "TableReader(Table(t)->HashAgg)->HashAgg",
-		},
-		{
-			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
-			best:    "TableReader(Table(t)->HashAgg)->HashAgg->HashAgg",
-			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
-		},
-		{
-			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#1,Column#14)->Projection->HashAgg",
-			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
-		},
-	}
+	var (
+		input  []string
+		output []struct {
+			Best    string
+			Warning string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+
 	ctx := context.Background()
-	for i, test := range tests {
+	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 
-		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, test.best, comment)
+		planString := core.ToString(p)
+		s.testData.OnRecord(func() {
+			output[i].Best = planString
+		})
+		c.Assert(planString, Equals, output[i].Best, comment)
 
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-		if test.warning == "" {
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		if output[i].Warning == "" {
 			c.Assert(len(warnings), Equals, 0, comment)
 		} else {
 			c.Assert(len(warnings), Equals, 1, comment)
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
-			c.Assert(warnings[0].Err.Error(), Equals, test.warning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
 		}
 	}
 }
