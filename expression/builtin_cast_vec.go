@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -109,7 +111,11 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 		}
 		if !hasUnsignedFlag0 && !hasUnsignedFlag1 {
 			rs[i] = float64(i64s[i])
-		} else if b.inUnion && i64s[i] < 0 {
+		} else if b.inUnion && !hasUnsignedFlag1 && i64s[i] < 0 {
+			// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
+			// NOTE: the following expressions are equal (so choose the more efficient one):
+			// `b.inUnion && hasUnsignedFlag0 && !hasUnsignedFlag1 && i64s[i] < 0`
+			// `b.inUnion && !hasUnsignedFlag1 && i64s[i] < 0`
 			rs[i] = 0
 		} else {
 			// recall that, int to float is different from uint to float
@@ -810,11 +816,60 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastStringAsIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+	result.ResizeInt64(n, false)
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.MergeNulls(buf)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	i64s := result.Int64s()
+	isUnsigned := mysql.HasUnsignedFlag(b.tp.Flag)
+	unionUnsigned := isUnsigned && b.inUnion
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		var (
+			res  int64
+			ures uint64
+		)
+		val := strings.TrimSpace(buf.GetString(i))
+		isNegative := len(val) > 1 && val[0] == '-'
+		if !isNegative {
+			ures, err = types.StrToUint(sc, val)
+			if !isUnsigned && err == nil && ures > uint64(math.MaxInt64) {
+				sc.AppendWarning(types.ErrCastAsSignedOverflow)
+			}
+			res = int64(ures)
+		} else if unionUnsigned {
+			res = 0
+		} else {
+			res, err = types.StrToInt(sc, val)
+			if err == nil && isUnsigned {
+				// If overflow, don't append this warnings
+				sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
+			}
+		}
+		res, err = b.handleOverflow(res, val, err, isNegative)
+		if err != nil {
+			return err
+		}
+		i64s[i] = res
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsDurationSig) vectorized() bool {
@@ -1309,11 +1364,38 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 }
 
 func (b *builtinCastJSONAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	res := result.Decimals()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		tempres, err := types.ConvertJSONToDecimal(sc, buf.GetJSON(i))
+		if err != nil {
+			return err
+		}
+		tempres, err = types.ProduceDecWithSpecifiedTp(tempres, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		res[i] = *tempres
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsRealSig) vectorized() bool {

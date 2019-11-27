@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -172,7 +173,7 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Exprs))
+	return expression.ExplainExpressionList(p.Exprs, p.schema)
 }
 
 // ExplainInfo implements Plan interface.
@@ -193,21 +194,19 @@ func (p *PhysicalLimit) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *basePhysicalAgg) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
+	builder := &strings.Builder{}
 	if len(p.GroupByItems) > 0 {
-		fmt.Fprintf(buffer, "group by:%s, ",
+		fmt.Fprintf(builder, "group by:%s, ",
 			expression.SortedExplainExpressionList(p.GroupByItems))
 	}
-	if len(p.AggFuncs) > 0 {
-		buffer.WriteString("funcs:")
-		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(agg))
-			if i+1 < len(p.AggFuncs) {
-				buffer.WriteString(", ")
-			}
+	for i := 0; i < len(p.AggFuncs); i++ {
+		builder.WriteString("funcs:")
+		fmt.Fprintf(builder, "%v->%v", aggregation.ExplainAggFunc(p.AggFuncs[i]), p.schema.Columns[i])
+		if i+1 < len(p.AggFuncs) {
+			builder.WriteString(", ")
 		}
 	}
-	return buffer.String()
+	return builder.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -335,7 +334,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 // ExplainInfo implements Plan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	formatWindowFuncDescs(buffer, p.WindowFuncDescs)
+	formatWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
 	isFirst := true
 	if len(p.PartitionBy) > 0 {
@@ -383,12 +382,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	return buffer.String()
 }
 
-func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc) *bytes.Buffer {
+func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
+	winFuncStartIdx := len(schema.Columns) - len(descs)
 	for i, desc := range descs {
 		if i != 0 {
 			buffer.WriteString(", ")
 		}
-		buffer.WriteString(desc.String())
+		fmt.Fprintf(buffer, "%v->%v", desc, schema.Columns[winFuncStartIdx+i])
 	}
 	return buffer
 }
@@ -435,7 +435,7 @@ func (p *LogicalAggregation) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Exprs))
+	return expression.ExplainExpressionList(p.Exprs, p.schema)
 }
 
 // ExplainInfo implements Plan interface.
