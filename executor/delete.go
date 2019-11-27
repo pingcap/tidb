@@ -18,6 +18,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -97,9 +98,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		break
 	}
 
-	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
-	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	sessVars := e.ctx.GetSessionVars()
+	// If tidb_batch_delete is ON and not in a transaction, or enable-batch-dml is ON, we could use BatchDelete mode.
+	batchDelete := (sessVars.BatchDelete && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
 	for {
@@ -114,15 +115,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
-			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(); err != nil {
+			if batchDelete && rowCount%sessVars.DMLBatchSize == 0 && rowCount != 0 {
+				if err = batchDMLCommit(ctx, e.ctx); err != nil {
 					return err
 				}
-				if err = e.ctx.NewTxn(ctx); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
-				}
-				rowCount = 0
 			}
 
 			datumRow := chunkRow.GetDatumRow(fields)
