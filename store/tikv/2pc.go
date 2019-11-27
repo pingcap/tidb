@@ -1202,9 +1202,8 @@ func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.Bin
 		binlogWriteResult := binInfo.WriteBinlog(c.store.clusterID)
 		err := binlogWriteResult.GetError()
 		if err != nil {
-			logutil.BgLogger().Error("failed to write binlog", zap.Error(err))
-		} else if binlogWriteResult.Skipped() {
-			logutil.BgLogger().Warn("skip writing finish binlog")
+			logutil.BgLogger().Error("failed to write binlog",
+				zap.Error(err))
 		}
 		logutil.Eventf(ctx, "finish write finish binlog")
 	}()
