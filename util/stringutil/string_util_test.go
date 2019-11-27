@@ -152,3 +152,21 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
 	}
 }
+
+func BenchmarkMatchSpecial(b *testing.B) {
+	var (
+		pattern = `a%a%a%a%a%a%a%a%b`
+		target  = `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+		escape  = byte('\\')
+	)
+
+	patChars, patTypes := CompilePattern(pattern, escape)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		match := DoMatch(target, patChars, patTypes)
+		if match {
+			b.Fatal("Unmatch expected.")
+		}
+	}
+}
