@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -33,9 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/profile"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
@@ -167,30 +164,21 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 }
 
 func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sql := "SELECT status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO WHERE type = 'tikv'"
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	servers, err := infoschema.GetClusterServerInfo(ctx)
 	failpoint.Inject("mockTiKVNodeStatusAddress", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
 		// there is no extra checks for it. (let the test fail if the expression invalid)
 		if s := val.(string); len(s) > 0 {
-			fields := []*types.FieldType{
-				{
-					Charset: mysql.UTF8Charset,
-					Collate: mysql.UTF8DefaultCollation,
-					Tp:      mysql.TypeVarchar,
-					Flen:    64,
-					Flag:    64,
-				},
+			servers = servers[:0]
+			for _, server := range strings.Split(s, ";") {
+				parts := strings.Split(server, ",")
+				servers = append(servers, infoschema.ServerInfo{
+					ServerType: parts[0],
+					Address:    parts[1],
+					StatusAddr: parts[2],
+				})
 			}
-			data := chunk.New(fields, 0, 3)
-			for i, col := range strings.Split(s, ",") {
-				data.AppendString(i, col)
-			}
-			iter := chunk.NewIterator4Chunk(data)
-			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				rows = append(rows, r)
-			}
-			// erase the error message
+			// erase error
 			err = nil
 		}
 	})
@@ -206,9 +194,12 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
-	ch := make(chan result, len(rows))
-	for _, row := range rows {
-		statusAddr := row.GetString(0)
+	ch := make(chan result, len(servers))
+	for _, server := range servers {
+		if server.ServerType != "tikv" {
+			continue
+		}
+		statusAddr := server.StatusAddr
 		if len(statusAddr) == 0 {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", statusAddr))
 			continue
@@ -234,6 +225,10 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 				defer func() {
 					terror.Log(resp.Body.Close())
 				}()
+				if resp.StatusCode != http.StatusOK {
+					ch <- result{err: errors.Errorf("request %s failed: %s", statusAddr, resp.Status)}
+					return
+				}
 				collector := profile.Collector{}
 				rows, err := collector.ProfileReaderToDatums(resp.Body)
 				if err != nil {
