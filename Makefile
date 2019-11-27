@@ -125,8 +125,9 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-# Split tests for CI to run `make test` parallelly.
+# Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
+	@>&2 echo "Great, all tests passed."
 
 test_part_1: checklist explaintest
 
