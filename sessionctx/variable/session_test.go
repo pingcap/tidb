@@ -151,7 +151,24 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		P90WaitTime:       time.Millisecond * 20,
 		MaxWaitTime:       time.Millisecond * 30,
 		MaxWaitAddress:    "10.6.131.79",
+		MaxBackoffTime:    make(map[string]time.Duration),
+		AvgBackoffTime:    make(map[string]time.Duration),
+		P90BackoffTime:    make(map[string]time.Duration),
+		TotBackoffTime:    make(map[string]time.Duration),
+		TotBackoffTimes:   make(map[string]int),
+		MaxBackoffAddress: make(map[string]string),
 	}
+
+	backoffs := []string{"rpcTiKV", "rpcPD", "regionMiss"}
+	for _, backoff := range backoffs {
+		copTasks.MaxBackoffTime[backoff] = time.Millisecond * 200
+		copTasks.MaxBackoffAddress[backoff] = "127.0.0.1"
+		copTasks.AvgBackoffTime[backoff] = time.Millisecond * 200
+		copTasks.P90BackoffTime[backoff] = time.Millisecond * 200
+		copTasks.TotBackoffTime[backoff] = time.Millisecond * 200
+		copTasks.TotBackoffTimes[backoff] = 200
+	}
+
 	var memMax int64 = 2333
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
@@ -168,6 +185,9 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
+# Backoff_regionMiss_total_times: 200 Backoff_regionMiss_total_time: 200ms Backoff_regionMiss_max_time: 200ms Backoff_regionMiss_max_addr: 127.0.0.1 Backoff_regionMiss_avg_time: 200ms Backoff_regionMiss_p90_time: 200ms
+# Backoff_rpcPD_total_times: 200 Backoff_rpcPD_total_time: 200ms Backoff_rpcPD_max_time: 200ms Backoff_rpcPD_max_addr: 127.0.0.1 Backoff_rpcPD_avg_time: 200ms Backoff_rpcPD_p90_time: 200ms
+# Backoff_rpcTiKV_total_times: 200 Backoff_rpcTiKV_total_time: 200ms Backoff_rpcTiKV_max_time: 200ms Backoff_rpcTiKV_max_addr: 127.0.0.1 Backoff_rpcTiKV_avg_time: 200ms Backoff_rpcTiKV_p90_time: 200ms
 # Mem_max: 2333
 # Prepared: true
 # Has_more_results: true

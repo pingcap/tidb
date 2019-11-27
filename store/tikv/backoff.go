@@ -250,6 +250,9 @@ type Backoffer struct {
 	types      []fmt.Stringer
 	vars       *kv.Variables
 	noop       bool
+
+	backoffSleepMS map[backoffType]int
+	backoffTimes   map[backoffType]int
 }
 
 type txnStartCtxKeyType struct{}
@@ -263,12 +266,17 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 		ctx:      ctx,
 		maxSleep: maxSleep,
 		vars:     kv.DefaultVars,
+
+		backoffSleepMS: make(map[backoffType]int),
+		backoffTimes:   make(map[backoffType]int),
 	}
 }
 
 // NewNoopBackoff create a Backoffer do nothing just return error directly
 func NewNoopBackoff(ctx context.Context) *Backoffer {
-	return &Backoffer{ctx: ctx, noop: true}
+	return &Backoffer{ctx: ctx, noop: true,
+		backoffSleepMS: make(map[backoffType]int),
+		backoffTimes:   make(map[backoffType]int)}
 }
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
@@ -332,6 +340,8 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	realSleep := f(b.ctx, maxSleepMs)
 	backoffDuration.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
+	b.backoffSleepMS[typ] += realSleep
+	b.backoffTimes[typ] ++
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {

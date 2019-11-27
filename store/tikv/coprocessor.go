@@ -920,6 +920,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail = new(execdetails.ExecDetails)
 	}
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep, resp.detail.BackoffTimes = make(map[string]time.Duration), make(map[string]int)
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
 	if rpcCtx != nil {
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
