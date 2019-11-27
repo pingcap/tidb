@@ -136,10 +136,10 @@ var skippedCommitterCounter int32
 func WaitBinlogRecover() {
 	logutil.BgLogger().Warn("[binloginfo] start waiting for binlog recovering")
 	for {
+		time.Sleep(time.Second)
 		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
 			break
 		}
-		time.Sleep(time.Second)
 	}
 	logutil.BgLogger().Warn("[binloginfo] binlog recovered")
 }
