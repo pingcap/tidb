@@ -1208,8 +1208,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlDuration(types.Duration{vals[0], types.UnspecifiedFsp})
-		lastRowDatum.SetMysqlDuration(types.Duration{vals[numRows-1], types.UnspecifiedFsp})
+		firstRowDatum.SetMysqlDuration(types.Duration{Duration: vals[0], Fsp: types.UnspecifiedFsp})
+		lastRowDatum.SetMysqlDuration(types.Duration{Duration: vals[numRows-1], Fsp: types.UnspecifiedFsp})
 	case types.ETJson:
 		previousKey := col.GetJSON(0)
 		for i := 1; i < numRows; i++ {
