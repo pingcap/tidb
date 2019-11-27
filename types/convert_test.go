@@ -469,17 +469,14 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func testSelectUpdateDeleteEmptyStringError(c *C) {
 	testCases := []struct {
 		inSelect bool
-		inUpdate bool
 		inDelete bool
 	}{
-		{true, false, false},
-		{false, true, false},
-		{false, false, true},
+		{true, false},
+		{false, true},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
-		sc.InUpdateStmt = tc.inUpdate
 		sc.InDeleteStmt = tc.inDelete
 
 		str := ""

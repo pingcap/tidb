@@ -810,12 +810,23 @@ func (s *testSuite3) TestJiraIssue5366(c *C) {
 	tk.MustQuery(`select * from bug`).Sort().Check(testkit.Rows("20180531557", "20190430140319679394"))
 }
 
-func (s *testSuite3) TestInsertCastFloat(c *C) {
+func (s *testSuite3) TestDMLCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int)`)
-	tk.MustExec(`insert into t values (ifnull('',0)+0)`)
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("0"))
-	_, err := tk.Exec(`insert into t values ('')`)
+	tk.MustExec(`create table t (a int, b double)`)
+	tk.MustExec(`insert into t values (ifnull('',0)+0, 0)`)
+	tk.MustExec(`insert into t values (0, ifnull('',0)+0)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("0 0", "0 0"))
+	_, err := tk.Exec(`insert into t values ('', 0)`)
 	c.Assert(err, NotNil)
+	_, err = tk.Exec(`insert into t values (0, '')`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`update t set a = ''`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`update t set b = ''`)
+	c.Assert(err, NotNil)
+	tk.MustExec("update t set a = ifnull('',0)+0")
+	tk.MustExec("update t set b = ifnull('',0)+0")
+	tk.MustExec("delete from t where a = ''")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
