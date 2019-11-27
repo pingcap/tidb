@@ -874,11 +874,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		return err
 	}
 
-	err = e.appendResult2Chunk(chk)
-	if err != nil {
-		return err
-	}
-	return nil
+	return e.appendResult2Chunk(chk)
 }
 
 func (e *StreamAggExec) consumeGroupRows() error {
@@ -1027,18 +1023,18 @@ type vecGroupChecker struct {
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
-	sameGroup := make([]bool, 1024)
+
 	return &vecGroupChecker{
 		ctx:          ctx,
 		GroupByItems: items,
 		groupCount:   0,
 		nextGroupID:  0,
-		sameGroup:    sameGroup,
+		sameGroup:    make([]bool, 1024),
 	}
 }
 
-// splitIntoGroups divides the chunk into more groups which the row in the same group have the same groupKey
-// the return value isFirstGroupSameAsPrev means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
+// splitIntoGroups splits a chunk into multiple groups which the row in the same group have the same groupKey
+// `isFirstGroupSameAsPrev` indicates whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsPrev bool, err error) {
 	// The numRows can not be zero. `fetchChild` is called before `splitIntoGroups` is called.
@@ -1104,7 +1100,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 }
 
 // evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
-// And check whether the chunk into groups according to the evaluation results
+// And resolve the rows into groups according to the evaluation results
 func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
