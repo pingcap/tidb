@@ -198,13 +198,28 @@ func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast
 }
 
 func checkIfDBExist(dbName string, is infoschema.InfoSchema) bool {
+	for _, c := range dbName {
+		if c == '%' {
+			return true
+		}
+	}
 	ifExist := is.SchemaExists(model.NewCIStr(dbName))
 	return ifExist
 }
 
 func checkIfTableExist(dbName string, tableName string, is infoschema.InfoSchema) bool {
+	for _, c := range dbName {
+		if c == '%' {
+			return true
+		}
+	}
 	schema, ok := is.SchemaByName(model.NewCIStr(dbName))
 	if ok {
+		for _, c := range tableName {
+			if c == '%' {
+				return true
+			}
+		}
 		ok = is.TableExists(schema.Name, model.NewCIStr(tableName))
 		return ok
 	}
