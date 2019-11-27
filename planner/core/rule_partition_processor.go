@@ -142,7 +142,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
-
+	
 	// do preSolve with filter exprs for situations like
 	// where c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 and c3 = c1 - 10
 	// no need to do partition pruning work for "alwaysFalse" filter results

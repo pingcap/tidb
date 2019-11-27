@@ -90,7 +90,7 @@ func (p *hashPartitionPruner) reduceConstantEQ() {
 func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bool) {
 	switch pi := piExpr.(type) {
 	case *ScalarFunction:
-		if pi.FuncName.L == ast.Plus {
+		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
 			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
 			leftVal, ok := p.tryEvalPartitionExpr(left)
 			if !ok {
@@ -100,7 +100,16 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bo
 			if !ok {
 				return 0, false
 			}
-			return rightVal + leftVal, true
+			switch pi.FuncName.L {
+			case ast.Plus:
+				return rightVal + leftVal, true
+			case ast.Minus:
+				return rightVal - leftVal, true
+			case ast.Mul:
+				return rightVal * leftVal, true
+			case ast.Div:
+				return rightVal / leftVal, true
+			}
 		}
 	case *Constant:
 		val, err := pi.Eval(chunk.Row{})
