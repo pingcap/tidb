@@ -832,7 +832,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.groupChecker.isExhausted() {
-		if err = e.fetchChild(ctx, chk); err != nil {
+		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil {
 			return err
 		}
 		if !e.executed {
@@ -845,27 +845,27 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		}
 	}
 	begin, end := e.groupChecker.getNextGroup()
-	e.groupRows = e.groupRows[:0]
 	for i := begin; i < end; i++ {
 		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 	}
 
-	for end == e.childResult.NumRows() {
-		end = -1
-		if err = e.fetchChild(ctx, chk); err != nil || e.executed {
+	for meetLastGroup := end == e.childResult.NumRows(); meetLastGroup; {
+		meetLastGroup = false
+		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil || e.executed {
 			return err
 		}
 
-		areSameGroup, err := e.groupChecker.splitIntoGroups(e.childResult)
+		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
 		if err != nil {
 			return err
 		}
 
-		if areSameGroup {
+		if isFirstGroupSameAsPrev {
 			begin, end = e.groupChecker.getNextGroup()
 			for i := begin; i < end; i++ {
 				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
 			}
+			meetLastGroup = end == e.childResult.NumRows()
 		}
 	}
 
@@ -896,7 +896,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	return nil
 }
 
-func (e *StreamAggExec) fetchChild(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, chk *chunk.Chunk) (err error) {
 	// Before fetching a new batch of input, we should consume the last group.
 	err = e.consumeGroupRows()
 	if err != nil {
@@ -1008,11 +1008,11 @@ type vecGroupChecker struct {
 	groupOffset []int
 	// groupCount is the count of groups in the current chunk
 	groupCount int
-	// curGroupID records the group id of the next group to be consumed
-	curGroupID int
+	// nextGroupID records the group id of the next group to be consumed
+	nextGroupID int
 
-	// previousLastGroupKey is the groupKey of the last group of the previous chunk
-	previousLastGroupKey []byte
+	// lastGroupKeyOfPrevChk is the groupKey of the last group of the previous chunk
+	lastGroupKeyOfPrevChk []byte
 	// firstGroupKey and lastGroupKey are used to store the groupKey of the first and last group of the current chunk
 	firstGroupKey []byte
 	lastGroupKey  []byte
@@ -1032,21 +1032,21 @@ func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *
 		ctx:          ctx,
 		GroupByItems: items,
 		groupCount:   0,
-		curGroupID:   0,
+		nextGroupID:  0,
 		sameGroup:    sameGroup,
 	}
 }
 
 // splitIntoGroups divides the chunk into more groups which the row in the same group have the same groupKey
-// the return value areSameGroup means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
+// the return value isFirstGroupSameAsPrev means whether the groupKey of the first group of the newly passed chunk is equal to the groupKey of the last group left before
 // TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, err error) {
-	// The numRows can not be zero. `FetchChild` is called before `splitIntoGroups` is called.
+func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsPrev bool, err error) {
+	// The numRows can not be zero. `fetchChild` is called before `splitIntoGroups` is called.
 	// if numRows == 0, it will be returned in `fetchChild`. See `fetchChild` for more details.
 	numRows := chk.NumRows()
 
 	e.reset()
-	e.curGroupID = 0
+	e.nextGroupID = 0
 	if len(e.GroupByItems) == 0 {
 		e.groupOffset = append(e.groupOffset, numRows)
 		return true, nil
@@ -1061,7 +1061,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 	}
 
 	for _, item := range e.GroupByItems {
-		err = e.checkGroupByItem(item, chk, numRows)
+		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -1076,19 +1076,21 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 		return false, err
 	}
 
-	if len(e.previousLastGroupKey) == 0 {
-		areSameGroup = false
+	if len(e.lastGroupKeyOfPrevChk) == 0 {
+		isFirstGroupSameAsPrev = false
 	} else {
-		if bytes.Equal(e.previousLastGroupKey, e.firstGroupKey) {
-			areSameGroup = true
+		if bytes.Equal(e.lastGroupKeyOfPrevChk, e.firstGroupKey) {
+			isFirstGroupSameAsPrev = true
 		} else {
-			areSameGroup = false
+			isFirstGroupSameAsPrev = false
 		}
 	}
-	if cap(e.previousLastGroupKey) < len(e.lastGroupKey) {
-		e.previousLastGroupKey = make([]byte, len(e.lastGroupKey))
+	if length := len(e.lastGroupKey); len(e.lastGroupKeyOfPrevChk) >= length {
+		e.lastGroupKeyOfPrevChk = e.lastGroupKeyOfPrevChk[:length]
+	} else {
+		e.lastGroupKeyOfPrevChk = make([]byte, len(e.lastGroupKey))
 	}
-	copy(e.previousLastGroupKey, e.lastGroupKey)
+	copy(e.lastGroupKeyOfPrevChk, e.lastGroupKey)
 
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
@@ -1097,12 +1099,12 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (areSameGroup bool, 
 	}
 	e.groupOffset = append(e.groupOffset, numRows)
 	e.groupCount = len(e.groupOffset)
-	return areSameGroup, nil
+	return isFirstGroupSameAsPrev, nil
 }
 
-// checkGroupByItem evaluates the chunk according to the expression item.
+// evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
 // And check whether the chunk into groups according to the evaluation results
-func (e *vecGroupChecker) checkGroupByItem(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
 	col, err := expression.GetColumn(eType, numRows)
@@ -1241,18 +1243,18 @@ func (e *vecGroupChecker) checkGroupByItem(item expression.Expression, chk *chun
 }
 
 func (e *vecGroupChecker) getNextGroup() (begin, end int) {
-	if e.curGroupID == 0 {
+	if e.nextGroupID == 0 {
 		begin = 0
 	} else {
-		begin = e.groupOffset[e.curGroupID-1]
+		begin = e.groupOffset[e.nextGroupID-1]
 	}
-	end = e.groupOffset[e.curGroupID]
-	e.curGroupID++
+	end = e.groupOffset[e.nextGroupID]
+	e.nextGroupID++
 	return begin, end
 }
 
 func (e *vecGroupChecker) isExhausted() bool {
-	return e.curGroupID >= e.groupCount
+	return e.nextGroupID >= e.groupCount
 }
 
 func (e *vecGroupChecker) reset() {
