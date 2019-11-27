@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -217,7 +218,8 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 		go func(address string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				url := fmt.Sprintf("http://%s/debug/pprof/profile?seconds=5&frequency=5", statusAddr)
+				interval := int(profile.CPUProfileInterval / time.Second)
+				url := fmt.Sprintf("http://%s/debug/pprof/profile?seconds=%d", statusAddr, interval)
 				req, err := http.NewRequest(http.MethodGet, url, nil)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
