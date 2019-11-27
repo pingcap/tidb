@@ -8,28 +8,28 @@ StreamAgg_20	1.00	root	funcs:avg(Column#7, Column#8)
     └─IndexScan_19	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t;
 id	count	task	operator info
-StreamAgg_20	1.00	root	funcs:avg(Column#7, Column#8)
-└─TableReader_21	1.00	root	data:StreamAgg_8
+StreamAgg_16	1.00	root	funcs:avg(Column#7, Column#8)
+└─TableReader_17	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tiflash]	funcs:count(Column#1), sum(Column#1)
-    └─TableScan_19	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t;
 id	count	task	operator info
-StreamAgg_20	1.00	root	funcs:sum(Column#6)
-└─TableReader_21	1.00	root	data:StreamAgg_8
+StreamAgg_16	1.00	root	funcs:sum(Column#6)
+└─TableReader_17	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(Column#1)
-    └─TableScan_19	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t;
 id	count	task	operator info
-StreamAgg_20	1.00	root	funcs:sum(Column#6)
-└─TableReader_21	1.00	root	data:StreamAgg_8
+StreamAgg_16	1.00	root	funcs:sum(Column#6)
+└─TableReader_17	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(plus(Column#1, 1))
-    └─TableScan_19	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t;
 id	count	task	operator info
-StreamAgg_20	1.00	root	funcs:sum(Column#6)
-└─TableReader_21	1.00	root	data:StreamAgg_8
+StreamAgg_16	1.00	root	funcs:sum(Column#6)
+└─TableReader_17	1.00	root	data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(isnull(Column#1))
-    └─TableScan_19	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 create table tt(a int, b int, primary key(a));
 desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
 id	count	task	operator info
