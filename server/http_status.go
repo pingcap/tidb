@@ -280,7 +280,7 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 	grpcL := m.Match(cmux.Any())
 
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg.Security, s.dom)
+	s.grpcServer = NewRPCServer(s.cfg.Security, s.dom, s)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)

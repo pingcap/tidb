@@ -306,7 +306,6 @@ func (s *Server) loadTLSCertificates() {
 // Run runs the server.
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
-	util.SetGlobalSessionManager(s)
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {

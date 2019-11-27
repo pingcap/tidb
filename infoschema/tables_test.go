@@ -93,7 +93,15 @@ func (s *testClusterTableSuite) SetUpSuite(c *C) {
 func setUpRPCService(c *C, addr string, dom *domain.Domain) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
-	srv := server.NewRPCServer(config.GetGlobalConfig().Security, dom)
+	// Fix issue 9836
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "root",
+		Host:    "127.0.0.1",
+		Command: mysql.ComQuery,
+	}
+	srv := server.NewRPCServer(config.GetGlobalConfig().Security, dom, sm)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
@@ -866,7 +874,8 @@ func (s *testClusterTableSuite) TestSelectClusterMemTable(c *C) {
 	defer os.Remove(slowLogFileName)
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from `TIDB_CLUSTER_PROCESSLIST`")
+	tk.MustQuery("select count(*) from `TIDB_CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from `TIDB_CLUSTER_PROCESSLIST`").Check(testkit.Rows("1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0  :10080"))
 	tk.MustQuery("select query_time, conn_id from `TIDB_CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
 	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 	tk.MustQuery("select digest, count(*) from `TIDB_CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))

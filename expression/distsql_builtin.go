@@ -1046,6 +1046,9 @@ func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if e == nil {
+			return nil, errors.Errorf("pb to expression failed, pb expression is %v", expr)
+		}
 		exprs = append(exprs, e)
 	}
 	return exprs, nil

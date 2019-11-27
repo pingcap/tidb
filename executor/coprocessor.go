@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -17,22 +30,33 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+type coprocessorDAGHandler struct {
+	sctx    sessionctx.Context
+	resp    *coprocessor.Response
+	selResp *tipb.SelectResponse
+	dagReq  *tipb.DAGRequest
+}
+
+func NewCoprocessorDAGHandler(sctx sessionctx.Context, resp *coprocessor.Response) *coprocessorDAGHandler {
+	return &coprocessorDAGHandler{
+		sctx:    sctx,
+		resp:    resp,
+		selResp: &tipb.SelectResponse{},
+	}
+}
+
 // HandleCopDAGRequest handles the coprocessor request.
-func HandleCopDAGRequest(ctx context.Context, sctx sessionctx.Context, req *coprocessor.Request) *coprocessor.Response {
-	resp := &coprocessor.Response{}
-	e, dagReq, err := buildDAGExecutor(sctx, req)
+func (h *coprocessorDAGHandler) HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+	e, err := h.buildDAGExecutor(req)
 	if err != nil {
-		resp.OtherError = err.Error()
-		return resp
+		return h.buildResp(err)
 	}
 
 	err = e.Open(ctx)
 	if err != nil {
-		resp.OtherError = err.Error()
-		return resp
+		return h.buildResp(err)
 	}
 
-	selResp := &tipb.SelectResponse{}
 	chk := newFirstChunk(e)
 	tps := e.base().retFieldTypes
 	for {
@@ -44,69 +68,69 @@ func HandleCopDAGRequest(ctx context.Context, sctx sessionctx.Context, req *copr
 		if chk.NumRows() == 0 {
 			break
 		}
-		err = fillUpData4SelectResponse(selResp, dagReq, sctx, chk, tps)
+		err = h.fillUpData4SelectResponse(chk, tps)
 		if err != nil {
 			break
 		}
 	}
-	return buildResp(selResp, err)
+	return h.buildResp(err)
 }
 
-func buildDAGExecutor(sctx sessionctx.Context, req *coprocessor.Request) (Executor, *tipb.DAGRequest, error) {
+func (h *coprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
-		return nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
+		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	sctx.GetSessionVars().StmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
-	sctx.GetSessionVars().StmtCtx.TimeZone, err = timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	h.sctx.GetSessionVars().StmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
+	h.sctx.GetSessionVars().StmtCtx.TimeZone, err = timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	e, err := buildDAG(sctx, dagReq.Executors)
+	h.dagReq = dagReq
+	e, err := h.buildDAG(dagReq.Executors)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return e, dagReq, nil
+	return e, nil
 }
 
-func buildDAG(sctx sessionctx.Context, executors []*tipb.Executor) (Executor, error) {
-	var src core.PhysicalPlan
-	is := sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	bp := core.NewPBPlanBuilder(sctx, is)
-	for i := 0; i < len(executors); i++ {
-		curr, err := bp.PBToPhysicalPlan(executors[i])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		curr.SetChildren(src)
-		src = curr
+func (h *coprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
+	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	bp := core.NewPBPlanBuilder(h.sctx, is)
+	plan, err := bp.BuildPhysicalPlanFromPB(executors)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	b := newExecutorBuilder(sctx, is)
-	return b.build(src), nil
+	b := newExecutorBuilder(h.sctx, is)
+	return b.build(plan), nil
 }
 
-func fillUpData4SelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, sctx sessionctx.Context, chk *chunk.Chunk, tps []*types.FieldType) error {
+func (h *coprocessorDAGHandler) fillUpData4SelectResponse(chk *chunk.Chunk, tps []*types.FieldType) error {
 	var err error
-	switch dagReq.EncodeType {
+	switch h.dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
-		err = encodeDefault(sctx, selResp, chk, tps, dagReq.OutputOffsets)
+		err = h.encodeDefault(chk, tps)
 	case tipb.EncodeType_TypeChunk:
-		err = encodeChunk(selResp, chk, tps, dagReq.OutputOffsets)
+		err = h.encodeChunk(chk, tps)
+	default:
+		return errors.Errorf("unknown dag encode type, %v", h.dagReq.EncodeType)
 	}
+	h.selResp.EncodeType = h.dagReq.EncodeType
 	return err
 }
 
-func buildResp(selResp *tipb.SelectResponse, err error) *coprocessor.Response {
-	resp := &coprocessor.Response{}
+func (h *coprocessorDAGHandler) buildResp(err error) *coprocessor.Response {
+	resp := h.resp
 	if err != nil {
 		resp.OtherError = err.Error()
+		return resp
 	}
-	data, err := proto.Marshal(selResp)
+	data, err := proto.Marshal(h.selResp)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -115,8 +139,9 @@ func buildResp(selResp *tipb.SelectResponse, err error) *coprocessor.Response {
 	return resp
 }
 
-func encodeChunk(selResp *tipb.SelectResponse, chk *chunk.Chunk, colTypes []*types.FieldType, colOrdinal []uint32) error {
-	chunks := selResp.Chunks
+func (h *coprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) error {
+	colOrdinal := h.dagReq.OutputOffsets
+	chunks := h.selResp.Chunks
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
@@ -125,33 +150,32 @@ func encodeChunk(selResp *tipb.SelectResponse, chk *chunk.Chunk, colTypes []*typ
 	chunks = append(chunks, tipb.Chunk{})
 	cur := &chunks[len(chunks)-1]
 	cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
-	selResp.Chunks = chunks
-	selResp.EncodeType = tipb.EncodeType_TypeChunk
+	h.selResp.Chunks = chunks
 	return nil
 }
 
-func encodeDefault(sctx sessionctx.Context, selResp *tipb.SelectResponse, chk *chunk.Chunk, tps []*types.FieldType, colOrdinal []uint32) error {
-	chunks := selResp.Chunks
+func (h *coprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) error {
+	colOrdinal := h.dagReq.OutputOffsets
+	chunks := h.selResp.Chunks
 	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow := make([]byte, 0)
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
-			data, err := codec.EncodeValue(sctx.GetSessionVars().StmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			data, err := codec.EncodeValue(h.sctx.GetSessionVars().StmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
 			if err != nil {
 				return err
 			}
 			requestedRow = append(requestedRow, data...)
 		}
-		chunks = appendRow(chunks, requestedRow, i)
+		chunks = h.appendRow(chunks, requestedRow, i)
 	}
-	selResp.Chunks = chunks
-	selResp.EncodeType = tipb.EncodeType_TypeDefault
+	h.selResp.Chunks = chunks
 	return nil
 }
 
 const rowsPerChunk = 64
 
-func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
+func (h *coprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 	if rowCnt%rowsPerChunk == 0 {
 		chunks = append(chunks, tipb.Chunk{})
 	}

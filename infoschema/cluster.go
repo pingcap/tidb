@@ -24,22 +24,18 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-const (
-	clusterTablePrefix = "TIDB_CLUSTER_"
-)
-
 // Cluster table list, attention:
 // 1. the table name should be upper case.
 // 2. clusterTableName should equal to "TIDB_CLUSTER_" + memTableTableName.
 const (
-	clusterTableSlowLog     = "TIDB_CLUSTER_SLOW_QUERY"  // clusterTablePrefix + tableSlowLog
-	clusterTableProcesslist = "TIDB_CLUSTER_PROCESSLIST" // clusterTablePrefix + tableProcesslist
+	clusterTableSlowLog     = "TIDB_CLUSTER_SLOW_QUERY"
+	clusterTableProcesslist = "TIDB_CLUSTER_PROCESSLIST"
 )
 
 // memTableToClusterTableMap means add memory table to cluster table.
-var memTableToClusterTableMap = map[string]struct{}{
-	tableSlowLog:     {},
-	tableProcesslist: {},
+var memTableToClusterTableMap = map[string]string{
+	tableSlowLog:     clusterTableSlowLog,
+	tableProcesslist: clusterTableProcesslist,
 }
 
 // clusterTableMap is the cluster table map.
@@ -47,18 +43,17 @@ var memTableToClusterTableMap = map[string]struct{}{
 var clusterTableMap = map[string]struct{}{}
 
 func init() {
-	var clusterTableCols = columnInfo{"ADDRESS", mysql.TypeVarchar, 64, mysql.UnsignedFlag, nil, nil}
-	for memTableName := range memTableToClusterTableMap {
+	var addrCol = columnInfo{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil}
+	for memTableName, clusterMemTableName := range memTableToClusterTableMap {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
 			continue
 		}
 		cols := make([]columnInfo, 0, len(memTableCols)+1)
 		cols = append(cols, memTableCols...)
-		cols = append(cols, clusterTableCols)
-		clusterTableName := strings.ToUpper(clusterTablePrefix + memTableName)
-		tableNameToColumns[clusterTableName] = cols
-		clusterTableMap[clusterTableName] = struct{}{}
+		cols = append(cols, addrCol)
+		tableNameToColumns[clusterMemTableName] = cols
+		clusterTableMap[clusterMemTableName] = struct{}{}
 	}
 }
 

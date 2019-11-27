@@ -36,9 +36,10 @@ import (
 )
 
 var globalDomain *domain.Domain
+var globalsessionManager util.SessionManager
 
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(security config.Security, dom *domain.Domain) *grpc.Server {
+func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
@@ -56,6 +57,7 @@ func NewRPCServer(security config.Security, dom *domain.Domain) *grpc.Server {
 		s = grpc.NewServer()
 	}
 	globalDomain = dom
+	globalsessionManager = sm
 	// For redirection the cop task.
 	mocktikv.TiDBRPCServerCoprocessorHandler = HandleCopDAGRequest
 	srv := &rpcServer{}
@@ -96,7 +98,9 @@ func HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coproce
 		return resp
 	}
 	defer se.Close()
-	return executor.HandleCopDAGRequest(ctx, se, req)
+
+	h := executor.NewCoprocessorDAGHandler(se, resp)
+	return h.HandleCopDAGRequest(ctx, req)
 }
 
 func createSession() (session.Session, error) {
@@ -114,6 +118,6 @@ func createSession() (session.Session, error) {
 	se.GetSessionVars().HashAggPartialConcurrency = 1
 	se.GetSessionVars().HashAggFinalConcurrency = 1
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
-	se.SetSessionManager(util.GetglobalSessionManager())
+	se.SetSessionManager(globalsessionManager)
 	return se, nil
 }

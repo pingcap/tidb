@@ -22,6 +22,19 @@ func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *pbPlan
 	return &pbPlanBuilder{sctx: sctx, is: is}
 }
 
+func (b *pbPlanBuilder) BuildPhysicalPlanFromPB(executors []*tipb.Executor) (p PhysicalPlan, err error) {
+	var src PhysicalPlan
+	for i := 0; i < len(executors); i++ {
+		curr, err := b.PBToPhysicalPlan(executors[i])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		curr.SetChildren(src)
+		src = curr
+	}
+	return src, nil
+}
+
 func (b *pbPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
 	switch e.Tp {
 	case tipb.ExecType_TypeMemTableScan:
