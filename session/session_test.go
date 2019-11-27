@@ -51,16 +51,30 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = SerialSuites(&testSessionSuite{})
+var _ = Suite(&testSessionSuite{})
+var _ = Suite(&testSessionSuite2{})
+var _ = SerialSuites(&testSessionSerialSuite{})
 
-type testSessionSuite struct {
+type testSessionSuiteBase struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
 }
 
-func (s *testSessionSuite) SetUpSuite(c *C) {
+type testSessionSuite struct {
+	testSessionSuiteBase
+}
+
+type testSessionSuite2 struct {
+	testSessionSuiteBase
+}
+
+type testSessionSerialSuite struct {
+	testSessionSuiteBase
+}
+
+func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -77,13 +91,13 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSessionSuite) TearDownSuite(c *C) {
+func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
-func (s *testSessionSuite) TearDownTest(c *C) {
+func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
@@ -1274,7 +1288,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	}
 }
 
-func (s *testSessionSuite) TestIndexMaxLength(c *C) {
+func (s *testSessionSuite2) TestIndexMaxLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_index_max_length")
 	tk.MustExec("use test_index_max_length")
@@ -1360,7 +1374,7 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	assertTypeLimit("timestamp", 4)
 }
 
-func (s *testSessionSuite) TestIndexColumnLength(c *C) {
+func (s *testSessionSuite2) TestIndexColumnLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c1 int, c2 blob);")
 	tk.MustExec("create index idx_c1 on t(c1);")
@@ -1377,7 +1391,7 @@ func (s *testSessionSuite) TestIndexColumnLength(c *C) {
 	c.Assert(idxC2Cols[0].Length, Equals, 6)
 }
 
-func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
+func (s *testSessionSuite2) TestIgnoreForeignKey(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	sqlText := `CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -1390,13 +1404,13 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 }
 
 // TestISColumns tests information_schema.columns.
-func (s *testSessionSuite) TestISColumns(c *C) {
+func (s *testSessionSuite2) TestISColumns(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
 	tk.MustQuery("SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'").Check(testkit.Rows("utf8mb4"))
 }
 
-func (s *testSessionSuite) TestRetry(c *C) {
+func (s *testSessionSuite2) TestRetry(c *C) {
 	// For https://github.com/pingcap/tidb/issues/571
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -1442,13 +1456,13 @@ func (s *testSessionSuite) TestRetry(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSuite) TestMultiStmts(c *C) {
+func (s *testSessionSuite2) TestMultiStmts(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1"))
 }
 
-func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
+func (s *testSessionSuite2) TestLastExecuteDDLFlag(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
@@ -1457,7 +1471,7 @@ func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
 	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), IsNil)
 }
 
-func (s *testSessionSuite) TestDecimal(c *C) {
+func (s *testSessionSuite2) TestDecimal(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t;")
@@ -1467,7 +1481,7 @@ func (s *testSessionSuite) TestDecimal(c *C) {
 	c.Check(err, NotNil)
 }
 
-func (s *testSessionSuite) TestParser(c *C) {
+func (s *testSessionSuite2) TestParser(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	// test for https://github.com/pingcap/tidb/pull/177
@@ -1482,7 +1496,7 @@ func (s *testSessionSuite) TestParser(c *C) {
 	tk.MustExec(`drop table t1,t2;`)
 }
 
-func (s *testSessionSuite) TestOnDuplicate(c *C) {
+func (s *testSessionSuite2) TestOnDuplicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	// test for https://github.com/pingcap/tidb/pull/454
@@ -1495,7 +1509,7 @@ func (s *testSessionSuite) TestOnDuplicate(c *C) {
 	tk.MustExec("insert into t select * from t1 limit 1 on duplicate key update c3=3333;")
 }
 
-func (s *testSessionSuite) TestReplace(c *C) {
+func (s *testSessionSuite2) TestReplace(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	// test for https://github.com/pingcap/tidb/pull/456
@@ -1508,7 +1522,7 @@ func (s *testSessionSuite) TestReplace(c *C) {
 	tk.MustExec("replace into t select * from t1 limit 1;")
 }
 
-func (s *testSessionSuite) TestDelete(c *C) {
+func (s *testSessionSuite2) TestDelete(c *C) {
 	// test for https://github.com/pingcap/tidb/pull/1135
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1548,7 +1562,7 @@ func (s *testSessionSuite) TestDelete(c *C) {
 	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
 }
 
-func (s *testSessionSuite) TestResetCtx(c *C) {
+func (s *testSessionSuite2) TestResetCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 
@@ -1579,7 +1593,7 @@ func (s *testSessionSuite) TestResetCtx(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("13", "25"))
 }
 
-func (s *testSessionSuite) TestUnique(c *C) {
+func (s *testSessionSuite2) TestUnique(c *C) {
 	// test for https://github.com/pingcap/tidb/pull/461
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1647,7 +1661,7 @@ func (s *testSessionSuite) TestUnique(c *C) {
 	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 
-func (s *testSessionSuite) TestSet(c *C) {
+func (s *testSessionSuite2) TestSet(c *C) {
 	// Test for https://github.com/pingcap/tidb/issues/1114
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1666,13 +1680,13 @@ func (s *testSessionSuite) TestSet(c *C) {
 	tk.MustQuery("select @tmp := c-2 from t where c=3").Check(testkit.Rows("1"))
 }
 
-func (s *testSessionSuite) TestMySQLTypes(c *C) {
+func (s *testSessionSuite2) TestMySQLTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery(`select 0x01 + 1, x'4D7953514C' = "MySQL"`).Check(testkit.Rows("2 1"))
 	tk.MustQuery(`select 0b01 + 1, 0b01000001 = "A"`).Check(testkit.Rows("2 1"))
 }
 
-func (s *testSessionSuite) TestIssue986(c *C) {
+func (s *testSessionSuite2) TestIssue986(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	sqlText := `CREATE TABLE address (
  		id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -1681,14 +1695,14 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 	tk.MustExec(`insert into address values ('10')`)
 }
 
-func (s *testSessionSuite) TestCast(c *C) {
+func (s *testSessionSuite2) TestCast(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select cast(0.5 as unsigned)")
 	tk.MustQuery("select cast(-0.5 as signed)")
 	tk.MustQuery("select hex(cast(0x10 as binary(2)))").Check(testkit.Rows("1000"))
 }
 
-func (s *testSessionSuite) TestTableInfoMeta(c *C) {
+func (s *testSessionSuite2) TestTableInfoMeta(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	checkResult := func(affectedRows uint64, insertID uint64) {
@@ -1719,7 +1733,7 @@ func (s *testSessionSuite) TestTableInfoMeta(c *C) {
 	tk.MustQuery("select * from tbl_test").Check(testkit.Rows("1 hello"))
 }
 
-func (s *testSessionSuite) TestCaseInsensitive(c *C) {
+func (s *testSessionSuite2) TestCaseInsensitive(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table T (a text, B int)")
@@ -1741,7 +1755,7 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 }
 
 // TestDeletePanic is for delete panic
-func (s *testSessionSuite) TestDeletePanic(c *C) {
+func (s *testSessionSuite2) TestDeletePanic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
 	tk.MustExec("insert into t values (1), (2), (3)")
@@ -1749,7 +1763,7 @@ func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk.MustExec("delete from `t` where `c` = ?", 2)
 }
 
-func (s *testSessionSuite) TestInformationSchemaCreateTime(c *C) {
+func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
 	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
@@ -1766,8 +1780,9 @@ func (s *testSessionSuite) TestInformationSchemaCreateTime(c *C) {
 }
 
 var _ = Suite(&testSchemaSuite{})
+var _ = SerialSuites(&testSchemaSerialSuite{})
 
-type testSchemaSuite struct {
+type testSchemaSuiteBase struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
@@ -1776,7 +1791,15 @@ type testSchemaSuite struct {
 	checkLeak func()
 }
 
-func (s *testSchemaSuite) TearDownTest(c *C) {
+type testSchemaSuite struct {
+	testSchemaSuiteBase
+}
+
+type testSchemaSerialSuite struct {
+	testSchemaSuiteBase
+}
+
+func (s *testSchemaSuiteBase) TearDownTest(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
@@ -1785,7 +1808,7 @@ func (s *testSchemaSuite) TearDownTest(c *C) {
 	}
 }
 
-func (s *testSchemaSuite) SetUpSuite(c *C) {
+func (s *testSchemaSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -1804,7 +1827,13 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.dom = dom
 }
 
-func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
+func (s *testSchemaSuiteBase) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, int32(3))
 	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
 	defer func() {
@@ -1855,13 +1884,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("commit")
 }
 
-func (s *testSchemaSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
+func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 
@@ -2229,7 +2252,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	rs.Close()
 }
 
-func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
+func (s *testSessionSuite2) TestStatementErrorInTransaction(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table statement_side_effect (c int primary key)")
 	tk.MustExec("begin")
@@ -2257,7 +2280,7 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
 
-func (s *testSessionSuite) TestStatementCountLimit(c *C) {
+func (s *testSessionSerialSuite) TestStatementCountLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
 	saved := config.GetGlobalConfig().Performance.StmtCountLimit
@@ -2281,7 +2304,7 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite) TestBatchCommit(c *C) {
+func (s *testSessionSerialSuite) TestBatchCommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_batch_commit = 1")
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
@@ -2339,7 +2362,7 @@ func (s *testSessionSuite) TestBatchCommit(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("4", "5"))
 }
 
-func (s *testSessionSuite) TestCastTimeToDate(c *C) {
+func (s *testSessionSuite2) TestCastTimeToDate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '-8:00'")
 	date := time.Now().In(time.FixedZone("", -8*int(time.Hour/time.Second)))
@@ -2365,7 +2388,7 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }
 
-func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
+func (s *testSessionSuite2) TestRollbackOnCompileError(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert t values (1)")
@@ -2396,7 +2419,7 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 	c.Assert(recoverErr, IsTrue)
 }
 
-func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
+func (s *testSessionSuite2) TestSetTransactionIsolationOneShot(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (k int, v int)")
 	tk.MustExec("insert t values (1, 42)")
@@ -2420,7 +2443,7 @@ func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite) TestDBUserNameLength(c *C) {
+func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table if not exists t (a int)")
 	// Test user name length can be longer than 16.
@@ -2429,7 +2452,7 @@ func (s *testSessionSuite) TestDBUserNameLength(c *C) {
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
 }
 
-func (s *testSessionSuite) TestKVVars(c *C) {
+func (s *testSessionSuite2) TestKVVars(c *C) {
 	c.Skip("there is no backoff here in the large txn, so this test is stale")
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kvvars (a int, b int)")
@@ -2478,7 +2501,7 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	c.Assert(atomic.LoadInt32(backOffWeightVal), Equals, int32(100))
 }
 
-func (s *testSessionSuite) TestCommitRetryCount(c *C) {
+func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("create table no_retry (id int)")
@@ -2497,7 +2520,7 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite) TestTxnRetryErrMsg(c *C) {
+func (s *testSessionSuite2) TestTxnRetryErrMsg(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("create table no_retry (id int)")
@@ -2599,7 +2622,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 }
 
 // TestSetGroupConcatMaxLen is for issue #7034
-func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
+func (s *testSessionSuite2) TestSetGroupConcatMaxLen(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	// Normal case
@@ -2645,7 +2668,7 @@ func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
+func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1 (id int);")
@@ -2722,7 +2745,7 @@ and s.b !='xx';`)
 	c.Assert(err2, IsNil)
 }
 
-func (s *testSessionSuite) TestTxnGoString(c *C) {
+func (s *testSessionSuite2) TestTxnGoString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists gostr;")
 	tk.MustExec("create table gostr (id int);")
@@ -2742,7 +2765,7 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
 
-func (s *testSessionSuite) TestMaxExeucteTime(c *C) {
+func (s *testSessionSuite2) TestMaxExeucteTime(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table MaxExecTime( id int,name varchar(128),age int);")
@@ -2768,7 +2791,7 @@ func (s *testSessionSuite) TestMaxExeucteTime(c *C) {
 	tk.MustExec("drop table if exists MaxExecTime;")
 }
 
-func (s *testSessionSuite) TestGrantViewRelated(c *C) {
+func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
 
@@ -2804,7 +2827,7 @@ func (s *testSessionSuite) TestGrantViewRelated(c *C) {
 	tkUser.MustExec("create view v_version29_c as select * from v_version29;")
 }
 
-func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
+func (s *testSessionSuite2) TestLoadClientInteractive(c *C) {
 	var (
 		err          error
 		connectionID uint64
@@ -2818,7 +2841,7 @@ func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
 }
 
-func (s *testSessionSuite) TestReplicaRead(c *C) {
+func (s *testSessionSuite2) TestReplicaRead(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
@@ -2830,7 +2853,7 @@ func (s *testSessionSuite) TestReplicaRead(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 }
 
-func (s *testSessionSuite) TestIsolationRead(c *C) {
+func (s *testSessionSuite2) TestIsolationRead(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
@@ -2845,7 +2868,7 @@ func (s *testSessionSuite) TestIsolationRead(c *C) {
 	c.Assert(hasTiKV, Equals, false)
 }
 
-func (s *testSessionSuite) TestStmtHints(c *C) {
+func (s *testSessionSuite2) TestStmtHints(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
@@ -2870,10 +2893,10 @@ func (s *testSessionSuite) TestStmtHints(c *C) {
 	// Test NO_INDEX_MERGE hint
 	tk.Se.GetSessionVars().SetEnableIndexMerge(true)
 	tk.MustExec("select /*+ NO_INDEX_MERGE() */ 1;")
-	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.NoIndexMergeHint, IsTrue)
 	tk.MustExec("select /*+ NO_INDEX_MERGE(), NO_INDEX_MERGE() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsTrue)
 
 	// Test USE_TOJA hint
 	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(true)
