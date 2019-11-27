@@ -120,7 +120,8 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 	return impl.NewProjectionImpl(proj), nil
 }
 
-// ImplTableGather implements TableGather as PhysicalTableReader.
+// ImplTiKVSingleReadGather implements TableGather
+// as PhysicalTableReader or PhysicalIndexReader.
 type ImplTiKVSingleReadGather struct {
 }
 
