@@ -348,12 +348,18 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 
 	// Initialize the information shema database and register the driver to `drivers`
-	dbID := autoid.GenLocalSchemaID()
+	dbID, err := autoid.GetSystemSchemaID(Name)
+	if err != nil {
+		panic(err.Error())
+	}
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
-		tableInfo.ID = autoid.GenLocalSchemaID()
+		tableInfo.ID, err = autoid.GetInformationSchemaTableID(tableInfo.Name.O)
+		if err != nil {
+			panic(err.Error())
+		}
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
 		}

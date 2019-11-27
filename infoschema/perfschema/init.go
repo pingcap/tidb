@@ -39,7 +39,10 @@ func Init() {
 	initOnce := func() {
 		p := parser.New()
 		tbls := make([]*model.TableInfo, 0)
-		dbID := autoid.GenLocalSchemaID()
+		dbID, err := autoid.GetSystemSchemaID(Name)
+		if err != nil {
+			panic(err.Error())
+		}
 
 		for _, sql := range perfSchemaTables {
 			stmt, err := p.ParseOneStmt(sql, "", "")
@@ -51,7 +54,10 @@ func Init() {
 				panic(err)
 			}
 			tbls = append(tbls, meta)
-			meta.ID = autoid.GenLocalSchemaID()
+			meta.ID, err = autoid.GetPerformanceSchemaTableID(meta.Name.O)
+			if err != nil {
+				panic(err.Error())
+			}
 			for i, c := range meta.Columns {
 				c.ID = int64(i) + 1
 			}

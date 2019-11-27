@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -252,13 +251,6 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 
 //codeInvalidTableID is the code of autoid error.
 const codeInvalidTableID terror.ErrCode = 1
-
-var localSchemaID = int64(math.MaxInt64)
-
-// GenLocalSchemaID generates a local schema ID.
-func GenLocalSchemaID() int64 {
-	return atomic.AddInt64(&localSchemaID, -1)
-}
 
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
