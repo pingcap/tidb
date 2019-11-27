@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
@@ -611,7 +613,14 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	_, err := tk.Exec("create table t (a int)")
+
+	limit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
+
+	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }

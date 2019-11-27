@@ -32,7 +32,6 @@ LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git de
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
@@ -126,7 +125,13 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest gogenerate
+# Split tests for CI to run `make test` in parallel.
+test: test_part_1 test_part_2
+	@>&2 echo "Great, all tests passed."
+
+test_part_1: checklist explaintest
+
+test_part_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
