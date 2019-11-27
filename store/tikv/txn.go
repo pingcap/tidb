@@ -325,7 +325,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches disabled
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
-		err = committer.executeAndWriteFinishBinlog(ctx)
+		err = committer.execute(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -343,7 +343,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if lock.IsStale() {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
-	err = committer.executeAndWriteFinishBinlog(ctx)
+	err = committer.execute(ctx)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}

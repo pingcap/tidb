@@ -194,16 +194,32 @@ func RegisterStatusListener(listener func(BinlogStatus) error) {
 	statusListener = listener
 }
 
+// WriteResult is used for the returned chan of WriteBinlog.
+type WriteResult struct {
+	skipped bool
+	err     error
+}
+
+// Skipped if true stands for the binlog writing is skipped.
+func (wr *WriteResult) Skipped() bool {
+	return wr.skipped
+}
+
+// GetError gets the error of WriteBinlog.
+func (wr *WriteResult) GetError() error {
+	return wr.err
+}
+
 // WriteBinlog writes a binlog to Pump.
-func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
+func (info *BinlogInfo) WriteBinlog(clusterID uint64) *WriteResult {
 	skip := atomic.LoadUint32(&skipBinlog)
 	if skip > 0 {
 		metrics.CriticalErrorCounter.Add(1)
-		return nil
+		return &WriteResult{true, nil}
 	}
 
 	if info.Client == nil {
-		return errors.New("pumps client is nil")
+		return &WriteResult{false, errors.New("pumps client is nil")}
 	}
 
 	// it will retry in PumpsClient if write binlog fail.
@@ -224,18 +240,18 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 					logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
 				}
 			}
-			return nil
+			return &WriteResult{true, nil}
 		}
 
 		if strings.Contains(err.Error(), "received message larger than max") {
 			// This kind of error is not critical, return directly.
-			return errors.Errorf("binlog data is too large (%s)", err.Error())
+			return &WriteResult{false, errors.Errorf("binlog data is too large (%s)", err.Error())}
 		}
 
-		return terror.ErrCritical.GenWithStackByArgs(err)
+		return &WriteResult{false, terror.ErrCritical.GenWithStackByArgs(err)}
 	}
 
-	return nil
+	return &WriteResult{false, nil}
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
