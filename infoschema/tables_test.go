@@ -86,11 +86,11 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = setUpRPCService(c, "0.0.0.0:10080", s.dom)
+	s.rpcserver = s.setUpRPCService(c, "0.0.0.0:10080", s.dom)
 	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
 }
 
-func setUpRPCService(c *C, addr string, dom *domain.Domain) *grpc.Server {
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string, dom *domain.Domain) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
