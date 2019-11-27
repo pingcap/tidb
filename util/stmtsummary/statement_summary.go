@@ -469,11 +469,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo) {
 		}
 		commitDetails.Mu.Lock()
 		for _, backoffType := range commitDetails.Mu.BackoffTypes {
-			if _, ok := ssbd.backoffTypes[backoffType]; ok {
-				ssbd.backoffTypes[backoffType] += 1
-			} else {
-				ssbd.backoffTypes[backoffType] = 1
-			}
+			ssbd.backoffTypes[backoffType] += 1
 		}
 		commitDetails.Mu.Unlock()
 	}
