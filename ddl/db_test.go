@@ -2083,7 +2083,7 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10));")
+	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);")
 	// Make sure the table schema is latest.
 	err = domain.GetDomain(s.s).Reload()
 	c.Assert(err, IsNil)
@@ -2117,22 +2117,29 @@ func (s *testDBSuite6) TestRepairTable(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
-	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a float primary key, b varchar(5));")
+	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a float primary key, b varchar(5), c int auto_increment);")
 	c.Assert(repairErr, IsNil)
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
 	// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
 	repairTable = testGetTableByName(c, s.s, "test", "origin")
 	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
-	c.Assert(len(repairTable.Meta().Columns), Equals, 2)
+	c.Assert(len(repairTable.Meta().Columns), Equals, 3)
 	c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
 	c.Assert(repairTable.Meta().Columns[1].ID, Equals, originTableInfo.Columns[1].ID)
+	c.Assert(repairTable.Meta().Columns[2].ID, Equals, originTableInfo.Columns[2].ID)
 	c.Assert(len(repairTable.Meta().Indices), Equals, 1)
 	c.Assert(repairTable.Meta().Indices[0].ID, Equals, originTableInfo.Columns[0].ID)
+	c.Assert(repairTable.Meta().AutoIncID, Equals, originTableInfo.AutoIncID)
+
+	c.Assert(repairTable.Meta().Columns[0].Tp, Equals, mysql.TypeFloat)
+	c.Assert(repairTable.Meta().Columns[1].Tp, Equals, mysql.TypeVarchar)
+	c.Assert(repairTable.Meta().Columns[1].Flen, Equals, 5)
+	c.Assert(repairTable.Meta().Columns[2].Tp, Equals, mysql.TypeLong)
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := s.tk.MustQuery("show create table origin")
-	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` float NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` float NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 
