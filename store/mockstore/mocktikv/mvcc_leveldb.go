@@ -651,12 +651,6 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ok {
-		if m.Assertion == kvrpcpb.Assertion_Exist {
-			logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
-		}
-		return nil
-	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= startTS {
@@ -682,7 +676,6 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 						Key: m.Key,
 					}
 				}
-				logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
 				break
 			}
 		}

@@ -16,7 +16,7 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -86,7 +86,7 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 	var conf Config
 	configFile := "log_config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
-	configFile = path.Join(path.Dir(localFile), configFile)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
@@ -100,11 +100,11 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 		_, err = f.WriteString(confStr)
 		c.Assert(err, IsNil)
 		c.Assert(conf.Load(configFile), IsNil)
+		c.Assert(conf.Valid(), valid)
 		c.Assert(conf.Log.EnableErrorStack, Equals, expectedEnableErrorStack)
 		c.Assert(conf.Log.DisableErrorStack, Equals, expectedDisableErrorStack)
 		c.Assert(conf.Log.EnableTimestamp, Equals, expectedEnableTimestamp)
 		c.Assert(conf.Log.DisableTimestamp, Equals, expectedDisableTimestamp)
-		c.Assert(conf.Valid(), valid)
 		c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }))
 		f.Truncate(0)
 		f.Seek(0, 0)
@@ -135,13 +135,13 @@ disable-timestamp = true
 [Log]
 enable-timestamp = true
 disable-timestamp = true
-`, nbUnset, nbUnset, nbTrue, nbTrue, false, true, NotNil)
+`, nbUnset, nbUnset, nbTrue, nbUnset, false, true, IsNil)
 
 	testLoad(`
 [Log]
 enable-error-stack = false
 disable-error-stack = false
-`, nbFalse, nbFalse, nbUnset, nbUnset, false, true, NotNil)
+`, nbFalse, nbUnset, nbUnset, nbUnset, false, true, IsNil)
 
 }
 
@@ -155,7 +155,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.TiKVClient.RegionCacheTTL = 600
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
-	configFile = path.Join(path.Dir(localFile), configFile)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
@@ -218,7 +218,7 @@ max-sql-length=1024
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
-	configFile = path.Join(path.Dir(localFile), "config.toml.example")
+	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
 
 	// Make sure the example config is the same as default config.
@@ -237,7 +237,7 @@ max-sql-length=1024
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = path.Join(path.Dir(localFile), certFile)
+	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -263,7 +263,7 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	c.Assert(f.Sync(), IsNil)
 
 	keyFile := "key.pem"
-	keyFile = path.Join(path.Dir(localFile), keyFile)
+	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----

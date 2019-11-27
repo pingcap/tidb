@@ -32,34 +32,34 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		exprStr string
 		result  string
 	}{
-		{"a < '1.0'", "lt(Column#1, 1)"},
-		{"a <= '1.0'", "le(Column#1, 1)"},
-		{"a > '1'", "gt(Column#1, 1)"},
-		{"a >= '1'", "ge(Column#1, 1)"},
-		{"a = '1'", "eq(Column#1, 1)"},
-		{"a <=> '1'", "nulleq(Column#1, 1)"},
-		{"a != '1'", "ne(Column#1, 1)"},
-		{"a < '1.1'", "lt(Column#1, 2)"},
-		{"a <= '1.1'", "le(Column#1, 1)"},
-		{"a > 1.1", "gt(Column#1, 1)"},
-		{"a >= '1.1'", "ge(Column#1, 2)"},
+		{"a < '1.0'", "lt(a, 1)"},
+		{"a <= '1.0'", "le(a, 1)"},
+		{"a > '1'", "gt(a, 1)"},
+		{"a >= '1'", "ge(a, 1)"},
+		{"a = '1'", "eq(a, 1)"},
+		{"a <=> '1'", "nulleq(a, 1)"},
+		{"a != '1'", "ne(a, 1)"},
+		{"a < '1.1'", "lt(a, 2)"},
+		{"a <= '1.1'", "le(a, 1)"},
+		{"a > 1.1", "gt(a, 1)"},
+		{"a >= '1.1'", "ge(a, 2)"},
 		{"a = '1.1'", "0"},
 		{"a <=> '1.1'", "0"},
-		{"a != '1.1'", "ne(cast(Column#1), 1.1)"},
-		{"'1' < a", "lt(1, Column#1)"},
-		{"'1' <= a", "le(1, Column#1)"},
-		{"'1' > a", "gt(1, Column#1)"},
-		{"'1' >= a", "ge(1, Column#1)"},
-		{"'1' = a", "eq(1, Column#1)"},
-		{"'1' <=> a", "nulleq(1, Column#1)"},
-		{"'1' != a", "ne(1, Column#1)"},
-		{"'1.1' < a", "lt(1, Column#1)"},
-		{"'1.1' <= a", "le(2, Column#1)"},
-		{"'1.1' > a", "gt(2, Column#1)"},
-		{"'1.1' >= a", "ge(1, Column#1)"},
+		{"a != '1.1'", "ne(cast(a), 1.1)"},
+		{"'1' < a", "lt(1, a)"},
+		{"'1' <= a", "le(1, a)"},
+		{"'1' > a", "gt(1, a)"},
+		{"'1' >= a", "ge(1, a)"},
+		{"'1' = a", "eq(1, a)"},
+		{"'1' <=> a", "nulleq(1, a)"},
+		{"'1' != a", "ne(1, a)"},
+		{"'1.1' < a", "lt(1, a)"},
+		{"'1.1' <= a", "le(2, a)"},
+		{"'1.1' > a", "gt(2, a)"},
+		{"'1.1' >= a", "ge(1, a)"},
 		{"'1.1' = a", "0"},
 		{"'1.1' <=> a", "0"},
-		{"'1.1' != a", "ne(1.1, cast(Column#1))"},
+		{"'1.1' != a", "ne(1.1, cast(a))"},
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
 		{"123456789123456789123456789.12345 > a", "1"},
@@ -68,7 +68,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		// This cast can not be eliminated,
 		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa), cast(Column#1))"},
+		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
 	}
 	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
 	schema := NewSchema(cols...)
@@ -214,33 +214,41 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}()
 
 	for _, t := range []struct {
-		args []types.Datum
-		ret  int64
+		args   []types.Datum
+		ret    int64
+		getErr bool
 	}{
-		{types.MakeDatums(nil, 1, 2), -1},
-		{types.MakeDatums(1, 2, 3), 0},
-		{types.MakeDatums(2, 1, 3), 1},
-		{types.MakeDatums(3, 1, 2), 2},
-		{types.MakeDatums(0, "b", "1", "2"), 1},
-		{types.MakeDatums("a", "b", "1", "2"), 1},
-		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4},
-		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2},
-		{types.MakeDatums(9007199254740992, 9007199254740993), 0},
-		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0},
-		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0},
-		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0},
-		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0},
-		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1},
-		{types.MakeDatums("9007199254740991", "9007199254740992"), 0},
+		{types.MakeDatums(nil, 1, 2), -1, false},
+		{types.MakeDatums(1, 2, 3), 0, false},
+		{types.MakeDatums(2, 1, 3), 1, false},
+		{types.MakeDatums(3, 1, 2), 2, false},
+		{types.MakeDatums(0, "b", "1", "2"), 1, false},
+		{types.MakeDatums("a", "b", "1", "2"), 1, false},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4, false},
+		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2, false},
+		{types.MakeDatums(9007199254740992, 9007199254740993), 0, false},
+		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0, false},
+		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0, false},
+		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0, false},
+		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0, false},
+		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
+		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
+		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
 
 		// tests for appropriate precision loss
-		{types.MakeDatums(9007199254740992, "9007199254740993"), 1},
-		{types.MakeDatums("9007199254740992", 9007199254740993), 1},
-		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
+		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
+		{types.MakeDatums("9007199254740992", 9007199254740993), 1, false},
+		{types.MakeDatums("9007199254740992", "9007199254740993"), 1, false},
 	} {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
+		if t.getErr {
+			v, err := evalBuiltinFunc(f, chunk.Row{})
+			c.Assert(err, NotNil)
+			c.Assert(v.GetInt64(), Equals, t.ret)
+			continue
+		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)

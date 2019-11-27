@@ -188,12 +188,6 @@ func (mh *marshalHelper) ReadSlice(r *bytes.Buffer, slice *[]byte) {
 	*slice = data
 }
 
-func newEntry(key MvccKey) *mvccEntry {
-	return &mvccEntry{
-		key: key,
-	}
-}
-
 // lockErr returns ErrLocked.
 // Note that parameter key is raw key, while key in ErrLocked is mvcc key.
 func (l *mvccLock) lockErr(key []byte) error {
