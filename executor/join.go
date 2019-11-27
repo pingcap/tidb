@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/bitmap"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -69,9 +70,11 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 
-	memTracker  *memory.Tracker // track memory usage.
-	prepared    bool
-	isOuterJoin bool
+	memTracker     *memory.Tracker // track memory usage.
+	diskTracker    *disk.Tracker   // track disk usage.
+	alreadySpilled bool
+	prepared       bool
+	isOuterJoin    bool
 
 	outerMatchedStatus []*bitmap.ConcurrentBitmap
 	useOuterToBuild    bool
@@ -140,6 +143,10 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.alreadySpilled = false
+	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
@@ -696,6 +703,11 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 				}
 				err = e.rowContainer.PutChunkSelected(chk, selected)
 			}
+		}
+		if !e.alreadySpilled && e.rowContainer.alreadySpilled() {
+			e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
+			e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
+			e.alreadySpilled = e.rowContainer.alreadySpilled()
 		}
 		if err != nil {
 			return err

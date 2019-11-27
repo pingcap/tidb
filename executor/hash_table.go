@@ -88,7 +88,8 @@ type hashRowContainer struct {
 	// memTracker is the reference of records.GetMemTracker().
 	// records would be set to nil for garbage collection when spilling is activated
 	// so we need this reference.
-	memTracker *memory.Tracker
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
 
 	// records stores the chunks in memory.
 	records *chunk.List
@@ -174,6 +175,7 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 func (c *hashRowContainer) spillToDisk() (err error) {
 	N := c.records.NumChunks()
 	c.recordsInDisk = chunk.NewListInDisk(c.hCtx.allTypes)
+	c.diskTracker = c.recordsInDisk.GetDiskTracker()
 	for i := 0; i < N; i++ {
 		chk := c.records.GetChunk(i)
 		err = c.recordsInDisk.Add(chk)
@@ -271,7 +273,7 @@ func (c *hashRowContainer) Close() error {
 func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
 
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.recordsInDisk.GetDiskTracker() }
+func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.diskTracker }
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
