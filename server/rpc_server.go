@@ -106,6 +106,7 @@ func createSession() (session.Session, error) {
 	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
+	// TODO: Need user and host to do privilege check.
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	//se.GetSessionVars().InRestrictedSQL = true
 	// This is for disable parallel hash agg.
