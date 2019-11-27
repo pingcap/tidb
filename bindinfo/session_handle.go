@@ -88,11 +88,10 @@ func (h *SessionHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.In
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
 	hash := parser.DigestHash(normdOrigSQL)
 	bindRecords := h.ch[hash]
-	if bindRecords != nil {
-		for _, bindRecord := range bindRecords {
-			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
-				return bindRecord
-			}
+
+	for _, bindRecord := range bindRecords {
+		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+			return bindRecord
 		}
 	}
 	return nil

@@ -2883,10 +2883,10 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	// Test NO_INDEX_MERGE hint
 	tk.Se.GetSessionVars().SetEnableIndexMerge(true)
 	tk.MustExec("select /*+ NO_INDEX_MERGE() */ 1;")
-	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.NoIndexMergeHint, IsTrue)
 	tk.MustExec("select /*+ NO_INDEX_MERGE(), NO_INDEX_MERGE() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsTrue)
 
 	// Test USE_TOJA hint
 	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(true)
