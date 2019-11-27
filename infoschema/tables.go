@@ -28,10 +28,13 @@ import (
 	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -49,6 +52,9 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -95,6 +101,7 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
 	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
+	tableTiDBClusterLoad                    = "TIDB_CLUSTER_LOAD"
 	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 
@@ -674,12 +681,19 @@ var tableTiDBServersInfoCols = []columnInfo{
 }
 
 var tableTiDBClusterConfigCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableTiDBClusterLoadCols = []columnInfo{
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1037,9 +1051,7 @@ var filesCols = []columnInfo{
 }
 
 var tableTiDBClusterInfoCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1906,14 +1918,10 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 
 	rows := make([][]types.Datum, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
-		tp := "tidb"
-		name := fmt.Sprintf("%s-%d", tp, len(rows))
 		addr := fmt.Sprintf("%s:%d", node.IP, node.Port)
 		statusAddr := fmt.Sprintf("%s:%d", node.IP, node.StatusPort)
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"tidb",
 			addr,
 			statusAddr,
 			node.Version,
@@ -1928,7 +1936,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	for i, addr := range etcd.EtcdAddrs() {
+	for _, addr := range etcd.EtcdAddrs() {
 		addr = strings.TrimSpace(addr)
 
 		// Get PD version
@@ -1968,12 +1976,8 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		}
 		terror.Log(resp.Body.Close())
 
-		tp := "pd"
-		name := fmt.Sprintf("%s-%d", tp, i)
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"pd",
 			addr,
 			addr,
 			version,
@@ -1996,13 +2000,9 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for i, storeStat := range storesStat.Stores {
-		tp := "tikv"
-		name := fmt.Sprintf("%s-%d", tp, i)
+	for _, storeStat := range storesStat.Stores {
 		row := types.MakeDatums(
-			len(rows)+1,
-			tp,
-			name,
+			"tikv",
 			storeStat.Store.Address,
 			storeStat.Store.StatusAddress,
 			storeStat.Store.Version,
@@ -2013,8 +2013,95 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
-func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
-	sql := "SELECT type, name, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
+func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	serversInfo, err := getClusterServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ipMap := make(map[string]struct{}, len(serversInfo))
+	rows := make([][]types.Datum, 0, len(serversInfo)*10)
+	for _, srv := range serversInfo {
+		// TODO: remove this after PD/TiKV support diagnostic grpc service.
+		if srv.tp == "pd" || srv.tp == "tikv" {
+			continue
+		}
+		addr := srv.statusAddr
+		ip := addr
+		if idx := strings.Index(addr, ":"); idx != -1 {
+			ip = addr[:idx]
+		}
+		if _, ok := ipMap[ip]; ok {
+			continue
+		}
+		ipMap[ip] = struct{}{}
+		items, err := getServerInfoByGRPC(srv.statusAddr, diagnosticspb.ServerInfoType_LoadInfo)
+		if err != nil {
+			return nil, err
+		}
+		partRows := serverInfoItemToRows(items, srv.tp, srv.statusAddr)
+		rows = append(rows, partRows...)
+	}
+	return rows, nil
+}
+
+func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(items))
+	for _, v := range items {
+		for _, item := range v.Pairs {
+			row := types.MakeDatums(
+				tp,
+				addr,
+				v.Tp,
+				v.Name,
+				item.Key,
+				item.Value,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+	conn, err := grpc.Dial(address, opt)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			log.Error("close grpc connection error", zap.Error(err))
+		}
+	}()
+
+	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	// FIXME: use session context instead of context.Background().
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
+	if err != nil {
+		return nil, err
+	}
+	return r.Items, nil
+}
+
+type serverInfo struct {
+	tp         string
+	address    string
+	statusAddr string
+}
+
+func getClusterServerInfo(ctx sessionctx.Context) ([]serverInfo, error) {
+	sql := "SELECT type, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
@@ -2044,26 +2131,43 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 			err = nil
 		}
 	})
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	srvInfos := make([]serverInfo, 0, len(rows))
+	for _, row := range rows {
+		row.GetString(0)
+		srvInfos = append(srvInfos, serverInfo{
+			tp:         row.GetString(0),
+			address:    row.GetString(1),
+			statusAddr: row.GetString(2),
+		})
+	}
+	return srvInfos, nil
+}
+
+func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
 		err  error
 	}
+	serversInfo, err := getClusterServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
-	ch := make(chan result, len(rows))
-	for i, row := range rows {
-		typ := row.GetString(0)
-		name := row.GetString(1)
-		address := row.GetString(2)
-		statusAddr := row.GetString(3)
+	ch := make(chan result, len(serversInfo))
+	for i, srv := range serversInfo {
+		typ := srv.tp
+		address := srv.address
+		statusAddr := srv.statusAddr
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s(%s) does not contain status address", typ, name, address))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 
@@ -2117,9 +2221,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
-						0,
 						typ,
-						name,
 						address,
 						item.key,
 						item.val,
@@ -2144,10 +2246,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
 	for _, result := range results {
-		for _, row := range result.rows {
-			row[0] = types.NewDatum(len(finalRows) + 1)
-			finalRows = append(finalRows, row)
-		}
+		finalRows = append(finalRows, result.rows...)
 	}
 	return finalRows, nil
 }
@@ -2217,26 +2316,21 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
 	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
+	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
-func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
+func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
-	return &infoschemaTable{
-		handle: handle,
-		meta:   meta,
-		cols:   columns,
-	}
+	return &infoschemaTable{meta: meta, cols: columns}, nil
 }
 
 type infoschemaTable struct {
-	handle *Handle
-	meta   *model.TableInfo
-	cols   []*table.Column
-	rows   [][]types.Datum
+	meta *model.TableInfo
+	cols []*table.Column
 }
 
 // schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
@@ -2327,6 +2421,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
+	case tableTiDBClusterLoad:
+		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
 	}
@@ -2444,6 +2540,11 @@ func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (it *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
+}
+
 // Allocator implements table.Table Allocator interface.
 func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
@@ -2559,6 +2660,11 @@ func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, n
 // AllocHandle implements table.Table AllocHandle interface.
 func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
+}
+
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
+func (vt *VirtualTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	return 0, 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Allocator interface.
