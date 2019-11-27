@@ -265,7 +265,7 @@ var MySQLErrName = map[uint16]string{
 	ErrIllegalReference:                         "Reference '%-.64s' not supported (%s)",
 	ErrDerivedMustHaveAlias:                     "Every derived table must have its own alias",
 	ErrSelectReduced:                            "Select %d was reduced during optimization",
-	ErrTablenameNotAllowedHere:                  "Table '%-.192s' from one of the SELECTs cannot be used in %-.32s",
+	ErrTablenameNotAllowedHere:                  "Table '%s' from one of the %ss cannot be used in %s",
 	ErrNotSupportedAuthMode:                     "Client does not support authentication protocol requested by server; consider upgrading MySQL client",
 	ErrSpatialCantHaveNull:                      "All parts of a SPATIAL index must be NOT NULL",
 	ErrCollationCharsetMismatch:                 "COLLATION '%s' is not valid for CHARACTER SET '%s'",
@@ -989,6 +989,23 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidDDLState:            "Invalid %s state: %v",
 	ErrCancelledDDLJob:            "Cancelled DDL job",
 	ErrRepairTable:                "Failed to repair table: %s",
+
+	ErrUnsupportedType:                     "Unsupported type %T",
+	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",
+	ErrCartesianProductUnsupported:         "Cartesian product is unsupported",
+	ErrPreparedStmtNotFound:                "Prepared statement not found",
+	ErrWrongParamCount:                     "Wrong parameter count",
+	ErrSchemaChanged:                       "Schema has changed",
+	ErrUnknownPlan:                         "Unknown plan",
+	ErrPrepareMulti:                        "Can not prepare multiple statements",
+	ErrPrepareDDL:                          "Can not prepare DDL statements with parameters",
+	ErrResultIsEmpty:                       "Result is empty",
+	ErrBuildExecutor:                       "Failed to build executor",
+	ErrBatchInsertFail:                     "Batch insert failed, please clean the table and try again.",
+	ErrGetStartTS:                          "Can not get start ts",
+	ErrPrivilegeCheckFail:                  "privilege check fail", // this error message should begin lowercased to be compatible with the test
+	ErrInvalidWildCard:                     "Wildcard fields without any table name appears in wrong place",
+	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",
