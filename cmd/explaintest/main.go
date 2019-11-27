@@ -682,7 +682,7 @@ func main() {
 		log.Info("run test ok", zap.String("test", t))
 	}
 
-	println("\nGreat, All tests passed")
+	log.Info("Explain test passed")
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
