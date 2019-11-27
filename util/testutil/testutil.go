@@ -150,7 +150,7 @@ func LoadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 		return res, err
 	}
 	if record {
-		res.output = make([]testCases, len(res.input), len(res.input))
+		res.output = make([]testCases, len(res.input))
 		for i := range res.input {
 			res.output[i].Name = res.input[i].Name
 		}
@@ -273,7 +273,7 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 		if err != nil {
 			return err
 		}
-		res := make([]byte, len(buf.Bytes()), len(buf.Bytes()))
+		res := make([]byte, len(buf.Bytes()))
 		copy(res, buf.Bytes())
 		buf.Reset()
 		rm := json.RawMessage(res)

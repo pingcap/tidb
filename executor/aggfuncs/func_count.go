@@ -389,8 +389,3 @@ func appendJSON(encodedBytes, _ []byte, val json.BinaryJSON) []byte {
 	encodedBytes = append(encodedBytes, val.Value...)
 	return encodedBytes
 }
-
-func appendString(encodedBytes, _ []byte, val string) []byte {
-	encodedBytes = append(encodedBytes, val...)
-	return encodedBytes
-}

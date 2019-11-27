@@ -212,8 +212,14 @@ func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames
 }
 
 func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
-	col := indexInfo.Columns[0]
+	if indexInfo.Primary {
+		for _, col := range indexInfo.Columns {
+			tblInfo.Columns[col.Offset].Flag |= mysql.PriKeyFlag
+		}
+		return
+	}
 
+	col := indexInfo.Columns[0]
 	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
 		tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
 	} else {
@@ -222,14 +228,17 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
-	col := indexInfo.Columns[0]
-
-	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
-		tblInfo.Columns[col.Offset].Flag &= ^mysql.UniqueKeyFlag
+	if indexInfo.Primary {
+		for _, col := range indexInfo.Columns {
+			tblInfo.Columns[col.Offset].Flag &= ^mysql.PriKeyFlag
+		}
+	} else if indexInfo.Unique && len(indexInfo.Columns) == 1 {
+		tblInfo.Columns[indexInfo.Columns[0].Offset].Flag &= ^mysql.UniqueKeyFlag
 	} else {
-		tblInfo.Columns[col.Offset].Flag &= ^mysql.MultipleKeyFlag
+		tblInfo.Columns[indexInfo.Columns[0].Offset].Flag &= ^mysql.MultipleKeyFlag
 	}
 
+	col := indexInfo.Columns[0]
 	// other index may still cover this col
 	for _, index := range tblInfo.Indices {
 		if index.Name.L == indexInfo.Name.L {
@@ -966,7 +975,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, table.WithAssertion(txn))
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 					// Index already exists, skip it.
@@ -1445,7 +1454,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
-	snap.SetPriority(priority)
+	snap.SetOption(kv.Priority, priority)
 	if err != nil {
 		return errors.Trace(err)
 	}

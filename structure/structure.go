@@ -28,11 +28,10 @@ const (
 )
 
 var (
-	errInvalidHashKeyFlag   = terror.ClassStructure.New(codeInvalidHashKeyFlag, "invalid encoded hash key flag")
-	errInvalidHashKeyPrefix = terror.ClassStructure.New(codeInvalidHashKeyPrefix, "invalid encoded hash key prefix")
-	errInvalidListIndex     = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list index")
-	errInvalidListMetaData  = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list meta data")
-	errWriteOnSnapshot      = terror.ClassStructure.New(codeWriteOnSnapshot, "write on snapshot")
+	errInvalidHashKeyFlag  = terror.ClassStructure.New(codeInvalidHashKeyFlag, "invalid encoded hash key flag")
+	errInvalidListIndex    = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list index")
+	errInvalidListMetaData = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list meta data")
+	errWriteOnSnapshot     = terror.ClassStructure.New(codeWriteOnSnapshot, "write on snapshot")
 )
 
 // NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.
