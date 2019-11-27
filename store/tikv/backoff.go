@@ -266,17 +266,12 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 		ctx:      ctx,
 		maxSleep: maxSleep,
 		vars:     kv.DefaultVars,
-
-		backoffSleepMS: make(map[backoffType]int),
-		backoffTimes:   make(map[backoffType]int),
 	}
 }
 
 // NewNoopBackoff create a Backoffer do nothing just return error directly
 func NewNoopBackoff(ctx context.Context) *Backoffer {
-	return &Backoffer{ctx: ctx, noop: true,
-		backoffSleepMS: make(map[backoffType]int),
-		backoffTimes:   make(map[backoffType]int)}
+	return &Backoffer{ctx: ctx, noop: true}
 }
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
@@ -340,7 +335,13 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	realSleep := f(b.ctx, maxSleepMs)
 	backoffDuration.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
+	if b.backoffSleepMS == nil {
+		b.backoffSleepMS = make(map[backoffType]int)
+	}
 	b.backoffSleepMS[typ] += realSleep
+	if b.backoffTimes == nil {
+		b.backoffTimes = make(map[backoffType]int)
+	}
 	b.backoffTimes[typ]++
 
 	var startTs interface{}
