@@ -249,7 +249,7 @@ func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
 
-	// Invalid operation will use the default opertion.
+	// Invalid operation will use the default operation.
 	binloginfo.EnableSkipBinlogFlag()
 	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=abc"))
