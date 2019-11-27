@@ -251,10 +251,10 @@ func (e *rawEntry) Less(than btree.Item) bool {
 
 // MVCCStore is a mvcc key-value storage.
 type MVCCStore interface {
-	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error)
+	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error)
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
-	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
+	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
 	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
 		forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error
 	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
