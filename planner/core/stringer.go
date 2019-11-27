@@ -179,6 +179,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
 	case *PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
+	case *PhysicalIndexMergeReader:
+		str = "IndexMergeReader(PartialPlans->["
+		for i, paritalPlan := range x.partialPlans {
+			if i > 0 {
+				str += ", "
+			}
+			str += ToString(paritalPlan)
+		}
+		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
 	case *PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", x.Conditions)
 	case *PhysicalIndexJoin:
