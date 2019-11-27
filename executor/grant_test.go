@@ -234,8 +234,10 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	// The bug is caused by the improper usage of double quotes like:
 	// INSERT INTO mysql.user ... VALUES ("..", "..", "..")
 	tk.MustExec(`SET SQL_MODE='ANSI_QUOTES'`)
+	tk.MustExec(`CREATE DATABASE video_ulimit`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
 	tk.MustExec(`REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';`)
+	tk.MustExec(`DROP DATABASE video_ulimit`)
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
 }
 
