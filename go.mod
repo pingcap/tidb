@@ -78,4 +78,4 @@ go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
 
-replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20191126022620-fce96f6e0e24
+replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20191127060640-bae427e606de

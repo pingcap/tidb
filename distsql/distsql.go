@@ -147,7 +147,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
-		setSystemEndian(dagReq)
+		setChunkMemoryLayout(dagReq)
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
@@ -179,9 +179,9 @@ func checkAlignment() bool {
 
 var systemEndian tipb.Endian
 
-// setSystemEndian sets the system endian for the DAGRequest.
-func setSystemEndian(dagReq *tipb.DAGRequest) {
-	dagReq.TidbSystemEndian = GetSystemEndian()
+// setChunkMemoryLayout sets the chunk memory layout for the DAGRequest.
+func setChunkMemoryLayout(dagReq *tipb.DAGRequest) {
+	dagReq.ChunkMemoryLayout = &tipb.ChunkMemoryLayout{Endian: GetSystemEndian()}
 }
 
 // GetSystemEndian gets the system endian.

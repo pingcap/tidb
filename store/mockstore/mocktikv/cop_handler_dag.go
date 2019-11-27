@@ -575,7 +575,7 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
-		if dagReq.TidbSystemEndian != distsql.GetSystemEndian() {
+		if dagReq.GetChunkMemoryLayout().GetEndian() != distsql.GetSystemEndian() {
 			return errors.Errorf("Mocktikv endian must be the same as TiDB system endian.")
 		}
 		colTypes := h.constructRespSchema(dagCtx)
