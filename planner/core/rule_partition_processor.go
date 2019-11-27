@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -102,16 +103,22 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 	filterConds := ds.allConds
 
-	if pi.Type == model.PartitionTypeHash {
+	// Try to locate partition directly for hash partition.
+	if pi.Type == model.PartitionTypeHash && len(filterConds) > 0 {
 		if table, ok := ds.table.(partitionTable); ok {
 			pExpr, err:= table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
 			if err != nil {
 				return nil, err
 			}
 			pe := pExpr.Expr
-			val, ok := expression.FastLocateHashPartition2(ds.SCtx(), filterConds, pe)
+			val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
+			if hasConflict {
+				tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+				tableDual.schema = ds.Schema()
+				return tableDual, nil
+			}
 			if ok {
-				idx := val % int64(pi.Num)
+				idx := math.Abs(val) % int64(pi.Num)
 				newDataSource := *ds
 				newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 				newDataSource.isPartition = true
@@ -142,7 +149,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
-	
+
 	// do preSolve with filter exprs for situations like
 	// where c1 = 1 and c2 > c1 + 10 and c2 < c3 + 1 and c3 = c1 - 10
 	// no need to do partition pruning work for "alwaysFalse" filter results
@@ -167,6 +174,8 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		}
 	}
 
+	// Rewrite data source to union all partitions, during which we may prune some
+	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
