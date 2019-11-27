@@ -471,6 +471,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}
 			continue
 		}
+		// TiFlash storage do not support index scan.
+		if ds.preferStoreType&preferTiFlash != 0 {
+			continue
+		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
 		if err != nil {
 			return nil, err

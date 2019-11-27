@@ -427,11 +427,10 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	} else {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
-	if hintInfo.ifPreferTiFlash(alias) {
-		ds.preferStoreType |= preferTiFlash
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
-	}
 	if hintInfo.ifPreferTiKV(alias) {
+		ds.preferStoreType |= preferTiKV
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
@@ -440,7 +439,8 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiKV
+		ds.preferStoreType |= preferTiFlash
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
 	}
 }
 
