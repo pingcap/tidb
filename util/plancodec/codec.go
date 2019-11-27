@@ -55,7 +55,7 @@ func DecodePlan(planString string) (string, error) {
 	return pd.decode(planString)
 }
 
-// DecodePlan use to decode the string to plan tree.
+// DecodeNormalizedPlan use to decode the string to plan tree.
 func DecodeNormalizedPlan(planString string) (string, error) {
 	if len(planString) == 0 {
 		return "", nil

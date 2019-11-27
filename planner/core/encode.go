@@ -97,12 +97,12 @@ type planDigester struct {
 
 // NormalizePlan is used to normalize the plan and generated plan digest.
 func NormalizePlan(p Plan) (normalized, digest string) {
-	d := digesterPool.Get().(*planDigester)
-	defer digesterPool.Put(d)
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
 		return "", ""
 	}
+	d := digesterPool.Get().(*planDigester)
+	defer digesterPool.Put(d)
 	d.normalizePlanTree(selectPlan)
 	normalized = string(d.buf.Bytes())
 	d.hasher.Write(d.buf.Bytes())
