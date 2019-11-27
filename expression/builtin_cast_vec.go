@@ -1068,12 +1068,11 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		sc := b.ctx.GetSessionVars().StmtCtx
-		dr, _, _, err := convertStringToDuration(sc, strconv.FormatFloat(f64s[i], 'f', -1, 64), int8(b.tp.Decimal))
+		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(f64s[i], 'f', -1, 64), int8(b.tp.Decimal))
 		if err != nil {
 			return err
 		}
-		ds[i] = dr
+		ds[i] = dur.Duration
 	}
 	return nil
 }
