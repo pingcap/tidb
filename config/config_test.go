@@ -147,6 +147,7 @@ disable-error-stack = false
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
+	conf.ServerVersion = "test_version"
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
@@ -196,6 +197,7 @@ max-sql-length=1024
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
