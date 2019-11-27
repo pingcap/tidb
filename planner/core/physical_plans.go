@@ -172,10 +172,8 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName      model.CIStr
-	Table       *model.TableInfo
-	Columns     []*model.ColumnInfo
-	TableAsName *model.CIStr
+	DBName model.CIStr
+	Table  *model.TableInfo
 }
 
 // PhysicalTableScan represents a table scan plan.
