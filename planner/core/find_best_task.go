@@ -1036,9 +1036,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	if ds.preferStoreType&preferTiKV != 0 {
 		ts.StoreType = kv.TiKV
 	}
-	if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.O) {
+	if infoschema.IsClusterMemTable(ds.DBName.L, ds.tableInfo.Name.L) {
 		ts.StoreType = kv.TiDBMem
-		ts.Init(ds.ctx, ds.blockOffset)
 		ts.tp = plancodec.TypeMemTableScan
 	}
 	if ts.StoreType == kv.TiFlash {

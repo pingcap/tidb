@@ -58,7 +58,9 @@ func NewRPCServer(security config.Security, dom *domain.Domain) *grpc.Server {
 	globalDomain = dom
 	// For redirection the cop task.
 	mocktikv.TiDBRPCServerCoprocessorHandler = HandleCopDAGRequest
-	diagnosticspb.RegisterDiagnosticsServer(s, &rpcServer{})
+	srv := &rpcServer{}
+	diagnosticspb.RegisterDiagnosticsServer(s, srv)
+	tikvpb.RegisterTikvServer(s, srv)
 	return s
 }
 
