@@ -421,7 +421,11 @@ func (b *{{.SigName}}) vectorized() bool {
 
 var addOrSubDate = template.Must(template.New("").Parse(`
 {{ range .Sigs }}
+{{- if eq .TypeA.TypeName "Duration" }}
+func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+{{- else }}
 func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+{{- end }}
 	n := input.NumRows()
 
 	unitCol, err := b.bufAllocator.get(types.ETString, n)
@@ -433,14 +437,25 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	dateCol, err := b.bufAllocator.get(types.ETDatetime, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(dateCol)
-	if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unitCol, dateCol); err != nil {
-		return err
-	}
+	{{ if eq .TypeA.TypeName "Duration" }}
+		durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(durationCol)
+		if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+			return err
+		}
+	{{ else }}
+		timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(timeCol)
+		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+			return err
+		}
+	{{ end }}
 
 	intervalCol, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -451,19 +466,37 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, dateCol, intervalCol)
-	orgDates := dateCol.Times()
-	resDates := result.Times()
+	{{ if eq .TypeA.TypeName "Duration" }}
+		stubDuration := types.Duration{Fsp: types.MaxFsp}
+		result.ResizeGoDuration(n, false)
+		result.MergeNulls(unitCol, durationCol, intervalCol)
+		oriDurations := durationCol.GoDurations()
+		resDurations := result.GoDurations()
+	{{ else }}
+		result.ResizeTime(n, false)
+		result.MergeNulls(unitCol, timeCol, intervalCol)
+		oriTimes := timeCol.Times()
+		resTimes := result.Times()
+	{{ end -}}
+
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 
-		{{- if eq $.FuncName "AddDate" }}
-			date, isNull, err := b.add(b.ctx, orgDates[i], intervalCol.GetString(i), unitCol.GetString(i))
+		{{- if eq .TypeA.TypeName "Duration" }}
+			stubDuration.Duration = oriDurations[i]
+			{{- if eq $.FuncName "AddDate" }}
+				duration, isNull, err := b.addDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+			{{- else }}
+				duration, isNull, err := b.subDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+			{{- end }}
 		{{- else }}
-			date, isNull, err := b.sub(b.ctx, orgDates[i], intervalCol.GetString(i), unitCol.GetString(i))
+			{{- if eq $.FuncName "AddDate" }}
+				time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+			{{- else }}
+				time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+			{{- end }}
 		{{- end }}
 		if err != nil {
 			return err
@@ -471,7 +504,11 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDates[i] = date
+			{{- if eq .TypeA.TypeName "Duration" }}
+				resDurations[i] = duration.Duration
+			{{- else }}
+				resTimes[i] = time
+			{{- end }}
 		}
 	}
 	return nil
@@ -534,11 +571,11 @@ func (g gener) gen() interface{} {
 	{{- else if eq .TypeA.ETName "Int"}}
 		&dateTimeIntGener{nullRation: 0.2},
 	{{- else }}
-		&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+		&defaultGener{eType: types.ET{{.TypeA.ETName}}, nullRation: 0.2},
 	{{- end }}
 {{ end }}
 
-{{ define "addOrSubDateCase" }}
+{{ define "addOrSubDateCases" }}
 	{{ range .Sigs }} // {{ .SigName }}
 		{
 			retEvalType: types.ET{{ .Output.ETName }},
@@ -632,12 +669,12 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 	{{ end }}
 	{{- if eq .FuncName "AddDate" }}
 		ast.AddDate: {
-			{{- template "addOrSubDateCase" . -}}
+			{{- template "addOrSubDateCases" . -}}
 		},
 	{{ end }}
 	{{- if eq .FuncName "SubDate" }}
 		ast.SubDate: {
-			{{- template "addOrSubDateCase" . -}}
+			{{- template "addOrSubDateCases" . -}}
 		},
 	{{ end }}
 {{ end }}
@@ -699,6 +736,10 @@ var addDataSigsTmpl = []sig{
 	{SigName: "builtinAddDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime},
 	{SigName: "builtinAddDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime},
 	{SigName: "builtinAddDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinAddDateDurationStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
+	{SigName: "builtinAddDateDurationIntSig", TypeA: TypeDuration, TypeB: TypeInt, Output: TypeDuration},
+	{SigName: "builtinAddDateDurationRealSig", TypeA: TypeDuration, TypeB: TypeReal, Output: TypeDuration},
+	{SigName: "builtinAddDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDuration},
 }
 
 var subDataSigsTmpl = []sig{
@@ -714,6 +755,10 @@ var subDataSigsTmpl = []sig{
 	{SigName: "builtinSubDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime},
 	{SigName: "builtinSubDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime},
 	{SigName: "builtinSubDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinSubDateDurationStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
+	{SigName: "builtinSubDateDurationIntSig", TypeA: TypeDuration, TypeB: TypeInt, Output: TypeDuration},
+	{SigName: "builtinSubDateDurationRealSig", TypeA: TypeDuration, TypeB: TypeReal, Output: TypeDuration},
+	{SigName: "builtinSubDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDuration},
 }
 
 type sig struct {

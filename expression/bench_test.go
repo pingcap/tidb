@@ -1059,7 +1059,7 @@ func removeTestOptions(args []string) []string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "builtin") {
 			argList = append(argList, arg)
-		} else if _, ok := funcs[arg]; ok {
+		} else if IsFunctionSupported(arg) {
 			argList = append(argList, arg)
 		}
 	}
