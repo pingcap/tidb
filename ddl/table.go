@@ -945,6 +945,6 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("invalid table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 }

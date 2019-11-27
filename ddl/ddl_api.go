@@ -3941,12 +3941,12 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	if !ok || oldDBInfo == nil {
 		return ErrRepairTableFail.GenWithStack("Failed to get the repaired database")
 	}
-	// By now only support same db repair.
+	// By now only support same DB repair.
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
 		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
 	}
-	// Cause DDL is passed nil here, it is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	// It is necessary to specify the table.ID and partition.ID manually.
+	newTableInfo, err := buildTableInfoWithCheck(ctx, d, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
