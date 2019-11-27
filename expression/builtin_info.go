@@ -484,9 +484,16 @@ func (b *builtinBenchmarkSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Get loop count.
-	loopCount, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	var loopCount int64
+	var isNull bool
+	var err error
+	if b.constLoopCount > 0 {
+		loopCount = b.constLoopCount
+	} else {
+		loopCount, isNull, err = b.args[0].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
 	}
 
 	// BENCHMARK() will return NULL if loop count < 0,
