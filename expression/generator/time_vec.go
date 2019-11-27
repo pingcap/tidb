@@ -427,56 +427,59 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 {{- end }}
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		{{- if eq .TypeA.TypeName "Duration" }}
+			result.ResizeGoDuration(n, true)
+		{{- else }}
+			result.ResizeTime(n, true)
+		{{- end }}
+		return nil
 	}
 
 	{{ if eq .TypeA.TypeName "Duration" }}
-		durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+		durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(durationCol)
-		if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+		defer b.bufAllocator.put(durationBuf)
+		if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 			return err
 		}
 	{{ else }}
-		timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+		dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 		if err != nil {
 			return err
 		}
-		defer b.bufAllocator.put(timeCol)
-		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+		defer b.bufAllocator.put(dateBuf)
+		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 			return err
 		}
 	{{ end }}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFrom{{.TypeB.ETName}}(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFrom{{.TypeB.ETName}}(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	{{ if eq .TypeA.TypeName "Duration" }}
-		stubDuration := types.Duration{Fsp: types.MaxFsp}
 		result.ResizeGoDuration(n, false)
-		result.MergeNulls(unitCol, durationCol, intervalCol)
-		oriDurations := durationCol.GoDurations()
+		result.MergeNulls(durationBuf, intervalBuf)
+		oriDurations := durationBuf.GoDurations()
 		resDurations := result.GoDurations()
+		iterDuration := types.Duration{Fsp: types.MaxFsp}
 	{{ else }}
 		result.ResizeTime(n, false)
-		result.MergeNulls(unitCol, timeCol, intervalCol)
-		oriTimes := timeCol.Times()
-		resTimes := result.Times()
+		result.MergeNulls(dateBuf, intervalBuf)
+		oriDates := dateBuf.Times()
+		resDates := result.Times()
 	{{ end -}}
 
 	for i := 0; i < n; i++ {
@@ -485,17 +488,17 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		}
 
 		{{- if eq .TypeA.TypeName "Duration" }}
-			stubDuration.Duration = oriDurations[i]
+			iterDuration.Duration = oriDurations[i]
 			{{- if eq $.FuncName "AddDate" }}
-				duration, isNull, err := b.addDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+				resDuration, isNull, err := b.addDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 			{{- else }}
-				duration, isNull, err := b.subDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+				resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 			{{- end }}
 		{{- else }}
 			{{- if eq $.FuncName "AddDate" }}
-				time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+				resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 			{{- else }}
-				time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+				resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 			{{- end }}
 		{{- end }}
 		if err != nil {
@@ -505,9 +508,9 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 			result.SetNull(i, true)
 		} else {
 			{{- if eq .TypeA.TypeName "Duration" }}
-				resDurations[i] = duration.Duration
+				resDurations[i] = resDuration.Duration
 			{{- else }}
-				resTimes[i] = time
+				resDates[i] = resDate
 			{{- end }}
 		}
 	}
@@ -589,15 +592,16 @@ func (g gener) gen() interface{} {
 			{{- end }}
 			geners: []dataGenerator{
 				{{- if eq .TestTypeA "" }}
-				{{- template "datetimeGener" . -}}
-				gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+					{{- template "datetimeGener" . -}}
+					gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+					nil,
 				{{- else }}
-				{{- template "datetimeGener" . -}}
-				gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+					{{- template "datetimeGener" . -}}
+					gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
+					nil,
 				{{- end }}
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	{{ end }}
 {{ end }}

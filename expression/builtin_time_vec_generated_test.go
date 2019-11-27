@@ -192,8 +192,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateStringIntSig
 		{
@@ -202,8 +203,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateStringRealSig
 		{
@@ -212,8 +214,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateStringDecimalSig
 		{
@@ -222,8 +225,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateIntStringSig
 		{
@@ -232,8 +236,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateIntIntSig
 		{
@@ -242,8 +247,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateIntRealSig
 		{
@@ -252,8 +258,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateIntDecimalSig
 		{
@@ -262,8 +269,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDatetimeStringSig
 		{
@@ -272,8 +280,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDatetimeIntSig
 		{
@@ -282,8 +291,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDatetimeRealSig
 		{
@@ -292,8 +302,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDatetimeDecimalSig
 		{
@@ -302,8 +313,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDurationStringSig
 		{
@@ -312,8 +324,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDurationIntSig
 		{
@@ -322,8 +335,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDurationRealSig
 		{
@@ -332,8 +346,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinAddDateDurationDecimalSig
 		{
@@ -342,8 +357,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 
@@ -355,8 +371,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateStringIntSig
 		{
@@ -365,8 +382,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateStringRealSig
 		{
@@ -375,8 +393,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateStringDecimalSig
 		{
@@ -385,8 +404,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateIntStringSig
 		{
@@ -395,8 +415,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateIntIntSig
 		{
@@ -405,8 +426,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateIntRealSig
 		{
@@ -415,8 +437,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateIntDecimalSig
 		{
@@ -425,8 +448,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&dateTimeIntGener{nullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDatetimeStringSig
 		{
@@ -435,8 +459,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDatetimeIntSig
 		{
@@ -445,8 +470,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDatetimeRealSig
 		{
@@ -455,8 +481,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDatetimeDecimalSig
 		{
@@ -465,8 +492,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDurationStringSig
 		{
@@ -475,8 +503,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDurationIntSig
 		{
@@ -485,8 +514,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDurationRealSig
 		{
@@ -495,8 +525,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		// builtinSubDateDurationDecimalSig
 		{
@@ -505,8 +536,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
 				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				&intervalUnitStrGener{nullRation: 0.05},
+				nil,
 			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 }

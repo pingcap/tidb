@@ -1010,50 +1010,49 @@ func (b *builtinTimeTimeTimeDiffSig) vectorized() bool {
 
 func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1065,50 +1064,49 @@ func (b *builtinAddDateStringStringSig) vectorized() bool {
 
 func (b *builtinAddDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1120,50 +1118,49 @@ func (b *builtinAddDateStringIntSig) vectorized() bool {
 
 func (b *builtinAddDateStringRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1175,50 +1172,49 @@ func (b *builtinAddDateStringRealSig) vectorized() bool {
 
 func (b *builtinAddDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1230,50 +1226,49 @@ func (b *builtinAddDateStringDecimalSig) vectorized() bool {
 
 func (b *builtinAddDateIntStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1285,50 +1280,49 @@ func (b *builtinAddDateIntStringSig) vectorized() bool {
 
 func (b *builtinAddDateIntIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1340,50 +1334,49 @@ func (b *builtinAddDateIntIntSig) vectorized() bool {
 
 func (b *builtinAddDateIntRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1395,50 +1388,49 @@ func (b *builtinAddDateIntRealSig) vectorized() bool {
 
 func (b *builtinAddDateIntDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1450,50 +1442,49 @@ func (b *builtinAddDateIntDecimalSig) vectorized() bool {
 
 func (b *builtinAddDateDatetimeStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1505,50 +1496,49 @@ func (b *builtinAddDateDatetimeStringSig) vectorized() bool {
 
 func (b *builtinAddDateDatetimeIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1560,50 +1550,49 @@ func (b *builtinAddDateDatetimeIntSig) vectorized() bool {
 
 func (b *builtinAddDateDatetimeRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1615,50 +1604,49 @@ func (b *builtinAddDateDatetimeRealSig) vectorized() bool {
 
 func (b *builtinAddDateDatetimeDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.add(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1670,52 +1658,51 @@ func (b *builtinAddDateDatetimeDecimalSig) vectorized() bool {
 
 func (b *builtinAddDateDurationStringSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.addDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.addDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -1727,52 +1714,51 @@ func (b *builtinAddDateDurationStringSig) vectorized() bool {
 
 func (b *builtinAddDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.addDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.addDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -1784,52 +1770,51 @@ func (b *builtinAddDateDurationIntSig) vectorized() bool {
 
 func (b *builtinAddDateDurationRealSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.addDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.addDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -1841,52 +1826,51 @@ func (b *builtinAddDateDurationRealSig) vectorized() bool {
 
 func (b *builtinAddDateDurationDecimalSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.addDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.addDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -1898,50 +1882,49 @@ func (b *builtinAddDateDurationDecimalSig) vectorized() bool {
 
 func (b *builtinSubDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -1953,50 +1936,49 @@ func (b *builtinSubDateStringStringSig) vectorized() bool {
 
 func (b *builtinSubDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2008,50 +1990,49 @@ func (b *builtinSubDateStringIntSig) vectorized() bool {
 
 func (b *builtinSubDateStringRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2063,50 +2044,49 @@ func (b *builtinSubDateStringRealSig) vectorized() bool {
 
 func (b *builtinSubDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2118,50 +2098,49 @@ func (b *builtinSubDateStringDecimalSig) vectorized() bool {
 
 func (b *builtinSubDateIntStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2173,50 +2152,49 @@ func (b *builtinSubDateIntStringSig) vectorized() bool {
 
 func (b *builtinSubDateIntIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2228,50 +2206,49 @@ func (b *builtinSubDateIntIntSig) vectorized() bool {
 
 func (b *builtinSubDateIntRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2283,50 +2260,49 @@ func (b *builtinSubDateIntRealSig) vectorized() bool {
 
 func (b *builtinSubDateIntDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromInt(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2338,50 +2314,49 @@ func (b *builtinSubDateIntDecimalSig) vectorized() bool {
 
 func (b *builtinSubDateDatetimeStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2393,50 +2368,49 @@ func (b *builtinSubDateDatetimeStringSig) vectorized() bool {
 
 func (b *builtinSubDateDatetimeIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2448,50 +2422,49 @@ func (b *builtinSubDateDatetimeIntSig) vectorized() bool {
 
 func (b *builtinSubDateDatetimeRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2503,50 +2476,49 @@ func (b *builtinSubDateDatetimeRealSig) vectorized() bool {
 
 func (b *builtinSubDateDatetimeDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeTime(n, true)
+		return nil
 	}
 
-	timeCol, err := b.bufAllocator.get(types.ETDatetime, n)
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(timeCol)
-	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unitCol, timeCol); err != nil {
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unitCol, timeCol, intervalCol)
-	oriTimes := timeCol.Times()
-	resTimes := result.Times()
+	result.MergeNulls(dateBuf, intervalBuf)
+	oriDates := dateBuf.Times()
+	resDates := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		time, isNull, err := b.sub(b.ctx, oriTimes[i], intervalCol.GetString(i), unitCol.GetString(i))
+		resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resTimes[i] = time
+			resDates[i] = resDate
 		}
 	}
 	return nil
@@ -2558,52 +2530,51 @@ func (b *builtinSubDateDatetimeDecimalSig) vectorized() bool {
 
 func (b *builtinSubDateDurationStringSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromString(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.subDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -2615,52 +2586,51 @@ func (b *builtinSubDateDurationStringSig) vectorized() bool {
 
 func (b *builtinSubDateDurationIntSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromInt(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.subDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -2672,52 +2642,51 @@ func (b *builtinSubDateDurationIntSig) vectorized() bool {
 
 func (b *builtinSubDateDurationRealSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromReal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.subDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil
@@ -2729,52 +2698,51 @@ func (b *builtinSubDateDurationRealSig) vectorized() bool {
 
 func (b *builtinSubDateDurationDecimalSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
-	unitCol, err := b.bufAllocator.get(types.ETString, n)
+	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(unitCol)
-	if err := b.args[2].VecEvalString(b.ctx, input, unitCol); err != nil {
-		return err
+	if isNull {
+		result.ResizeGoDuration(n, true)
+		return nil
 	}
 
-	durationCol, err := b.bufAllocator.get(types.ETDuration, n)
+	durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(durationCol)
-	if err := b.args[0].VecEvalDuration(b.ctx, input, durationCol); err != nil {
+	defer b.bufAllocator.put(durationBuf)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
 		return err
 	}
 
-	intervalCol, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(intervalCol)
-	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unitCol, intervalCol); err != nil {
+	defer b.bufAllocator.put(intervalBuf)
+	if err := b.vecGetIntervalFromDecimal(&b.baseBuiltinFunc, input, unit, intervalBuf); err != nil {
 		return err
 	}
 
-	stubDuration := types.Duration{Fsp: types.MaxFsp}
 	result.ResizeGoDuration(n, false)
-	result.MergeNulls(unitCol, durationCol, intervalCol)
-	oriDurations := durationCol.GoDurations()
+	result.MergeNulls(durationBuf, intervalBuf)
+	oriDurations := durationBuf.GoDurations()
 	resDurations := result.GoDurations()
+	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		stubDuration.Duration = oriDurations[i]
-		duration, isNull, err := b.subDuration(b.ctx, stubDuration, intervalCol.GetString(i), unitCol.GetString(i))
+		iterDuration.Duration = oriDurations[i]
+		resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.SetNull(i, true)
 		} else {
-			resDurations[i] = duration.Duration
+			resDurations[i] = resDuration.Duration
 		}
 	}
 	return nil

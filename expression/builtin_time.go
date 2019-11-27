@@ -2788,30 +2788,6 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	return date, false, nil
 }
 
-func (du *baseDateArithmitical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
-	dur, err := types.ExtractDurationValue(unit, interval)
-	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
-	}
-	retDur, err := d.Add(dur)
-	if err != nil {
-		return types.ZeroDuration, true, err
-	}
-	return retDur, false, nil
-}
-
-func (du *baseDateArithmitical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
-	dur, err := types.ExtractDurationValue(unit, interval)
-	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
-	}
-	retDur, err := d.Sub(dur)
-	if err != nil {
-		return types.ZeroDuration, true, err
-	}
-	return retDur, false, nil
-}
-
 func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
@@ -2849,7 +2825,31 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	return date, false, nil
 }
 
-func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
+	dur, err := types.ExtractDurationValue(unit, interval)
+	if err != nil {
+		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
+	}
+	retDur, err := d.Add(dur)
+	if err != nil {
+		return types.ZeroDuration, true, err
+	}
+	return retDur, false, nil
+}
+
+func (du *baseDateArithmitical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
+	dur, err := types.ExtractDurationValue(unit, interval)
+	if err != nil {
+		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
+	}
+	retDur, err := d.Sub(dur)
+	if err != nil {
+		return types.ZeroDuration, true, err
+	}
+	return retDur, false, nil
+}
+
+func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -2861,10 +2861,11 @@ func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unit, buf)
+	result.MergeNulls(buf)
 	dates := result.Times()
 	i64s := buf.Int64s()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	isClockUnit := types.IsClockUnit(unit)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2874,7 +2875,7 @@ func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 			return err
 		}
 		dateTp := mysql.TypeDate
-		if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit.GetString(i)) {
+		if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || isClockUnit {
 			dateTp = mysql.TypeDatetime
 		}
 		date.Type = dateTp
@@ -2883,7 +2884,7 @@ func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 	return nil
 }
 
-func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -2895,9 +2896,10 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 	}
 
 	result.ResizeTime(n, false)
-	result.MergeNulls(unit, buf)
+	result.MergeNulls(buf)
 	dates := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	isClockUnit := types.IsClockUnit(unit)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2905,7 +2907,7 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 
 		dateStr := buf.GetString(i)
 		dateTp := mysql.TypeDate
-		if !types.IsDateFormat(dateStr) || types.IsClockUnit(unit.GetString(i)) {
+		if !types.IsDateFormat(dateStr) || isClockUnit {
 			dateTp = mysql.TypeDatetime
 		}
 
@@ -2924,21 +2926,21 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 	return nil
 }
 
-func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
 		return err
 	}
 
-	result.MergeNulls(unit)
 	dates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 
 		dateTp := mysql.TypeDate
-		if dates[i].Type == mysql.TypeDatetime || dates[i].Type == mysql.TypeTimestamp || types.IsClockUnit(unit.GetString(i)) {
+		if dates[i].Type == mysql.TypeDatetime || dates[i].Type == mysql.TypeTimestamp || isClockUnit {
 			dateTp = mysql.TypeDatetime
 		}
 		dates[i].Type = dateTp
@@ -2946,7 +2948,7 @@ func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input
 	return nil
 }
 
-func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -2959,13 +2961,13 @@ func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, inp
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if unit.IsNull(i) || buf.IsNull(i) {
+		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
 		interval := buf.GetString(i)
-		if unitLower := strings.ToLower(unit.GetString(i)); unitLower == "day" || unitLower == "hour" {
+		if unitLower := strings.ToLower(unit); unitLower == "day" || unitLower == "hour" {
 			if intervalLower := strings.ToLower(interval); intervalLower == "true" {
 				interval = "1"
 			} else if intervalLower == "false" {
@@ -2979,7 +2981,7 @@ func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, inp
 	return nil
 }
 
-func (du *baseDateArithmitical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETDecimal, n)
 	if err != nil {
@@ -2990,71 +2992,97 @@ func (du *baseDateArithmitical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, in
 		return err
 	}
 
+	isCompoundUnit := false
+	amendInterval := func(val string, row *chunk.Row) (string, bool, error) {
+		return val, false, nil
+	}
+	switch unitUpper := strings.ToUpper(unit); unitUpper {
+	case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
+		"DAY_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND", "HOUR_SECOND", "MINUTE_MICROSECOND", "SECOND_MICROSECOND":
+		isCompoundUnit = true
+		switch strings.ToUpper(unit) {
+		case "HOUR_MINUTE", "MINUTE_SECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "YEAR_MONTH":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return strings.Replace(val, ".", "-", -1), false, nil
+			}
+		case "DAY_HOUR":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return strings.Replace(val, ".", " ", -1), false, nil
+			}
+		case "DAY_MINUTE":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "0 " + strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "DAY_SECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "0 00:" + strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "DAY_MICROSECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "0 00:00:" + val, false, nil
+			}
+		case "HOUR_MICROSECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "00:00:" + val, false, nil
+			}
+		case "HOUR_SECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "00:" + strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "MINUTE_MICROSECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "00:" + val, false, nil
+			}
+		case "SECOND_MICROSECOND":
+			/* keep interval as original decimal */
+		}
+	case "SECOND":
+		/* keep interval as original decimal */
+	default:
+		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
+		castExpr := WrapWithCastAsString(b.ctx, WrapWithCastAsInt(b.ctx, b.args[1]))
+		amendInterval = func(_ string, row *chunk.Row) (string, bool, error) {
+			interval, isNull, err := castExpr.EvalString(b.ctx, *row)
+			return interval, isNull || err != nil, err
+		}
+	}
+
 	result.ReserveString(n)
 	decs := buf.Decimals()
-	castExpr := WrapWithCastAsString(b.ctx, WrapWithCastAsInt(b.ctx, b.args[1]))
 	for i := 0; i < n; i++ {
-		if unit.IsNull(i) || buf.IsNull(i) {
+		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
-		isNull := false
-		row := input.GetRow(i)
 		interval := decs[i].String()
-		unitUpper := strings.ToUpper(unit.GetString(i))
-		switch unitUpper {
-		case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
-			"DAY_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND", "HOUR_SECOND", "MINUTE_MICROSECOND", "SECOND_MICROSECOND":
-			neg := false
-			if interval != "" && interval[0] == '-' {
-				neg = true
-				interval = interval[1:]
-			}
-			switch unitUpper {
-			case "HOUR_MINUTE", "MINUTE_SECOND":
-				interval = strings.Replace(interval, ".", ":", -1)
-			case "YEAR_MONTH":
-				interval = strings.Replace(interval, ".", "-", -1)
-			case "DAY_HOUR":
-				interval = strings.Replace(interval, ".", " ", -1)
-			case "DAY_MINUTE":
-				interval = "0 " + strings.Replace(interval, ".", ":", -1)
-			case "DAY_SECOND":
-				interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
-			case "DAY_MICROSECOND":
-				interval = "0 00:00:" + interval
-			case "HOUR_MICROSECOND":
-				interval = "00:00:" + interval
-			case "HOUR_SECOND":
-				interval = "00:" + strings.Replace(interval, ".", ":", -1)
-			case "MINUTE_MICROSECOND":
-				interval = "00:" + interval
-			case "SECOND_MICROSECOND":
-				/* keep interval as original decimal */
-			}
-			if neg {
-				interval = "-" + interval
-			}
-		case "SECOND":
-			// interval is already like the %f format.
-		default:
-			// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
-			interval, isNull, err = castExpr.EvalString(b.ctx, row)
-			if err != nil {
-				return err
-			}
+		row := input.GetRow(i)
+		isNeg := false
+		if isCompoundUnit && interval != "" && interval[0] == '-' {
+			isNeg = true
+			interval = interval[1:]
+		}
+		interval, isNull, err := amendInterval(interval, &row)
+		if err != nil {
+			return err
 		}
 		if isNull {
 			result.AppendNull()
-		} else {
-			result.AppendString(interval)
+			continue
 		}
+		if isCompoundUnit && isNeg {
+			interval = "-" + interval
+		}
+		result.AppendString(interval)
 	}
 	return nil
 }
 
-func (du *baseDateArithmitical) vecGetIntervalFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) vecGetIntervalFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -3068,7 +3096,7 @@ func (du *baseDateArithmitical) vecGetIntervalFromInt(b *baseBuiltinFunc, input 
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
-		if unit.IsNull(i) || buf.IsNull(i) {
+		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
 			result.AppendString(strconv.FormatInt(i64s[i], 10))
@@ -3077,7 +3105,7 @@ func (du *baseDateArithmitical) vecGetIntervalFromInt(b *baseBuiltinFunc, input 
 	return nil
 }
 
-func (du *baseDateArithmitical) vecGetIntervalFromReal(b *baseBuiltinFunc, input *chunk.Chunk, unit *chunk.Column, result *chunk.Column) error {
+func (du *baseDateArithmitical) vecGetIntervalFromReal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
@@ -3092,7 +3120,7 @@ func (du *baseDateArithmitical) vecGetIntervalFromReal(b *baseBuiltinFunc, input
 	f64s := buf.Float64s()
 	prec := b.args[1].GetType().Decimal
 	for i := 0; i < n; i++ {
-		if unit.IsNull(i) || buf.IsNull(i) {
+		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
 			result.AppendString(strconv.FormatFloat(f64s[i], 'f', prec, 64))
