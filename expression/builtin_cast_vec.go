@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
