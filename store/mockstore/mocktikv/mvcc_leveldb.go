@@ -264,12 +264,11 @@ func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 
 // Get implements the MVCCStore interface.
 // key cannot be nil or []byte{}
-func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	// TODO: Update the nil here to support point-get for non-block reading on the large transaction.
-	return mvcc.getValue(key, startTS, isoLevel, nil)
+	return mvcc.getValue(key, startTS, isoLevel, resolvedLocks)
 }
 
 func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
@@ -317,13 +316,13 @@ func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.Isola
 }
 
 // BatchGet implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
 	pairs := make([]Pair, 0, len(ks))
 	for _, k := range ks {
-		v, err := mvcc.getValue(k, startTS, isoLevel, nil)
+		v, err := mvcc.getValue(k, startTS, isoLevel, resolvedLocks)
 		if v == nil && err == nil {
 			continue
 		}
