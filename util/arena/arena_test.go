@@ -15,7 +15,13 @@ package arena
 
 import (
 	"testing"
+
+	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestSimpleArenaAllocator(t *testing.T) {
 	arena := NewAllocator(1000)

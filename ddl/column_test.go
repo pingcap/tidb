@@ -951,6 +951,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
+		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
 		{"decimal(2,1)", "decimal(2,1)", nil},
 	}
 	for _, tt := range tests {

@@ -166,7 +166,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 		iv := ivBuf.GetBytes(i)
 		if len(iv) < aes.BlockSize {
-			return errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
+			return errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_encrypt is too short. Must be at least %d bytes long", aes.BlockSize)
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 		iv = iv[0:aes.BlockSize]
@@ -189,6 +189,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		if err != nil {
 			result.AppendNull()
+			continue
 		}
 		result.AppendBytes(cipherText)
 	}
@@ -274,11 +275,98 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinAesDecryptIVSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals AES_DECRYPT(crypt_str, key_key, iv).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+		return err
+	}
+
+	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(keyBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+		return err
+	}
+
+	ivBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(ivBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, ivBuf); err != nil {
+		return err
+	}
+
+	isCBC := false
+	isOFB := false
+	isCFB := false
+	switch b.modeName {
+	case "cbc":
+		isCBC = true
+	case "ofb":
+		isOFB = true
+	case "cfb":
+		isCFB = true
+	default:
+		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
+	}
+
+	isConst := b.args[1].ConstItem()
+	var key []byte
+	if isConst {
+		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		// According to doc: If either function argument is NULL, the function returns NULL.
+		if strBuf.IsNull(i) || keyBuf.IsNull(i) || ivBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		iv := ivBuf.GetBytes(i)
+		if len(iv) < aes.BlockSize {
+			return errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
+		}
+		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
+		iv = iv[0:aes.BlockSize]
+		if !isConst {
+			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
+		}
+		var plainText []byte
+
+		// ANNOTATION:
+		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
+		// and the memory will be modified in AESDecryptWithCBC & AESDecryptWithOFB & AESDecryptWithCFB
+		if isCBC {
+			plainText, err = encrypt.AESDecryptWithCBC([]byte(strBuf.GetString(i)), key, iv)
+		}
+		if isOFB {
+			plainText, err = encrypt.AESDecryptWithOFB([]byte(strBuf.GetString(i)), key, iv)
+		}
+		if isCFB {
+			plainText, err = encrypt.AESDecryptWithCFB([]byte(strBuf.GetString(i)), key, iv)
+		}
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendBytes(plainText)
+	}
+	return nil
 }
 
 func (b *builtinRandomBytesSig) vectorized() bool {

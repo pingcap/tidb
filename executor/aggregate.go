@@ -224,6 +224,19 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 	e.executed = false
+
+	if e.runtimeStats != nil {
+		var partialConcurrency, finalConcurrency int
+		if e.isUnparallelExec {
+			partialConcurrency = 0
+			finalConcurrency = 0
+		} else {
+			partialConcurrency = cap(e.partialWorkers)
+			finalConcurrency = cap(e.finalWorkers)
+		}
+		e.runtimeStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		e.runtimeStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
+	}
 	return e.baseExecutor.Close()
 }
 
