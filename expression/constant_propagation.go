@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/math"
 	"go.uber.org/zap"
 )
 
@@ -588,56 +587,6 @@ func newPropConstSolver() PropagateConstantSolver {
 	solver := &propConstSolver{}
 	solver.colMapper = make(map[int64]int)
 	return solver
-}
-
-func (s *propConstSolver) tryEvalPartitionExpr(piExpr Expression) (int64, bool) {
-	switch pi := piExpr.(type) {
-	case *ScalarFunction:
-		if pi.FuncName.L == ast.Plus {
-			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
-			leftVal, ok := s.tryEvalPartitionExpr(left)
-			if !ok {
-				return 0, false
-			}
-			rightVal, ok := s.tryEvalPartitionExpr(right)
-			if !ok {
-				return 0, false
-			}
-			return rightVal + leftVal, true
-		}
-	case *Constant:
-		val, err := pi.Eval(chunk.Row{})
-		if err != nil {
-			return 0, false
-		}
-		if val.Kind() == types.KindInt64 {
-			return val.GetInt64(), true
-		} else if val.Kind() == types.KindUint64 {
-			return int64(val.GetUint64()), true
-		}
-	case *Column:
-		// Look up map
-		idx := s.getColID(pi)
-		val := s.eqList[idx]
-		if val != nil {
-			return s.tryEvalPartitionExpr(val)
-		}
-		return 0, false
-	}
-	return 0, false
-}
-
-func FastLocateHashPartition(ctx sessionctx.Context, conditions []Expression, partition Expression) (int64, bool) {
-	solver := &propConstSolver{}
-	solver.colMapper = make(map[int64]int)
-	solver.ctx = ctx
-	solver.solve(conditions)
-	val, ok := solver.tryEvalPartitionExpr(partition)
-	if ok {
-		return math.Abs(val), ok
-	} else {
-		return val, ok
-	}
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.

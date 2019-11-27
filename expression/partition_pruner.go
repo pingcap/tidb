@@ -61,7 +61,7 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 			if p.constantMap[father] != nil {
 				// May has conflict here.
 				if !p.constantMap[father].Equal(p.ctx, p.constantMap[i]) {
-					return false
+					return true
 				}
 			} else {
 				p.constantMap[father] = p.constantMap[i]
@@ -74,17 +74,21 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 			p.constantMap[i] = p.constantMap[father]
 		}
 	}
-	return true
+	return false
 }
 
-func (p *hashPartitionPruner) reduceConstantEQ() {
+func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	for _, con := range p.conditions {
 		col, cond := validEqualCond(con)
 		if col != nil {
 			id := p.getColID(col)
+			if p.constantMap[id] != nil {
+				return true
+			}
 			p.constantMap[id] = cond
 		}
 	}
+	return false
 }
 
 func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bool) {
@@ -140,26 +144,30 @@ func newHashPartitionPruner() *hashPartitionPruner {
 	return pruner
 }
 
-func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool) {
+func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool, bool) {
 	p.ctx = ctx
-	cols := make([]*Column, 0, len(conds))
 	for _, cond := range conds {
 		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
-		cols = append(cols, ExtractColumns(cond)...)
+		for _, col := range ExtractColumns(cond) {
+			p.insertCol(col)
+		}
 	}
-	cols = append(cols, ExtractColumns(piExpr)...)
-	for _, col := range cols {
+	for _, col := range ExtractColumns(piExpr) {
 		p.insertCol(col)
 	}
 	p.constantMap = make([]*Constant, p.numColumn, p.numColumn)
-	p.reduceConstantEQ()
-	ok := p.reduceColumnEQ()
-	if !ok {
-		return 0, false
+	conflict := p.reduceConstantEQ()
+	if conflict {
+		return 0, false, conflict
 	}
-	return p.tryEvalPartitionExpr(piExpr)
+	conflict = p.reduceColumnEQ()
+	if conflict {
+		return 0, false, conflict
+	}
+	res, ok := p.tryEvalPartitionExpr(piExpr)
+	return res, ok, false
 }
 
-func FastLocateHashPartition2(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool) {
+func FastLocateHashPartition(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool, bool) {
 	return newHashPartitionPruner().solve(ctx, conds, piExpr)
 }
