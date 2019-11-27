@@ -283,7 +283,7 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 	h.sweepList()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+		if !dumpMode && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
@@ -717,7 +717,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			}
 		}
 	}
-	return
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string) bool {
