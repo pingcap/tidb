@@ -89,90 +89,19 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql   string
-		left  string
-		right string
-	}{
-		// issue #7628, inner join
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b where t1.a > t2.a",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b where t1.a=1 or t2.a=1",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)",
-			left:  "[or(eq(Column#1, 1), eq(Column#1, 2))]",
-			right: "[or(eq(Column#13, 1), eq(Column#13, 2))]",
-		},
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
-			left:  "[or(eq(Column#3, 1), eq(Column#1, 2))]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4)))",
-			left:  "[eq(Column#3, 1) or(eq(Column#1, 3), eq(Column#1, 4))]",
-			right: "[or(eq(Column#13, 3), eq(Column#13, 4))]",
-		},
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.a>1 and t1.a < 3 and t2.a=1) or (t1.a=2 and t2.a=2)",
-			left:  "[or(and(gt(Column#1, 1), lt(Column#1, 3)), eq(Column#1, 2))]",
-			right: "[or(eq(Column#13, 1), eq(Column#13, 2))]",
-		},
-		{
-			sql:   "select * from t as t1 join t as t2 on t1.b = t2.b and ((t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2))",
-			left:  "[or(eq(Column#1, 1), eq(Column#1, 2))]",
-			right: "[or(eq(Column#13, 1), eq(Column#13, 2))]",
-		},
-		// issue #7628, left join
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2))",
-			left:  "[]",
-			right: "[or(eq(Column#13, 1), eq(Column#13, 2))]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b and t1.a > t2.a",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b and (t1.a=1 or t2.a=1)",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2))",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t2.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2))",
-			left:  "[]",
-			right: "[or(eq(Column#15, 1), eq(Column#13, 2))]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a=2))",
-			left:  "[]",
-			right: "[or(or(eq(Column#13, 3), eq(Column#13, 4)), eq(Column#13, 2))]",
-		},
-		// Duplicate condition would be removed.
-		{
-			sql:   "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1",
-			left:  "[gt(Column#1, 1)]",
-			right: "[]",
-		},
-	}
+	var (
+		input  []string
+		output []struct {
+			Left  string
+			Right string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for i, ca := range input {
+		comment := Commentf("for %s", ca)
+		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
@@ -188,44 +117,30 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
-		c.Assert(leftCond, Equals, ca.left, comment)
-		c.Assert(rightCond, Equals, ca.right, comment)
+		s.testData.OnRecord(func() {
+			output[i].Left, output[i].Right = leftCond, rightCond
+		})
+		c.Assert(leftCond, Equals, output[i].Left, comment)
+		c.Assert(rightCond, Equals, output[i].Right, comment)
 	}
 }
 
 func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql   string
-		sel   string
-		left  string
-		right string
-	}{
-		// issue #7628, left join with where condition
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a is null) or (t1.a=2 and t2.a=2)",
-			sel:   "[or(and(eq(Column#1, 1), isnull(Column#13)), and(eq(Column#1, 2), eq(Column#13, 2)))]",
-			left:  "[or(eq(Column#1, 1), eq(Column#1, 2))]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
-			sel:   "[or(and(eq(Column#3, 1), or(eq(Column#1, 3), eq(Column#13, 3))), and(eq(Column#1, 2), eq(Column#13, 2)))]",
-			left:  "[or(eq(Column#3, 1), eq(Column#1, 2))]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a is null)",
-			sel:   "[or(and(eq(Column#3, 1), or(and(eq(Column#1, 3), eq(Column#13, 3)), and(eq(Column#1, 4), eq(Column#13, 4)))), and(eq(Column#1, 2), isnull(Column#13)))]",
-			left:  "[or(and(eq(Column#3, 1), or(eq(Column#1, 3), eq(Column#1, 4))), eq(Column#1, 2))]",
-			right: "[]",
-		},
-	}
+	var (
+		input  []string
+		output []struct {
+			Sel   string
+			Left  string
+			Right string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for i, ca := range input {
+		comment := Commentf("for %s", ca)
+		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
@@ -236,7 +151,10 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		selection, ok := proj.children[0].(*LogicalSelection)
 		c.Assert(ok, IsTrue, comment)
 		selCond := fmt.Sprintf("%s", selection.Conditions)
-		c.Assert(selCond, Equals, ca.sel, comment)
+		s.testData.OnRecord(func() {
+			output[i].Sel = selCond
+		})
+		c.Assert(selCond, Equals, output[i].Sel, comment)
 		join, ok := selection.children[0].(*LogicalJoin)
 		c.Assert(ok, IsTrue, comment)
 		leftPlan, ok := join.children[0].(*DataSource)
@@ -245,66 +163,48 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
-		c.Assert(leftCond, Equals, ca.left, comment)
-		c.Assert(rightCond, Equals, ca.right, comment)
+		s.testData.OnRecord(func() {
+			output[i].Left, output[i].Right = leftCond, rightCond
+		})
+		c.Assert(leftCond, Equals, output[i].Left, comment)
+		c.Assert(rightCond, Equals, output[i].Right, comment)
 	}
 }
 
 func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql      string
-		best     string
-		joinType string
-	}{
-		{
-			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 or t2.c > 1;",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#2,Column#14)->Sel([or(gt(Column#3, 1), gt(Column#15, 1))])->Projection",
-			joinType: "left outer join",
-		},
-		{
-			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 and t2.c > 1;",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#2,Column#14)->Projection",
-			joinType: "inner join",
-		},
-		{
-			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 or t2.c > 1);",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#2,Column#14)->Projection",
-			joinType: "inner join",
-		},
-		{
-			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1);",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#2,Column#14)->Sel([not(and(gt(Column#3, 1), gt(Column#15, 1)))])->Projection",
-			joinType: "left outer join",
-		},
-		{
-			sql:      "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c;",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#3,Column#15)->Projection",
-			joinType: "inner join",
-		},
-		{
-			sql:      "select * from t t1 left join t t2 on true where t1.b <=> t2.b;",
-			best:     "Join{DataScan(t1)->DataScan(t2)}->Sel([nulleq(Column#2, Column#14)])->Projection",
-			joinType: "left outer join",
-		},
-	}
+	var (
+		input  []string
+		output []struct {
+			Best     string
+			JoinType string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for i, ca := range input {
+		comment := Commentf("for %s", ca)
+		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
-		c.Assert(ToString(p), Equals, ca.best, comment)
+		planString := ToString(p)
+		s.testData.OnRecord(func() {
+			output[i].Best = planString
+		})
+		c.Assert(planString, Equals, output[i].Best, comment)
 		join, ok := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		if !ok {
 			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
 			c.Assert(ok, IsTrue, comment)
 		}
-		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
+		s.testData.OnRecord(func() {
+			output[i].JoinType = join.JoinType.String()
+		})
+		c.Assert(join.JoinType.String(), Equals, output[i].JoinType, comment)
 	}
 }
 
@@ -317,7 +217,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -339,111 +239,39 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 
 func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql   string
-		plan  string
-		left  string
-		right string
-	}{
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#5,Column#17)->Projection",
-			left:  "[not(isnull(Column#5))]",
-			right: "[not(isnull(Column#17))]",
-		},
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.e > t2.e",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[not(isnull(Column#5))]",
-			right: "[not(isnull(Column#17))]",
-		},
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e and t1.e is not null",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#5,Column#17)->Projection",
-			left:  "[not(isnull(Column#5))]",
-			right: "[not(isnull(Column#17))]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.e = t2.e",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#5,Column#17)->Projection",
-			left:  "[]",
-			right: "[not(isnull(Column#17))]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.e > t2.e",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[]",
-			right: "[not(isnull(Column#17))]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.e = t2.e and t2.e is not null",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#5,Column#17)->Projection",
-			left:  "[]",
-			right: "[not(isnull(Column#17))]",
-		},
-		{
-			sql:   "select * from t t1 right join t t2 on t1.e = t2.e and t1.e is not null",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#5,Column#17)->Projection",
-			left:  "[not(isnull(Column#5))]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.e <=> t2.e",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.e <=> t2.e",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-		// Not deriving if column has NotNull flag already.
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#2,Column#14)->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.b = t2.b",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#2,Column#14)->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.b > t2.b",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-		// Not deriving for AntiSemiJoin
-		{
-			sql:   "select * from t t1 where not exists (select * from t t2 where t2.e = t1.e)",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(Column#5,Column#17)->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-	}
+	var (
+		input  []string
+		output []struct {
+			Plan  string
+			Left  string
+			Right string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for i, ca := range input {
+		comment := Commentf("for %s", ca)
+		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
-		c.Assert(ToString(p), Equals, ca.plan, comment)
+		s.testData.OnRecord(func() {
+			output[i].Plan = ToString(p)
+		})
+		c.Assert(ToString(p), Equals, output[i].Plan, comment)
 		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
 		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
 		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
-		c.Assert(leftConds, Equals, ca.left, comment)
-		c.Assert(rightConds, Equals, ca.right, comment)
+		s.testData.OnRecord(func() {
+			output[i].Left, output[i].Right = leftConds, rightConds
+		})
+		c.Assert(leftConds, Equals, output[i].Left, comment)
+		c.Assert(rightConds, Equals, output[i].Right, comment)
 	}
 }
 
@@ -530,7 +358,7 @@ func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	c.Assert(ok, IsTrue, comment)
 	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.
-	c.Assert(leftCond, Equals, "[gt(cast(Column#1), rand()) gt(cast(Column#1), rand())]", comment)
+	c.Assert(leftCond, Equals, "[gt(cast(test.t.a), rand()) gt(cast(test.t.a), rand())]", comment)
 }
 
 func (s *testPlanSuite) TestTablePartition(c *C) {
@@ -567,81 +395,34 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
 	copy(definitions1, definitions)
 	is1 := MockPartitionInfoSchema(definitions1)
+	isChoices := []infoschema.InfoSchema{is, is1}
 
-	tests := []struct {
-		sql   string
-		first string
-		best  string
-		is    infoschema.InfoSchema
-	}{
-		{
-			sql:  "select * from t",
-			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn < 31",
-			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn < 61",
-			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn > 17 and t.ptn < 61",
-			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
-			best: "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
-			is:   is,
-		},
-		{
-			sql:  "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
-			best: "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn < 8",
-			best: "Partition(41)->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn > 128",
-			best: "Partition(45)->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn > 128",
-			best: "Dual->Projection",
-			is:   is1,
-		},
-		{
-			// NULL will be located in the first partition.
-			sql:  "select * from t where t.ptn is null",
-			best: "Partition(41)->Projection",
-			is:   is,
-		},
-		{
-			sql:  "select * from t where t.ptn is null or t.ptn > 70",
-			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
-			is:   is1,
-		},
-	}
+	var (
+		input []struct {
+			SQL   string
+			IsIdx int
+		}
+		output []string
+	)
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for i, ca := range input {
+		comment := Commentf("for %s", ca.SQL)
+		stmt, err := s.ParseOneStmt(ca.SQL, "", "")
 		c.Assert(err, IsNil, comment)
-		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, ca.is)
+		s.testData.OnRecord(func() {
+
+		})
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, isChoices[ca.IsIdx])
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		planString := ToString(p)
+		s.testData.OnRecord(func() {
+			output[i] = planString
+		})
+		c.Assert(ToString(p), Equals, output[i], Commentf("for %s", ca))
 	}
 }
 
@@ -697,47 +478,24 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 
 func (s *testPlanSuite) TestJoinReOrder(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d",
-			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#14)->DataScan(t3)}(Column#13,Column#26)->DataScan(t4)}(Column#27,Column#37)(Column#15,Column#40)->Join{DataScan(t5)->DataScan(t6)}(Column#52,Column#64)}->Projection",
-		},
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6, t t7, t t8 where t1.a = t8.a",
-			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(Column#1,Column#85)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection",
-		},
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
-			best: "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(Column#49,Column#1)->DataScan(t2)}(Column#1,Column#13)->DataScan(t3)}(Column#13,Column#25)(Column#1,Column#25)->DataScan(t4)}(Column#49,Column#37)(Column#25,Column#37)(Column#13,Column#37)->Projection",
-		},
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection",
-		},
-		{
-			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(Column#13,Column#37)->DataScan(t2)}(Column#37,Column#25)->Projection}->Projection",
-		},
-		{
-			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection",
-		},
-	}
+	var input, output []string
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+	for i, tt := range input {
+		comment := Commentf("for %s", tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		planString := ToString(p)
+		s.testData.OnRecord(func() {
+			output[i] = planString
+		})
+		c.Assert(planString, Equals, output[i], Commentf("for %s", tt))
 	}
 }
 
@@ -767,160 +525,26 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 
 func (s *testPlanSuite) TestColumnPruning(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql string
-		ans map[int][]string
-	}{
-		{
-			sql: "select count(*) from t group by a",
-			ans: map[int][]string{
-				1: {"Column#1"},
-			},
-		},
-		{
-			sql: "select count(*) from t",
-			ans: map[int][]string{
-				1: {"Column#1"},
-			},
-		},
-		{
-			sql: "select count(*) from t a join t b where a.a < 1",
-			ans: map[int][]string{
-				1: {"Column#1"},
-				2: {"Column#13"},
-			},
-		},
-		{
-			sql: "select count(*) from t a join t b on a.a = b.d",
-			ans: map[int][]string{
-				1: {"Column#1"},
-				2: {"Column#16"},
-			},
-		},
-		{
-			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#4"},
-				2: {"Column#16"},
-			},
-		},
-		{
-			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#4"},
-				2: {"Column#13", "Column#14", "Column#16"},
-			},
-		},
-		{
-			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#4"},
-				2: {"Column#13", "Column#14", "Column#16"},
-			},
-		},
-		{
-			sql: "select (select count(a) from t where b = k.a) from t k",
-			ans: map[int][]string{
-				1: {"Column#1"},
-				3: {"Column#13", "Column#14"},
-			},
-		},
-		{
-			sql: "select exists (select count(*) from t where b = k.a) from t k",
-			ans: map[int][]string{
-				1: {"Column#1"},
-			},
-		},
-		{
-			sql: "select b = (select count(*) from t where b = k.a) from t k",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#2"},
-				3: {"Column#14"},
-			},
-		},
-		{
-			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
-			ans: map[int][]string{
-				1: {"Column#1"},
-				3: {"Column#14"},
-			},
-		},
-		{
-			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#2", "Column#3"},
-			},
-		},
-		{
-			sql: "select a from t where b < any (select c from t)",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#2"},
-				3: {"Column#15"},
-			},
-		},
-		{
-			sql: "select a from t where (b,a) != all (select c,d from t)",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#2"},
-				3: {"Column#15", "Column#16"},
-			},
-		},
-		{
-			sql: "select a from t where (b,a) in (select c,d from t)",
-			ans: map[int][]string{
-				1: {"Column#1", "Column#2"},
-				3: {"Column#15", "Column#16"},
-			},
-		},
-		{
-			sql: "select a from t where a in (select a from t s group by t.b)",
-			ans: map[int][]string{
-				1: {"Column#1"},
-				3: {"Column#13"},
-			},
-		},
-		{
-			sql: "select t01.a from (select a from t t21 union all select a from t t22) t2 join t t01 on 1 left outer join t t3 on 1 join t t4 on 1",
-			ans: map[int][]string{
-				1:  {"Column#1"},
-				3:  {"Column#13"},
-				5:  {"Column#25"},
-				8:  {"Column#26"},
-				10: {"Column#38"},
-				12: {"Column#50"},
-			},
-		},
-		{
-			sql: "select 1 from (select count(b) as cnt from t) t1;",
-			ans: map[int][]string{
-				1: {"Column#1"},
-			},
-		},
-		{
-			sql: "select count(1) from (select count(b) as cnt from t) t1;",
-			ans: map[int][]string{
-				1: {"Column#1"},
-			},
-		},
-		{
-			sql: "select count(1) from (select count(b) as cnt from t group by c) t1;",
-			ans: map[int][]string{
-				1: {"Column#3"},
-			},
-		},
-	}
+	var (
+		input  []string
+		output []map[int][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+	for i, tt := range input {
+		comment := Commentf("for %s", tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		checkDataSourceCols(lp, c, tt.ans, comment)
+		s.testData.OnRecord(func() {
+			output[i] = make(map[int][]string)
+		})
+		s.checkDataSourceCols(lp, c, output[i], comment)
 	}
 }
 
@@ -957,25 +581,37 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
-func checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
+func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *DataSource:
+		s.testData.OnRecord(func() {
+			ans[p.ID()] = make([]string, p.Schema().Len())
+		})
 		colList, ok := ans[p.ID()]
 		c.Assert(ok, IsTrue, Commentf("For %v DataSource ID %d Not found", comment, p.ID()))
 		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
-		for i, colName := range colList {
-			c.Assert(p.Schema().Columns[i].String(), Equals, colName, comment)
+		for i, col := range p.Schema().Columns {
+			s.testData.OnRecord(func() {
+				colList[i] = col.String()
+			})
+			c.Assert(col.String(), Equals, colList[i], comment)
 		}
 	case *LogicalUnionAll:
+		s.testData.OnRecord(func() {
+			ans[p.ID()] = make([]string, p.Schema().Len())
+		})
 		colList, ok := ans[p.ID()]
 		c.Assert(ok, IsTrue, Commentf("For %v UnionAll ID %d Not found", comment, p.ID()))
 		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
-		for i, colName := range colList {
-			c.Assert(p.Schema().Columns[i].String(), Equals, colName, comment)
+		for i, col := range p.Schema().Columns {
+			s.testData.OnRecord(func() {
+				colList[i] = col.String()
+			})
+			c.Assert(col.String(), Equals, colList[i], comment)
 		}
 	}
 	for _, child := range p.Children() {
-		checkDataSourceCols(child, c, ans, comment)
+		s.checkDataSourceCols(child, c, ans, comment)
 	}
 }
 
@@ -1202,40 +838,13 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 func (s *testPlanSuite) TestAggPrune(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select a, count(b) from t group by a",
-			best: "DataScan(t)->Projection",
-		},
-		{
-			sql:  "select sum(b) from t group by c, d, e",
-			best: "DataScan(t)->Aggr(sum(Column#2))->Projection",
-		},
-		{
-			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
-			best: "DataScan(t)->Projection",
-		},
-		{
-			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
-			best: "DataScan(t)->Projection",
-		},
-		{
-			sql:  "select a, count(b) from t group by a",
-			best: "DataScan(t)->Projection",
-		},
-		{
-			sql:  "select a, count(distinct a, b) from t group by a",
-			best: "DataScan(t)->Projection",
-		},
-	}
+	var input, output []string
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+	for i, tt := range input {
+		comment := Commentf("for %s", tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
@@ -1243,7 +852,11 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, comment)
+		planString := ToString(p)
+		s.testData.OnRecord(func() {
+			output[i] = planString
+		})
+		c.Assert(planString, Equals, output[i], comment)
 	}
 }
 
@@ -1619,68 +1232,13 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 
 func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		// Test left outer join + distinct
-		{
-			sql:  "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
-			best: "DataScan(t1)->Aggr(firstrow(Column#1),firstrow(Column#2))",
-		},
-		// Test right outer join + distinct
-		{
-			sql:  "select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b",
-			best: "DataScan(t2)->Aggr(firstrow(Column#13),firstrow(Column#14))",
-		},
-		// Test duplicate agnostic agg functions on join
-		{
-			sql:  "select max(t1.a), min(test.t1.b) from t t1 left join t t2 on t1.b = t2.b",
-			best: "DataScan(t1)->Aggr(max(Column#1),min(Column#2))->Projection",
-		},
-		{
-			sql:  "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
-			best: "DataScan(t1)->Aggr(sum(Column#1))->Projection",
-		},
-		{
-			sql:  "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
-			best: "DataScan(t1)->Aggr(count(Column#1, Column#2))->Projection",
-		},
-		// Test left outer join
-		{
-			sql:  "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
-			best: "DataScan(t1)->Projection",
-		},
-		// Test right outer join
-		{
-			sql:  "select t2.b from t t1 right outer join t t2 on t1.a = t2.a",
-			best: "DataScan(t2)->Projection",
-		},
-		// For complex join query
-		{
-			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
-			best: "Join{Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)->DataScan(t3)->TopN([Column#26 true],0,1)}(Column#2,Column#26)->TopN([Column#26 true],0,1)->Aggr(max(Column#26))->Projection",
-		},
-		{
-			sql:  "select t1.a ta, t1.b tb from t t1 left join t t2 on t1.a = t2.a",
-			best: "DataScan(t1)->Projection",
-		},
-		{
-			// Because the `order by` uses t2.a, the `join` can't be eliminated.
-			sql:  "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
-			best: "Join{DataScan(t1)->DataScan(t2)}(Column#1,Column#13)->Sort->Projection",
-		},
-		// For issue 11167
-		{
-			sql:  "select a.a from t a natural left join t b natural left join t c",
-			best: "DataScan(a)->Projection",
-		},
-	}
+	var input, output []string
+	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.TODO()
-	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+	for i, tt := range input {
+		comment := Commentf("case:%v sql:%s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
@@ -1688,7 +1246,11 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, comment)
+		planString := ToString(p)
+		s.testData.OnRecord(func() {
+			output[i] = planString
+		})
+		c.Assert(planString, Equals, output[i], comment)
 	}
 }
 
@@ -1936,7 +1498,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(Column#1,Column#25)->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection",
 		},
 	}
 	ctx := context.TODO()

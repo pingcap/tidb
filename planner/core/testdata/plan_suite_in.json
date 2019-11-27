@@ -506,5 +506,14 @@
       "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
       "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;"
     ]
+  },
+  {
+    "name": "TestAggToCopHint",
+    "cases": [
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
+      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a"
+    ]
   }
 ]
