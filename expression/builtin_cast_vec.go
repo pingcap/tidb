@@ -1059,7 +1059,6 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
-
 	result.ResizeGoDuration(n, false)
 	result.MergeNulls(buf)
 	f64s := buf.Float64s()
@@ -1076,7 +1075,6 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 	}
 	return nil
 }
-
 
 func (b *builtinCastTimeAsDurationSig) vectorized() bool {
 	return true
