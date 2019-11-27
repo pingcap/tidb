@@ -455,7 +455,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
 				}
 			})
-		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
+		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 }
 

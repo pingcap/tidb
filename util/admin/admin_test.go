@@ -497,7 +497,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3, table.WithAssertion(txn))
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -518,7 +518,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4, table.WithAssertion(txn))
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))
@@ -577,7 +577,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4, nil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
