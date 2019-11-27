@@ -1131,8 +1131,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(vals[0])
-		lastRowDatum.SetValue(vals[numRows-1])
+		firstRowDatum.SetInt64(vals[0])
+		lastRowDatum.SetInt64(vals[numRows-1])
 	case types.ETReal:
 		vals := col.Float64s()
 		for i := 1; i < numRows; i++ {
@@ -1147,8 +1147,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(vals[0])
-		lastRowDatum.SetValue(vals[numRows-1])
+		firstRowDatum.SetFloat64(vals[0])
+		lastRowDatum.SetFloat64(vals[numRows-1])
 	case types.ETDecimal:
 		vals := col.Decimals()
 		for i := 1; i < numRows; i++ {
@@ -1163,8 +1163,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(vals[0])
-		lastRowDatum.SetValue(vals[numRows-1])
+		firstRowDatum.SetMysqlDecimal(&vals[0])
+		lastRowDatum.SetMysqlDecimal(&vals[numRows-1])
 	case types.ETDatetime, types.ETTimestamp:
 		vals := col.Times()
 		for i := 1; i < numRows; i++ {
@@ -1179,8 +1179,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(vals[0])
-		lastRowDatum.SetValue(vals[numRows-1])
+		firstRowDatum.SetMysqlTime(vals[0])
+		lastRowDatum.SetMysqlTime(vals[numRows-1])
 	case types.ETDuration:
 		vals := col.GoDurations()
 		for i := 1; i < numRows; i++ {
@@ -1195,8 +1195,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(vals[0])
-		lastRowDatum.SetValue(vals[numRows-1])
+		firstRowDatum.SetMysqlDuration(types.Duration{vals[0], types.UnspecifiedFsp})
+		lastRowDatum.SetMysqlDuration(types.Duration{vals[numRows-1], types.UnspecifiedFsp})
 	case types.ETJson:
 		previousKey := col.GetJSON(0)
 		for i := 1; i < numRows; i++ {
@@ -1210,8 +1210,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(col.GetJSON(0))
-		lastRowDatum.SetValue(col.GetJSON(numRows - 1))
+		firstRowDatum.SetMysqlJSON(col.GetJSON(0))
+		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1))
 	case types.ETString:
 		previousKey := col.GetString(0)
 		for i := 1; i < numRows; i++ {
@@ -1225,8 +1225,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetValue(col.GetString(0))
-		lastRowDatum.SetValue(col.GetString(numRows - 1))
+		firstRowDatum.SetString(col.GetString(0))
+		lastRowDatum.SetString(col.GetString(numRows - 1))
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}
