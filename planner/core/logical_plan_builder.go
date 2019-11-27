@@ -581,7 +581,7 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -591,16 +591,21 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
-func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
+func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, joinTp ast.JoinType, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	if joinTp == ast.LeftJoin {
+		resetNotNullFlag(rsc, 0, rsc.Len())
+	} else if joinTp == ast.RightJoin {
+		resetNotNullFlag(lsc, 0, lsc.Len())
+	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
-	if rightJoin {
+	if joinTp == ast.RightJoin {
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -2472,6 +2477,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
+	if tbl.Type() == table.VirtualTable {
+		return b.buildMemTable(ctx, dbName, tableInfo)
+	}
+
 	if tableInfo.IsView() {
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
@@ -2557,11 +2566,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
-	// We append an extra handle column to the schema when "ds" is not a memory
-	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
+	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
-	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
-	if !isMemDB && handleCol == nil {
+	if handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
@@ -2601,7 +2608,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	if txn.Valid() && !txn.IsReadOnly() && !isMemDB {
+	if txn.Valid() && !txn.IsReadOnly() {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
@@ -2622,6 +2629,50 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	return result, nil
+}
+
+func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	// We can use the `tableInfo.Columns` directly because the memory table has
+	// a stable schema and there is no online DDL on the memory table.
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
+	var handleCol *expression.Column
+	for _, col := range tableInfo.Columns {
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     col.Name,
+			OrigTblName: tableInfo.Name,
+			OrigColName: col.Name,
+		})
+		// NOTE: Rewrite the expression if memory table supports generated columns in the future
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
+			RetType:  &col.FieldType,
+		}
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			handleCol = newCol
+		}
+		schema.Append(newCol)
+	}
+
+	if handleCol != nil {
+		handleMap := make(map[int64][]*expression.Column)
+		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+		b.handleHelper.pushMap(handleMap)
+	} else {
+		b.handleHelper.pushMap(nil)
+	}
+
+	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
+	p := LogicalMemTable{
+		dbName:    dbName,
+		tableInfo: tableInfo,
+	}.Init(b.ctx, b.getSelectOffset())
+	p.SetSchema(schema)
+	p.names = names
+	return p, nil
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view

@@ -356,7 +356,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(number))
+		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
 	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
 	dur, err := t.ConvertToDuration()
@@ -673,7 +673,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(handleTruncateError(sc, ErrTruncated))
+		err = errors.Trace(handleTruncateError(sc, ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", s)))
 	}
 	return valid, err
 }

@@ -183,10 +183,12 @@ github.com/pingcap/kvproto v0.0.0-20191118050206-47672e7eabc0/go.mod h1:WWLmULLO
 github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9 h1:AJD9pZYm72vMgPcQDww9rkZ1DnWfl0pXV3BOWlkYIjA=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
-github.com/pingcap/parser v0.0.0-20191120083129-cbaf2bd7f17d h1:+ev1tNLx9uiVay2b4s9U+vKDWs4z2CCpD41RGJuOZjY=
-github.com/pingcap/parser v0.0.0-20191120083129-cbaf2bd7f17d/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20191120165920-d5c49d11cc64 h1:jpLGhi9hEp6Px9NDKkSjpcWuBdkgSCTxGMlrw9bWipQ=
+github.com/pingcap/parser v0.0.0-20191120165920-d5c49d11cc64/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0 h1:GIEq+wZfrl2bcJxpuSrEH4H7/nlf5YdmpS+dU9lNIt8=
 github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0/go.mod h1:G/6rJpnYwM0LKMec2rI82/5Kg6GaZMvlfB+e6/tvYmI=
+github.com/pingcap/sysutil v0.0.0-20191126040022-986c5b3ed9a3 h1:HCNif3lukL83gNC2EBAoh2Qbz36+2p0bm0LjgnNfl1s=
+github.com/pingcap/sysutil v0.0.0-20191126040022-986c5b3ed9a3/go.mod h1:Futrrmuw98pEsbEmoPsjw8aKLCmixwHEmT2rF+AsXGw=
 github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible h1:H1jg0aDWz2SLRh3hNBo2HFtnuHtudIUvBumU7syRkic=
 github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20191120020146-6161b015e21e h1:OWgXsJ2Zwa+q+sqi87fGuNda+ChJrclVd7wiGP5Epps=
