@@ -423,6 +423,7 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 // SetConcurrencyInfo sets the concurrency information.
+// When the num <= 0, it means the exector is not parallel.
 func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -430,8 +431,6 @@ func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 }
 
 func (e *RuntimeStats) String() string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 	if len(e.concurrency) > 0 {
 		for _, concurrency := range e.concurrency {
