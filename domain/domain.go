@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/infoschema/metric_table"
+	"github.com/pingcap/tidb/infoschema/metrictable"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -615,7 +615,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	metric_table.Init()
+	metrictable.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()

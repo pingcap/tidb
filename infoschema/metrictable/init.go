@@ -1,4 +1,4 @@
-package metric_table
+package metrictable
 
 import (
 	"sync"
@@ -29,7 +29,7 @@ func Init() {
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
-			Name:    model.NewCIStr(MetricDBName),
+			Name:    model.NewCIStr(metricDBName),
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 			Tables:  metricTables,

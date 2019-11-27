@@ -1,4 +1,4 @@
-package metric_table
+package metrictable
 
 import (
 	"time"

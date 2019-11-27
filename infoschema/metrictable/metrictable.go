@@ -1,4 +1,4 @@
-package metric_table
+package metrictable
 
 import (
 	"strconv"
@@ -16,9 +16,7 @@ const (
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
 
-const (
-	MetricDBName = "METRIC"
-)
+const metricDBName = "METRIC"
 
 type metricTableDef struct {
 	promQL        string
