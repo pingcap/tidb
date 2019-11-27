@@ -93,17 +93,17 @@ id	count	task	operator info
 IndexMerge_9	0.00	root	
 ├─IndexScan_5	9999.00	cop[tikv]	table:t, index:b, range:[-inf,10000), keep order:false
 ├─IndexScan_6	9999.00	cop[tikv]	table:t, index:c, range:[-inf,10000), keep order:false
-└─Selection_8	0.00	cop[tikv]	lt(Column#6, 10), or(lt(Column#1, 10), lt(Column#4, 10))
+└─Selection_8	0.00	cop[tikv]	lt(test.t.f, 10), or(lt(test.t.a, 10), lt(test.t.d, 10))
   └─TableScan_7	19998.00	cop[tikv]	table:t, keep order:false
 explain select /*+ use_index_merge(t, tb) */ * from t where b < 50 or c < 5000000;
 id	count	task	operator info
 TableReader_7	4000000.00	root	data:Selection_6
-└─Selection_6	4000000.00	cop[tikv]	or(lt(Column#2, 50), lt(Column#3, 5000000))
+└─Selection_6	4000000.00	cop[tikv]	or(lt(test.t.b, 50), lt(test.t.c, 5000000))
   └─TableScan_5	5000000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
 explain select /*+ no_index_merge(), use_index_merge(t, tb, tc) */ * from t where b < 50 or c < 5000000;
 id	count	task	operator info
 TableReader_7	4000000.00	root	data:Selection_6
-└─Selection_6	4000000.00	cop[tikv]	or(lt(Column#2, 50), lt(Column#3, 5000000))
+└─Selection_6	4000000.00	cop[tikv]	or(lt(test.t.b, 50), lt(test.t.c, 5000000))
   └─TableScan_5	5000000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
 explain select /*+ use_index_merge(t, primary, tb) */ * from t where a < 50 or b < 5000000;
 id	count	task	operator info

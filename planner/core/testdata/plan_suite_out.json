@@ -208,7 +208,7 @@
       },
       {
         "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(Column#1, 1), gt(Column#9, 2))]))",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
         "HasWarn": true,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       }
