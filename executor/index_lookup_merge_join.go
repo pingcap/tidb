@@ -684,5 +684,9 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	}
 	e.joinChkResourceCh = nil
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		concurrency := cap(e.resultCh)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+	}
 	return e.baseExecutor.Close()
 }

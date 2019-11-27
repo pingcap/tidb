@@ -1245,7 +1245,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	e := &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		t:              tb,
-		columns:        v.Columns,
+		columns:        v.Table.Columns,
 		seekHandle:     math.MinInt64,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
