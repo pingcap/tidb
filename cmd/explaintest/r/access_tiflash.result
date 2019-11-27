@@ -48,7 +48,7 @@ TableReader_11	10000.00	root	data:TableScan_10
 └─TableScan_10	10000.00	cop[tikv]	table:ttt, range:[-inf,+inf], keep order:true, desc, stats:pseudo
 desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc;
 id	count	task	operator info
-Sort_4	10000.00	root	Column#1:desc
+Sort_4	10000.00	root	test.ttt.a:desc
 └─TableReader_8	10000.00	root	data:TableScan_7
   └─TableScan_7	10000.00	cop[tiflash]	table:ttt, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a;
