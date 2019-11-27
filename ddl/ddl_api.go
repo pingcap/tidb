@@ -3945,7 +3945,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
 		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
 	}
-	// Cause DDL is passed nil here, it is necessary to specify the table.ID and partition.id manually.
+	// Cause DDL is passed nil here, it is necessary to specify the table.ID and partition.ID manually.
 	newTableInfo, err := buildTableInfoWithCheck(ctx, nil, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
@@ -3968,40 +3968,40 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 				return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be same")
 			}
 		}
-		for i, new := range newTableInfo.Partition.Definitions {
+		for i, newOne := range newTableInfo.Partition.Definitions {
 			found := false
-			for _, old := range oldTableInfo.Partition.Definitions {
-				if new.Name.L == old.Name.L && stringSliceEqual(new.LessThan, old.LessThan) {
-					newTableInfo.Partition.Definitions[i].ID = old.ID
+			for _, oldOne := range oldTableInfo.Partition.Definitions {
+				if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
+					newTableInfo.Partition.Definitions[i].ID = oldOne.ID
 					found = true
 					break
 				}
 			}
 			if !found {
-				return ErrRepairTableFail.GenWithStackByArgs("Partition " + new.Name.L + " has lost")
+				return ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
 			}
 		}
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
-	for i, new := range newTableInfo.Indices {
+	for i, newOne := range newTableInfo.Indices {
 		found := false
-		for _, old := range oldTableInfo.Indices {
-			if new.Name.L == old.Name.L && columnSliceEqual(new.Columns, old.Columns) {
-				newTableInfo.Indices[i].ID = old.ID
+		for _, oldOne := range oldTableInfo.Indices {
+			if newOne.Name.L == oldOne.Name.L && columnSliceEqual(newOne.Columns, oldOne.Columns) {
+				newTableInfo.Indices[i].ID = oldOne.ID
 				found = true
 				break
 			}
 		}
 		if !found {
-			return ErrRepairTableFail.GenWithStackByArgs("Index " + new.Name.L + " has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
 		}
 	}
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
-	for i, new := range newTableInfo.Columns {
-		old := getColumnInfoByName(oldTableInfo, new.Name.L)
+	for i, newOne := range newTableInfo.Columns {
+		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
 		if old == nil {
-			return ErrRepairTableFail.GenWithStackByArgs("Column " + new.Name.L + " has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
 		}
 		newTableInfo.Columns[i].ID = old.ID
 	}
