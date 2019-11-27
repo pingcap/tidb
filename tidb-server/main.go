@@ -79,6 +79,7 @@ const (
 	nmSocket           = "socket"
 	nmEnableBinlog     = "enable-binlog"
 	nmRunDDL           = "run-ddl"
+	nmServerVersion    = "server-version"
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
@@ -118,7 +119,7 @@ var (
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
-
+	serverVersion    = flag.String(nmServerVersion, "", "tidb server version")
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
 	logFile      = flag.String(nmLogFile, "", "log file path")
@@ -470,7 +471,9 @@ func overrideConfig() {
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
 	}
-
+	if actualFlags[nmServerVersion] {
+		cfg.ServerVersion = *serverVersion
+	}
 	// Log
 	if actualFlags[nmLogLevel] {
 		cfg.Log.Level = *logLevel
