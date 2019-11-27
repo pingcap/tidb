@@ -425,6 +425,8 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
 			rollbackIfNotExist = true
+			logutil.BgLogger().Warn("no primary lock after secondary lock expire",
+				zap.Stringer("lock", l))
 		}
 	}
 }
@@ -537,7 +539,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			tikvLockResolverCountWithResolveLockLite.Inc()
 			lreq.Keys = [][]byte{l.Key}
 			if !status.IsCommitted() {
-				logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
+				logutil.BgLogger().Info("resolveLock rollback", zap.Stringer("lock", l))
 			}
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
