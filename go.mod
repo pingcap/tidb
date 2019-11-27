@@ -41,7 +41,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20191120165920-d5c49d11cc64
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
 	github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible
-	github.com/pingcap/tipb v0.0.0-20191120020146-6161b015e21e
+	github.com/pingcap/tipb v0.0.0-20191127084114-0820b784842f
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
@@ -77,5 +77,3 @@ require (
 go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
-
-replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20191127060640-bae427e606de
