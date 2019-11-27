@@ -91,28 +91,13 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	columns := p.Columns
-	if p.StoreType == kv.TiDB {
-		return p.toMemTableScanPB(ctx)
-	}
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: model.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
-}
-
-func (p *PhysicalTableScan) toMemTableScanPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	columns := p.Columns
-	tsExec := &tipb.MemTableScan{
-		DbName:    p.DBName.L,
-		TableName: p.Table.Name.L,
-		Columns:   model.ColumnsToProto(columns, p.Table.PKIsHandle),
-	}
-	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	return &tipb.Executor{Tp: tipb.ExecType_TypeMemTableScan, MemTblScan: tsExec}, err
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
