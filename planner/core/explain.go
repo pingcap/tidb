@@ -513,7 +513,7 @@ func (p *LogicalLimit) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *TableScan) ExplainInfo() string {
+func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	if p.Source.handleCol != nil {
 		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCol.ExplainInfo())
@@ -525,7 +525,7 @@ func (p *TableScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *IndexScan) ExplainInfo() string {
+func (p *LogicalIndexScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	index := p.Index
 	if len(index.Columns) > 0 {

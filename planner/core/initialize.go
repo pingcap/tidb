@@ -45,14 +45,14 @@ func (tg TableGather) Init(ctx sessionctx.Context, offset int) *TableGather {
 	return &tg
 }
 
-// Init initializes TableScan.
-func (ts TableScan) Init(ctx sessionctx.Context, offset int) *TableScan {
+// Init initializes LogicalTableScan.
+func (ts LogicalTableScan) Init(ctx sessionctx.Context, offset int) *LogicalTableScan {
 	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
 	return &ts
 }
 
-// Init initializes IndexScan.
-func (is IndexScan) Init(ctx sessionctx.Context, offset int) *IndexScan {
+// Init initializes LogicalIndexScan.
+func (is LogicalIndexScan) Init(ctx sessionctx.Context, offset int) *LogicalIndexScan {
 	is.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
 	return &is
 }

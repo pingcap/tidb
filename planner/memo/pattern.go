@@ -100,9 +100,9 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandLimit
 	case *plannercore.TableGather:
 		return OperandTableGather
-	case *plannercore.TableScan:
+	case *plannercore.LogicalTableScan:
 		return OperandTableScan
-	case *plannercore.IndexScan:
+	case *plannercore.LogicalIndexScan:
 		return OperandIndexScan
 	case *plannercore.LogicalShow:
 		return OperandShow

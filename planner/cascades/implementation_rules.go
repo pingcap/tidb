@@ -46,7 +46,7 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 		&ImplIndexScan{},
 	},
 	memo.OperandTableGather: {
-		&ImplTableGather{},
+		&ImplTiKVSingleReadGather{},
 	},
 	memo.OperandShow: {
 		&ImplShow{},
@@ -121,16 +121,16 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 }
 
 // ImplTableGather implements TableGather as PhysicalTableReader.
-type ImplTableGather struct {
+type ImplTiKVSingleReadGather struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (r *ImplTableGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplTiKVSingleReadGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	tg := expr.ExprNode.(*plannercore.TableGather)
 	if tg.IsIndexGather {
@@ -147,14 +147,14 @@ type ImplTableScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	ts := expr.ExprNode.(*plannercore.TableScan)
+	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
 	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicalScan := expr.ExprNode.(*plannercore.TableScan)
+	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsEmpty() {
 		ts.KeepOrder = true
@@ -170,13 +170,13 @@ type ImplIndexScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	is := expr.ExprNode.(*plannercore.IndexScan)
+	is := expr.ExprNode.(*plannercore.LogicalIndexScan)
 	return prop.IsEmpty() || is.MatchIndexProp(prop)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
-	logicalScan := expr.ExprNode.(*plannercore.IndexScan)
+	logicalScan := expr.ExprNode.(*plannercore.LogicalIndexScan)
 	is := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsEmpty() {
 		is.KeepOrder = true

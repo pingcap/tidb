@@ -197,8 +197,8 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	return ds.stats, nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
+// DeriveStats implements LogicalPlan DeriveStats interface.
+func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
@@ -225,8 +225,8 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	return ts.stats, nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (is *IndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+// DeriveStats implements LogicalPlan DeriveStats interface.
+func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	for i, expr := range is.AccessConds {
 		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
 	}

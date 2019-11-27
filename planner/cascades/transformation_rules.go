@@ -101,7 +101,7 @@ func NewRulePushSelDownTableScan() Transformation {
 // the key ranges of the `ts` operator.
 func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.TableScan)
+	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
 	if ts.Handle == nil {
 		return nil, false, false, nil
 	}
@@ -109,7 +109,7 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	if accesses == nil {
 		return nil, false, false, nil
 	}
-	newTblScan := plannercore.TableScan{
+	newTblScan := plannercore.LogicalTableScan{
 		Source:      ts.Source,
 		Handle:      ts.Handle,
 		AccessConds: ts.AccessConds.Shallow(),

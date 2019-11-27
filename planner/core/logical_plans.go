@@ -42,7 +42,8 @@ var (
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &TableGather{}
-	_ LogicalPlan = &TableScan{}
+	_ LogicalPlan = &LogicalTableScan{}
+	_ LogicalPlan = &LogicalIndexScan{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
@@ -416,8 +417,8 @@ type TableGather struct {
 	IsIndexGather bool
 }
 
-// TableScan is the logical table scan operator for TiKV.
-type TableScan struct {
+// LogicalTableScan is the logical table scan operator for TiKV.
+type LogicalTableScan struct {
 	logicalSchemaProducer
 	Source      *DataSource
 	Handle      *expression.Column
@@ -425,8 +426,8 @@ type TableScan struct {
 	Ranges      []*ranger.Range
 }
 
-// IndexScan is the logical index scan operator for TiKV.
-type IndexScan struct {
+// LogicalIndexScan is the logical index scan operator for TiKV.
+type LogicalIndexScan struct {
 	logicalSchemaProducer
 	// DataSource should be read-only here.
 	Source       *DataSource
@@ -445,7 +446,7 @@ type IndexScan struct {
 }
 
 // MatchIndexProp checks if the indexScan can match the required property.
-func (p *IndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
@@ -499,7 +500,7 @@ func getTablePath(paths []*accessPath) *accessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 	tg := TableGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
 	tg.SetSchema(ds.Schema())
@@ -508,7 +509,7 @@ func (ds *DataSource) buildTableGather() LogicalPlan {
 }
 
 func (ds *DataSource) buildIndexGather(path *accessPath) LogicalPlan {
-	is := IndexScan{
+	is := LogicalIndexScan{
 		Source:       ds,
 		IsDoubleRead: false,
 		Index:        path.index,
@@ -807,7 +808,7 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
 }
 
-func (p *IndexScan) getPKIsHandleCol() *expression.Column {
+func (p *LogicalIndexScan) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(p.Columns, p.schema, p.Source.tableInfo.PKIsHandle)
 }
 
