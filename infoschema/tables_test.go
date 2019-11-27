@@ -741,9 +741,9 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	))
 
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr,
-		"tidb,127.0.0.1:11080," + mockAddr,
-		"tikv,127.0.0.1:11080," + mockAddr,
+		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
@@ -814,9 +814,9 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	mockAddr := "127.0.0.1:10080"
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr,
-		"tidb,127.0.0.1:11080," + mockAddr,
-		"tikv,127.0.0.1:11080," + mockAddr,
+		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
