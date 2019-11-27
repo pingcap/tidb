@@ -74,6 +74,9 @@ split-region-max-num = 1000
 # In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
 alter-primary-key = false
 
+# serverVersion is used to show the version of tidb when log in.
+server-version = ""
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
