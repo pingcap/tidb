@@ -249,6 +249,14 @@ func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
 
+	binloginfo.EnableSkipBinlogFlag()
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=abc"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
 	binloginfo.AddOneSkippedCommitter()
 	c.Assert(binloginfo.SkippedCommitterCount(), Equals, int32(1))
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=reset"))
@@ -259,6 +267,13 @@ func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 
 	binloginfo.EnableSkipBinlogFlag()
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=nowait"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	binloginfo.EnableSkipBinlogFlag()
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=nowait&op=reset"))
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
