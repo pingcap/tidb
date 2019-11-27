@@ -672,12 +672,11 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if op := req.FormValue(qOperation); len(op) > 0 {
-		if op == "reset" {
-			binloginfo.ResetSkippedCommitterCounter()
-		} else if op == "nowait" {
-			binloginfo.DisableSkipBinlogFlag()
-		}
+	op := req.FormValue(qOperation)
+	if op == "reset" {
+		binloginfo.ResetSkippedCommitterCounter()
+	} else if op == "nowait" {
+		binloginfo.DisableSkipBinlogFlag()
 	} else {
 		binloginfo.DisableSkipBinlogFlag()
 		binloginfo.WaitBinlogRecover()
