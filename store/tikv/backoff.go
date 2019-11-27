@@ -341,7 +341,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	backoffDuration.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
 	b.backoffSleepMS[typ] += realSleep
-	b.backoffTimes[typ] ++
+	b.backoffTimes[typ]++
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
