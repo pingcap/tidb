@@ -539,7 +539,6 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err = txn.Set(key, value); err != nil {
 		return 0, err
 	}
-	txn.SetAssertion(key, kv.None)
 
 	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 		return 0, err
@@ -803,7 +802,6 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	}
 
 	key := t.RecordKey(h)
-	txn.SetAssertion(key, kv.Exist)
 	err = txn.Delete([]byte(key))
 	if err != nil {
 		return err
@@ -823,7 +821,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -838,12 +836,12 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, rm, vals, h, txn)
+	return idx.Delete(sc, rm, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
-	opts := []table.CreateIdxOptFunc{table.WithAssertion(txn)}
+	var opts []table.CreateIdxOptFunc
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
