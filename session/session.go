@@ -76,10 +76,10 @@ var (
 	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
 	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
 	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalOK        = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "ok")
-	transactionDurationInternalError     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "error")
-	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
-	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
+	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
+	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
+	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
+	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
 	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
 	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
@@ -441,12 +441,16 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
-	var txnSize int
-	var isPessimistic bool
-	if s.txn.Valid() {
-		txnSize = s.txn.Size()
-		isPessimistic = s.txn.IsPessimistic()
+	defer func() {
+		s.txn.changeToInvalid()
+		s.cleanRetryInfo()
+	}()
+	if !s.txn.Valid() {
+		// If the transaction is invalid, maybe it has already been rolled back by the client.
+		return nil
 	}
+	txnSize := s.txn.Size()
+	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -471,12 +475,21 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
+		} else {
+			logutil.Logger(ctx).Warn("can not retry txn",
+				zap.String("label", s.getSQLLabel()),
+				zap.Error(err),
+				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
+				zap.Bool("IsPessimistic", isPessimistic),
+				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),
+				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
+				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
+
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
-	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
 		switch isoLevelOneShot.State {
@@ -935,7 +948,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
-			return "", variable.UnknownSystemVar.GenWithStackByArgs(name)
+			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		}
 		return "", err
 	}
@@ -1627,7 +1640,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dom.LoadBindInfoLoop(se2)
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.LoadBindInfoLoop(se2, se3)
 	if err != nil {
 		return nil, err
 	}
@@ -1839,7 +1856,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
+	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
+	variable.TiDBStoreLimit,
 }
 
 var (
@@ -2031,18 +2050,18 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	if s.isInternal() {
 		if err != nil {
 			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalError.Observe(duration)
+			transactionDurationInternalAbort.Observe(duration)
 		} else {
 			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalOK.Observe(duration)
+			transactionDurationInternalCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
 			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralError.Observe(duration)
+			transactionDurationGeneralAbort.Observe(duration)
 		} else {
 			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralOK.Observe(duration)
+			transactionDurationGeneralCommit.Observe(duration)
 		}
 	}
 }

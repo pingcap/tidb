@@ -24,6 +24,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
@@ -141,7 +142,6 @@ type batchExecutor struct {
 
 type mutationEx struct {
 	pb.Mutation
-	asserted          bool
 	isPessimisticLock bool
 }
 
@@ -279,27 +279,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	if len(keys) == 0 {
 		return nil
-	}
-
-	for _, pair := range txn.assertions {
-		mutation, ok := mutations[string(pair.key)]
-		if !ok {
-			// It's possible when a transaction inserted a key then deleted it later.
-			continue
-		}
-		// Only apply the first assertion!
-		if mutation.asserted {
-			continue
-		}
-		switch pair.assertion {
-		case kv.Exist:
-			mutation.Assertion = pb.Assertion_Exist
-		case kv.NotExist:
-			mutation.Assertion = pb.Assertion_NotExist
-		default:
-			mutation.Assertion = pb.Assertion_None
-		}
-		mutation.asserted = true
 	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
@@ -488,6 +467,20 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 			isPessimisticLock[i] = true
 		}
 	}
+	var minCommitTS uint64
+	if c.forUpdateTS > 0 {
+		minCommitTS = c.forUpdateTS + 1
+	} else {
+		minCommitTS = c.startTS + 1
+	}
+
+	failpoint.Inject("mockZeroCommitTS", func(val failpoint.Value) {
+		// Should be val.(uint64) but failpoint doesn't support that.
+		if tmp, ok := val.(int); ok && uint64(tmp) == c.startTS {
+			minCommitTS = 0
+		}
+	})
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
@@ -496,6 +489,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys, txnSize uint64
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
+		MinCommitTs:       minCommitTS,
 	}
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
@@ -557,7 +551,8 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		// Set callerStartTS to 0 so as not to update minCommitTS.
+		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -758,7 +753,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
-		_, err = c.store.lockResolver.ResolveLocks(bo, c.startTS, locks)
+		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}

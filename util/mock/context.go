@@ -17,7 +17,6 @@ package mock
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -43,7 +42,6 @@ type Context struct {
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
 	sessionVars *variable.SessionVars
-	mux         sync.Mutex // fix data race in ddl test.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	sm          util.SessionManager
@@ -63,9 +61,13 @@ func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet,
 	return nil, errors.Errorf("Not Support.")
 }
 
+type mockDDLOwnerChecker struct{}
+
+func (c *mockDDLOwnerChecker) IsOwner() bool { return true }
+
 // DDLOwnerChecker returns owner.DDLOwnerChecker.
 func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return nil
+	return &mockDDLOwnerChecker{}
 }
 
 // SetValue implements sessionctx.Context SetValue interface.
@@ -106,7 +108,7 @@ func (c *Context) GetClient() kv.Client {
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	return v.Value, nil
 }
@@ -115,7 +117,7 @@ func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, 
 func (c *Context) SetGlobalSysVar(ctx sessionctx.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	v.Value = value
 	return nil

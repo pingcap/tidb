@@ -15,6 +15,7 @@ package cascades
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/util/ranger"
@@ -22,6 +23,7 @@ import (
 
 // Transformation defines the interface for the transformation rules.
 type Transformation interface {
+	// GetPattern gets the cached pattern of the rule.
 	GetPattern() *memo.Pattern
 	// Match is used to check whether the GroupExpr satisfies all the requirements of the transformation rule.
 	//
@@ -40,76 +42,53 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-// TransformationID is the handle of a Transformation. When we want to add
-// a new Transformation rule, we should first add its ID here, and create
-// the rule in the transformationRuleList below with the same order.
-type TransformationID int
-
-const (
-	rulePushSelDownTableScan TransformationID = iota
-	rulePushSelDownTableGather
-	rulePushSelDownSort
-	rulePushSelDownProjection
-	rulePushSelDownAggregation
-	ruleEnumeratePaths
-)
-
-var transformationRuleList = []Transformation{
-	&PushSelDownTableScan{},
-	&PushSelDownTableGather{},
-	&PushSelDownSort{},
-	&PushSelDownProjection{},
-	&PushSelDownAggregation{},
-	&EnumeratePaths{},
-}
-
-var defaultTransformationMap = map[memo.Operand][]TransformationID{
+var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
-		rulePushSelDownTableScan,
-		rulePushSelDownTableGather,
-		rulePushSelDownSort,
-		rulePushSelDownProjection,
-		rulePushSelDownAggregation,
+		NewRulePushSelDownTableScan(),
+		NewRulePushSelDownTableGather(),
+		NewRulePushSelDownSort(),
+		NewRulePushSelDownProjection(),
+		NewRulePushSelDownAggregation(),
+		NewRulePushSelDownJoin(),
 	},
 	memo.OperandDataSource: {
-		ruleEnumeratePaths,
+		NewRuleEnumeratePaths(),
+	},
+	memo.OperandAggregation: {
+		NewRulePushAggDownGather(),
+	},
+	memo.OperandLimit: {
+		NewRuleTransformLimitToTopN(),
 	},
 }
 
-var patternMap []*memo.Pattern
-
-// init initializes the patternMap when initializing the cascade package.
-func init() {
-	patternMap = make([]*memo.Pattern, len(transformationRuleList))
-	for id, rule := range transformationRuleList {
-		patternMap[id] = rule.GetPattern()
-	}
+type baseRule struct {
+	pattern *memo.Pattern
 }
 
-// GetTransformationRule returns the Transformation rule by its ID.
-func GetTransformationRule(id TransformationID) Transformation {
-	return transformationRuleList[id]
+// Match implements Transformation Interface.
+func (r *baseRule) Match(expr *memo.ExprIter) bool {
+	return true
 }
 
-// GetPattern returns the Pattern of the given TransformationID.
-func GetPattern(id TransformationID) *memo.Pattern {
-	return patternMap[id]
+// GetPattern implements Transformation Interface.
+func (r *baseRule) GetPattern() *memo.Pattern {
+	return r.pattern
 }
 
 // PushSelDownTableScan pushes the selection down to TableScan.
 type PushSelDownTableScan struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface. The pattern of this rule is `Selection -> TableScan`.
-func (r *PushSelDownTableScan) GetPattern() *memo.Pattern {
+// NewRulePushSelDownTableScan creates a new Transformation PushSelDownTableScan.
+// The pattern of this rule is: `Selection -> TableScan`
+func NewRulePushSelDownTableScan() Transformation {
+	rule := &PushSelDownTableScan{}
 	ts := memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOrTiFlash)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash, ts)
-	return p
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownTableScan) Match(expr *memo.ExprIter) bool {
-	return true
+	rule.pattern = p
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -152,20 +131,19 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 // PushSelDownTableGather pushes the selection down to child of TableGather.
 type PushSelDownTableGather struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface. The pattern of this rule
-// is `Selection -> TableGather -> Any`
-func (r *PushSelDownTableGather) GetPattern() *memo.Pattern {
+// NewRulePushSelDownTableGather creates a new Transformation PushSelDownTableGather.
+// The pattern of this rule is `Selection -> TableGather -> Any`.
+func NewRulePushSelDownTableGather() Transformation {
 	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
 	tg := memo.BuildPattern(memo.OperandTableGather, memo.EngineTiDBOnly, any)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
-	return p
-}
 
-// Match implements Transformation interface.
-func (r *PushSelDownTableGather) Match(expr *memo.ExprIter) bool {
-	return true
+	rule := &PushSelDownTableGather{}
+	rule.pattern = p
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -208,16 +186,15 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 
 // EnumeratePaths converts DataSource to table scan and index scans.
 type EnumeratePaths struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface. The pattern of this rule is `DataSource`.
-func (r *EnumeratePaths) GetPattern() *memo.Pattern {
-	return memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
-}
-
-// Match implements Transformation interface.
-func (r *EnumeratePaths) Match(expr *memo.ExprIter) bool {
-	return true
+// NewRuleEnumeratePaths creates a new Transformation EnumeratePaths.
+// The pattern of this rule is: `DataSource`.
+func NewRuleEnumeratePaths() Transformation {
+	rule := &EnumeratePaths{}
+	rule.pattern = memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -232,23 +209,110 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 	return newExprs, true, false, nil
 }
 
-// PushSelDownSort pushes the Selection down to the child of Sort.
-type PushSelDownSort struct {
+// PushAggDownGather splits Aggregation to two stages, final and partial1,
+// and pushed the partial Aggregation down to the child of TableGather.
+type PushAggDownGather struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface. The pattern of this rule
-// is `Selection -> Sort`.
-func (r *PushSelDownSort) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+// NewRulePushAggDownGather creates a new Transformation PushAggDownGather.
+// The pattern of this rule is: `Aggregation -> TableGather`.
+func NewRulePushAggDownGather() Transformation {
+	rule := &PushAggDownGather{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandTableGather, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Mode != aggregation.CompleteMode {
+			return false
+		}
+	}
+	childEngine := expr.Children[0].GetExpr().Children[0].EngineType
+	if childEngine != memo.EngineTiKV {
+		// TODO: Remove this check when we have implemented TiFlashAggregation.
+		return false
+	}
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, false)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Agg->Gather` to `Agg(Final) -> Gather -> Agg(Partial1)`.
+func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	aggSchema := old.GetExpr().Group.Prop.Schema
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TableGather)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	// The old Aggregation should stay unchanged for other transformation.
+	// So we build a new LogicalAggregation for the partialAgg.
+	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
+	for i, aggFunc := range agg.AggFuncs {
+		newAggFunc := &aggregation.AggFuncDesc{
+			HasDistinct: false,
+			Mode:        aggregation.Partial1Mode,
+		}
+		newAggFunc.Name = aggFunc.Name
+		newAggFunc.RetTp = aggFunc.RetTp
+		// The args will be changed below, so that we have to build a new slice for it.
+		newArgs := make([]expression.Expression, len(aggFunc.Args))
+		copy(newArgs, aggFunc.Args)
+		newAggFunc.Args = newArgs
+		partialAggFuncs[i] = newAggFunc
+	}
+	partialGbyItems := make([]expression.Expression, len(agg.GroupByItems))
+	copy(partialGbyItems, agg.GroupByItems)
+	partialAgg := plannercore.LogicalAggregation{
+		AggFuncs:     partialAggFuncs,
+		GroupByItems: partialGbyItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	partialAgg.CopyAggHints(agg)
+
+	finalAggFuncs, finalGbyItems, partialSchema :=
+		plannercore.BuildFinalModeAggregation(partialAgg.SCtx(), partialAgg.AggFuncs, partialAgg.GroupByItems, aggSchema)
+	// Remove unnecessary FirstRow.
+	partialAgg.AggFuncs =
+		plannercore.RemoveUnnecessaryFirstRow(partialAgg.SCtx(), finalAggFuncs, finalGbyItems, partialAgg.AggFuncs, partialAgg.GroupByItems, partialSchema)
+	finalAgg := plannercore.LogicalAggregation{
+		AggFuncs:     finalAggFuncs,
+		GroupByItems: finalGbyItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	finalAgg.CopyAggHints(agg)
+
+	partialAggExpr := memo.NewGroupExpr(partialAgg)
+	partialAggExpr.SetChildren(childGroup)
+	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialSchema).SetEngineType(childGroup.EngineType)
+	gatherExpr := memo.NewGroupExpr(gather)
+	gatherExpr.SetChildren(partialAggGroup)
+	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialSchema)
+	finalAggExpr := memo.NewGroupExpr(finalAgg)
+	finalAggExpr.SetChildren(gatherGroup)
+	// We don't erase the old complete mode Aggregation because
+	// this transformation would not always be better.
+	return []*memo.GroupExpr{finalAggExpr}, false, false, nil
+}
+
+// PushSelDownSort pushes the Selection down to the child of Sort.
+type PushSelDownSort struct {
+	baseRule
+}
+
+// NewRulePushSelDownSort creates a new Transformation PushSelDownSort.
+// The pattern of this rule is: `Selection -> Sort`.
+func NewRulePushSelDownSort() Transformation {
+	rule := &PushSelDownSort{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownSort) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -269,20 +333,19 @@ func (r *PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 
 // PushSelDownProjection pushes the Selection down to the child of Projection.
 type PushSelDownProjection struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface.
-func (r *PushSelDownProjection) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+// NewRulePushSelDownProjection creates a new Transformation PushSelDownProjection.
+// The pattern of this rule is: `Selection -> Projection`.
+func NewRulePushSelDownProjection() Transformation {
+	rule := &PushSelDownProjection{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownProjection) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -329,21 +392,19 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 
 // PushSelDownAggregation pushes Selection down to the child of Aggregation.
 type PushSelDownAggregation struct {
+	baseRule
 }
 
-// GetPattern implements Transformation interface.
+// NewRulePushSelDownAggregation creates a new Transformation PushSelDownAggregation.
 // The pattern of this rule is `Selection -> Aggregation`.
-func (r *PushSelDownAggregation) GetPattern() *memo.Pattern {
-	return memo.BuildPattern(
+func NewRulePushSelDownAggregation() Transformation {
+	rule := &PushSelDownAggregation{}
+	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
 		memo.EngineAll,
 		memo.NewPattern(memo.OperandAggregation, memo.EngineAll),
 	)
-}
-
-// Match implements Transformation interface.
-func (r *PushSelDownAggregation) Match(expr *memo.ExprIter) bool {
-	return true
+	return rule
 }
 
 // OnTransform implements Transformation interface.
@@ -410,4 +471,121 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 	remainedGroupExpr := memo.NewGroupExpr(remainedSel)
 	remainedGroupExpr.SetChildren(aggGroup)
 	return []*memo.GroupExpr{remainedGroupExpr}, true, false, nil
+}
+
+// TransformLimitToTopN transforms Limit+Sort to TopN.
+type TransformLimitToTopN struct {
+	baseRule
+}
+
+// NewRuleTransformLimitToTopN creates a new Transformation TransformLimitToTopN.
+// The pattern of this rule is `Limit -> Sort`.
+func NewRuleTransformLimitToTopN() Transformation {
+	rule := &TransformLimitToTopN{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `Limit -> Sort -> x` to `TopN -> x`.
+func (r *TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	topN := plannercore.LogicalTopN{
+		ByItems: sort.ByItems,
+		Offset:  limit.Offset,
+		Count:   limit.Count,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	topNExpr := memo.NewGroupExpr(topN)
+	topNExpr.SetChildren(childGroup)
+	return []*memo.GroupExpr{topNExpr}, true, false, nil
+}
+
+// PushSelDownJoin pushes Selection through Join.
+type PushSelDownJoin struct {
+	baseRule
+}
+
+// NewRulePushSelDownJoin creates a new Transformation PushSelDownJoin.
+// The pattern of this rule is `Selection -> Join`.
+func NewRulePushSelDownJoin() Transformation {
+	rule := &PushSelDownJoin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
+func buildChildSelectionGroup(
+	oldSel *plannercore.LogicalSelection,
+	conditions []expression.Expression,
+	childGroup *memo.Group) *memo.Group {
+	if len(conditions) == 0 {
+		return childGroup
+	}
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(oldSel.SCtx(), oldSel.SelectBlockOffset())
+	groupExpr := memo.NewGroupExpr(newSel)
+	groupExpr.SetChildren(childGroup)
+	newChild := memo.NewGroupWithSchema(groupExpr, childGroup.Prop.Schema)
+	return newChild
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the Selection through Join. Besides, this rule fulfills the `XXXConditions` field of Join.
+func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	joinExpr := old.Children[0].GetExpr()
+	// TODO: we need to create a new LogicalJoin here.
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	sctx := sel.SCtx()
+	leftGroup := old.Children[0].GetExpr().Children[0]
+	rightGroup := old.Children[0].GetExpr().Children[1]
+	var equalCond []*expression.ScalarFunction
+	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	switch join.JoinType {
+	case plannercore.InnerJoin:
+		tempCond := make([]expression.Expression, 0,
+			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(sel.Conditions))
+		tempCond = append(tempCond, join.LeftConditions...)
+		tempCond = append(tempCond, join.RightConditions...)
+		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
+		tempCond = append(tempCond, join.OtherConditions...)
+		tempCond = append(tempCond, sel.Conditions...)
+		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
+		tempCond = expression.PropagateConstant(sctx, tempCond)
+		// Return table dual when filter is constant false or null.
+		dual := plannercore.Conds2TableDual(join, tempCond)
+		if dual != nil {
+			return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, false, true, nil
+		}
+		equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(tempCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, true, true)
+		join.LeftConditions = nil
+		join.RightConditions = nil
+		join.EqualConditions = equalCond
+		join.OtherConditions = otherCond
+		leftCond = leftPushCond
+		rightCond = rightPushCond
+	default:
+		// TODO: Enhance this rule to deal with LeftOuter/RightOuter/Semi/SmiAnti/LeftOuterSemi/LeftOuterSemiAnti Joins.
+	}
+	leftCond = expression.RemoveDupExprs(sctx, leftCond)
+	rightCond = expression.RemoveDupExprs(sctx, rightCond)
+	for _, eqCond := range join.EqualConditions {
+		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
+		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
+	}
+	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
+	leftGroup = buildChildSelectionGroup(sel, leftCond, joinExpr.Children[0])
+	rightGroup = buildChildSelectionGroup(sel, rightCond, joinExpr.Children[1])
+	newJoinExpr := memo.NewGroupExpr(join)
+	newJoinExpr.SetChildren(leftGroup, rightGroup)
+	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
 }

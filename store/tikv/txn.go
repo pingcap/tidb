@@ -112,21 +112,6 @@ func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
-// SetAssertion sets a assertion for the key operation.
-func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
-	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
-	key1 := append([]byte{}, key...)
-	txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
-}
-
-func (txn *tikvTxn) ConfirmAssertions(succ bool) {
-	if succ {
-		txn.confirmed = len(txn.assertions)
-	} else {
-		txn.assertions = txn.assertions[:txn.confirmed]
-	}
-}
-
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
@@ -381,7 +366,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
 }
 
-// lockWaitTime in ms, except that 0 means always wait lock, 1 means nowait lock
+// lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
@@ -477,7 +462,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg.Add(1)
 	go func() {
 		failpoint.Inject("AsyncRollBackSleep", func() {
-			time.Sleep(2 * time.Second)
+			time.Sleep(100 * time.Millisecond)
 		})
 		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
 		if err != nil {

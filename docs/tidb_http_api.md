@@ -301,29 +301,31 @@ timezone.*
     ```shell
     $curl http://127.0.0.1:10080/info/all
     {
+        "servers_num": 2,
+        "owner_id": "29a65ec0-d931-4f9e-a212-338eaeffab96",
+        "is_all_server_version_consistent": true,
         "all_servers_info": {
-            "275a19ae-d248-4dc0-b78c-6613a7509423": {
-                "ddl_id": "275a19ae-d248-4dc0-b78c-6613a7509423",
-                "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-                "ip": "192.168.197.206",
-                "lease": "45s",
-                "listening_port": 4001,
-                "status_port": 10081,
-                "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
-            },
-            "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77": {
-                "ddl_id": "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77",
-                "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-                "ip": "192.168.197.206",
-                "lease": "45s",
+            "29a65ec0-d931-4f9e-a212-338eaeffab96": {
+                "version": "5.7.25-TiDB-v4.0.0-alpha-669-g8f2a09a52-dirty",
+                "git_hash": "8f2a09a52fdcaf9d9bfd775d2c6023f363dc121e",
+                "ddl_id": "29a65ec0-d931-4f9e-a212-338eaeffab96",
+                "ip": "",
                 "listening_port": 4000,
                 "status_port": 10080,
-                "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+                "lease": "45s",
+                "binlog_status": "Off"
+            },
+            "cd13c9eb-c3ee-4887-af9b-e64f3162d92c": {
+                "version": "5.7.25-TiDB-v4.0.0-alpha-669-g8f2a09a52-dirty",
+                "git_hash": "8f2a09a52fdcaf9d9bfd775d2c6023f363dc121e",
+                "ddl_id": "cd13c9eb-c3ee-4887-af9b-e64f3162d92c",
+                "ip": "",
+                "listening_port": 4001,
+                "status_port": 10081,
+                "lease": "45s",
+                "binlog_status": "Off"
             }
-        },
-        "is_all_server_version_consistent": true,
-        "owner_id": "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77",
-        "servers_num": 2
+        }
     }
     ```
 
@@ -410,4 +412,10 @@ timezone.*
     ```
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
+    ```
+
+1. Resume the binlog writing when Pump is recovered.
+
+    ```shell
+    curl http://{TiDBIP}:10080/binlog/recover
     ```

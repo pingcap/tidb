@@ -116,7 +116,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		p.checkBindGrammar(node)
+		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+	case *ast.DropBindingStmt:
+		if node.HintedSel != nil {
+			p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		}
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
@@ -128,9 +132,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, p.err != nil
 }
 
-func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
-	originSQL := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
+	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
+	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
 
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
@@ -528,7 +532,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey:
+				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
 				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if p.err != nil {
 					return

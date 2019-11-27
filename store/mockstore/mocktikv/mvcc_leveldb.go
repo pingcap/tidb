@@ -268,24 +268,25 @@ func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.Isolat
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	return mvcc.getValue(key, startTS, isoLevel)
+	// TODO: Update the nil here to support point-get for non-block reading on the large transaction.
+	return mvcc.getValue(key, startTS, isoLevel, nil)
 }
 
-func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
 	})
 	defer iter.Release()
 
-	return getValue(iter, key, startTS, isoLevel)
+	return getValue(iter, key, startTS, isoLevel, resolvedLocks)
 }
 
-func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
 	dec1 := lockDecoder{expectKey: key}
 	ok, err := dec1.Decode(iter)
 	if ok && isoLevel == kvrpcpb.IsolationLevel_SI {
-		startTS, err = dec1.lock.check(startTS, key)
+		startTS, err = dec1.lock.check(startTS, key, resolvedLocks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -322,7 +323,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 
 	pairs := make([]Pair, 0, len(ks))
 	for _, k := range ks {
-		v, err := mvcc.getValue(k, startTS, isoLevel)
+		v, err := mvcc.getValue(k, startTS, isoLevel, nil)
 		if v == nil && err == nil {
 			continue
 		}
@@ -336,7 +337,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 }
 
 // Scan implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLock []uint64) []Pair {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
@@ -350,7 +351,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	ok := true
 	var pairs []Pair
 	for len(pairs) < limit && ok {
-		value, err := getValue(iter, currKey, startTS, isoLevel)
+		value, err := getValue(iter, currKey, startTS, isoLevel, resolvedLock)
 		if err != nil {
 			pairs = append(pairs, Pair{
 				Key: currKey,
@@ -376,7 +377,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 }
 
 // ReverseScan implements the MVCCStore interface. The search range is [startKey, endKey).
-func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair {
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
@@ -394,9 +395,10 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 	// TODO: return error.
 	terror.Log(errors.Trace(err))
 	helper := reverseScanHelper{
-		startTS:  startTS,
-		isoLevel: isoLevel,
-		currKey:  currKey,
+		startTS:       startTS,
+		isoLevel:      isoLevel,
+		currKey:       currKey,
+		resolvedLocks: resolvedLocks,
 	}
 
 	for succ && len(helper.pairs) < limit {
@@ -434,17 +436,18 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 }
 
 type reverseScanHelper struct {
-	startTS  uint64
-	isoLevel kvrpcpb.IsolationLevel
-	currKey  []byte
-	entry    mvccEntry
-	pairs    []Pair
+	startTS       uint64
+	isoLevel      kvrpcpb.IsolationLevel
+	resolvedLocks []uint64
+	currKey       []byte
+	entry         mvccEntry
+	pairs         []Pair
 }
 
 func (helper *reverseScanHelper) finishEntry() {
 	reverse(helper.entry.values)
 	helper.entry.key = NewMvccKey(helper.currKey)
-	val, err := helper.entry.Get(helper.startTS, helper.isoLevel)
+	val, err := helper.entry.Get(helper.startTS, helper.isoLevel, helper.resolvedLocks)
 	if len(val) != 0 || err != nil {
 		helper.pairs = append(helper.pairs, Pair{
 			Key:   helper.currKey,
@@ -609,7 +612,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		if m.GetOp() == kvrpcpb.Op_Insert {
-			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
+			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
 				anyError = true
@@ -649,12 +652,6 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ok {
-		if m.Assertion == kvrpcpb.Assertion_Exist {
-			logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
-		}
-		return nil
-	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= startTS {
@@ -680,7 +677,6 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 						Key: m.Key,
 					}
 				}
-				logutil.BgLogger().Error("ASSERTION FAIL!!!", zap.Stringer("mutation", m))
 				break
 			}
 		}
@@ -882,7 +878,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 		}
 		// If current transaction's lock exist.
 		if ok && dec.lock.startTS == startTS {
-			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+			if err = rollbackLock(batch, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
 			return nil
@@ -919,7 +915,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 	return nil
 }
 
-func rollbackLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS uint64) error {
+func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -980,7 +976,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		if ok && dec.lock.startTS == startTS {
 			// If the lock has already outdated, clean up it.
 			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
+				if err = rollbackLock(batch, key, startTS); err != nil {
 					return err
 				}
 				return mvcc.db.Write(batch, nil)
@@ -1032,9 +1028,12 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 // primaryKey + lockTS together could locate the primary lock.
 // callerStartTS is the start ts of reader transaction.
 // currentTS is the current ts, but it may be inaccurate. Just use it to check TTL.
-func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64) (uint64, uint64, error) {
+func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS, currentTS uint64,
+	rollbackIfNotExist bool) (ttl uint64, commitTS uint64, action kvrpcpb.Action, err error) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
+
+	action = kvrpcpb.Action_NoAction
 
 	startKey := mvccEncode(primaryKey, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
@@ -1046,9 +1045,11 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 		dec := lockDecoder{
 			expectKey: primaryKey,
 		}
-		ok, err := dec.Decode(iter)
+		var ok bool
+		ok, err = dec.Decode(iter)
 		if err != nil {
-			return 0, 0, errors.Trace(err)
+			err = errors.Trace(err)
+			return
 		}
 		// If current transaction's lock exists.
 		if ok && dec.lock.startTS == lockTS {
@@ -1057,18 +1058,21 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 
 			// If the lock has already outdated, clean up it.
 			if uint64(oracle.ExtractPhysical(lock.startTS))+lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
-				if err = rollbackLock(batch, lock, primaryKey, lockTS); err != nil {
-					return 0, 0, errors.Trace(err)
+				if err = rollbackLock(batch, primaryKey, lockTS); err != nil {
+					err = errors.Trace(err)
+					return
 				}
 				if err = mvcc.db.Write(batch, nil); err != nil {
-					return 0, 0, errors.Trace(err)
+					err = errors.Trace(err)
+					return
 				}
-				return 0, 0, nil
+				return 0, 0, kvrpcpb.Action_TTLExpireRollback, nil
 			}
 
 			// If this is a large transaction and the lock is active, push forward the minCommitTS.
-			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction.
+			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction (old version TiDB).
 			if lock.minCommitTS > 0 {
+				action = kvrpcpb.Action_MinCommitTSPushed
 				// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 				if lock.minCommitTS < callerStartTS+1 {
 					lock.minCommitTS = callerStartTS + 1
@@ -1081,40 +1085,63 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 					}
 
 					writeKey := mvccEncode(primaryKey, lockVer)
-					writeValue, err := lock.MarshalBinary()
-					if err != nil {
-						return 0, 0, errors.Trace(err)
+					writeValue, err1 := lock.MarshalBinary()
+					if err1 != nil {
+						err = errors.Trace(err1)
+						return
 					}
 					batch.Put(writeKey, writeValue)
-					if err = mvcc.db.Write(batch, nil); err != nil {
-						return 0, 0, errors.Trace(err)
+					if err1 = mvcc.db.Write(batch, nil); err1 != nil {
+						err = errors.Trace(err1)
+						return
 					}
 				}
 			}
 
-			return lock.ttl, 0, nil
+			return lock.ttl, 0, action, nil
 		}
 
 		// If current transaction's lock does not exist.
 		// If the commit info of the current transaction exists.
-		c, ok, err := getTxnCommitInfo(iter, primaryKey, lockTS)
-		if err != nil {
-			return 0, 0, errors.Trace(err)
+		c, ok, err1 := getTxnCommitInfo(iter, primaryKey, lockTS)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return
 		}
 		if ok {
 			// If current transaction is already committed.
 			if c.valueType != typeRollback {
-				return 0, c.commitTS, nil
+				return 0, c.commitTS, action, nil
 			}
 			// If current transaction is already rollback.
-			return 0, 0, nil
+			return 0, 0, kvrpcpb.Action_NoAction, nil
 		}
 	}
 
 	// If current transaction is not prewritted before, it may be pessimistic lock.
-	// When pessimistic lock rollback, it may not leave a 'rollbacked' tombstone.
-	logutil.BgLogger().Debug("CheckTxnStatus can't find the primary lock, pessimistic rollback?")
-	return 0, 0, nil
+	// When pessimistic txn rollback statement, it may not leave a 'rollbacked' tombstone.
+
+	// Or maybe caused by concurrent prewrite operation.
+	// Especially in the non-block reading case, the secondary lock is likely to be
+	// written before the primary lock.
+
+	if rollbackIfNotExist {
+		batch := &leveldb.Batch{}
+		if err1 := rollbackLock(batch, primaryKey, lockTS); err1 != nil {
+			err = errors.Trace(err1)
+			return
+		}
+		if err1 := mvcc.db.Write(batch, nil); err1 != nil {
+			err = errors.Trace(err1)
+			return
+		}
+		return 0, 0, kvrpcpb.Action_LockNotExistRollback, nil
+	}
+
+	return 0, 0, action, &ErrTxnNotFound{kvrpcpb.TxnNotFound{
+		StartTs:    lockTS,
+		PrimaryKey: primaryKey,
+	}}
 }
 
 // TxnHeartBeat implements the MVCCStore interface.
@@ -1220,7 +1247,7 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 			if commitTS > 0 {
 				err = commitLock(batch, dec.lock, currKey, startTS, commitTS)
 			} else {
-				err = rollbackLock(batch, dec.lock, currKey, startTS)
+				err = rollbackLock(batch, currKey, startTS)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1260,7 +1287,7 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 				if commitTS > 0 {
 					err = commitLock(batch, dec.lock, currKey, dec.lock.startTS, commitTS)
 				} else {
-					err = rollbackLock(batch, dec.lock, currKey, dec.lock.startTS)
+					err = rollbackLock(batch, currKey, dec.lock.startTS)
 				}
 				if err != nil {
 					return errors.Trace(err)

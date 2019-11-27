@@ -174,13 +174,6 @@ type showSlowMessage struct {
 	sync.WaitGroup
 }
 
-type queryType int
-
-const (
-	queryTypeTop queryType = iota
-	queryTypeRecent
-)
-
 func (q *topNSlowQueries) QueryRecent(count int) []*SlowQueryInfo {
 	return q.recent.Query(count)
 }
