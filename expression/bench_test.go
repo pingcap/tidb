@@ -985,6 +985,10 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
+	} else if funcName == ast.Values {
+		tp := eType2FieldType(testCase.retEvalType)
+		fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, tp}
+		baseFunc, err = fc.getFunction(ctx, cols)
 	} else {
 		baseFunc, err = funcs[funcName].getFunction(ctx, cols)
 	}
@@ -1057,6 +1061,11 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
 					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
+			}
+			if funcName == ast.Values {
+				ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+				currInsertValues := types.MakeDatums("1", "2")
+				ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
 			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))

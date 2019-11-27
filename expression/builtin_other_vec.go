@@ -23,11 +23,33 @@ import (
 )
 
 func (b *builtinValuesIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinValuesIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sessionVars := b.ctx.GetSessionVars()
+	n := input.NumRows()
+	result.ResizeInt64(n, true)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if !sessionVars.StmtCtx.InInsertStmt {
+			continue
+		}
+		row := sessionVars.CurrInsertValues
+		if row.IsEmpty() {
+			return errors.New("Session current insert values is nil")
+		}
+		if b.offset < row.Len() {
+			if row.IsNull(b.offset) {
+				continue
+			}
+			i64s[i] = row.GetInt64(b.offset)
+			result.SetNull(i, false)
+			continue
+		}
+		return errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	}
+	return nil
 }
 
 func (b *builtinValuesDurationSig) vectorized() bool {

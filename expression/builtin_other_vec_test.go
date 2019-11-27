@@ -28,6 +28,9 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.GetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
+	ast.Values: {
+		{retEvalType: types.ETInt},
+	},
 	ast.BitCount: {},
 	ast.GetParam: {
 		{
