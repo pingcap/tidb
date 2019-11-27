@@ -173,29 +173,20 @@ func (s testSuite9) TestIndexJoinHavingExprInInnerJoinKeys(c *C) {
 	tk.MustExec(`create table t1(
 						v_int int, 
 						v_float float, 
-						v_string varchar(20), 
-						v_decimal decimal(40, 10), 
-						v_datetime datetime, 
-						v_time time);`)
+						v_decimal decimal(40, 10));`)
 	tk.MustExec(`create table t2(
 						v_int int, 
 						v_float float, 
-						v_string varchar(20), 
 						v_decimal decimal(40, 10), 
-						v_datetime datetime, 
-						v_time time,
 						key(v_int),
 						key(v_float),
-						key(v_string),
-						key(v_decimal),
-						key(v_datetime),
-						key(v_time));`)
+						key(v_decimal));`)
 	tk.MustExec(`insert into t1 values 
-		(1, 1.0, "1.00", 1, cast(time(1) as datetime), time(1)),
-		(2, 2.0, "2", 2, cast(time(2) as datetime), time(2));`)
+		(1, 1.0, 1),
+		(2, 2.0, 2);`)
 	tk.MustExec(`insert into t2 values 
-		(1, 1.0, "1.00", 1, cast(time(1) as datetime), time(1)),
-		(2, 2.0, "2", 2, cast(time(2) as datetime), time(2));`)
+		(1, 1.0, 1),
+		(2, 2.0, 2);`)
 
 	var input []string
 	var output []struct {
