@@ -736,9 +736,9 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
 			return err
 		}
+		dst.MergeNulls(result)
 		for i := 0; i < n; i++ {
-			if result.IsNull(i) || dst.IsNull(i) {
-				dst.SetNull(i, true)
+			if dst.IsNull(i) {
 				continue
 			}
 			argTime, err = types.ParseDatetime(sc, result.GetString(i))
@@ -755,7 +755,6 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 				dstTimes[i] = argTime
 			}
 		}
-		result.MergeNulls(result, dst)
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
