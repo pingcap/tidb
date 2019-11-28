@@ -581,3 +581,18 @@ idLoop:
 func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(row)
 }
+
+// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+func (col *Column) SupportReverseEval() bool {
+	switch col.RetType.Tp {
+	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return true
+	}
+	return false
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	return changeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
+}
