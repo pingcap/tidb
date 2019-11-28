@@ -300,6 +300,26 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
+	case *PhysicalIndexMergeReader:
+		Indexs := make([]model.CIStr, 0, 2)
+		var tableName model.CIStr
+		var tableAsName *model.CIStr
+		for _, partialPlan := range pp.PartialPlans {
+			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
+				Indexs = append(Indexs, index.Index.Name)
+				tableName = index.Table.Name
+				tableAsName = index.TableAsName
+			} else {
+				indexName := model.NewCIStr("PRIMARY")
+				Indexs = append(Indexs, indexName)
+			}
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintIndexMerge),
+			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
+			Indexes:  Indexs,
+		})
 	case *PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
