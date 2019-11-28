@@ -16,6 +16,7 @@ package linux
 
 import (
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -29,31 +30,7 @@ func OSVersion() (osVersion string, err error) {
 		return
 	}
 
-	sysName := make([]byte, 0, len(un.Sysname))
-	for _, name := range un.Sysname {
-		if name == 0 {
-			break
-		}
-		sysName = append(sysName, byte(name))
-	}
-
-	release := make([]byte, 0, len(un.Release))
-	for _, c := range un.Release {
-		if c == 0 {
-			break
-		}
-		release = append(release, byte(c))
-	}
-
-	machine := make([]byte, 0, len(un.Machine))
-	for _, c := range un.Machine {
-		if c == 0 {
-			break
-		}
-		machine = append(machine, byte(c))
-	}
-
-	osVersion = string(sysName) + " " + string(release) + "." + string(machine)
+	osVersion = "Linux " + *(*string)(unsafe.Pointer(&un.Release[:])) + "." + *(*string)(unsafe.Pointer(&un.Machine[:]))
 	return
 }
 
