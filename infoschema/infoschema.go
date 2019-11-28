@@ -14,7 +14,6 @@
 package infoschema
 
 import (
-	"go.uber.org/zap"
 	"sort"
 	"sync/atomic"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
