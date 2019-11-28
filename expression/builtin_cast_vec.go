@@ -893,7 +893,7 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, buf.GetString(i), int8(b.tp.Decimal))
+		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(buf.GetString(i)), int8(b.tp.Decimal))
 		if err != nil {
 			return err
 		}
