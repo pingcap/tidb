@@ -1771,9 +1771,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
-	storeBootstrappedLock.Lock()
-	storeBootstrapped[store.UUID()] = true
-	storeBootstrappedLock.Unlock()
+	setStoreBootstrapped(store.UUID())
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
