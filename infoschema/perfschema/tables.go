@@ -164,7 +164,7 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 }
 
 func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
-	servers, err := infoschema.GetClusterServerInfo(ctx)
+	servers, err := infoschema.GetTiKVServerInfo(ctx)
 	failpoint.Inject("mockTiKVNodeStatusAddress", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
 		// there is no extra checks for it. (let the test fail if the expression invalid)
@@ -195,9 +195,6 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(servers))
 	for _, server := range servers {
-		if server.ServerType != "tikv" {
-			continue
-		}
 		statusAddr := server.StatusAddr
 		if len(statusAddr) == 0 {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", statusAddr))

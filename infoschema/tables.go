@@ -1938,6 +1938,20 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 	})
 
+	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	var servers []ServerInfo
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetTiKVServerInfo} {
+		nodes, err := r(ctx)
+		if err != nil {
+			return nil, err
+		}
+		servers = append(servers, nodes...)
+	}
+	return servers, nil
+}
+
+// GetTiDBServerInfo returns all TiDB nodes information of cluster
+func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get TiDB servers info.
 	tidbNodes, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
@@ -1954,13 +1968,18 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash:    node.GitHash,
 		})
 	}
+	return servers, nil
+}
 
+// GetPDServerInfo returns all PD nodes information of cluster
+func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
 	store := ctx.GetStore()
 	etcd, ok := store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
+	var servers []ServerInfo
 	for _, addr := range etcd.EtcdAddrs() {
 		addr = strings.TrimSpace(addr)
 
@@ -2009,7 +2028,12 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash:    content.GitHash,
 		})
 	}
+	return servers, nil
+}
 
+// GetTiKVServerInfo returns all TiKV nodes information of cluster
+func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	store := ctx.GetStore()
 	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
@@ -2024,6 +2048,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var servers []ServerInfo
 	for _, storeStat := range storesStat.Stores {
 		servers = append(servers, ServerInfo{
 			ServerType: "tikv",
