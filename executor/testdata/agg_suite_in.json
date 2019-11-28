@@ -1,0 +1,19 @@
+[
+  {
+    "name": "TestInjectProjBelowTopN",
+    "cases": [
+      "explain select * from t order by i + 1",
+      "select * from t order by i + 1",
+      "explain select * from t order by i + 1 limit 2",
+      "select * from t order by i + 1 limit 2",
+      "select i, i, i from t order by i + 1"
+    ]
+  },
+  {
+    "name": "TestIssue12759HashAggCalledByApply",
+    "cases": [
+      // make sure the plan is Apply -> Apply -> Apply -> HashAgg, and the count of Apply is equal to HashAggFinalConcurrency-1.
+      "explain select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt"
+    ]
+  }
+]

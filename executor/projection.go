@@ -259,6 +259,13 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
+	if e.runtimeStats != nil {
+		if e.isUnparallelExec() {
+			e.runtimeStats.SetConcurrencyInfo("Concurrency", 0)
+		} else {
+			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
+		}
+	}
 	return e.baseExecutor.Close()
 }
 
