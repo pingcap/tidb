@@ -212,7 +212,6 @@ func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int);")
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.

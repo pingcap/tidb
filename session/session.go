@@ -800,10 +800,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	}
 	// Set snapshot.
 	if snapshot != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshot)
-		if err != nil {
-			return nil, nil, err
-		}
+		se.sessionVars.SnapshotInfoschema = s.sessionVars.SnapshotInfoschema
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
 			return nil, nil, err
 		}
