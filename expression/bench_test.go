@@ -629,9 +629,14 @@ func (g *timeStrGener) gen() interface{} {
 }
 
 // dateStrGener is used to generate strings which are data format
-type dateStrGener struct{}
+type dateStrGener struct {
+	nullRation float64
+}
 
 func (g *dateStrGener) gen() interface{} {
+	if g.nullRation > 1e-6 && rand.Float64() < g.nullRation {
+		return nil
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
