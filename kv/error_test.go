@@ -37,6 +37,7 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrWriteConflictInTiDB,
 	}
 	for _, err := range kvErrs {
-		c.Assert(err.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
+		code := err.ToSQLError().Code
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

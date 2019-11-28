@@ -323,8 +323,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 			return nil, errors.Trace(err)
 		}
 	}
-	// TODO: Update INFORMATION_SCHEMA schema to use virtual table.
-	b.createSchemaTablesForInfoSchemaDB()
+
+	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
 		sort.Sort(v)
 	}
@@ -364,20 +364,6 @@ var drivers []*virtualTableDriver
 // RegisterVirtualTable register virtual tables to the builder.
 func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc) {
 	drivers = append(drivers, &virtualTableDriver{dbInfo, tableFromMeta})
-}
-
-func (b *Builder) createSchemaTablesForInfoSchemaDB() {
-	infoSchemaSchemaTables := &schemaTables{
-		dbInfo: infoSchemaDB,
-		tables: make(map[string]table.Table, len(infoSchemaDB.Tables)),
-	}
-	b.is.schemaMap[infoSchemaDB.Name.L] = infoSchemaSchemaTables
-	for _, t := range infoSchemaDB.Tables {
-		tbl := createInfoSchemaTable(b.handle, t)
-		infoSchemaSchemaTables.tables[t.Name.L] = tbl
-		bucketIdx := tableBucketIdx(t.ID)
-		b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
-	}
 }
 
 // Build sets new InfoSchema to the handle in the Builder.
