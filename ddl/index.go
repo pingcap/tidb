@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -160,36 +161,46 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexColName) error {
 	return nil
 }
 
+// getIndexColumnLength calculate the bytes number required in an index column.
 func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
-	// Take care of the sum of length of all index columns.
+	length := types.UnspecifiedLength
 	if colLen != types.UnspecifiedLength {
-		return colLen, nil
+		length = colLen
+	} else if col.Flen != types.UnspecifiedLength {
+		length = col.Flen
 	}
-	// Specified data types.
-	if col.Flen != types.UnspecifiedLength {
-		// Special case for the bit type.
-		if col.FieldType.Tp == mysql.TypeBit {
-			return (col.Flen + 7) >> 3, nil
+
+	switch col.Tp {
+	case mysql.TypeBit:
+		return (length + 7) >> 3, nil
+	case mysql.TypeVarchar, mysql.TypeString:
+		// Different charsets occupy different numbers of bytes on each character.
+		desc, err := charset.GetCharsetDesc(col.Charset)
+		if err != nil {
+			return 0, errUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
 		}
-		return col.Flen, nil
-
-	}
-
-	length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]
-	if !ok {
-		return length, errUnknownTypeLength.GenWithStackByArgs(col.FieldType.Tp)
-	}
-
-	// Special case for time fraction.
-	if types.IsTypeFractionable(col.FieldType.Tp) &&
-		col.FieldType.Decimal != types.UnspecifiedLength {
-		decimalLength, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]
-		if !ok {
-			return length, errUnknownFractionLength.GenWithStackByArgs(col.FieldType.Tp, col.FieldType.Decimal)
+		return desc.Maxlen * length, nil
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+		return length, nil
+	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeShort:
+		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
+	case mysql.TypeFloat:
+		if length <= mysql.MaxFloatPrecisionLength {
+			return mysql.DefaultLengthOfMysqlTypes[mysql.TypeFloat], nil
 		}
-		length += decimalLength
+		return mysql.DefaultLengthOfMysqlTypes[mysql.TypeDouble], nil
+	case mysql.TypeDecimal, mysql.TypeNewDecimal:
+		return calcBytesLengthForDecimal(length), nil
+	case mysql.TypeYear, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
+	default:
+		return length, nil
 	}
-	return length, nil
+}
+
+// Decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
+func calcBytesLengthForDecimal(m int) int {
+	return (m / 9 * 4) + ((m%9)+1)/2
 }
 
 func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
