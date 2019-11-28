@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -652,6 +653,12 @@ type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+type randDurString struct{}
+
+func (g *randDurString) gen() interface{} {
+	return strconv.FormatInt(int64(rand.Intn(types.TimeMaxHour)*10000+rand.Intn(60)*100+rand.Intn(60)), 10)
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
