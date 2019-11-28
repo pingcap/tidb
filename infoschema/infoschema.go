@@ -357,7 +357,7 @@ func init() {
 		var ok bool
 		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
 		if !ok {
-			panic(fmt.Sprintf("get system table id failed, unknown system table `%v`", tableInfo.Name.O))
+			panic(fmt.Sprintf("get information_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
 		}
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1

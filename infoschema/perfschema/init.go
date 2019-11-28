@@ -54,7 +54,7 @@ func Init() {
 			var ok bool
 			meta.ID, ok = tableIDMap[meta.Name.O]
 			if !ok {
-				panic(fmt.Sprintf("get system table id failed, unknown system table `%v`", meta.Name.O))
+				panic(fmt.Sprintf("get performance_schema table id failed, unknown system table `%v`", meta.Name.O))
 			}
 			for i, c := range meta.Columns {
 				c.ID = int64(i) + 1

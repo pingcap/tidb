@@ -40,10 +40,6 @@ var memTableToClusterTableMap = map[string]string{
 	tableProcesslist: clusterTableProcesslist,
 }
 
-// clusterTableMap is the cluster table map.
-// It will be initialized in `init` function.
-var clusterTableMap = map[string]struct{}{}
-
 func init() {
 	var addrCol = columnInfo{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil}
 	for memTableName, clusterMemTableName := range memTableToClusterTableMap {
@@ -55,7 +51,6 @@ func init() {
 		cols = append(cols, memTableCols...)
 		cols = append(cols, addrCol)
 		tableNameToColumns[clusterMemTableName] = cols
-		clusterTableMap[clusterMemTableName] = struct{}{}
 	}
 }
 
@@ -69,7 +64,7 @@ func isClusterTableByName(dbName, tableName string) bool {
 		return false
 	}
 	tableName = strings.ToUpper(tableName)
-	_, ok := clusterTableMap[tableName]
+	_, ok := tableNameToColumns[tableName]
 	return ok
 }
 
@@ -91,10 +86,10 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 	if err != nil {
 		return nil, err
 	}
-	return appendClusterColumnsToRows(rows), nil
+	return appendHostInfoToRows(rows), nil
 }
 
-func appendClusterColumnsToRows(rows [][]types.Datum) [][]types.Datum {
+func appendHostInfoToRows(rows [][]types.Datum) [][]types.Datum {
 	serverInfo := infosync.GetServerInfo()
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
 	for i := range rows {

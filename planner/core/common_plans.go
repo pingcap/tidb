@@ -739,16 +739,12 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	case *PhysicalTableReader:
 		var storeType string
 		switch x.StoreType {
-		case kv.TiKV:
-			storeType = kv.TiKV.Name()
-		case kv.TiFlash:
-			storeType = kv.TiFlash.Name()
-		case kv.TiDB:
-			storeType = kv.TiDB.Name()
+		case kv.TiKV, kv.TiFlash, kv.TiDB:
+			// expected do nothing
 		default:
-			err = errors.Errorf("the store type %v is unknown", x.StoreType)
-			return
+			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
+		storeType = x.StoreType.Name()
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)

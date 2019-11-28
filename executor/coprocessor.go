@@ -101,7 +101,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 func (h *CoprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
 	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	bp := core.NewPBPlanBuilder(h.sctx, is)
-	plan, err := bp.BuildPhysicalPlanFromPB(executors)
+	plan, err := bp.Build(executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
