@@ -30,6 +30,23 @@ import (
 	"go.uber.org/zap"
 )
 
+// Attention:
+// For reading cluster TiDB memory tables, the system schema/table should be same.
+// Once the system schema/table id been allocated, it can't be changed any more.
+// Change the system schema/table id may have the compatibility problem.
+const (
+	// SystemSchemaIDFlag is the system schema/table id flag, it's exports for test.
+	SystemSchemaIDFlag = 1 << 62
+	// InformationSchemaDBID is the information_schema schema id, it's exports for test.
+	InformationSchemaDBID int64 = SystemSchemaIDFlag | 1
+	// PerformanceSchemaDBID is the performance_schema schema id flag, it's exports for test.
+	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 2
+	// InformationSchemaTableIDStart is the information_schema tables start id, it's exports for test.
+	InformationSchemaTableIDStart int64 = 10000
+	// PerformanceSchemaTableIDStart is the performance_schema tables start id, it's exports for test.
+	PerformanceSchemaTableIDStart int64 = 20000
+)
+
 const (
 	minStep            = 30000
 	maxStep            = 2000000

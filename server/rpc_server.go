@@ -35,8 +35,6 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-var rpcSrv *rpcServer
-
 // NewRPCServer creates a new rpc server.
 func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
@@ -55,7 +53,7 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 	if s == nil {
 		s = grpc.NewServer()
 	}
-	rpcSrv = &rpcServer{
+	rpcSrv := &rpcServer{
 		dom: dom,
 		sm:  sm,
 	}
@@ -93,7 +91,7 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 // handleCopRequest handles the cop dag request.
 func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	se, err := rpcSrv.createSession()
+	se, err := s.createSession()
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -101,7 +99,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	defer se.Close()
 
 	h := executor.NewCoprocessorDAGHandler(se, resp)
-	return h.HandleCopDAGRequest(ctx, req)
+	return h.HandleRequest(ctx, req)
 }
 
 func (s *rpcServer) createSession() (session.Session, error) {
@@ -113,7 +111,6 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	is := do.InfoSchema()
 	// TODO: Need user and host to do privilege check.
 	se.GetSessionVars().TxnCtx.InfoSchema = is
-	//se.GetSessionVars().InRestrictedSQL = true
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
 	se.GetSessionVars().HashAggPartialConcurrency = 1

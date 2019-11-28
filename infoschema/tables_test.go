@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
@@ -86,11 +87,11 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = s.setUpRPCService(c, "0.0.0.0:10080", s.dom)
+	s.rpcserver = s.setUpRPCService(c, "0.0.0.0:10080")
 	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
 }
 
-func (s *testClusterTableSuite) setUpRPCService(c *C, addr string, dom *domain.Domain) *grpc.Server {
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
@@ -101,7 +102,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string, dom *domain.D
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig().Security, dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig().Security, s.dom, sm)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
@@ -657,6 +658,7 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
+	defer f.Close()
 	_, err = f.Write([]byte(`
 # Time: 2019-02-13T19:33:56.571953+08:00
 `))
@@ -865,6 +867,33 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	c.Assert(len(typeMap), Equals, 0)
 	c.Assert(len(addrMap), Equals, 0)
 	c.Assert(len(nameMap), Equals, 0)
+}
+
+func (s *testTableSuite) TestSystemSchemaID(c *C) {
+	uniqueIDMap := make(map[int64]string)
+	s.checkSystemSchemaTableID(c, "information_schema", autoid.SystemSchemaIDFlag|1, 10000, 20000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "performance_schema", autoid.SystemSchemaIDFlag|2, 20000, 30000, uniqueIDMap)
+}
+
+func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {
+	is := s.dom.InfoSchema()
+	c.Assert(is, NotNil)
+	db, ok := is.SchemaByName(model.NewCIStr(dbName))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.ID, Equals, dbID)
+	// Test for information_schema table id.
+	tables := is.SchemaTables(model.NewCIStr(dbName))
+	c.Assert(len(tables), Greater, 0)
+	for _, tbl := range tables {
+		tid := tbl.Meta().ID
+		comment := Commentf("table name is %v", tbl.Meta().Name)
+		c.Assert(tid&autoid.SystemSchemaIDFlag, Greater, int64(0), comment)
+		c.Assert(tid&^autoid.SystemSchemaIDFlag, Greater, start, comment)
+		c.Assert(tid&^autoid.SystemSchemaIDFlag, Less, end, comment)
+		name, ok := uniqueIDMap[tid]
+		c.Assert(ok, IsFalse, Commentf("schema id of %v is duplicate with %v, both is %v", name, tbl.Meta().Name, tid))
+		uniqueIDMap[tid] = tbl.Meta().Name.O
+	}
 }
 
 func (s *testClusterTableSuite) TestSelectClusterMemTable(c *C) {

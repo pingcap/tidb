@@ -488,35 +488,3 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 		alloc.Alloc(2, 1)
 	}
 }
-
-func (*testSuite) TestGetSystemSchemaID(c *C) {
-	uniqueIDMap := make(map[int64]string)
-	for name, id := range autoid.SystemSchemaIDMap {
-		if n, ok := uniqueIDMap[id]; ok {
-			c.Fatalf("schema id of %v is duplicate with %v, both is %v", name, n, id)
-		}
-		uniqueIDMap[id] = name
-		i, err := autoid.GetSystemSchemaID(name)
-		c.Assert(err, IsNil)
-		c.Assert(i, Equals, id|autoid.SystemIDFlag)
-	}
-	for name, id := range autoid.InformationSchemaTableIDMap {
-		if n, ok := uniqueIDMap[id]; ok {
-			c.Fatalf("system table id of %v is duplicate with %v, both is %v", name, n, id)
-		}
-		uniqueIDMap[id] = name
-		i, err := autoid.GetInformationSchemaTableID(name)
-		c.Assert(err, IsNil)
-		c.Assert(i, Equals, id|autoid.SystemIDFlag)
-	}
-	for name, id := range autoid.PerformanceSchemaTableIDMap {
-		if n, ok := uniqueIDMap[id]; ok {
-			c.Fatalf("system table id of %v is duplicate with %v, both is %v", name, n, id)
-		}
-		uniqueIDMap[id] = name
-		i, err := autoid.GetPerformanceSchemaTableID(name)
-		c.Assert(err, IsNil)
-		c.Assert(i, Equals, id|autoid.SystemIDFlag)
-	}
-
-}

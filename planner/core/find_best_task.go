@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -1037,7 +1036,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	if infoschema.IsClusterTable(ds.table.Type()) {
 		ts.StoreType = kv.TiDB
-		ts.tp = plancodec.TypeMemTableScan
 	}
 	if ts.StoreType == kv.TiFlash {
 		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
