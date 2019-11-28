@@ -364,7 +364,6 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	}
 	hg.Bounds = c
 	hg.Buckets = hg.Buckets[:curBuck]
-	return
 }
 
 // GetIncreaseFactor will return a factor of data increasing after the last analysis.
@@ -624,9 +623,7 @@ func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
 	newHist.Bounds = hg.Bounds.CopyConstruct()
 	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
-	for _, bkt := range hg.Buckets {
-		newHist.Buckets = append(newHist.Buckets, bkt)
-	}
+	newHist.Buckets = append(newHist.Buckets, hg.Buckets...)
 	return &newHist
 }
 
