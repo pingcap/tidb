@@ -455,9 +455,22 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.AllocHandle(ctx)
-		if err != nil {
-			return 0, err
+		stmtCtx := ctx.GetSessionVars().StmtCtx
+		rows := stmtCtx.RecordRows()
+		if rows > 1 {
+			if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
+				stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = t.AllocHandleIDs(ctx, rows)
+				if err != nil {
+					return 0, err
+				}
+			}
+			stmtCtx.BaseRowID += 1
+			recordID = stmtCtx.BaseRowID
+		} else {
+			recordID, err = t.AllocHandle(ctx)
+			if err != nil {
+				return 0, err
+			}
 		}
 	}
 
@@ -469,6 +482,9 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	sessVars := ctx.GetSessionVars()
 
 	rm, err := t.getRollbackableMemStore(ctx)
+	if err != nil {
+		return 0, err
+	}
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -526,7 +542,6 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err = txn.Set(key, value); err != nil {
 		return 0, err
 	}
-	txn.SetAssertion(key, kv.None)
 
 	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 		return 0, err
@@ -790,7 +805,6 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	}
 
 	key := t.RecordKey(h)
-	txn.SetAssertion(key, kv.Exist)
 	err = txn.Delete([]byte(key))
 	if err != nil {
 		return err
@@ -810,7 +824,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -825,12 +839,12 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, rm, vals, h, txn)
+	return idx.Delete(sc, rm, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
-	opts := []table.CreateIdxOptFunc{table.WithAssertion(txn)}
+	var opts []table.CreateIdxOptFunc
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
@@ -947,13 +961,19 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
+	_, rowID, err := t.AllocHandleIDs(ctx, 1)
+	return rowID, err
+}
+
+// AllocHandle implements table.Table AllocHandle interface.
+func (t *tableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
+	base, maxID, err := t.Allocator(ctx).Alloc(t.tableID, n)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if t.meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits) {
+		if OverflowShardBits(maxID, t.meta.MaxShardRowIDBits) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -961,16 +981,17 @@ func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 			// will be duplicated with:
 			// rowID = 0100111111111111111111111111111111111111111111111111111111111111
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
-			return 0, autoid.ErrAutoincReadFailed
+			return 0, 0, autoid.ErrAutoincReadFailed
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
 			shard := t.calcShard(txnCtx.StartTS)
 			txnCtx.Shard = &shard
 		}
-		rowID |= *txnCtx.Shard
+		base |= *txnCtx.Shard
+		maxID |= *txnCtx.Shard
 	}
-	return rowID, nil
+	return base, maxID, nil
 }
 
 // OverflowShardBits checks whether the rowID overflow `1<<(64-shardRowIDBits-1) -1`.
@@ -1068,10 +1089,6 @@ func (t *tableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) 
 	}
 	return false
 }
-
-var (
-	recordPrefixSep = []byte("_r")
-)
 
 // FindIndexByColName returns a public table index containing only one column named `name`.
 func FindIndexByColName(t table.Table, name string) table.Index {

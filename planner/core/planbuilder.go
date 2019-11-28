@@ -67,8 +67,10 @@ type tableHintInfo struct {
 	sortMergeJoinTables []hintTableInfo
 	hashJoinTables      []hintTableInfo
 	indexHintList       []indexHintInfo
-	flashTables         []hintTableInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
 	aggHints            aggHintInfo
+	indexMergeHintList  []indexHintInfo
 }
 
 type hintTableInfo struct {
@@ -126,7 +128,11 @@ func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.flashTables)
+	return info.matchTableName(tableNames, info.tiflashTables)
+}
+
+func (info *tableHintInfo) ifPreferTiKV(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.tikvTables)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -853,6 +859,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
 	case ast.AdminPluginDisable:
 		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+	case ast.AdminFlushBindings:
+		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+	case ast.AdminCaptureBindings:
+		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+	case ast.AdminEvolveBindings:
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1595,6 +1607,11 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
+		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
+			if raw.Level.Level == ast.GrantLevelTable {
+				return nil, ErrNoDB
+			}
+		}
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")
@@ -1824,26 +1841,12 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.names = insertPlan.names4OnDuplicate
-	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
-	for _, col := range insertPlan.Table.Cols() {
-		columnByName[col.Name.L] = col
-	}
-	onDupColSet, dupCols, dupColNames, err := insertPlan.validateOnDup(insert.OnDuplicate, columnByName, tableInfo)
+
+	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+	})
 	if err != nil {
 		return nil, err
-	}
-	for i, assign := range insert.OnDuplicate {
-		// Construct the function which calculates the assign value of the column.
-		expr, err1 := b.rewriteInsertOnDuplicateUpdate(ctx, assign.Expr, mockTablePlan, insertPlan)
-		if err1 != nil {
-			return nil, err1
-		}
-
-		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
-			Col:     dupCols[i],
-			ColName: dupColNames[i].ColName,
-			Expr:    expr,
-		})
 	}
 
 	// Calculate generated columns.
@@ -1858,29 +1861,50 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, types.NameSlice, error) {
+func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
-	dupCols := make([]*expression.Column, 0, len(onDup))
-	dupColNames := make(types.NameSlice, 0, len(onDup))
+	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
+	for _, col := range p.Table.Cols() {
+		colMap[col.Name.L] = col
+	}
 	for _, assign := range onDup {
 		// Check whether the column to be updated exists in the source table.
 		idx, err := expression.FindFieldName(p.tableColNames, assign.Column)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		} else if idx < 0 {
-			return nil, nil, nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
+			return nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
 		}
 
 		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
-		if column.IsGenerated() {
-			return nil, nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
 		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if column.IsGenerated() {
+			if defaultExpr != nil {
+				continue
+			}
+			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		}
+
 		onDupColSet[column.Name.L] = struct{}{}
-		dupCols = append(dupCols, p.tableSchema.Columns[idx])
-		dupColNames = append(dupColNames, p.tableColNames[idx])
+
+		expr, err := yield(assign.Expr)
+		if err != nil {
+			return nil, err
+		}
+
+		p.OnDuplicate = append(p.OnDuplicate, &expression.Assignment{
+			Col:     p.tableSchema.Columns[idx],
+			ColName: p.tableColNames[idx].ColName,
+			Expr:    expr,
+		})
 	}
-	return onDupColSet, dupCols, dupColNames, nil
+	return onDupColSet, nil
 }
 
 func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
@@ -1927,14 +1951,27 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	if err != nil {
 		return err
 	}
+	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.IsGenerated() {
-			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
+			generatedColumns[tCol.Name.L] = struct{}{}
 		}
 	}
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
+		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
+			if defaultExpr != nil {
+				continue
+			}
+			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
+		}
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
@@ -2239,7 +2276,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	}
 	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
 	if err != nil {
-		if !types.ErrTruncated.Equal(err) {
+		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) {
 			return d, err
 		}
 		valStr, err1 := value.ToString()

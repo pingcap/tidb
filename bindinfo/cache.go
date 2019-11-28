@@ -33,6 +33,9 @@ const (
 	Invalid = "invalid"
 	// PendingVerify means the bind info needs to be verified.
 	PendingVerify = "pending verify"
+	// Rejected means that the bind has been rejected after verify process.
+	// We can retry it after certain time has passed.
+	Rejected = "rejected"
 )
 
 // Binding stores the basic bind hint info.
@@ -146,6 +149,16 @@ func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 		}
 	}
 	return result
+}
+
+func (br *BindRecord) removeDeletedBindings() *BindRecord {
+	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, Bindings: make([]Binding, 0, len(br.Bindings))}
+	for _, binding := range br.Bindings {
+		if binding.Status != deleted {
+			result.Bindings = append(result.Bindings, binding)
+		}
+	}
+	return &result
 }
 
 // shallowCopy shallow copies the BindRecord.

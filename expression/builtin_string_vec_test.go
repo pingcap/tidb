@@ -58,7 +58,28 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}},
 	},
 	ast.ConcatWS: {},
-	ast.Convert:  {},
+	ast.Convert: {
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			constants: []*Constant{nil, {Value: types.NewDatum("utf8"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			constants: []*Constant{nil, {Value: types.NewDatum("binary"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			constants: []*Constant{nil, {Value: types.NewDatum("utf8mb4"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			constants: []*Constant{nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			constants: []*Constant{nil, {Value: types.NewDatum("latin1"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+	},
 	ast.Substring: {
 		{
 			retEvalType:   types.ETString,
@@ -98,6 +119,11 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		},
 		{
 			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&selectStringGener{[]string{"01", "10", "001", "110", "0001", "1110"}}, &selectStringGener{[]string{"010010001000010", "101101110111101"}}},
+		},
+		{
+			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners:        []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}, &rangeInt64Gener{-10, 20}},
 		},
@@ -105,6 +131,65 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners:        []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 10}, &rangeInt64Gener{0, 8}},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&selectStringGener{[]string{"01", "10", "001", "110", "0001", "1110"}}, &selectStringGener{[]string{"010010001000010", "101101110111101"}}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&selectStringGener{[]string{"01", "10", "001", "110", "0001", "1110"}}, &selectStringGener{[]string{"010010001000010", "101101110111101"}}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}, nil},
+			geners:             []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}, nil},
+			geners:             []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}, nil},
+			geners:             []dataGenerator{&selectStringGener{[]string{"01", "10", "001", "110", "0001", "1110"}}, &selectStringGener{[]string{"010010001000010", "101101110111101"}}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}, {Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&randLenStrGener{0, 10}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}, {Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&randLenStrGener{1, 2}, &randLenStrGener{0, 20}},
+		},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETString, types.ETString},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}, {Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
+			geners:             []dataGenerator{&selectStringGener{[]string{"01", "10", "001", "110", "0001", "1110"}}, &selectStringGener{[]string{"010010001000010", "101101110111101"}}},
 		},
 	},
 	ast.Hex: {
@@ -117,6 +202,24 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Trim: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}}},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}, nil},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimBoth), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}, nil},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimLeading), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners:        []dataGenerator{&randLenStrGener{10, 20}, &randLenStrGener{5, 25}, nil},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
 	},
 	ast.LTrim: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
@@ -304,6 +407,14 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.InsertFunc: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}, &rangeInt64Gener{-10, 20}, &rangeInt64Gener{0, 100}, &randLenStrGener{0, 10}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+				{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin},
+			},
+		},
 	},
 	ast.Elt: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&rangeInt64Gener{-1, 5}}},
