@@ -822,15 +822,15 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("create table t2 (b char, c int)")
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 	_, err := tk.Exec("alter table t1 change a a varchar(16)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(16) not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column type varchar(16) not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a varchar(10)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(10) not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column type varchar(10) not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a datetime")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column type datetime not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column can't change unsigned integer to signed or vice versa")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column type int(11) not match origin char(1)")
 }
 
 func (s *testIntegrationSuite1) TestIndexOnMultipleGeneratedColumn(c *C) {
