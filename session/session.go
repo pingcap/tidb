@@ -1720,6 +1720,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
 }
