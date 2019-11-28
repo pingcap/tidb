@@ -730,7 +730,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	var argTime types.Time
 
 	var findInvalidTime []bool = make([]bool, n)
-	var invalidValue []string
+	var invalidValue []string = make([]string, n)
 
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
@@ -746,7 +746,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
 				} else if !findInvalidTime[i] {
-					invalidValue = append(invalidValue, result.GetString(i))
+					invalidValue[i] = result.GetString(i)
 					findInvalidTime[i] = true
 				}
 				continue
@@ -755,12 +755,12 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 				dstTimes[i] = argTime
 			}
 		}
+		result.MergeNulls(result, dst)
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if findInvalidTime[i] {
-			result.AppendString(invalidValue[0])
-			invalidValue = invalidValue[1:]
+			result.AppendString(invalidValue[i])
 			continue
 		}
 		if dst.IsNull(i) {
