@@ -207,8 +207,10 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][6], Equals, "finished")
 }
 
-func (s *testShowStatsSuite) TestShowAStatusSnapshot(c *C) {
+func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int);")
