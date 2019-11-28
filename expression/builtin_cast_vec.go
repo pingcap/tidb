@@ -1411,6 +1411,9 @@ func (b *builtinCastStringAsDecimalSig) vectorized() bool {
 }
 
 func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	if IsBinaryLiteral(b.args[0]){
+		return b.args[0].VecEvalDecimal(b.ctx,input,result)
+	}
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -1429,10 +1432,15 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 			continue
 		}
 		dec := new(types.MyDecimal)
-		if err := stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
-			return err
+		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && dec.IsNegative()) {
+			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
+				return err
+			}
+			res[i] = *dec
+			if _, err := types.ProduceDecWithSpecifiedTp(&res[i], b.tp, stmtCtx); err != nil {
+				return err
+			}
 		}
-		res[i] = *dec
 	}
 	return nil
 }

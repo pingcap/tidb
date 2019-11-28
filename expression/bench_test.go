@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -324,7 +323,9 @@ func (g *jsonStringGener) gen() interface{} {
 type decimalStringGener struct{}
 
 func (g *decimalStringGener) gen() interface{} {
-	return strconv.FormatFloat(rand.Float64(), 'E', -1, 64)
+	tempDecimal:= new(types.MyDecimal);
+	if err:= tempDecimal.FromFloat64(rand.Float64()); err!=nil{panic(err)}
+	return tempDecimal.String();
 }
 
 type jsonTimeGener struct{}
