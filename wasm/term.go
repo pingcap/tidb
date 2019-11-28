@@ -17,6 +17,9 @@ type Terminal interface {
 	// WriteEmpty format the empty result to string
 	WriteEmpty(time.Duration) string
 
+	// WriteSuccess returns a success message
+	WriteSuccess(time.Duration) string
+
 	// Error format error to string
 	Error(error) string
 }
@@ -79,8 +82,13 @@ func (t *Term) WriteRows(fields []*ast.ResultField, rows [][]string, d time.Dura
 }
 
 // WriteEmpty format the empty result to string
-func (t *Term) WriteEmpty(d time.Duration) string {
+func (t *Term) WriteSuccess(d time.Duration) string {
 	return fmt.Sprintf("Execute success (%.2f sec)\n", d.Seconds())
+}
+
+// WriteEmpty format the empty result to string
+func (t *Term) WriteEmpty(d time.Duration) string {
+	return fmt.Sprintf("Empty set (%.2f sec)\n", d.Seconds())
 }
 
 // divider add a line ('--------') to split two rows

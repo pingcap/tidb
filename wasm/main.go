@@ -55,7 +55,7 @@ func registerExecuteSQL(k *Kit, term Terminal) {
 					if err := k.ExecFile(); err != nil {
 						ret += term.Error(err)
 					} else {
-						ret += term.WriteEmpty(time.Now().Sub(start))
+						ret += term.WriteSuccess(time.Now().Sub(start))
 					}
 					continue
 				}
@@ -63,12 +63,21 @@ func registerExecuteSQL(k *Kit, term Terminal) {
 				if rs, err := k.Exec(sql); err != nil {
 					ret += term.Error(err)
 				} else if rs == nil {
-					ret += term.WriteEmpty(time.Now().Sub(start))
-				} else if rows, err := k.ResultSetToStringSlice(rs); err != nil {
-					ret += term.Error(err)
+					ret += term.WriteSuccess(time.Now().Sub(start))
 				} else {
-					msg := term.WriteRows(rs.Fields(), rows, time.Now().Sub(start))
-					ret += msg
+					rows, err := k.ResultSetToStringSlice(rs);
+					if err != nil {
+						ret += term.Error(err)
+					} else if len(rows) == 0 {
+						if strings.Contains(strings.ToLower(sql), "select") {
+							ret += term.WriteEmpty(time.Now().Sub(start))
+						} else {
+							ret += term.WriteSuccess(time.Now().Sub(start))
+						}
+					} else {
+						msg := term.WriteRows(rs.Fields(), rows, time.Now().Sub(start))
+						ret += msg
+					}
 				}
 			}
 			fmt.Println(ret)
