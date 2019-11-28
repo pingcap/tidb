@@ -784,6 +784,25 @@ func (b *builtinCastRealAsRealSig) evalReal(row chunk.Row) (res float64, isNull 
 	return
 }
 
+func (b *builtinCastRealAsRealSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastRealAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastRealAsIntSig struct {
 	baseBuiltinCastFunc
 }
@@ -815,6 +834,25 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 	return res, isNull, err
 }
 
+func (b *builtinCastRealAsIntSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastRealAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastRealAsDecimalSig struct {
 	baseBuiltinCastFunc
 }
@@ -839,6 +877,25 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
 	return res, false, err
+}
+
+func (b *builtinCastRealAsDecimalSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastRealAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastRealAsStringSig struct {
@@ -946,6 +1003,25 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row chunk.Row) (res *types.
 	return res, false, err
 }
 
+func (b *builtinCastDecimalAsDecimalSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastDecimalAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastDecimalAsIntSig struct {
 	baseBuiltinCastFunc
 }
@@ -985,6 +1061,25 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 	}
 
 	return res, false, err
+}
+
+func (b *builtinCastDecimalAsIntSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastDecimalAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastDecimalAsStringSig struct {
@@ -1031,6 +1126,25 @@ func (b *builtinCastDecimalAsRealSig) evalReal(row chunk.Row) (res float64, isNu
 		res, err = val.ToFloat64()
 	}
 	return res, false, err
+}
+
+func (b *builtinCastDecimalAsRealSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastDecimalAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastDecimalAsTimeSig struct {

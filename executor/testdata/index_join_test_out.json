@@ -5,13 +5,13 @@
       {
         "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_float = t2.v_int",
         "Explain": [
-          "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#5, Column#6, Column#7",
-          "└─IndexJoin_11 12500.00 root inner join, inner:Projection_10, outer key:Column#2, inner key:Column#5",
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─IndexJoin_11 12500.00 root inner join, inner:Projection_10, outer key:test.t1.v_float, inner key:test.t2.v_int",
           "  ├─TableReader_22 10000.00 root data:TableScan_21",
           "  │ └─TableScan_21 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─Projection_10 1.25 root Column#5, Column#6, Column#7, cast(Column#5)",
+          "  └─Projection_10 1.25 root test.t2.v_int, test.t2.v_float, test.t2.v_decimal, cast(test.t2.v_int)->Column#9",
           "    └─IndexLookUp_9 1.25 root ",
-          "      ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_int, range: decided by [eq(Column#5, Column#2)], keep order:false, stats:pseudo",
+          "      ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_int, range: decided by [eq(test.t2.v_int, test.t1.v_float)], keep order:false, stats:pseudo",
           "      └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
         ],
         "Res": [
@@ -22,11 +22,11 @@
       {
         "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_float = t2.v_int",
         "Explain": [
-          "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#5, Column#6, Column#7",
-          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(Column#2, Column#9)]",
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(test.t1.v_float, Column#9)]",
           "  ├─TableReader_24 10000.00 root data:TableScan_23",
           "  │ └─TableScan_23 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─Projection_25 10000.00 root Column#5, Column#6, Column#7, cast(Column#5)",
+          "  └─Projection_25 10000.00 root test.t2.v_int, test.t2.v_float, test.t2.v_decimal, cast(test.t2.v_int)->Column#9",
           "    └─TableReader_27 10000.00 root data:TableScan_26",
           "      └─TableScan_26 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
@@ -38,13 +38,13 @@
       {
         "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_int",
         "Explain": [
-          "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#5, Column#6, Column#7",
-          "└─IndexJoin_11 12500.00 root inner join, inner:Projection_10, outer key:Column#3, inner key:Column#5",
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─IndexJoin_11 12500.00 root inner join, inner:Projection_10, outer key:test.t1.v_decimal, inner key:test.t2.v_int",
           "  ├─TableReader_22 10000.00 root data:TableScan_21",
           "  │ └─TableScan_21 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─Projection_10 1.25 root Column#5, Column#6, Column#7, cast(Column#5)",
+          "  └─Projection_10 1.25 root test.t2.v_int, test.t2.v_float, test.t2.v_decimal, cast(test.t2.v_int)->Column#9",
           "    └─IndexLookUp_9 1.25 root ",
-          "      ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_int, range: decided by [eq(Column#5, Column#3)], keep order:false, stats:pseudo",
+          "      ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_int, range: decided by [eq(test.t2.v_int, test.t1.v_decimal)], keep order:false, stats:pseudo",
           "      └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
         ],
         "Res": [
@@ -55,13 +55,145 @@
       {
         "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_int",
         "Explain": [
-          "Projection_6 12500.00 root Column#1, Column#2, Column#3, Column#5, Column#6, Column#7",
-          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(Column#3, Column#9)]",
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(test.t1.v_decimal, Column#9)]",
           "  ├─TableReader_24 10000.00 root data:TableScan_23",
           "  │ └─TableScan_23 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─Projection_25 10000.00 root Column#5, Column#6, Column#7, cast(Column#5)",
+          "  └─Projection_25 10000.00 root test.t2.v_int, test.t2.v_float, test.t2.v_decimal, cast(test.t2.v_int)->Column#9",
           "    └─TableReader_27 10000.00 root data:TableScan_26",
           "      └─TableScan_26 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_int = t2.v_float",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─IndexJoin_10 12500.00 root inner join, inner:IndexLookUp_9, outer key:Column#9, inner key:test.t2.v_float",
+          "  ├─Projection_19 10000.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, cast(test.t1.v_int)->Column#9",
+          "  │ └─TableReader_21 10000.00 root data:TableScan_20",
+          "  │   └─TableScan_20 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─IndexLookUp_9 1.25 root ",
+          "    ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_float, range: decided by [eq(test.t2.v_float, Column#9)], keep order:false, stats:pseudo",
+          "    └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_int = t2.v_float",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─HashLeftJoin_19 12500.00 root inner join, inner:TableReader_25, equal:[eq(Column#9, test.t2.v_float)]",
+          "  ├─Projection_21 10000.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, cast(test.t1.v_int)->Column#9",
+          "  │ └─TableReader_23 10000.00 root data:TableScan_22",
+          "  │   └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_25 10000.00 root data:TableScan_24",
+          "    └─TableScan_24 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_float",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─IndexJoin_10 12500.00 root inner join, inner:IndexLookUp_9, outer key:Column#9, inner key:test.t2.v_float",
+          "  ├─Projection_19 10000.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, cast(test.t1.v_decimal)->Column#9",
+          "  │ └─TableReader_21 10000.00 root data:TableScan_20",
+          "  │   └─TableScan_20 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─IndexLookUp_9 1.25 root ",
+          "    ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_float, range: decided by [eq(test.t2.v_float, Column#9)], keep order:false, stats:pseudo",
+          "    └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_decimal = t2.v_float",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─HashLeftJoin_19 12500.00 root inner join, inner:TableReader_25, equal:[eq(Column#9, test.t2.v_float)]",
+          "  ├─Projection_21 10000.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, cast(test.t1.v_decimal)->Column#9",
+          "  │ └─TableReader_23 10000.00 root data:TableScan_22",
+          "  │   └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_25 10000.00 root data:TableScan_24",
+          "    └─TableScan_24 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_float = t2.v_decimal",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─IndexJoin_11 12500.00 root inner join, inner:Projection_10, outer key:test.t1.v_float, inner key:test.t2.v_decimal",
+          "  ├─TableReader_22 10000.00 root data:TableScan_21",
+          "  │ └─TableScan_21 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_10 1.25 root test.t2.v_int, test.t2.v_float, test.t2.v_decimal, cast(test.t2.v_decimal)->Column#9",
+          "    └─IndexLookUp_9 1.25 root ",
+          "      ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_decimal, range: decided by [eq(test.t2.v_decimal, test.t1.v_float)], keep order:false, stats:pseudo",
+          "      └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_float = t2.v_decimal",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─HashLeftJoin_21 12500.00 root inner join, inner:Projection_25, equal:[eq(test.t1.v_float, Column#9)]",
+          "  ├─TableReader_24 10000.00 root data:TableScan_23",
+          "  │ └─TableScan_23 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_25 10000.00 root test.t2.v_int, test.t2.v_float, test.t2.v_decimal, cast(test.t2.v_decimal)->Column#9",
+          "    └─TableReader_27 10000.00 root data:TableScan_26",
+          "      └─TableScan_26 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1, t2) */ * from t1 join t2 on t1.v_int = t2.v_decimal",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─IndexJoin_10 12500.00 root inner join, inner:IndexLookUp_9, outer key:Column#9, inner key:test.t2.v_decimal",
+          "  ├─Projection_19 10000.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, cast(test.t1.v_int)->Column#9",
+          "  │ └─TableReader_21 10000.00 root data:TableScan_20",
+          "  │   └─TableScan_20 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─IndexLookUp_9 1.25 root ",
+          "    ├─IndexScan_7 1.25 cop[tikv] table:t2, index:v_decimal, range: decided by [eq(test.t2.v_decimal, Column#9)], keep order:false, stats:pseudo",
+          "    └─TableScan_8 1.25 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1.0000000000 1 1 1.0000000000",
+          "2 2 2.0000000000 2 2 2.0000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t1, t2) */ * from t1 join t2 on t1.v_int = t2.v_decimal",
+        "Explain": [
+          "Projection_6 12500.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, test.t2.v_int, test.t2.v_float, test.t2.v_decimal",
+          "└─HashLeftJoin_19 12500.00 root inner join, inner:TableReader_25, equal:[eq(Column#9, test.t2.v_decimal)]",
+          "  ├─Projection_21 10000.00 root test.t1.v_int, test.t1.v_float, test.t1.v_decimal, cast(test.t1.v_int)->Column#9",
+          "  │ └─TableReader_23 10000.00 root data:TableScan_22",
+          "  │   └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_25 10000.00 root data:TableScan_24",
+          "    └─TableScan_24 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Res": [
           "1 1 1.0000000000 1 1 1.0000000000",
