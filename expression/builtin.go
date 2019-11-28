@@ -252,6 +252,10 @@ func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error)
 	return json.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
+func (b *baseBuiltinFunc) vectorized() bool {
+	return false
+}
+
 func (b *baseBuiltinFunc) supportReverseEval() bool {
 	return false
 }
@@ -270,11 +274,7 @@ func (b *baseBuiltinFunc) isChildrenReversed() bool {
 }
 
 func (b *baseBuiltinFunc) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (types.Datum, error) {
-	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEval() should never be called, please contact the TiDB team for help")
-}
-
-func (b *baseBuiltinFunc) vectorized() bool {
-	return false
+	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
@@ -418,7 +418,6 @@ type reverseBuiltinFunc interface {
 	supportReverseEval() bool
 	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
 	isChildrenReversed() bool
-
 	// reverseEval evaluates the only one column value with given function result.
 	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error)
 }

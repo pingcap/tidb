@@ -762,6 +762,16 @@ func getDatumBound(retType *types.FieldType, rType RoundingType) types.Datum {
 	return types.Datum{}
 }
 
+// The function is for expression's reverse evaluation.
+// Here is an example for what's effort for the function: CastRealAsInt(t.a),
+// 		if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
+// 		then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
+//      if the result is MaxInt64, and the rounding type is ceiling. Then we should get the MaxFloat64
+//      instead of float64(MaxInt64).
+// Another example: cast(1.1 as signed) = 1,
+// 		when we get the answer 1, we can only reversely evaluate 1.0 as the column value. So in this
+// 		case, we should judge whether the rounding type are ceiling. If it is, then we should plus one for
+// 		1.0 and get the reverse result 2.0.
 func changeReverseResultByUpperLowerBound(
 	sc *stmtctx.StatementContext,
 	retType *types.FieldType,
@@ -780,7 +790,7 @@ func changeReverseResultByUpperLowerBound(
 		resRetType.Tp = mysql.TypeLonglong
 	case types.KindUint64:
 		resRetType.Tp = mysql.TypeLonglong
-		resRetType.Flag |= mysql.UniqueFlag
+		resRetType.Flag |= mysql.UnsignedFlag
 	case types.KindFloat32:
 		resRetType.Tp = mysql.TypeFloat
 	case types.KindFloat64:
@@ -797,6 +807,57 @@ func changeReverseResultByUpperLowerBound(
 	}
 	if cmp == 0 {
 		d = getDatumBound(retType, rType)
+	} else if rType == Ceiling {
+		switch retType.Tp {
+		case mysql.TypeShort:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				if d.GetUint64() != math.MaxUint16 {
+					d.SetUint64(d.GetUint64() + 1)
+				}
+			} else {
+				if d.GetInt64() != math.MaxInt16 {
+					d.SetInt64(d.GetInt64() + 1)
+				}
+			}
+		case mysql.TypeLong:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				if d.GetUint64() != math.MaxUint32 {
+					d.SetUint64(d.GetUint64() + 1)
+				}
+			} else {
+				if d.GetInt64() != math.MaxInt32 {
+					d.SetInt64(d.GetInt64() + 1)
+				}
+			}
+		case mysql.TypeLonglong:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				if d.GetUint64() != math.MaxUint64 {
+					d.SetUint64(d.GetUint64() + 1)
+				}
+			} else {
+				if d.GetInt64() != math.MaxInt64 {
+					d.SetInt64(d.GetInt64() + 1)
+				}
+			}
+		case mysql.TypeFloat:
+			if d.GetFloat32() != math.MaxFloat32 {
+				d.SetFloat32(d.GetFloat32() + 1.0)
+			}
+		case mysql.TypeDouble:
+			if d.GetFloat64() != math.MaxFloat64 {
+				d.SetFloat64(d.GetFloat64() + 1.0)
+			}
+		case mysql.TypeNewDecimal:
+			if d.GetMysqlDecimal().Compare(types.NewMaxOrMinDec(false, retType.Flen, retType.Decimal)) != 0 {
+				var decimalOne, newD types.MyDecimal
+				one := decimalOne.FromInt(1)
+				err = types.DecimalAdd(d.GetMysqlDecimal(), one, &newD)
+				if err != nil {
+					return d, err
+				}
+				d = types.NewDecimalDatum(&newD)
+			}
+		}
 	}
 	return d, nil
 }
