@@ -272,6 +272,9 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
 	e.finalInputCh = make(chan *chunk.Chunk, finalConcurrency)
+	for i := 0; i < finalConcurrency; i++ {
+		e.finalInputCh <- newFirstChunk(e)
+	}
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -668,28 +671,28 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	if e.executed {
 		return nil
 	}
-	for !chk.IsFull() {
-		e.finalInputCh <- chk
+	for {
 		result, ok := <-e.finalOutputCh
-		if !ok { // all finalWorkers exited
+		if !ok {
 			e.executed = true
-			if chk.NumRows() > 0 { // but there are some data left
-				return nil
-			}
 			if e.isChildReturnEmpty && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
 			}
-			e.isChildReturnEmpty = false
 			return nil
 		}
 		if result.err != nil {
 			return result.err
 		}
+		chk.Append(result.chk, 0, result.chk.NumRows())
+		result.chk.Reset()
+		e.finalInputCh <- result.chk
 		if chk.NumRows() > 0 {
 			e.isChildReturnEmpty = false
 		}
+		if chk.IsFull() {
+			return nil
+		}
 	}
-	return nil
 }
 
 // unparallelExec executes hash aggregation algorithm in single thread.
