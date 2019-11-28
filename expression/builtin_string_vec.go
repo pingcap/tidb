@@ -1175,11 +1175,67 @@ func (b *builtinLocateBinary2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinLocateBinary3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals LOCATE(substr,str,pos), case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1, buf2)
+	ds := buf2.Int64s()
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		pos := ds[i]
+		pos--
+		subStr := buf0.GetString(i)
+		str := buf1.GetString(i)
+		subStrLen := len(subStr)
+		if pos < 0 || pos > int64(len(str)-subStrLen) {
+			i64s[i] = 0
+			continue
+		} else if subStrLen == 0 {
+			i64s[i] = pos + 1
+			continue
+		}
+		slice := str[pos:]
+		idx := strings.Index(slice, subStr)
+		if idx != -1 {
+			i64s[i] = pos + int64(idx) + 1
+			continue
+		}
+		i64s[i] = 0
+	}
+	return nil
 }
 
 func (b *builtinExportSet4ArgSig) vectorized() bool {
