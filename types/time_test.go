@@ -740,7 +740,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc.TimeZone = losAngelesTz
 	tbl = []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Except string
 	}{
 		{"2019-11-25 07:25:45.123456", 4, "2019-11-25 07:25:45.1235"},
