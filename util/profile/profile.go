@@ -15,7 +15,6 @@ package profile
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"runtime/pprof"
