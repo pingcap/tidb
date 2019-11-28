@@ -456,7 +456,7 @@ const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfile
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMemory contains the columns name definitions for table tidb_profile_cpu_memory
+// tableTiDBProfileMemory contains the columns name definitions for table tidb_profile_memory
 const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMemory + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +

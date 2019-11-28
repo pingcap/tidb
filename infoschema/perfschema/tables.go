@@ -192,7 +192,6 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 		err  error
 	}
 
-	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(servers))
 	for _, server := range servers {
@@ -253,6 +252,7 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 		results = append(results, result)
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].addr < results[j].addr })
+	var finalRows [][]types.Datum
 	for _, result := range results {
 		addr := types.NewStringDatum(result.addr)
 		for _, row := range result.rows {
