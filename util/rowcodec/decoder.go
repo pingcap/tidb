@@ -14,6 +14,7 @@
 package rowcodec
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,13 +32,6 @@ type Decoder struct {
 	columns     []ColInfo
 	handleColID int64
 	loc         *time.Location
-	forceVarint bool
-}
-
-// WithForceVarint is option to NewDecoder to force decode number in row as varint.
-// statistic need using varint to backwards compatibility.
-func WithForceVarint(d *Decoder) {
-	d.forceVarint = true
 }
 
 // NewDecoder creates a NewDecoder.
@@ -336,31 +330,17 @@ func (decoder *Decoder) DecodeToBytes(outputOffset map[int64]int, handle int64, 
 	}
 	values := make([][]byte, len(outputOffset))
 	for _, col := range decoder.columns {
-		var err error
-		tp, err := fieldType2Flag(byte(col.Tp), uint(col.Flag))
-		if err != nil {
-			return nil, err
-		}
+		tp := fieldType2Flag(byte(col.Tp), uint(col.Flag))
 		colID := col.ID
 		offset := outputOffset[colID]
 		if col.IsPKHandle || colID == model.ExtraHandleID {
 			handleData := cacheBytes
-			if decoder.forceVarint {
-				if mysql.HasUnsignedFlag(uint(col.Flag)) {
-					handleData = append(handleData, VaruintFlag)
-					handleData = codec.EncodeUvarint(handleData, uint64(handle))
-				} else {
-					handleData = append(handleData, VarintFlag)
-					handleData = codec.EncodeVarint(handleData, handle)
-				}
+			if mysql.HasUnsignedFlag(uint(col.Flag)) {
+				handleData = append(handleData, VaruintFlag)
+				handleData = codec.EncodeUvarint(handleData, uint64(handle))
 			} else {
-				if mysql.HasUnsignedFlag(uint(col.Flag)) {
-					handleData = append(handleData, UintFlag)
-					handleData = codec.EncodeUint(handleData, uint64(handle))
-				} else {
-					handleData = append(handleData, IntFlag)
-					handleData = codec.EncodeInt(handleData, handle)
-				}
+				handleData = append(handleData, VarintFlag)
+				handleData = codec.EncodeVarint(handleData, handle)
 			}
 			values[offset] = handleData
 			continue
@@ -403,21 +383,11 @@ func (decoder *Decoder) encodeOldDatum(tp byte, val []byte) []byte {
 		buf = append(buf, CompactBytesFlag)
 		buf = codec.EncodeCompactBytes(buf, val)
 	case IntFlag:
-		if decoder.forceVarint {
-			buf = append(buf, VarintFlag)
-			buf = codec.EncodeVarint(buf, decodeInt(val))
-		} else {
-			buf = append(buf, IntFlag)
-			buf = codec.EncodeInt(buf, decodeInt(val))
-		}
+		buf = append(buf, VarintFlag)
+		buf = codec.EncodeVarint(buf, decodeInt(val))
 	case UintFlag:
-		if decoder.forceVarint {
-			buf = append(buf, VaruintFlag)
-			buf = codec.EncodeUvarint(buf, decodeUint(val))
-		} else {
-			buf = append(buf, UintFlag)
-			buf = codec.EncodeUint(buf, decodeUint(val))
-		}
+		buf = append(buf, VaruintFlag)
+		buf = codec.EncodeUvarint(buf, decodeUint(val))
 	default:
 		buf = append(buf, tp)
 		buf = append(buf, val...)
@@ -426,7 +396,7 @@ func (decoder *Decoder) encodeOldDatum(tp byte, val []byte) []byte {
 }
 
 // fieldType2Flag transforms field type into kv type flag.
-func fieldType2Flag(tp byte, f uint) (flag byte, err error) {
+func fieldType2Flag(tp byte, f uint) (flag byte) {
 	switch tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if f&mysql.UnsignedFlag == 0 {
@@ -454,7 +424,7 @@ func fieldType2Flag(tp byte, f uint) (flag byte, err error) {
 	case mysql.TypeNull:
 		flag = NilFlag
 	default:
-		err = errors.Errorf("unknown field type %d", tp)
+		panic(fmt.Sprintf("unknown field type %d", tp))
 	}
 	return
 }

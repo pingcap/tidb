@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.	package rowcodec_test
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -570,7 +570,7 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 	c.Assert(err.Error(), Equals, "Miss column 2")
 }
 
-func (s *testSuite) TestForceVarint(c *C) {
+func (s *testSuite) TestVarintCompatibility(c *C) {
 	encodeAndDecodeByte := func(c *C, testData []testData) {
 		// transform test data into input.
 		colIDs := make([]int64, 0, len(testData))
@@ -602,7 +602,7 @@ func (s *testSuite) TestForceVarint(c *C) {
 		sc.TimeZone = time.UTC
 		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 		c.Assert(err, IsNil)
-		decoder := rowcodec.NewDecoder(cols, -1, sc.TimeZone, rowcodec.WithForceVarint)
+		decoder := rowcodec.NewDecoder(cols, -1, sc.TimeZone)
 		// decode to old row bytes.
 		colOffset := make(map[int64]int)
 		for i, t := range testData {
@@ -712,9 +712,6 @@ func (s *testSuite) TestCodecUtil(c *C) {
 		})
 	}
 	d := rowcodec.NewDecoder(cols, -1, nil)
-	_, err = d.DecodeToDatumMap(newRow, -1, nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.String(), Equals, "(1:[1]),(2:[2]),(3:[3])")
 
 	// test ColumnIsNull
 	isNil, err := d.ColumnIsNull(newRow, 4, nil)

@@ -15,8 +15,6 @@ package rowcodec
 
 import (
 	"encoding/binary"
-	"fmt"
-	"strings"
 )
 
 // row is the struct type used to access the a row.
@@ -34,31 +32,6 @@ type row struct {
 	// for large row
 	colIDs32  []uint32
 	offsets32 []uint32
-}
-
-// String implements the strings.Stringer interface.
-func (r row) String() string {
-	var colValStrs []string
-	for i := 0; i < int(r.numNotNullCols); i++ {
-		var colID, offStart, offEnd int64
-		if r.large {
-			colID = int64(r.colIDs32[i])
-			if i != 0 {
-				offStart = int64(r.offsets32[i-1])
-			}
-			offEnd = int64(r.offsets32[i])
-		} else {
-			colID = int64(r.colIDs[i])
-			if i != 0 {
-				offStart = int64(r.offsets[i-1])
-			}
-			offEnd = int64(r.offsets[i])
-		}
-		colValData := r.data[offStart:offEnd]
-		colValStr := fmt.Sprintf("(%d:%d)", colID, colValData) // TODO: optimize for string column
-		colValStrs = append(colValStrs, colValStr)
-	}
-	return strings.Join(colValStrs, ",")
 }
 
 func (r *row) getData(i int) []byte {
