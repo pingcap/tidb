@@ -206,7 +206,7 @@ func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (string, bool, error) 
 	if err != nil {
 		return "", isNull, err
 	} else if isNull {
-		return "NULL", false, err
+		return "NULL", true, err
 	}
 	tlen := len(str)
 	if tlen >= 2 {
@@ -1062,7 +1062,7 @@ func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil {
 		return "", isNull, err
 	} else if isNull {
-		return "NULL", false, err
+		return "NULL", true, err
 	}
 	return strconv.Quote(str), false, nil
 }

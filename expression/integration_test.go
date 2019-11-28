@@ -3896,8 +3896,8 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	tk.MustGetErrCode("select json_unquote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
 	tk.MustGetErrCode("select json_unquote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
 
-	tk.MustQuery("select json_quote(NULL);").Check(testkit.Rows("NULL"))
-	tk.MustQuery("select json_unquote(NULL);").Check(testkit.Rows("NULL"))
+	tk.MustQuery("select json_quote(NULL);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select json_unquote(NULL);").Check(testkit.Rows("<nil>"))
 
 	tk.MustQuery("select json_quote('abc');").Check(testkit.Rows(`"abc"`))
 	tk.MustQuery(`select json_quote(convert('"abc"' using ascii));`).Check(testkit.Rows(`"\"abc\""`))

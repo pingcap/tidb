@@ -313,7 +313,7 @@ func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendString("NULL")
+			result.AppendNull()
 			continue
 		}
 		result.AppendString(strconv.Quote(buf.GetString(i)))
@@ -754,7 +754,7 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendString("NULL")
+			result.AppendNull()
 			continue
 		}
 		str := buf.GetString(i)
