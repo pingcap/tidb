@@ -46,6 +46,7 @@ var perfSchemaTables = []string{
 	tableTiDBAllocsProfile,
 	tableTiDBProfileBlock,
 	tableTiDBProfileGoroutines,
+	tableTiKVProfileCPU,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -385,6 +386,7 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.
 const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
+	"SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
 	"STMT_TYPE VARCHAR(64) NOT NULL," +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
 	"DIGEST VARCHAR(64) NOT NULL," +
@@ -446,7 +448,7 @@ const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
-// tableTiDBProfileCPU contains the columns name definitions for table events_cpu_profile_graph
+// tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -455,7 +457,7 @@ const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfile
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMemory contains the columns name definitions for table events_memory_profile_graph
+// tableTiDBProfileMemory contains the columns name definitions for table tidb_profile_memory
 const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMemory + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -464,7 +466,7 @@ const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMutex contains the columns name definitions for table events_mutex_profile_graph
+// tableTiDBProfileMutex contains the columns name definitions for table tidb_profile_mutex
 const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMutex + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -473,7 +475,7 @@ const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBAllocsProfile contains the columns name definitions for table events_allocs_profile_graph
+// tableTiDBAllocsProfile contains the columns name definitions for table tidb_profile_allocs
 const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileAllocs + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -482,7 +484,7 @@ const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileBlock contains the columns name definitions for table events_block_profile_graph
+// tableTiDBProfileBlock contains the columns name definitions for table tidb_profile_block
 const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileBlock + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -491,9 +493,19 @@ const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileGoroutines contains the columns name definitions for table events_goroutine
+// tableTiDBProfileGoroutines contains the columns name definitions for table tidb_profile_goroutines
 const tableTiDBProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileGoroutines + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
 	"LOCATION VARCHAR(512));"
+
+	// tableTiKVProfileCPU contains the columns name definitions for table tikv_profile_cpu
+const tableTiKVProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiKVProfileCPU + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
