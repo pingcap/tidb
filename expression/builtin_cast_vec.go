@@ -1541,8 +1541,8 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(input *chunk.Chunk, re
 			}
 			if dur == types.ZeroDuration {
 				result.SetNull(i, true)
+				continue
 			}
-			continue
 		}
 		ds[i] = dur.Duration
 	}
