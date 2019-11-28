@@ -28,26 +28,38 @@ func (b *builtinValuesIntSig) vectorized() bool {
 
 func (b *builtinValuesIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	sessionVars := b.ctx.GetSessionVars()
-	n := input.NumRows()
-	result.ResizeInt64(n, true)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if !sessionVars.StmtCtx.InInsertStmt {
-			continue
-		}
+	var res int64
+	isNull := true
+	var err error
+	if !sessionVars.StmtCtx.InInsertStmt {
+		res = 0
+	} else {
 		row := sessionVars.CurrInsertValues
 		if row.IsEmpty() {
-			return errors.New("Session current insert values is nil")
-		}
-		if b.offset < row.Len() {
-			if row.IsNull(b.offset) {
-				continue
+			err = errors.New("Session current insert values is nil")
+		} else {
+			if b.offset < row.Len() {
+				if row.IsNull(b.offset) {
+					res = 0
+				} else {
+					res = row.GetInt64(b.offset)
+					isNull = false
+				}
+			} else {
+				err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 			}
-			i64s[i] = row.GetInt64(b.offset)
-			result.SetNull(i, false)
-			continue
 		}
-		return errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	result.ResizeInt64(n, isNull)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = res
 	}
 	return nil
 }
