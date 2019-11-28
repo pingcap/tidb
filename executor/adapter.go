@@ -619,9 +619,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
-	a.Ctx.GetSessionVars().StartTime = time.Now()
-	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
-	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err

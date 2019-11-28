@@ -100,6 +100,9 @@ record-plan-in-slow-log = 1
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
 
+# When the user uses multi-query and the overall SQL execution time exceeds the following threshold, it will be logged. (Seconds)
+multi-query-threshold = 10
+
 # Maximum query length recorded in log.
 query-log-max-len = 4096
 

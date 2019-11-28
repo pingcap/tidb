@@ -189,6 +189,8 @@ store-limit=0
 [stmt-summary]
 max-stmt-count=1000
 max-sql-length=1024
+[log]
+multi-query-threshold = 100
 `)
 
 	c.Assert(err, IsNil)
@@ -215,6 +217,7 @@ max-sql-length=1024
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.EnableBatchDML, Equals, true)
+	c.Assert(conf.Log.MultiQueryThreshold, Equals, uint64(100))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -224,7 +227,7 @@ max-sql-length=1024
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
-	// Test for lof config.
+	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }))
 
 	// Test for tracing config.
