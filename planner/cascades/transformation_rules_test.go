@@ -63,7 +63,7 @@ func testGroupToString(input []string, output []struct {
 		c.Assert(ok, IsTrue)
 		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
 		c.Assert(err, IsNil)
-		group := convert2Group(logic)
+		group := memo.Convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {

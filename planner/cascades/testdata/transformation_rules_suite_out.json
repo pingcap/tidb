@@ -156,9 +156,9 @@
           "    TableGather_5 input:[Group#4]",
           "Group#4 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
           "    TableScan_4 table:t, pk col:Column#1",
-          "Group#3 Schema:[Column#14,Column#1]",
+          "Group#3 Schema:[Column#14,Column#1], UniqueKey:[Column#1]",
           "    TableGather_5 input:[Group#5]",
-          "Group#5 Schema:[Column#14,Column#1]",
+          "Group#5 Schema:[Column#14,Column#1], UniqueKey:[Column#1]",
           "    Aggregation_6 input:[Group#4], group by:Column#1, funcs:sum(Column#2)"
         ]
       },
@@ -174,9 +174,9 @@
           "    TableGather_5 input:[Group#4]",
           "Group#4 Schema:[Column#1,Column#2,Column#3], UniqueKey:[Column#1]",
           "    TableScan_4 table:t, pk col:Column#1",
-          "Group#3 Schema:[Column#14,Column#16,Column#1]",
+          "Group#3 Schema:[Column#14,Column#16,Column#1], UniqueKey:[Column#1]",
           "    TableGather_5 input:[Group#5]",
-          "Group#5 Schema:[Column#14,Column#16,Column#1]",
+          "Group#5 Schema:[Column#14,Column#16,Column#1], UniqueKey:[Column#1]",
           "    Aggregation_6 input:[Group#4], group by:Column#1, plus(Column#1, Column#3), funcs:sum(Column#2)"
         ]
       },

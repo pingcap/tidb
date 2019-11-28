@@ -202,7 +202,7 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 	ds := old.GetExpr().ExprNode.(*plannercore.DataSource)
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
-		expr := convert2GroupExpr(gather)
+		expr := memo.Convert2GroupExpr(gather)
 		expr.Children[0].SetEngineType(memo.EngineTiKV)
 		newExprs = append(newExprs, expr)
 	}

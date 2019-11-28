@@ -14,6 +14,7 @@
 package memo
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -190,4 +191,42 @@ func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
 	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, newExpr)
 	g.Delete(newExpr)
 	c.Assert(g.GetFirstElem(OperandLimit), IsNil)
+}
+
+func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
+	// case 1: primary key has constant constraint
+	stmt1, err := s.ParseOneStmt("select a from t where a = 10", "", "")
+	c.Assert(err, IsNil)
+	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt1, s.is)
+	c.Assert(err, IsNil)
+	logic1, ok := p1.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	group1 := Convert2Group(logic1)
+	c.Assert(group1.Prop.MaxOneRow, IsTrue)
+	c.Assert(len(group1.Prop.Schema.Keys), Equals, 1)
+
+	// case 2: group by column is key
+	stmt2, err := s.ParseOneStmt("select b, sum(a) from t group by b", "", "")
+	c.Assert(err, IsNil)
+	p2, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt2, s.is)
+	c.Assert(err, IsNil)
+	logic2, ok := p2.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	group2 := Convert2Group(logic2)
+	c.Assert(group2.Prop.MaxOneRow, IsFalse)
+	c.Assert(len(group2.Prop.Schema.Keys), Equals, 1)
+
+	// case 3: build key info for new Group
+	newSel := plannercore.LogicalSelection{}.Init(s.sctx, 0)
+	newExpr1 := NewGroupExpr(newSel)
+	newExpr1.SetChildren(group2)
+	newGroup1 := NewGroupWithSchema(newExpr1, group2.Prop.Schema)
+	c.Assert(len(newGroup1.Prop.Schema.Keys), Equals, 1)
+
+	// case 4: build maxOneRow for new Group
+	newLimit := plannercore.LogicalLimit{Count: 1}.Init(s.sctx, 0)
+	newExpr2 := NewGroupExpr(newLimit)
+	newExpr2.SetChildren(group2)
+	newGroup2 := NewGroupWithSchema(newExpr2, group2.Prop.Schema)
+	c.Assert(newGroup2.Prop.MaxOneRow, IsTrue)
 }
