@@ -33,7 +33,7 @@ var CPUProfileInterval = 30 * time.Second
 // Collector is used to collect the profile results
 type Collector struct{}
 
-// ProfileReaderToDatums reads data from reader and returns the flamegraph which is organized by tree form
+// ProfileReaderToDatums reads data from reader and returns the flamegraph which is organized by tree form.
 func (c *Collector) ProfileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
 	p, err := profile.Parse(f)
 	if err != nil {
