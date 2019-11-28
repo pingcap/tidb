@@ -356,6 +356,7 @@ func NewRulePushSelDownProjection() Transformation {
 func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
@@ -366,7 +367,7 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	for _, cond := range sel.Conditions {
 		if !expression.HasGetSetVarFunc(cond) {
-			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, proj.Schema(), proj.Exprs))
+			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, projSchema, proj.Exprs))
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
 		}
@@ -383,7 +384,7 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	if len(canNotBePushed) == 0 {
 		return []*memo.GroupExpr{newProjExpr}, true, false, nil
 	}
-	newProjGroup := memo.NewGroupWithSchema(newProjExpr, proj.Schema())
+	newProjGroup := memo.NewGroupWithSchema(newProjExpr, projSchema)
 	newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
 	newTopSelExpr := memo.NewGroupExpr(newTopSel)
 	newTopSelExpr.SetChildren(newProjGroup)
@@ -413,6 +414,7 @@ func NewRulePushSelDownAggregation() Transformation {
 func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	agg := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	aggSchema := old.Children[0].Prop.Schema
 	var pushedExprs []expression.Expression
 	var remainedExprs []expression.Expression
 	exprsOriginal := make([]expression.Expression, 0, len(agg.AggFuncs))
@@ -439,7 +441,7 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 			}
 			if canPush {
 				// TODO: Don't substitute since they should be the same column.
-				newCond := expression.ColumnSubstitute(cond, agg.Schema(), exprsOriginal)
+				newCond := expression.ColumnSubstitute(cond, aggSchema, exprsOriginal)
 				pushedExprs = append(pushedExprs, newCond)
 			} else {
 				remainedExprs = append(remainedExprs, cond)
@@ -466,7 +468,7 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 		return []*memo.GroupExpr{aggGroupExpr}, true, false, nil
 	}
 
-	aggGroup := memo.NewGroupWithSchema(aggGroupExpr, agg.Schema())
+	aggGroup := memo.NewGroupWithSchema(aggGroupExpr, aggSchema)
 	remainedSel := plannercore.LogicalSelection{Conditions: remainedExprs}.Init(sctx, sel.SelectBlockOffset())
 	remainedGroupExpr := memo.NewGroupExpr(remainedSel)
 	remainedGroupExpr.SetChildren(aggGroup)
