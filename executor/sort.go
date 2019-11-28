@@ -167,7 +167,9 @@ func (e *SortExec) externalSorting() (err error) {
 	e.initCompareFuncs()
 	e.buildKeyColumns()
 	e.rowPtrsInDisk = e.initPointersForListInDisk(e.rowChunksInDisk)
-	e.initPartitionListAndRowPtrs()
+
+	e.partitionList = make([]*chunk.ListInDisk, 0)
+	e.partitionRowPtrs = make([][]chunk.RowPtr, 0)
 	// partition sort
 	// the part num will be adjusted in the next pr.
 	for i := 0; i < 1; i++ {
@@ -177,33 +179,25 @@ func (e *SortExec) externalSorting() (err error) {
 		}
 		e.initPointers()
 		sort.Slice(e.rowPtrs, e.keyColumnsLess)
-		err = e.restorePartitionToDisk()
+		listInDisk, err := e.spillToDiskByRowPtr()
 		if err != nil {
 			return err
 		}
+		e.partitionList = append(e.partitionList, listInDisk)
+		e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
 	}
 	// merge sort
 	// merge sort will be implemented in the next pr.
+	// Now it only read data from partition and restore again.
 	err = e.readPartition(e.partitionList[0], e.partitionRowPtrs[0])
 	if err != nil {
 		return err
 	}
 	e.initPointers()
 	e.finalChunksInDisk, err = e.spillToDiskByRowPtr()
+
 	e.finalRowPtrs = e.initPointersForListInDisk(e.finalChunksInDisk)
-	return nil
-}
-
-func (e *SortExec) initPartitionListAndRowPtrs() {
-	e.partitionList = make([]*chunk.ListInDisk, 0)
-	e.partitionRowPtrs = make([][]chunk.RowPtr, 0)
-}
-
-func (e *SortExec) restorePartitionToDisk() (err error) {
-	listInDisk, err := e.spillToDiskByRowPtr()
-	e.partitionList = append(e.partitionList, listInDisk)
-	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
-	return nil
+	return err
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
@@ -307,10 +301,6 @@ func (e *SortExec) keyColumnsLess(i, j int) bool {
 }
 
 func (e *SortExec) readPartition(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) error {
-	if len(rowPtrs) == 0 {
-		e.rowChunks = nil
-		return nil
-	}
 	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	for _, rowPtr := range rowPtrs {
 		rowPtr, err := disk.GetRow(rowPtr)
