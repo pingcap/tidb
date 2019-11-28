@@ -81,6 +81,8 @@ const (
 	HintTiFlash = "tiflash"
 	// HintTiKV is a label represents the tikv storage type.
 	HintTiKV = "tikv"
+	// HintIndexMerge is a hint to enforce using some indexes at the same time.
+	HintIndexMerge = "use_index_merge"
 )
 
 const (
@@ -2127,7 +2129,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
-		indexHintList                                                         []indexHintInfo
+		indexHintList, indexMergeHintList                                     []indexHintInfo
 		tiflashTables, tikvTables                                             []hintTableInfo
 		aggHints                                                              aggHintInfo
 	)
@@ -2188,6 +2190,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			if hint.StoreType.L == HintTiKV {
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
+		case HintIndexMerge:
+			if len(hint.Tables) != 0 {
+				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2200,6 +2213,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
 		aggHints:                  aggHints,
+		indexMergeHintList:        indexMergeHintList,
 	})
 }
 
@@ -2421,6 +2435,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
 }
 
@@ -2529,6 +2544,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
+	// extract the IndexMergeHint
+	var indexMergeHints []*ast.IndexHint
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexMergeHintList {
+			if hint.tblName.L == tblName.L {
+				indexMergeHints = append(indexMergeHints, hint.indexHint)
+			}
+		}
+	}
 	ds := DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -2536,6 +2560,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,
 		indexHints:          tn.IndexHints,
+		indexMergeHints:     indexMergeHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
@@ -2545,7 +2570,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
-	for _, col := range columns {
+	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -2558,6 +2583,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
 			RetType:  &col.FieldType,
+			OrigName: names[i].String(),
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
