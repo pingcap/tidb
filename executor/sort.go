@@ -78,12 +78,10 @@ func (e *SortExec) Close() error {
 			return err
 		}
 	}
-	if e.partitionList != nil {
-		for _, chunkInDisk := range e.partitionList {
-			if chunkInDisk != nil {
-				if err := chunkInDisk.Close(); err != nil {
-					return err
-				}
+	for _, chunkInDisk := range e.partitionList {
+		if chunkInDisk != nil {
+			if err := chunkInDisk.Close(); err != nil {
+				return err
 			}
 		}
 	}
@@ -93,7 +91,7 @@ func (e *SortExec) Close() error {
 		}
 	}
 	e.rowChunksInDisk = nil
-	e.partitionList = nil
+	e.partitionList = e.partitionList[:0]
 	e.finalChunksInDisk = nil
 	e.memTracker = nil
 	return e.children[0].Close()
@@ -112,11 +110,11 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.exceeded = 0
 	e.spilled = 0
 	e.rowChunksInDisk = nil
-	e.rowPtrsInDisk = nil
-	e.partitionList = nil
-	e.partitionRowPtrs = nil
+	e.rowPtrsInDisk = e.rowPtrsInDisk[:0]
+	e.partitionList = e.partitionList[:0]
+	e.partitionRowPtrs = e.partitionRowPtrs[:0]
 	e.finalChunksInDisk = nil
-	e.finalRowPtrs = nil
+	e.finalRowPtrs = e.finalRowPtrs[:0]
 	return e.children[0].Open(ctx)
 }
 
@@ -167,25 +165,21 @@ func (e *SortExec) externalSorting() (err error) {
 	e.initCompareFuncs()
 	e.buildKeyColumns()
 	e.rowPtrsInDisk = e.initPointersForListInDisk(e.rowChunksInDisk)
-
-	e.partitionList = make([]*chunk.ListInDisk, 0)
-	e.partitionRowPtrs = make([][]chunk.RowPtr, 0)
 	// partition sort
-	// the part num will be adjusted in the next pr.
-	for i := 0; i < 1; i++ {
-		err = e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk)
-		if err != nil {
-			return err
-		}
-		e.initPointers()
-		sort.Slice(e.rowPtrs, e.keyColumnsLess)
-		listInDisk, err := e.spillToDiskByRowPtr()
-		if err != nil {
-			return err
-		}
-		e.partitionList = append(e.partitionList, listInDisk)
-		e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
+	// Now only have one partition.
+	// The partition will be adjusted in the next pr.
+	err = e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk)
+	if err != nil {
+		return err
 	}
+	e.initPointers()
+	sort.Slice(e.rowPtrs, e.keyColumnsLess)
+	listInDisk, err := e.spillToDiskByRowPtr()
+	if err != nil {
+		return err
+	}
+	e.partitionList = append(e.partitionList, listInDisk)
+	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
 	// merge sort
 	// merge sort will be implemented in the next pr.
 	// Now it only read data from partition and restore again.
