@@ -197,7 +197,7 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 	for _, server := range servers {
 		statusAddr := server.StatusAddr
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", statusAddr))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", server.Address))
 			continue
 		}
 
