@@ -14,7 +14,7 @@
       {
         "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Projection_25 1.00 root Column#1, Column#2, Column#3",
+          "Projection_25 1.00 root test.tbl.a, test.tbl.b, test.tbl.c",
           "└─IndexLookUp_24 1.00 root limit embedded(offset:2, count:1)",
           "  ├─Limit_23 3.00 cop[tikv] offset:0, count:3",
           "  │ └─IndexScan_21 3.00 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:true, desc",
@@ -26,7 +26,7 @@
         "Plan": [
           "IndexLookUp_15 1.00 root limit embedded(offset:2, count:1)",
           "├─Limit_14 3.00 cop[tikv] offset:0, count:3",
-          "│ └─Selection_13 3.00 cop[tikv] gt(Column#3, 1)",
+          "│ └─Selection_13 3.00 cop[tikv] gt(test.tbl.c, 1)",
           "│   └─IndexScan_11 3.75 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:false",
           "└─TableScan_12 1.00 cop[tikv] table:tbl, keep order:false, stats:pseudo"
         ]
@@ -38,7 +38,7 @@
           "└─IndexLookUp_15 3.00 root ",
           "  ├─IndexScan_11 3.75 cop[tikv] table:tbl, index:b, c, range:(1,+inf], keep order:false",
           "  └─Limit_14 3.00 cop[tikv] offset:0, count:3",
-          "    └─Selection_13 3.00 cop[tikv] gt(Column#1, 1)",
+          "    └─Selection_13 3.00 cop[tikv] gt(test.tbl.a, 1)",
           "      └─TableScan_12 3.75 cop[tikv] table:tbl, keep order:false"
         ]
       }
@@ -50,13 +50,13 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
-          "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(Column#1, Column#4)]",
+          "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_12 9990.00 root data:Selection_11",
-          "│ └─Selection_11 9990.00 cop[tikv] not(isnull(Column#1))",
+          "│ └─Selection_11 9990.00 cop[tikv] not(isnull(test.t.a))",
           "│   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─Selection_13 7992.00 root from_unixtime(cast(Column#5))",
+          "└─Selection_13 7992.00 root from_unixtime(cast(test.t.b))",
           "  └─TableReader_16 9990.00 root data:Selection_15",
-          "    └─Selection_15 9990.00 cop[tikv] not(isnull(Column#4))",
+          "    └─Selection_15 9990.00 cop[tikv] not(isnull(test.t.a))",
           "      └─TableScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
@@ -68,12 +68,66 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01'",
         "Plan": [
-          "HashLeftJoin_9 10000.00 root left outer join, inner:Selection_10 (REVERSED), equal:[eq(Column#1, Column#4)]",
-          "├─Selection_10 8000.00 root ge(cast(Column#2), 2019-01-01 00:00:00.000000)",
+          "HashLeftJoin_9 10000.00 root left outer join, inner:Selection_10 (REVERSED), equal:[eq(test.t.a, test.t.a)]",
+          "├─Selection_10 8000.00 root ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
           "│ └─TableReader_12 10000.00 root data:TableScan_11",
           "│   └─TableScan_11 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─TableReader_14 10000.00 root data:TableScan_13",
           "  └─TableScan_13 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPartitionTableStats",
+    "Cases": [
+      {
+        "SQL": "explain select * from t order by a",
+        "Result": [
+          "Sort_8 10005.00 root test.t.a:asc",
+          "└─Union_11 10005.00 root ",
+          "  ├─TableReader_13 10000.00 root data:TableScan_12",
+          "  │ └─TableScan_12 10000.00 cop[tikv] table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  ├─TableReader_15 1.00 root data:TableScan_14",
+          "  │ └─TableScan_14 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  └─TableReader_17 4.00 root data:TableScan_16",
+          "    └─TableScan_16 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t order by a",
+        "Result": [
+          "15 5",
+          "21 1",
+          "22 2",
+          "23 3",
+          "24 4"
+        ]
+      },
+      {
+        "SQL": "explain select * from t order by a limit 3",
+        "Result": [
+          "TopN_16 3.00 root test.t.a:asc, offset:0, count:3",
+          "└─Union_20 7.00 root ",
+          "  ├─TopN_21 3.00 root test.t.a:asc, offset:0, count:3",
+          "  │ └─TableReader_29 3.00 root data:TopN_28",
+          "  │   └─TopN_28 3.00 cop[tikv] test.t.a:asc, offset:0, count:3",
+          "  │     └─TableScan_27 10000.00 cop[tikv] table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  ├─TopN_34 1.00 root test.t.a:asc, offset:0, count:3",
+          "  │ └─TableReader_42 1.00 root data:TableScan_41",
+          "  │   └─TableScan_41 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  └─TopN_43 3.00 root test.t.a:asc, offset:0, count:3",
+          "    └─TableReader_51 3.00 root data:TopN_50",
+          "      └─TopN_50 3.00 cop[tikv] test.t.a:asc, offset:0, count:3",
+          "        └─TableScan_49 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t order by a limit 3",
+        "Result": [
+          "15 5",
+          "21 1",
+          "22 2"
         ]
       }
     ]

@@ -23,9 +23,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -522,11 +525,71 @@ func (b *builtinQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinInsertBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	pos, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(pos)
+	if err := b.args[1].VecEvalInt(b.ctx, input, pos); err != nil {
+		return err
+	}
+	length, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(length)
+	if err := b.args[2].VecEvalInt(b.ctx, input, length); err != nil {
+		return err
+	}
+	newstr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(newstr)
+	if err := b.args[3].VecEvalString(b.ctx, input, newstr); err != nil {
+		return err
+	}
+	posIs := pos.Int64s()
+	lengthIs := length.Int64s()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if str.IsNull(i) || pos.IsNull(i) || length.IsNull(i) || newstr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		strI := str.GetString(i)
+		strLength := int64(len(strI))
+		posI := posIs[i]
+		if posI < 1 || posI > strLength {
+			result.AppendString(strI)
+			continue
+		}
+		lengthI := lengthIs[i]
+		if lengthI > strLength-posI+1 || lengthI < 0 {
+			lengthI = strLength - posI + 1
+		}
+		newstrI := newstr.GetString(i)
+		if uint64(strLength-lengthI+int64(len(newstrI))) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(strI[0:posI-1] + newstrI + strI[posI+lengthI-1:])
+	}
+	return nil
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
@@ -538,11 +601,41 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinConvertSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	expr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(expr)
+	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
+		return err
+	}
+	// Since charset is already validated and set from getFunction(), there's no
+	// need to get charset from args again.
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+	// return with error.
+	if encoding == nil {
+		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if expr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		exprI := expr.GetString(i)
+		target, _, err := transform.String(encoding.NewDecoder(), exprI)
+		if err != nil {
+			return err
+		}
+		result.AppendString(target)
+	}
+	return nil
 }
 
 func (b *builtinSubstringIndexSig) vectorized() bool {
@@ -739,11 +832,72 @@ func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinLpadBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals LPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
 func (b *builtinLpadBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(strBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+		return err
+	}
+	lenBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lenBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, lenBuf); err != nil {
+		return err
+	}
+	padBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(padBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, padBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := lenBuf.Int64s()
+	lenBuf.MergeNulls(strBuf)
+	for i := 0; i < n; i++ {
+		if lenBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		targetLength := int(i64s[i])
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
+			result.AppendNull()
+			continue
+		}
+
+		if padBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := strBuf.GetString(i)
+		strLength := len(str)
+		padStr := padBuf.GetString(i)
+		padLength := len(padStr)
+		if targetLength < 0 || targetLength > b.tp.Flen || (strLength < targetLength && padLength == 0) {
+			result.AppendNull()
+			continue
+		}
+		if tailLen := targetLength - strLength; tailLen > 0 {
+			repeatCount := tailLen/padLength + 1
+			str = strings.Repeat(padStr, repeatCount)[:tailLen] + str
+		}
+		result.AppendString(str[:targetLength])
+	}
+	return nil
 }
 
 func (b *builtinLpadSig) vectorized() bool {
@@ -982,11 +1136,42 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinLocateBinary2ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLocateBinary2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		subStr := buf0.GetString(i)
+		if len(subStr) == 0 {
+			i64s[i] = 1
+			continue
+		}
+		i64s[i] = int64(strings.Index(buf1.GetString(i), subStr) + 1)
+	}
+	return nil
 }
 
 func (b *builtinLocateBinary3ArgsSig) vectorized() bool {
@@ -1268,11 +1453,44 @@ func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinInstrSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	substr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(substr)
+	if err := b.args[1].VecEvalString(b.ctx, input, substr); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str, substr)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		strI := strings.ToLower(str.GetString(i))
+		substrI := strings.ToLower(substr.GetString(i))
+		idx := strings.Index(strI, substrI)
+		if idx == -1 {
+			res[i] = 0
+			continue
+		}
+		res[i] = int64(utf8.RuneCountInString(strI[:idx]) + 1)
+	}
+	return nil
 }
 
 func (b *builtinOctStringSig) vectorized() bool {
@@ -1587,11 +1805,67 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinTrim3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		useDefaultRemStr := buf1.IsNull(i)
+		direction := ast.TrimDirectionType(buf2.GetInt64(i))
+		baseStr := buf0.GetString(i)
+		remStr := buf1.GetString(i)
+		if direction == ast.TrimLeading {
+			if useDefaultRemStr {
+				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
+			} else {
+				result.AppendString(trimLeft(baseStr, remStr))
+			}
+		} else if direction == ast.TrimTrailing {
+			if useDefaultRemStr {
+				result.AppendString(strings.TrimRight(baseStr, spaceChars))
+			} else {
+				result.AppendString(trimRight(baseStr, remStr))
+			}
+		} else {
+			if useDefaultRemStr {
+				result.AppendString(strings.Trim(baseStr, spaceChars))
+			} else {
+				tmpStr := trimLeft(baseStr, remStr)
+				result.AppendString(trimRight(tmpStr, remStr))
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinOrdSig) vectorized() bool {
@@ -1622,11 +1896,40 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 }
 
 func (b *builtinInstrBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInstrBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	str, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(str)
+	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
+		return err
+	}
+	substr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(substr)
+	if err := b.args[1].VecEvalString(b.ctx, input, substr); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str, substr)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		strI := str.GetString(i)
+		substrI := substr.GetString(i)
+		idx := strings.Index(strI, substrI)
+		res[i] = int64(idx + 1)
+	}
+	return nil
 }
 
 func (b *builtinLengthSig) vectorized() bool {
@@ -2022,11 +2325,30 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinCharLengthBinarySig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharLengthBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	res := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		str := buf.GetString(i)
+		res[i] = int64(len(str))
+	}
+	return nil
 }
 
 func (b *builtinBinSig) vectorized() bool {
