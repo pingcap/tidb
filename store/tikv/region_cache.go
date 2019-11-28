@@ -25,18 +25,22 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
-	btreeDegree                = 32
-	rcDefaultRegionCacheTTLSec = 600
-	invalidatedLastAccessTime  = -1
+	btreeDegree               = 32
+	invalidatedLastAccessTime = -1
 )
+
+// RegionCacheTTLSec is the max idle time for regions in the region cache.
+var RegionCacheTTLSec int64 = 600
 
 var (
 	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_region_from_cache", "ok")
@@ -121,7 +125,7 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
-		if ts-lastAccess > rcDefaultRegionCacheTTLSec {
+		if ts-lastAccess > RegionCacheTTLSec {
 			return false
 		}
 		if atomic.CompareAndSwapInt64(&r.lastAccess, lastAccess, ts) {
@@ -273,6 +277,12 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	if err != nil {
 		return nil, err
 	}
+	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/store/tikv/injectWrongStoreAddr`
+	failpoint.Inject("injectWrongStoreAddr", func(val failpoint.Value) {
+		if a, ok := val.(string); ok && len(a) > 0 {
+			addr = a
+		}
+	})
 	if store == nil || len(addr) == 0 {
 		// Store not found, region must be out of date.
 		cachedRegion.invalidate()
@@ -440,7 +450,8 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
 // Specially it also returns the first key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
-func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+// filter is used to filter some unwanted keys.
+func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter func(key, regionStartKey []byte) bool) (map[RegionVerID][][]byte, RegionVerID, error) {
 	groups := make(map[RegionVerID][][]byte)
 	var first RegionVerID
 	var lastLoc *KeyLocation
@@ -450,6 +461,9 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 			lastLoc, err = c.LocateKey(bo, k)
 			if err != nil {
 				return nil, first, errors.Trace(err)
+			}
+			if filter != nil && filter(k, lastLoc.StartKey) {
+				continue
 			}
 		}
 		id := lastLoc.Region
@@ -888,6 +902,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 			logutil.Logger(context.Background()).Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
@@ -942,11 +957,12 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string     // loaded store address
-	storeID      uint64     // store's id
-	state        uint64     // unsafe store storeState
-	resolveMutex sync.Mutex // protect pd from concurrent init requests
-	fail         uint32     // store fail count, see RegionStore.storeFails
+	addr         string        // loaded store address
+	storeID      uint64        // store's id
+	state        uint64        // unsafe store storeState
+	resolveMutex sync.Mutex    // protect pd from concurrent init requests
+	fail         uint32        // store fail count, see RegionStore.storeFails
+	tokenCount   atomic2.Int64 // used store token count
 }
 
 type resolveState uint64

@@ -370,12 +370,12 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dbName:       v.DBName,
-		tblInfo:      v.TblInfo,
-		indices:      v.Indices,
+		table:        v.Table,
+		indexInfos:   v.IndexInfos,
 		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
-		retCh:        make(chan error, len(v.Indices)),
+		retCh:        make(chan error, len(readerExecs)),
 	}
 	return e
 }
@@ -539,6 +539,9 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor {
 	b.isSelectForUpdate = true
+	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
+		return nil
+	}
 	// Build 'select for update' using the 'for update' ts.
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
@@ -661,6 +664,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	if v.SelectPlan != nil {
+		// Try to update the forUpdateTS for insert/replace into select statements.
+		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
+		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
+			return nil
+		}
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -848,8 +858,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// GetDirtyDB() is safe here. If this table has been modified in the transaction, non-nil DirtyTable
 		// can be found in DirtyDB now, so GetDirtyTable is safe; if this table has not been modified in the
 		// transaction, empty DirtyTable would be inserted into DirtyDB, it does not matter when multiple
-		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Thus we don't use lock
-		// to synchronize here.
+		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Although the DirtyDB looks
+		// safe for data race in all the cases, the map of golang will throw panic when it's accessed in parallel.
+		// So we lock it when getting dirty table.
 		physicalTableID := getPhysicalTableID(x.table)
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
@@ -1394,6 +1405,9 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
+	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+		return nil
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -1476,6 +1490,9 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
+	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+		return nil
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -1491,6 +1508,20 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblID2Table:  tblID2table,
 	}
 	return deleteExec
+}
+
+// updateForUpdateTSIfNeeded updates the ForUpdateTS for a pessimistic transaction if needed.
+// PointGet executor will get conflict error if the ForUpdateTS is older than the latest commitTS,
+// so we don't need to update now for better latency.
+func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.PhysicalPlan) error {
+	txnCtx := b.ctx.GetSessionVars().TxnCtx
+	if !txnCtx.IsPessimistic {
+		return nil
+	}
+	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
+		return nil
+	}
+	return UpdateForUpdateTS(b.ctx, 0)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
@@ -1885,7 +1916,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
-	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
@@ -1993,7 +2025,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	return ret
 }
 
@@ -2038,6 +2070,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		colLens:           is.IdxColLens,
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
+		PushedLimit:       v.PushedLimit,
 	}
 
 	if containsLimit(indexReq.Executors) {
@@ -2072,7 +2105,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, ts.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }

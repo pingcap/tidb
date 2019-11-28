@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -264,6 +265,7 @@ func (t *rootTask) plan() PhysicalPlan {
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
+	sunk := false
 	if cop, ok := t.(*copTask); ok {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
@@ -272,9 +274,42 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(p.ctx, cop)
+		sunk = p.sinkIntoIndexLookUp(t)
 	}
-	t = attachPlan2Task(p, t)
-	return t
+	if sunk {
+		return t
+	}
+	return attachPlan2Task(p, t)
+}
+
+func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
+	root := t.(*rootTask)
+	reader, isDoubleRead := root.p.(*PhysicalIndexLookUpReader)
+	proj, isProj := root.p.(*PhysicalProjection)
+	if !isDoubleRead && !isProj {
+		return false
+	}
+	if isProj {
+		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		if !isDoubleRead {
+			return false
+		}
+	}
+	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
+	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	if !isTableScan {
+		return false
+	}
+	reader.PushedLimit = &PushedDownLimit{
+		Offset: p.Offset,
+		Count:  p.Count,
+	}
+	ts.stats = p.stats
+	reader.stats = p.stats
+	if isProj {
+		proj.stats = p.stats
+	}
+	return true
 }
 
 // GetCost computes the cost of in memory sort.
@@ -454,7 +489,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	}
 
 	// Create physical "final" aggregation.
-	if p.tp == TypeStreamAgg {
+	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,
@@ -474,18 +509,27 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
-		if partialAgg != nil {
-			if cop.tablePlan != nil {
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
+		// The `doubleReadNeedProj` is always set if the double read needs to keep order. So we just use it to decided
+		// whether the following plan is double read with order reserved.
+		if !cop.doubleReadNeedProj {
+			partialAgg, finalAgg := p.newPartialAggregate()
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
 			}
+			t = finishCopTask(p.ctx, cop)
+			attachPlan2Task(finalAgg, t)
+		} else {
+			t = finishCopTask(p.ctx, cop)
+			attachPlan2Task(p, t)
 		}
-		t = finishCopTask(p.ctx, cop)
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}

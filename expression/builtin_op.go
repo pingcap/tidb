@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
@@ -64,6 +65,15 @@ func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	args[1], err = wrapWithIsTrue(ctx, true, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinLogicAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalAnd)
@@ -105,6 +115,15 @@ func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	args[1], err = wrapWithIsTrue(ctx, true, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	bf.tp.Flen = 1
 	sig := &builtinLogicOrSig{bf}
@@ -152,6 +171,7 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinLogicXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalXor)
@@ -375,6 +395,11 @@ func (b *builtinRightShiftSig) evalInt(row chunk.Row) (int64, bool, error) {
 type isTrueOrFalseFunctionClass struct {
 	baseFunctionClass
 	op opcode.Op
+
+	// keepNull indicates how this function treats a null input parameter.
+	// If keepNull is true and the input parameter is null, the function will return null.
+	// If keepNull is false, the null input parameter will be cast to 0.
+	keepNull bool
 }
 
 func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -395,25 +420,25 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 	case opcode.IsTruth:
 		switch argTp {
 		case types.ETReal:
-			sig = &builtinRealIsTrueSig{bf}
+			sig = &builtinRealIsTrueSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_RealIsTrue)
 		case types.ETDecimal:
-			sig = &builtinDecimalIsTrueSig{bf}
+			sig = &builtinDecimalIsTrueSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrue)
 		case types.ETInt:
-			sig = &builtinIntIsTrueSig{bf}
+			sig = &builtinIntIsTrueSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 		}
 	case opcode.IsFalsity:
 		switch argTp {
 		case types.ETReal:
-			sig = &builtinRealIsFalseSig{bf}
+			sig = &builtinRealIsFalseSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_RealIsFalse)
 		case types.ETDecimal:
-			sig = &builtinDecimalIsFalseSig{bf}
+			sig = &builtinDecimalIsFalseSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalse)
 		case types.ETInt:
-			sig = &builtinIntIsFalseSig{bf}
+			sig = &builtinIntIsFalseSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		}
 	}
@@ -422,10 +447,11 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 
 type builtinRealIsTrueSig struct {
 	baseBuiltinFunc
+	keepNull bool
 }
 
 func (b *builtinRealIsTrueSig) Clone() builtinFunc {
-	newSig := &builtinRealIsTrueSig{}
+	newSig := &builtinRealIsTrueSig{keepNull: b.keepNull}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -435,6 +461,9 @@ func (b *builtinRealIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
 	if isNull || input == 0 {
 		return 0, false, nil
 	}
@@ -443,10 +472,11 @@ func (b *builtinRealIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 type builtinDecimalIsTrueSig struct {
 	baseBuiltinFunc
+	keepNull bool
 }
 
 func (b *builtinDecimalIsTrueSig) Clone() builtinFunc {
-	newSig := &builtinDecimalIsTrueSig{}
+	newSig := &builtinDecimalIsTrueSig{keepNull: b.keepNull}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -456,6 +486,9 @@ func (b *builtinDecimalIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
 	if isNull || input.IsZero() {
 		return 0, false, nil
 	}
@@ -464,10 +497,11 @@ func (b *builtinDecimalIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 type builtinIntIsTrueSig struct {
 	baseBuiltinFunc
+	keepNull bool
 }
 
 func (b *builtinIntIsTrueSig) Clone() builtinFunc {
-	newSig := &builtinIntIsTrueSig{}
+	newSig := &builtinIntIsTrueSig{keepNull: b.keepNull}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -477,6 +511,9 @@ func (b *builtinIntIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
 	if isNull || input == 0 {
 		return 0, false, nil
 	}
@@ -485,10 +522,11 @@ func (b *builtinIntIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 type builtinRealIsFalseSig struct {
 	baseBuiltinFunc
+	keepNull bool
 }
 
 func (b *builtinRealIsFalseSig) Clone() builtinFunc {
-	newSig := &builtinRealIsFalseSig{}
+	newSig := &builtinRealIsFalseSig{keepNull: b.keepNull}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -498,6 +536,9 @@ func (b *builtinRealIsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
 	if isNull || input != 0 {
 		return 0, false, nil
 	}
@@ -506,10 +547,11 @@ func (b *builtinRealIsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 type builtinDecimalIsFalseSig struct {
 	baseBuiltinFunc
+	keepNull bool
 }
 
 func (b *builtinDecimalIsFalseSig) Clone() builtinFunc {
-	newSig := &builtinDecimalIsFalseSig{}
+	newSig := &builtinDecimalIsFalseSig{keepNull: b.keepNull}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -519,6 +561,9 @@ func (b *builtinDecimalIsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
 	if isNull || !input.IsZero() {
 		return 0, false, nil
 	}
@@ -527,10 +572,11 @@ func (b *builtinDecimalIsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 type builtinIntIsFalseSig struct {
 	baseBuiltinFunc
+	keepNull bool
 }
 
 func (b *builtinIntIsFalseSig) Clone() builtinFunc {
-	newSig := &builtinIntIsFalseSig{}
+	newSig := &builtinIntIsFalseSig{keepNull: b.keepNull}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -539,6 +585,9 @@ func (b *builtinIntIsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
+	}
+	if b.keepNull && isNull {
+		return 0, true, nil
 	}
 	if isNull || input != 0 {
 		return 0, false, nil

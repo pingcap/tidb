@@ -133,14 +133,14 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	if info.DB != nil && len(info.DB.(string)) > 0 {
 		logFields = append(logFields, zap.String("database", info.DB.(string)))
 	}
-	var tableIDs, indexIDs string
+	var tableIDs, indexNames string
 	if len(info.StmtCtx.TableIDs) > 0 {
 		tableIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.TableIDs), " ", ",", -1)
 		logFields = append(logFields, zap.String("table_ids", tableIDs))
 	}
-	if len(info.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexIDs), " ", ",", -1)
-		logFields = append(logFields, zap.String("index_ids", indexIDs))
+	if len(info.StmtCtx.IndexNames) > 0 {
+		indexNames = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexNames), " ", ",", -1)
+		logFields = append(logFields, zap.String("index_ids", indexNames))
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {

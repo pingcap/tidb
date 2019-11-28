@@ -20,6 +20,7 @@ import (
 
 func (s *testSuite4) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	var result *testkit.Result
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
@@ -28,7 +29,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 		tk.MustExec("set @@tidb_enable_window_function = 0")
 	}()
 	tk.MustExec("insert into t values (1,2,3),(4,3,2),(2,3,4)")
-	result := tk.MustQuery("select count(a) over () from t")
+	result = tk.MustQuery("select count(a) over () from t")
 	result.Check(testkit.Rows("3", "3", "3"))
 	result = tk.MustQuery("select sum(a) over () + count(a) over () from t")
 	result.Check(testkit.Rows("10", "10", "10"))
@@ -178,7 +179,8 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 }
 
-func (s *testSuite4) TestWindowFunctionsIssue11614(c *C) {
+func (s *testSuite4) TestWindowFunctionsDataReference(c *C) {
+	// see https://github.com/pingcap/tidb/issues/11614
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -192,4 +194,10 @@ func (s *testSuite4) TestWindowFunctionsIssue11614(c *C) {
 	result.Check(testkit.Rows("2 1 0", "2 2 0.5", "2 3 1"))
 	result = tk.MustQuery("select a, b, CUME_DIST() over (partition by a order by b) from t")
 	result.Check(testkit.Rows("2 1 0.3333333333333333", "2 2 0.6666666666666666", "2 3 1"))
+
+	// see https://github.com/pingcap/tidb/issues/12415
+	result = tk.MustQuery("select b, first_value(b) over (order by b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
+	result = tk.MustQuery("select b, first_value(b) over (order by b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
 }

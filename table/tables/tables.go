@@ -665,11 +665,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 
 // Row implements table.Table Row interface.
 func (t *tableCommon) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
-	r, err := t.RowWithCols(ctx, h, t.Cols())
-	if err != nil {
-		return nil, err
-	}
-	return r, nil
+	return t.RowWithCols(ctx, h, t.Cols())
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -916,7 +912,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
+	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
 	if err != nil {
 		return 0, err
 	}

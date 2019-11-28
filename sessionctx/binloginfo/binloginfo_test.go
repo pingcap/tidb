@@ -431,3 +431,44 @@ func (s *testBinlogSuite) TestDeleteSchema(c *C) {
 	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
 	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
 }
+
+func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
+	testCase := []struct {
+		input  string
+		result string
+	}{
+		{
+			"create table t1 (id int ) shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */ ;",
+		},
+		{
+			"create table t1 (id int ) shard_row_id_bits=2 pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t1 (id int ) shard_row_id_bits=2     pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2     pre_split_regions=2 */ ;",
+		},
+
+		{
+			"create table t1 (id int ) shard_row_id_bits=2 engine=innodb pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
+		},
+		{
+			"create table t1 (id int ) pre_split_regions=2 shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
+			"create table t6 (id int ) /*!90000 shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
+		},
+		{
+			"alter table t shard_row_id_bits=2 ",
+			"alter table t /*!90000 shard_row_id_bits=2 */",
+		},
+	}
+	for _, ca := range testCase {
+		re := binloginfo.AddSpecialComment(ca.input)
+		c.Assert(re, Equals, ca.result)
+	}
+}

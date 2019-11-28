@@ -75,18 +75,19 @@ var (
 	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
 	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
 	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalOK        = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "ok")
-	transactionDurationInternalError     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "error")
-	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
-	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
+	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
+	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
+	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
+	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	transactionCounterInternalOK  = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK   = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-
-	transactionRollbackCounterInternal = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
+	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
+	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
+	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
+	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
+	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
+	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
 
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
@@ -97,7 +98,7 @@ var (
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 )
 
-// Session context
+// Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context
 	Status() uint16                                               // Flag of current status, such as autocommit.
@@ -393,12 +394,16 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
-	var txnSize int
-	var isPessimistic bool
-	if s.txn.Valid() {
-		txnSize = s.txn.Size()
-		isPessimistic = s.txn.IsPessimistic()
+	defer func() {
+		s.txn.changeToInvalid()
+		s.cleanRetryInfo()
+	}()
+	if !s.txn.Valid() {
+		// If the transaction is invalid, maybe it has already been rolled back by the client.
+		return nil
 	}
+	txnSize := s.txn.Size()
+	isPessimistic := s.txn.IsPessimistic()
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
@@ -411,10 +416,12 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				commitRetryLimit = 0
 			}
 		}
+		// If the transaction is batched, it should not retry any more.
+		isBatched := s.GetSessionVars().TxnCtx.IsBatched
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && !isBatched && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -424,12 +431,21 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
+		} else {
+			logutil.Logger(ctx).Warn("can not retry txn",
+				zap.String("label", s.getSQLLabel()),
+				zap.Error(err),
+				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
+				zap.Bool("IsPessimistic", isPessimistic),
+				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),
+				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
+				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
+
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
-	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
 		switch isoLevelOneShot.State {
@@ -469,7 +485,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(err)
+	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -594,6 +610,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StartTime = time.Now()
+			s.sessionVars.DurationCompile = time.Duration(0)
+			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -608,7 +627,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
+					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -964,6 +983,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
+	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1009,6 +1029,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	s.GetSessionVars().StartTime = startTS
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1017,11 +1038,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
+	durParse := time.Since(startTS)
+	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 
 	var tempStmtNodes []ast.StmtNode
@@ -1055,10 +1078,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
+		durCompile := time.Since(startTS)
+		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 		} else {
-			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
+			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 		}
 		s.currentPlan = stmt.Plan
 
@@ -1222,6 +1247,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args .
 	}
 
 	s.PrepareTxnCtx(ctx)
+	s.sessionVars.StartTime = time.Now()
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args...)
 	if err != nil {
 		return nil, err
@@ -1662,6 +1688,7 @@ var builtinGlobalVariable = []string{
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
 	variable.MaxExecutionTime,
+	variable.InnodbLockWaitTimeout,
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
@@ -1692,6 +1719,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableFastAnalyze,
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBTxnMode,
+	variable.TiDBEnableStmtSummary,
+	variable.TiDBMaxDeltaSchemaCount,
+	variable.TiDBStoreLimit,
 }
 
 var (
@@ -1867,7 +1897,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
-			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
+			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
 
@@ -1875,35 +1905,54 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	if s.isInternal() {
 		if err != nil {
 			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalError.Observe(duration)
+			transactionDurationInternalAbort.Observe(duration)
 		} else {
 			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalOK.Observe(duration)
+			transactionDurationInternalCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
 			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralError.Observe(duration)
+			transactionDurationGeneralAbort.Observe(duration)
 		} else {
 			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralOK.Observe(duration)
+			transactionDurationGeneralCommit.Observe(duration)
 		}
 	}
 }
 
-func (s *session) recordTransactionCounter(err error) {
+func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
+	if stmtNode == nil {
+		if s.isInternal() {
+			if err != nil {
+				transactionCounterInternalErr.Inc()
+			} else {
+				transactionCounterInternalOK.Inc()
+			}
+		} else {
+			if err != nil {
+				transactionCounterGeneralErr.Inc()
+			} else {
+				transactionCounterGeneralOK.Inc()
+			}
+		}
+		return
+	}
+
+	var isTxn bool
+	switch stmtNode.(type) {
+	case *ast.CommitStmt:
+		isTxn = true
+	case *ast.RollbackStmt:
+		isTxn = true
+	}
+	if !isTxn {
+		return
+	}
 	if s.isInternal() {
-		if err != nil {
-			transactionCounterInternalErr.Inc()
-		} else {
-			transactionCounterInternalOK.Inc()
-		}
+		transactionCounterInternalCommitRollback.Inc()
 	} else {
-		if err != nil {
-			transactionCounterGeneralErr.Inc()
-		} else {
-			transactionCounterGeneralOK.Inc()
-		}
+		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 

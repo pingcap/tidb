@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -224,6 +225,33 @@ func (s *testSuite3) TestCreateView(c *C) {
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
 	tk.MustExec("execute stmt")
+
+	// create view on union
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop view if exists v")
+	_, err = tk.Exec("create view v as select * from t1 union select * from t2")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1,2), (1,1), (1,2)")
+	tk.MustExec("insert into t2 values(1,1),(1,3)")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 union select * from t2")
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 2", "1 3"))
+	tk.MustExec("alter table t1 drop column a")
+	_, err = tk.Exec("select * from v")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
+	tk.MustExec("alter table t1 add column a int")
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
+	tk.MustExec("alter table t1 drop column a")
+	tk.MustExec("alter table t2 drop column b")
+	_, err = tk.Exec("select * from v")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
+	tk.MustExec("drop view v")
+
+	tk.MustExec("create view v as (select * from t1)")
+	tk.MustExec("drop view v")
+	tk.MustExec("create view v as (select * from t1 union select * from t2)")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
@@ -331,7 +359,7 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
-	tk.MustExec("create table mc(c1 int, c2 varchar(10))")
+	tk.MustExec("create table mc(c1 int, c2 varchar(10), c3 bit)")
 	_, err := tk.Exec("alter table mc modify column c1 short")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table mc modify column c1 bigint")
@@ -344,9 +372,10 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")
+	tk.MustExec("alter table mc modify column c3 bit")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
@@ -586,6 +615,11 @@ func (s *testSuite3) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("create index %s on t(c)", indexName1))
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+
+	// for create table with index.
+	tk.MustExec("drop table t;")
+	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 

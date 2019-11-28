@@ -211,6 +211,18 @@ type candidatePath struct {
 	isMatchProp  bool
 }
 
+// getScanType converts the scan type to int, the higher the better.
+// DoubleScan -> 0, TableScan -> 1, IndexScan -> 2.
+func getScanTypeScore(p *candidatePath) int {
+	if !p.isSingleScan {
+		return 0
+	}
+	if p.path.isTablePath {
+		return 1
+	}
+	return 2
+}
+
 // compareColumnSet will compares the two set. The last return value is used to indicate
 // if they are comparable, it is false when both two sets have columns that do not occur in the other.
 // When the second return value is true, the value of first:
@@ -241,10 +253,20 @@ func compareBool(l, r bool) int {
 	return 1
 }
 
+func compareInt(l, r int) int {
+	if l == r {
+		return 0
+	}
+	if l < r {
+		return -1
+	}
+	return 1
+}
+
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // (1): the set of columns that occurred in the access condition,
 // (2): whether or not it matches the physical property
-// (3): does it require a double scan.
+// (3): whether the candidate is a IndexScan or TableScan or DoubleScan. (IndexScan > TableScan > DoubleScan)
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
@@ -252,7 +274,7 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 	if !comparable {
 		return 0
 	}
-	scanResult := compareBool(lhs.isSingleScan, rhs.isSingleScan)
+	scanResult := compareInt(getScanTypeScore(lhs), getScanTypeScore(rhs))
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
 	sum := setsResult + scanResult + matchResult
 	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
@@ -305,11 +327,12 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		var currentCandidate *candidatePath
 		if path.isTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
-		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced {
-			// We will use index to generate physical plan if:
-			// this path's access cond is not nil or
-			// we have prop to match or
-			// this index is forced to choose.
+		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced || isCoveringIndex(ds.schema.Columns, path.index.Columns, ds.tableInfo.PKIsHandle) {
+			// We will use index to generate physical plan if any of the following conditions is satisfied:
+			// 1. This path's access cond is not nil.
+			// 2. We have a non-empty prop to match.
+			// 3. This index is forced to choose.
+			// 4. The needed columns are all covered by index columns(and handleCol).
 			currentCandidate = ds.getIndexCandidate(path, prop)
 		} else {
 			continue
@@ -502,7 +525,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	is.initSchema(idx, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
@@ -543,7 +566,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 }
 
 // TODO: refactor this part, we should not call Clone in fact.
-func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
+func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)

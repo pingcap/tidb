@@ -47,7 +47,11 @@ type CommitDetails struct {
 	PrewriteTime      time.Duration
 	CommitTime        time.Duration
 	LocalLatchTime    time.Duration
-	TotalBackoffTime  time.Duration
+	CommitBackoffTime int64
+	Mu                struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
 	ResolveLockTime   int64
 	WriteKeys         int
 	WriteSize         int
@@ -68,6 +72,28 @@ const (
 	TotalKeysStr = "Total_keys"
 	// ProcessKeysStr means the total processed keys.
 	ProcessKeysStr = "Process_keys"
+	// PreWriteTimeStr means the time of pre-write.
+	PreWriteTimeStr = "Prewrite_time"
+	// CommitTimeStr means the time of commit.
+	CommitTimeStr = "Commit_time"
+	// GetCommitTSTimeStr means the time of getting commit ts.
+	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// CommitBackoffTimeStr means the time of commit backoff.
+	CommitBackoffTimeStr = "Commit_backoff_time"
+	// BackoffTypesStr means the backoff type.
+	BackoffTypesStr = "Backoff_types"
+	// ResolveLockTimeStr means the time of resolving lock.
+	ResolveLockTimeStr = "Resolve_lock_time"
+	// LocalLatchWaitTimeStr means the time of waiting in local latch.
+	LocalLatchWaitTimeStr = "Local_latch_wait_time"
+	// WriteKeysStr means the count of keys in the transaction.
+	WriteKeysStr = "Write_keys"
+	// WriteSizeStr means the key/value size in the transaction.
+	WriteSizeStr = "Write_size"
+	// PrewriteRegionStr means the count of region when pre-write.
+	PrewriteRegionStr = "Prewrite_region"
+	// TxnRetryStr means the count of transaction retry.
+	TxnRetryStr = "Txn_retry"
 )
 
 // String implements the fmt.Stringer interface.
@@ -94,36 +120,42 @@ func (d ExecDetails) String() string {
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
 		if commitDetails.PrewriteTime > 0 {
-			parts = append(parts, fmt.Sprintf("Prewrite_time: %v", commitDetails.PrewriteTime.Seconds()))
+			parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.CommitTime > 0 {
-			parts = append(parts, fmt.Sprintf("Commit_time: %v", commitDetails.CommitTime.Seconds()))
+			parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.GetCommitTsTime > 0 {
-			parts = append(parts, fmt.Sprintf("Get_commit_ts_time: %v", commitDetails.GetCommitTsTime.Seconds()))
+			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
 		}
-		if commitDetails.TotalBackoffTime > 0 {
-			parts = append(parts, fmt.Sprintf("Total_backoff_time: %v", commitDetails.TotalBackoffTime.Seconds()))
+		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		if commitBackoffTime > 0 {
+			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
+		commitDetails.Mu.Lock()
+		if len(commitDetails.Mu.BackoffTypes) > 0 {
+			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
+		}
+		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
-			parts = append(parts, fmt.Sprintf("Resolve_lock_time: %v", time.Duration(resolveLockTime).Seconds()))
+			parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.LocalLatchTime > 0 {
-			parts = append(parts, fmt.Sprintf("Local_latch_wait_time: %v", commitDetails.LocalLatchTime.Seconds()))
+			parts = append(parts, LocalLatchWaitTimeStr+": "+strconv.FormatFloat(commitDetails.LocalLatchTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.WriteKeys > 0 {
-			parts = append(parts, fmt.Sprintf("Write_keys: %d", commitDetails.WriteKeys))
+			parts = append(parts, WriteKeysStr+": "+strconv.FormatInt(int64(commitDetails.WriteKeys), 10))
 		}
 		if commitDetails.WriteSize > 0 {
-			parts = append(parts, fmt.Sprintf("Write_size: %d", commitDetails.WriteSize))
+			parts = append(parts, WriteSizeStr+": "+strconv.FormatInt(int64(commitDetails.WriteSize), 10))
 		}
 		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
 		if prewriteRegionNum > 0 {
-			parts = append(parts, fmt.Sprintf("Prewrite_region: %d", prewriteRegionNum))
+			parts = append(parts, PrewriteRegionStr+": "+strconv.FormatInt(int64(prewriteRegionNum), 10))
 		}
 		if commitDetails.TxnRetry > 0 {
-			parts = append(parts, fmt.Sprintf("Txn_retry: %d", commitDetails.TxnRetry))
+			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -161,9 +193,15 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitDetails.GetCommitTsTime > 0 {
 			fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
 		}
-		if commitDetails.TotalBackoffTime > 0 {
-			fields = append(fields, zap.String("total_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.TotalBackoffTime.Seconds(), 'f', -1, 64)+"s")))
+		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		if commitBackoffTime > 0 {
+			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
+		commitDetails.Mu.Lock()
+		if len(commitDetails.Mu.BackoffTypes) > 0 {
+			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
+		}
+		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
 			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))

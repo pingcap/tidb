@@ -201,3 +201,15 @@ explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
+
+# test sleep in subquery
+explain select 1 from (select sleep(1)) t;
+
+# test fields with windows function
+drop table t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
+    i int(10) unsigned DEFAULT NULL,
+    x int(10) unsigned DEFAULT 0,
+    PRIMARY KEY (`id`)
+);
+explain select row_number() over( partition by i ) - x as rnk from t;

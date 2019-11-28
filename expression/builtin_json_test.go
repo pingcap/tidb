@@ -95,8 +95,10 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		{`{"a":     "b"}`, `{"a":     "b"}`},
 		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
 		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
-		{`Invalid Json string\tis OK`, `Invalid Json string	is OK`},
+		{`Invalid Json string\tis OK`, `Invalid Json string\tis OK`},
 		{`"1\\u2232\\u22322"`, `1\u2232\u22322`},
+		{`"[{\"x\":\"{\\\"y\\\":12}\"}]"`, `[{"x":"{\"y\":12}"}]`},
+		{`[{\"x\":\"{\\\"y\\\":12}\"}]`, `[{\"x\":\"{\\\"y\\\":12}\"}]`},
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
@@ -863,5 +865,36 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		} else {
 			c.Assert(err, NotNil)
 		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONValid(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONValid]
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{`{"a":1}`, 1},
+		{`hello`, 0},
+		{`"hello"`, 1},
+		{`null`, 1},
+		{`{}`, 1},
+		{`[]`, 1},
+		{`2`, 1},
+		{`2.5`, 1},
+		{`2019-8-19`, 0},
+		{`"2019-8-19"`, 1},
+		{2, 0},
+		{2.5, 0},
+		{nil, nil},
+	}
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }

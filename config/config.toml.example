@@ -41,6 +41,9 @@ mem-quota-query = 34359738368
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
@@ -53,6 +56,14 @@ check-mb4-value-in-utf8 = true
 
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
+
+# Maximum number of the splitting region, which is used by the split region statement.
+split-region-max-num = 1000
+
+# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
+# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
+# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+alter-primary-key = false
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -69,6 +80,10 @@ slow-query-file = "tidb-slow.log"
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
+
+# record-plan-in-slow-log is used to enable record query plan in slow log.
+# 0 is disable. 1 is enable.
+record-plan-in-slow-log = 1
 
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
@@ -119,14 +134,16 @@ report-status = true
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
+## API for prometheus: http://${status-host}:${status_port}/metrics
+## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
-# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+# Prometheus client push interval in second, set \"0\" to disable push to pushgateway.
 metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
@@ -170,6 +187,18 @@ force-priority = "NO_PRIORITY"
 
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
+
+# The limitation of the number for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-entry-count-limit = 300000
+
+# The limitation of the size in byte for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -264,10 +293,19 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
+
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = true
+enabled = false
 capacity = 2048000
 
 [binlog]
@@ -294,6 +332,9 @@ enable = true
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "120s".
-ttl = "40s"
+[stmt-summary]
+# max number of statements kept in memory.
+max-stmt-count = 100
+
+# max length of displayed normalized sql and sample sql.
+max-sql-length = 4096

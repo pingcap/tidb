@@ -85,6 +85,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.flag |= inCreateOrDropTable
@@ -527,7 +528,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey:
+				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
 				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if p.err != nil {
 					return
@@ -614,7 +615,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
-		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
+		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
 		for _, str := range colDef.Tp.Elems {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
@@ -628,13 +629,20 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
+	case mysql.TypeBit:
+		if tp.Flen <= 0 {
+			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
+		}
+		if tp.Flen > mysql.MaxBitDisplayWidth {
+			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
+		}
 	default:
 		// TODO: Add more types.
 	}
 	return nil
 }
 
-// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether default value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
@@ -734,6 +742,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.User.Hostname = currentUser.Hostname
 			node.User.AuthUsername = currentUser.AuthUsername
 			node.User.AuthHostname = currentUser.AuthHostname
+		}
+	}
+}
+
+func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
+	for _, val := range node.Constraints {
+		if val.Refer != nil && val.Refer.Table.Schema.String() == "" {
+			val.Refer.Table.Schema = node.Table.Schema
 		}
 	}
 }

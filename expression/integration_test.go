@@ -2236,6 +2236,22 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("9223372036854775808 9223372036854775808", "9223372036854775808 9223372036854775808"))
 	tk.MustExec(`drop table tb5;`)
 
+	// test builtinCastIntAsDecimalSig
+	tk.MustExec(`drop table if exists tb5`)
+	tk.MustExec(`create table tb5 (a decimal(65), b bigint(64) unsigned);`)
+	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
+	result = tk.MustQuery(`select cast(b as decimal(64)) from tb5 union all select b from tb5;`)
+	result.Check(testkit.Rows("9223372036854775808", "9223372036854775808"))
+	tk.MustExec(`drop table tb5`)
+
+	// test builtinCastIntAsRealSig
+	tk.MustExec(`drop table if exists tb5`)
+	tk.MustExec(`create table tb5 (a bigint(64) unsigned, b double(64, 10));`)
+	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
+	result = tk.MustQuery(`select a from tb5 where a = b union all select b from tb5;`)
+	result.Check(testkit.Rows("9223372036854776000", "9223372036854776000"))
+	tk.MustExec(`drop table tb5`)
+
 	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:00"))
@@ -3574,6 +3590,39 @@ func (s *testIntegrationSuite) TestJSONBuiltin(c *C) {
 	tk.MustExec("CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`))")
 	_, err := tk.Exec("UPDATE `test`.`my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');")
 	c.Assert(err, NotNil)
+
+	r := tk.MustQuery("select json_valid(null);")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery(`select json_valid("null");`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid(0);")
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid("0");`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid("hello");`)
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid('"hello"');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid('{"a":1}');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid('{}');")
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`select json_valid('[]');`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select json_valid('2019-8-19');")
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`select json_valid('"2019-8-19"');`)
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
@@ -4008,6 +4057,25 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 		ret = 1
 	}
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
+}
+
+func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustQuery("select tidb_decode_plan('')").Check(testkit.Rows(""))
+	tk.MustQuery("select tidb_decode_plan('7APIMAk1XzEzCTAJMQlmdW5jczpjb3VudCgxKQoxCTE3XzE0CTAJMAlpbm5lciBqb2luLCBp" +
+		"AQyQOlRhYmxlUmVhZGVyXzIxLCBlcXVhbDpbZXEoQ29sdW1uIzEsIA0KCDkpIBkXADIVFywxMCldCjIJMzJfMTgFZXhkYXRhOlNlbGVjdGlvbl" +
+		"8xNwozCTFfMTcJMQkwCWx0HVlATlVMTCksIG5vdChpc251bGwVHAApUhcAUDIpKQo0CTEwXzE2CTEJMTAwMDAJdAHB2Dp0MSwgcmFuZ2U6Wy1p" +
+		"bmYsK2luZl0sIGtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkbwoFtgAyAZcEMAk6tgAEMjAFtgQyMDq2AAg5LCBmtgAAMFa3AAA5FbcAO" +
+		"T63AAAyzrcA')").Check(testkit.Rows("" +
+		"\tStreamAgg_13        \troot\t1    \tfuncs:count(1)\n" +
+		"\t└─HashLeftJoin_14   \troot\t0    \tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
+		"\t  ├─TableReader_18  \troot\t0    \tdata:Selection_17\n" +
+		"\t  │ └─Selection_17  \tcop \t0    \tlt(Column#1, NULL), not(isnull(Column#1)), not(isnull(Column#2))\n" +
+		"\t  │   └─TableScan_16\tcop \t10000\ttable:t1, range:[-inf,+inf], keep order:false, stats:pseudo\n" +
+		"\t  └─TableReader_21  \troot\t0    \tdata:Selection_20\n" +
+		"\t    └─Selection_20  \tcop \t0    \tlt(Column#9, NULL), not(isnull(Column#10)), not(isnull(Column#9))\n" +
+		"\t      └─TableScan_19\tcop \t10000\ttable:t2, range:[-inf,+inf], keep order:false, stats:pseudo"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
@@ -4780,4 +4848,32 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE)`).Check(testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR)`).Check(testkit.Rows("2007-03-31 00:08:28"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH)`).Check(testkit.Rows("2009-05-28 22:08:28"))
+}
+
+func (s *testIntegrationSuite) TestIssue12301(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (d decimal(19, 0), i bigint(11))")
+	tk.MustExec("insert into t values (123456789012, 123456789012)")
+	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
+}
+
+func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// current db is empty
+	_, err := tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+
+	// current db is not empty
+	tk.MustExec("use test")
+	_, err = tk.Exec("SELECT xxx(1)")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.xxx does not exist")
+
+	_, err = tk.Exec("SELECT yyy()")
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
+
 }

@@ -380,7 +380,17 @@ func (trs *tidbResultSet) Close() error {
 	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
 		return nil
 	}
-	return trs.recordSet.Close()
+	err := trs.recordSet.Close()
+	trs.recordSet = nil
+	trs.rows = nil
+	return err
+}
+
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
+func (trs *tidbResultSet) OnFetchReturned() {
+	if cl, ok := trs.recordSet.(fetchNotifier); ok {
+		cl.OnFetchReturned()
+	}
 }
 
 func (trs *tidbResultSet) Columns() []*ColumnInfo {

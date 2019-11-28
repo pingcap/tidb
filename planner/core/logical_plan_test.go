@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -445,7 +446,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t1.a,test.t2.a)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -722,6 +723,16 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			is:   is,
 		},
 		{
+			sql:  "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
+			best: "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+			is:   is,
+		},
+		{
+			sql:  "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
+			best: "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+			is:   is,
+		},
+		{
 			sql:  "select * from t where t.ptn < 8",
 			best: "Partition(41)->Projection",
 			is:   is,
@@ -939,6 +950,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// If this schema is not set correctly, table.RemoveRecord would fail when adding
 			// binlog columns, because the schema and data are not consistent.
 			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
+		},
+		{
+			sql:  "update t set a = 2 where b in (select c from t)",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->StreamAgg}(test.t.b,test.t.c)->Projection->Update",
 		},
 	}
 
@@ -2237,7 +2252,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
+			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
@@ -2257,7 +2272,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
+			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
@@ -2273,7 +2288,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -2305,7 +2320,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
+			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
@@ -2373,7 +2388,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
-			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
+			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(row_number() over())->Projection",
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
@@ -2397,7 +2412,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select ntile(null) over() from t",
-			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
+			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(ntile(<nil>) over())->Projection",
 		},
 		{
 			sql:    "select avg(a) over w from t window w as(partition by b)",
@@ -2481,6 +2496,23 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN CURRENT ROW AND 1 PRECEDING )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
+			result: "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
+		},
+		// Test issue 11943
+		{
+			sql:    "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
+			result: "TableReader(Table(t))->Sort->Window(row_number() over(partition by test.t.b))->Projection->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
@@ -2490,28 +2522,46 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	ctx := context.TODO()
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is)
-		builder := &PlanBuilder{
-			ctx:       MockContext(),
-			is:        s.is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
-		p, err := builder.Build(ctx, stmt)
+		p, stmt, err := s.optimize(ctx, tt.sql)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
 			continue
 		}
+		c.Assert(ToString(p), Equals, tt.result, comment)
+
+		var sb strings.Builder
+		// After restore, the result should be the same.
+		err = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		lp, ok := p.(LogicalPlan)
-		c.Assert(ok, IsTrue)
-		p, err = physicalOptimize(lp)
-		c.Assert(err, IsNil)
+		p, _, err = s.optimize(ctx, sb.String())
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
 		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
+}
+
+func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan, ast.Node, error) {
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	err = Preprocess(s.ctx, stmt, s.is)
+	if err != nil {
+		return nil, nil, err
+	}
+	builder := NewPlanBuilder(MockContext(), s.is)
+	p, err := builder.Build(ctx, stmt)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err = physicalOptimize(p.(LogicalPlan))
+	return p.(PhysicalPlan), stmt, err
 }
 
 func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
@@ -2571,6 +2621,10 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		{
 			sql:    "select * from t where f > 1 and g > 1",
 			result: "PRIMARY_KEY,f,g,f_g",
+		},
+		{
+			sql:    "select count(1) from t",
+			result: "c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
 		},
 	}
 	ctx := context.TODO()

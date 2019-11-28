@@ -195,10 +195,12 @@ const (
 
 // FromGoTime translates time.Time to mysql time internal representation.
 func FromGoTime(t gotime.Time) MysqlTime {
+	// Plus 500 nanosecond for rounding of the millisecond part.
+	t = t.Add(500 * gotime.Nanosecond)
+
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
-	// Nanosecond plus 500 then divided 1000 means rounding to microseconds.
-	microsecond := (t.Nanosecond() + 500) / 1000
+	microsecond := t.Nanosecond() / 1000
 	return FromDate(year, int(month), day, hour, minute, second, microsecond)
 }
 
@@ -423,7 +425,7 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	} else {
 		// Take the hh:mm:ss part out to avoid handle month or day = 0.
 		hour, minute, second, microsecond := t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond()
-		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, gotime.Local)
+		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, sc.TimeZone)
 		t2 := roundTime(t1, fsp)
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
@@ -1517,7 +1519,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
 	}
 
-	if _, err := t.GoTime(gotime.Local); err != nil {
+	if _, err := t.GoTime(sc.TimeZone); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2177,6 +2179,11 @@ func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) boo
 		return true
 	}
 
+	if len(date) == 0 {
+		ctx[token] = 0
+		return true
+	}
+
 	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
 		return false
@@ -2294,20 +2301,13 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			isDuration, isDate = false, false
 			break
 		}
-		var durationTokens bool
-		var dateTokens bool
 		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
-			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
-				durationTokens = true
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f':
+				isDuration = true
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
-				dateTokens = true
+				isDate = true
 			}
-		}
-		if durationTokens {
-			isDuration = true
-		} else if dateTokens {
-			isDate = true
 		}
 		if isDuration && isDate {
 			break

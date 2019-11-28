@@ -129,6 +129,24 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'tester'@'localhost';`)
+	mustExec(c, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	mustExec(c, rootSe, `create database test2`)
+	mustExec(c, rootSe, `create table test2.t(id int, v int, primary key(id))`)
+	mustExec(c, rootSe, `insert into test2.t(id, v) values(1, 1)`)
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `use test;`)
+	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
@@ -601,6 +619,12 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -625,6 +649,24 @@ func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
 	pc := privilege.GetPrivilegeManager(se)
 	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
+}
+
+func (s *testPrivilegeSuite) TestAuthHost(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'test_auth_host'@'%';`)
+	mustExec(c, rootSe, `GRANT ALL ON *.* TO 'test_auth_host'@'%' WITH GRANT OPTION;`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	mustExec(c, se, "CREATE USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, se, "GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "create user test_auth_host_a")
+	c.Assert(err, NotNil)
+
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'%';")
 }
 
 func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {

@@ -255,9 +255,9 @@ create table t (a int, b int, c int, key idx(a, b, c));
 explain select count(a) from t;
 id	count	task	operator info
 StreamAgg_16	1.00	root	funcs:count(col_0)
-└─TableReader_17	1.00	root	data:StreamAgg_8
+└─IndexReader_17	1.00	root	index:StreamAgg_8
   └─StreamAgg_8	1.00	cop	funcs:count(test.t.a)
-    └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─IndexScan_15	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:false, stats:pseudo
 select count(a) from t;
 count(a)
 0
@@ -430,3 +430,21 @@ Projection_7	10000.00	root	6_aux_0
   │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_12	10000.00	root	data:TableScan_11
     └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1 from (select sleep(1)) t;
+id	count	task	operator info
+Projection_4	1.00	root	1
+└─Projection_5	1.00	root	sleep(1)
+  └─TableDual_6	1.00	root	rows:1
+drop table t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
+i int(10) unsigned DEFAULT NULL,
+x int(10) unsigned DEFAULT 0,
+PRIMARY KEY (`id`)
+);
+explain select row_number() over( partition by i ) - x as rnk from t;
+id	count	task	operator info
+Projection_8	10000.00	root	minus(4_window_3, test.t.x)
+└─Window_9	10000.00	root	row_number() over(partition by test.t.i)
+  └─Sort_12	10000.00	root	test.t.i:asc
+    └─TableReader_11	10000.00	root	data:TableScan_10
+      └─TableScan_10	10000.00	cop	table:t, range:[0,+inf], keep order:false, stats:pseudo

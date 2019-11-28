@@ -985,14 +985,14 @@ func chunkForTest(c *C, sc *stmtctx.StatementContext, datums []types.Datum, tps 
 }
 
 func (s *testCodecSuite) TestDecodeRange(c *C) {
-	_, err := DecodeRange(nil, 0)
+	_, _, err := DecodeRange(nil, 0)
 	c.Assert(err, NotNil)
 
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(nil, nil, datums...)
 	c.Assert(err, IsNil)
 
-	datums1, err := DecodeRange(rowData, len(datums))
+	datums1, _, err := DecodeRange(rowData, len(datums))
 	c.Assert(err, IsNil)
 	for i, datum := range datums1 {
 		cmp, err := datum.CompareDatum(nil, &datums[i])
@@ -1002,7 +1002,7 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 
 	for _, b := range []byte{NilFlag, bytesFlag, maxFlag, maxFlag + 1} {
 		newData := append(rowData, b)
-		_, err := DecodeRange(newData, len(datums)+1)
+		_, _, err := DecodeRange(newData, len(datums)+1)
 		c.Assert(err, IsNil)
 	}
 }

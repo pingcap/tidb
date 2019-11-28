@@ -16,6 +16,7 @@ package variable
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -115,6 +116,14 @@ func BoolToIntStr(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// BoolToInt32 converts bool to int32
+func BoolToInt32(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // we only support MySQL now
@@ -562,7 +571,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "basedir", "/usr/local/mysql"},
 	{ScopeGlobal, "innodb_old_blocks_time", "1000"},
 	{ScopeGlobal, "innodb_stats_method", "nulls_equal"},
-	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, "50"},
+	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, strconv.FormatInt(DefInnodbLockWaitTimeout, 10)},
 	{ScopeGlobal, LocalInFile, "1"},
 	{ScopeGlobal | ScopeSession, "myisam_stats_method", "nulls_unequal"},
 	{ScopeNone, "version_compile_os", "osx10.8"},
@@ -629,6 +638,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
 	{ScopeSession, WarningCount, "0"},
 	{ScopeSession, ErrorCount, "0"},
+	{ScopeGlobal, "thread_pool_size", "16"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -684,6 +694,7 @@ var defaultSysVars = []*SysVar{
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
 	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
@@ -691,6 +702,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
 	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
+	{ScopeGlobal, TiDBMaxDeltaSchemaCount, strconv.Itoa(DefTiDBMaxDeltaSchemaCount)},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
@@ -701,6 +713,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBWaitSplitRegionTimeout, strconv.Itoa(DefWaitSplitRegionTimeout)},
 	{ScopeSession, TiDBLowResolutionTSO, "0"},
 	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
+	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
+	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -937,6 +952,8 @@ const (
 	InnodbTableLocks = "innodb_table_locks"
 	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
+	// ThreadPoolSize is the name of 'thread_pool_size' variable.
+	ThreadPoolSize = "thread_pool_size"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

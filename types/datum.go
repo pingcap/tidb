@@ -1184,6 +1184,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		s := d.GetString()
 		y, err = StrToInt(sc, s)
 		if err != nil {
+			ret.SetInt64(0)
 			return ret, errors.Trace(err)
 		}
 		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
@@ -1196,16 +1197,18 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {
-			return invalidConv(d, target.Tp)
+			_, err = invalidConv(d, target.Tp)
+			ret.SetInt64(0)
+			return ret, err
 		}
 		y = ret.GetInt64()
 	}
 	y, err = AdjustYear(y, adjust)
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		_, err = invalidConv(d, target.Tp)
 	}
 	ret.SetInt64(y)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
@@ -1215,12 +1218,16 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	switch d.k {
 	case KindString, KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+	case KindInt64:
+		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
+		d.k = KindUint64
+		fallthrough
 	default:
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
 	}
 	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
-		return Datum{}, errors.Trace(ErrOverflow.GenWithStackByArgs("BIT", fmt.Sprintf("(%d)", target.Flen)))
+		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
 	}
 	byteSize := (target.Flen + 7) >> 3
 	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))

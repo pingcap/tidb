@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -234,7 +235,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 }
 
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint, tblCharset, dbCharset string) ([]*table.Column, []*ast.Constraint, error) {
+	constraints []*ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) ([]*table.Column, []*ast.Constraint, error) {
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
@@ -246,7 +247,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, dbCharset)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate, dbCharset, dbCollate)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -262,23 +263,32 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	return cols, constraints, nil
 }
 
-// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset.
-func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, error) {
+// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset,
+// and it will also resolve the collate by the order: table collate > database collate > server default collate.
+func ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate string) (string, string, error) {
 	if len(tblCharset) != 0 {
-		defCollate, err := charset.GetDefaultCollation(tblCharset)
-		if err != nil {
-			// return terror is better.
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+		// tblCollate is not specified by user.
+		if len(tblCollate) == 0 {
+			defCollate, err := charset.GetDefaultCollation(tblCharset)
+			if err != nil {
+				// return terror is better.
+				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+			}
+			return tblCharset, defCollate, nil
 		}
-		return tblCharset, defCollate, nil
+		return tblCharset, tblCollate, nil
 	}
 
 	if len(dbCharset) != 0 {
-		defCollate, err := charset.GetDefaultCollation(dbCharset)
-		if err != nil {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+		// dbCollate is not specified by user.
+		if len(dbCollate) == 0 {
+			defCollate, err := charset.GetDefaultCollation(dbCharset)
+			if err != nil {
+				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+			}
+			return dbCharset, defCollate, nil
 		}
-		return dbCharset, defCollate, errors.Trace(err)
+		return dbCharset, dbCollate, nil
 	}
 
 	charset, collate := charset.GetDefaultCharsetAndCollate()
@@ -295,7 +305,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset string, dbCharset string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset, tblCollate, dbCharset, dbCollate string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
@@ -303,7 +313,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 			if len(specifiedCollates) == 0 {
 				// Both the charset and collate are not specified.
 				var err error
-				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+				tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -374,11 +384,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) (*table.Column, []*ast.Constraint, error) {
 	// specifiedCollates refers to collates in colDef.Options, should handle them together.
 	specifiedCollates := extractCollateFromOption(colDef)
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, dbCharset); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, tblCollate, dbCharset, dbCollate); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -507,13 +517,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.PriKeyFlag
+				// Check PriKeyFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.PriKeyFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.PriKeyFlag
+				}
 			case ast.ColumnOptionUniqKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
+				// Check UniqueFlag first to avoid extra duplicate constraints.
+				if col.Flag&mysql.UniqueFlag == 0 {
+					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					constraints = append(constraints, constraint)
+					col.Flag |= mysql.UniqueKeyFlag
+				}
 			case ast.ColumnOptionDefaultValue:
 				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
@@ -574,6 +590,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.ZerofillFlag
 	}
+
 	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
 	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
 	// But some types like bit and year, won't show its unsigned flag in `show create table`.
@@ -599,8 +616,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
-	tp, fsp := t.Tp, t.Decimal
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, error) {
+	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
@@ -612,14 +629,14 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 					}
 				}
 				if defaultFsp != fsp {
-					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
 		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
-			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 		}
 
 		// Value is nil means `default null`.
@@ -660,19 +677,71 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 		return strconv.FormatUint(value, 10), nil
 	}
 
-	if tp == mysql.TypeDuration {
-		var err error
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
+	switch tp {
+	case mysql.TypeSet:
+		return setSetDefaultValue(v, col)
+	case mysql.TypeDuration:
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", errors.Trace(err)
 		}
-	}
-
-	if tp == mysql.TypeBit {
+	case mysql.TypeBit:
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
 			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
 		}
 	}
+
+	return v.ToString()
+}
+
+// setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
+func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
+	if v.Kind() == types.KindInt64 {
+		setCnt := len(col.Elems)
+		maxLimit := int64(1<<uint(setCnt) - 1)
+		val := v.GetInt64()
+		if val < 1 || val > maxLimit {
+			return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		}
+		setVal, err := types.ParseSetValue(col.Elems, uint64(val))
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v.SetMysqlSet(setVal)
+		return v.ToString()
+	}
+
+	str, err := v.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if str == "" {
+		return str, nil
+	}
+
+	valMap := make(map[string]struct{}, len(col.Elems))
+	dVals := strings.Split(strings.ToLower(str), ",")
+	for _, dv := range dVals {
+		valMap[dv] = struct{}{}
+	}
+	var existCnt int
+	for dv := range valMap {
+		for i := range col.Elems {
+			e := strings.ToLower(col.Elems[i])
+			if e == dv {
+				existCnt++
+				break
+			}
+		}
+	}
+	if existCnt != len(valMap) {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	setVal, err := types.ParseSetName(col.Elems, str)
+	if err != nil {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	v.SetMysqlSet(setVal)
 
 	return v.ToString()
 }
@@ -1058,19 +1127,12 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
-			var col *table.Column
-			for _, key := range constr.Keys {
-				col = table.FindCol(cols, key.Column.Name.O)
-				if col == nil {
-					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
-				}
-				// Virtual columns cannot be used in primary key.
-				if col.IsGenerated() && !col.GeneratedStored {
-					return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
-				}
+			lastCol, err := checkPKOnGeneratedColumn(tbInfo, constr.Keys)
+			if err != nil {
+				return nil, err
 			}
-			if len(constr.Keys) == 1 {
-				switch col.Tp {
+			if len(constr.Keys) == 1 && !config.GetGlobalConfig().AlterPrimaryKey {
+				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 					tbInfo.PKIsHandle = true
@@ -1079,6 +1141,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 				}
 			}
 		}
+
 		if constr.Tp == ast.ConstraintFulltext {
 			sc := ctx.GetSessionVars().StmtCtx
 			sc.AppendWarning(ErrTableCantHandleFt)
@@ -1100,10 +1163,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 		}
 		// set index type.
 		if constr.Option != nil {
-			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(),
-				constr.Option.Comment,
-				maxCommentLength,
-				errTooLongIndexComment.GenWithStackByArgs(idxInfo.Name.String(), maxCommentLength))
+			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), constr.Option)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1209,10 +1269,10 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 // The SQL string should be a create table statement.
 // Don't use this function to build a partitioned table.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), nil, s, mysql.DefaultCharset)
+	return buildTableInfoWithCheck(mock.NewContext(), nil, s, mysql.DefaultCharset, "")
 }
 
-func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset string) (*model.TableInfo, error) {
+func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	colDefs := s.Cols
 	colObjects := make([]interface{}, 0, len(colDefs))
@@ -1239,9 +1299,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	tableCharset := findTableOptionCharset(s.Options)
+	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
+	if err != nil {
+		return nil, err
+	}
+
 	// The column charset haven't been resolved here.
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, dbCharset, dbCollate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1256,6 +1320,8 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tbInfo.Collate = tableCollate
+	tbInfo.Charset = tableCharset
 
 	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
@@ -1265,11 +1331,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if pi != nil {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-			if len(pi.Columns) == 0 {
-				err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
-			} else {
-				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
-			}
+			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
 		case model.PartitionTypeHash:
 			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
@@ -1282,12 +1344,11 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		tbInfo.Partition = pi
 	}
 
-	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset); err != nil {
+	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset, dbCollate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1317,7 +1378,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset)
+	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1429,11 +1490,22 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
-	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
+	viewInfo, err := buildViewInfo(ctx, s)
+	if err != nil {
+		return err
+	}
 
-	colObjects := make([]interface{}, 0, len(viewInfo.Cols))
-	for _, col := range viewInfo.Cols {
-		colObjects = append(colObjects, col)
+	cols := make([]*table.Column, len(s.Cols))
+	colObjects := make([]interface{}, 0, len(s.Cols))
+
+	for i, v := range s.Cols {
+		cols[i] = table.ToColumn(&model.ColumnInfo{
+			Name:   v,
+			ID:     int64(i),
+			Offset: i,
+			State:  model.StatePublic,
+		})
+		colObjects = append(colObjects, v)
 	}
 
 	if err = checkTooLongColumn(colObjects); err != nil {
@@ -1471,33 +1543,16 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	return d.callHookOnChanged(err)
 }
 
-func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
-	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption, Cols: s.SchemaCols}
-	var tableColumns = make([]*table.Column, len(s.SchemaCols))
-	if s.Cols == nil {
-		for i, v := range s.SchemaCols {
-			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v,
-				ID:      int64(i),
-				Offset:  i,
-				State:   model.StatePublic,
-				Version: model.CurrLatestColumnInfoVersion,
-			})
-		}
-	} else {
-		for i, v := range s.Cols {
-			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v,
-				ID:      int64(i),
-				Offset:  i,
-				State:   model.StatePublic,
-				Version: model.CurrLatestColumnInfoVersion,
-			})
-		}
+func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
+	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
+	var sb strings.Builder
+	if err := s.Select.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
+		return nil, err
 	}
 
-	return viewInfo, tableColumns
+	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
+		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
 
 func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
@@ -1513,12 +1568,8 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
-	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column, s *ast.CreateTableStmt) error {
+	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
 	}
 
@@ -1530,31 +1581,37 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return err
 	}
 
-	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return err
+	if len(pi.Columns) == 0 {
+		if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+			return err
+		}
+
+		// s maybe nil when add partition.
+		if s == nil {
+			return nil
+		}
+
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, cols, tbInfo)
 	}
 
-	return checkPartitionFuncType(ctx, s, cols, tbInfo)
-}
-
-func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
-	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return err
-	}
-
+	// Check for range columns partition.
 	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
 		return err
 	}
 
-	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
-		return err
+	if s != nil {
+		for _, def := range s.Partition.Definitions {
+			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, pi.Columns, exprs); err != nil {
+				return err
+			}
+		}
 	}
 
-	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return errors.Trace(err)
-	}
-
-	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
+	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
 }
 
 func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
@@ -1590,8 +1647,9 @@ func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.Table
 	if len(curr.LessThan) != len(pi.Columns) {
 		return errors.Trace(ast.ErrPartitionColumnList)
 	}
+	var prev *model.PartitionDefinition
 	for i := 1; i < len(defs); i++ {
-		prev, curr := curr, &defs[i]
+		prev, curr = curr, &defs[i]
 		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
 		if err != nil {
 			return err
@@ -1676,8 +1734,8 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset string) (err error) {
-	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, dbCharset)
+func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, dbCollate string) (err error) {
+	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, tbInfo.Collate, dbCharset, dbCollate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1691,20 +1749,6 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset s
 	return
 }
 
-func findTableOptionCharset(options []*ast.TableOption) string {
-	var tableCharset string
-	for i := len(options) - 1; i >= 0; i-- {
-		op := options[i]
-		if op.Tp == ast.TableOptionCharset {
-			// find the last one.
-			tableCharset = op.StrValue
-			break
-		}
-	}
-
-	return tableCharset
-}
-
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1713,10 +1757,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
-		case ast.TableOptionCharset:
-			tbInfo.Charset = op.StrValue
-		case ast.TableOptionCollate:
-			tbInfo.Collate = op.StrValue
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
@@ -1735,7 +1775,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
 		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
 	}
-
 	return nil
 }
 
@@ -1749,40 +1788,37 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
-	charsets := make([]string, 0, len(options))
-	collates := make([]string, 0, len(options))
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			charsets = append(charsets, opt.StrValue)
+			info, err := charset.GetCharsetDesc(opt.StrValue)
+			if err != nil {
+				return "", "", err
+			}
+			if len(chs) == 0 {
+				chs = info.Name
+			} else if chs != info.Name {
+				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
+			}
+			if len(coll) == 0 {
+				coll = info.DefaultCollation
+			}
 		case ast.TableOptionCollate:
-			collates = append(collates, opt.StrValue)
-		}
-	}
-
-	if len(charsets) > 1 {
-		return "", "", ErrConflictingDeclarations.GenWithStackByArgs(charsets[0], charsets[1])
-	}
-	if len(charsets) == 1 {
-		if charsets[0] == "" {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
-		}
-		ca = charsets[0]
-	}
-	if len(collates) != 0 {
-		for i := range collates {
-			if collates[i] == "" {
-				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
+			info, err := charset.GetCollationByName(opt.StrValue)
+			if err != nil {
+				return "", "", err
 			}
-			if len(ca) != 0 && !charset.ValidCharsetAndCollation(ca, collates[i]) {
-				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(collates[i], ca)
+			if len(chs) == 0 {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
+			coll = info.Name
 		}
-		co = collates[len(collates)-1]
 	}
 	return
 }
@@ -1854,6 +1890,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
+		case ast.AlterTableDropPrimaryKey:
+			err = d.dropIndex(ctx, ident, true, model.NewCIStr(mysql.PrimaryKeyName))
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
@@ -1868,7 +1908,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			case ast.ConstraintForeignKey:
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
+				err = d.CreatePrimaryKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			default:
@@ -1886,10 +1926,6 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
-		case ast.AlterTableDropPrimaryKey:
-			err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("drop")
-		case ast.AlterTableRenameIndex:
-			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -2088,7 +2124,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, schema.Charset)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2129,17 +2165,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := buildPartitionInfo(meta, d, spec)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = checkPartitionNameUnique(meta, partInfo)
+	partInfo, err := buildPartitionInfo(ctx, meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2148,7 +2174,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// old partitions to check all partitions is strictly increasing.
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	err = checkCreatePartitionValue(ctx, meta, &tmp, t.Cols())
+	err = checkPartitionByRange(ctx, meta, &tmp, t.Cols(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2409,7 +2435,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, err := getDefaultValue(ctx, col.Name.L, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, col, option)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
@@ -2439,10 +2465,6 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 
 // processColumnOptions is only used in getModifiableColumnJob.
 func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
-	if len(options) == 0 {
-		return nil
-	}
-
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation
@@ -2510,6 +2532,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
+
+	if col.Tp == mysql.TypeBit {
+		col.Flag |= mysql.UnsignedFlag
+	}
 
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
@@ -2583,7 +2609,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// should take the collate in colDef.Option into consideration rather than handling it separately
 	specifiedCollates := extractCollateFromOption(specNewColumn)
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, schema.Charset)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2608,11 +2634,15 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
 		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
 	}
+	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
+	if !ctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("to remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
+	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
+		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -2884,7 +2914,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	if len(origCharset) == 0 {
 		// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 		// This DDL will update the table charset to default charset.
-		origCharset, origCollate, err = ResolveCharsetCollation("", dbInfo.Charset)
+		origCharset, origCollate, err = ResolveCharsetCollation("", "", dbInfo.Charset, dbInfo.Collate)
 		if err != nil {
 			return doNothing, err
 		}
@@ -3045,6 +3075,9 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID:   newSchema.ID,
@@ -3073,6 +3106,67 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	return indexName
 }
 
+func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
+	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
+	if !config.GetGlobalConfig().AlterPrimaryKey {
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
+	}
+
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = checkTooLongIndex(indexName); err != nil {
+		return ErrTooLongIdent.GenWithStackByArgs(mysql.PrimaryKeyName)
+	}
+
+	indexName = model.NewCIStr(mysql.PrimaryKeyName)
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+		return infoschema.ErrMultiplePriKey
+	}
+
+	tblInfo := t.Meta()
+	// Check before the job is put to the queue.
+	// This check is redundant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is super fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, err = checkPKOnGeneratedColumn(tblInfo, idxColNames); err != nil {
+		return err
+	}
+
+	if tblInfo.GetPartitionInfo() != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, true); err != nil {
+			return err
+		}
+	}
+
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	unique := true
+	sqlMode := ctx.GetSessionVars().SQLMode
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAddPrimaryKey,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{unique, indexName, idxColNames, indexOption, sqlMode},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -3095,7 +3189,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 
 	tblInfo := t.Meta()
 	// Check before the job is put to the queue.
-	// This check is redudant, but useful. If DDL check fail before the job is put
+	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
@@ -3104,20 +3198,13 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		return errors.Trace(err)
 	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, false); err != nil {
 			return err
 		}
 	}
-
-	if indexOption != nil {
-		// May be truncate comment here, when index comment too long and sql_mode is't strict.
-		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),
-			indexOption.Comment,
-			maxCommentLength,
-			errTooLongIndexComment.GenWithStackByArgs(indexName.String(), maxCommentLength))
-		if err != nil {
-			return errors.Trace(err)
-		}
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -3216,6 +3303,10 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 }
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr) error {
+	return d.dropIndex(ctx, ti, false, indexName)
+}
+
+func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3227,21 +3318,38 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if isPK {
+		if !config.GetGlobalConfig().AlterPrimaryKey {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
+
+		}
+		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+		if indexInfo == nil && !t.Meta().PKIsHandle {
+			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+		}
+		if t.Meta().PKIsHandle {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+		}
+	}
 	if indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
-	cols := t.Cols()
-	for _, idxCol := range indexInfo.Columns {
-		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
-			return autoid.ErrWrongAutoKey
-		}
+	// Check for drop index on auto_increment column.
+	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	jobTp := model.ActionDropIndex
+	if isPK {
+		jobTp = model.ActionDropPrimaryKey
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		Type:       model.ActionDropIndex,
+		Type:       jobTp,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{indexName},
 	}
@@ -3275,18 +3383,24 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 // validateCommentLength checks comment length of table, column, index and partition.
 // If comment length is more than the standard length truncate it
 // and store the comment length upto the standard comment length size.
-func validateCommentLength(vars *variable.SessionVars, comment string, maxLen int, err error) (string, error) {
-	if len(comment) > maxLen {
+func validateCommentLength(vars *variable.SessionVars, indexName string, indexOption *ast.IndexOption) (string, error) {
+	if indexOption == nil {
+		return "", nil
+	}
+
+	maxLen := MaxCommentLength
+	if len(indexOption.Comment) > maxLen {
+		err := errTooLongIndexComment.GenWithStackByArgs(indexName, maxLen)
 		if vars.StrictSQLMode {
 			return "", err
 		}
 		vars.StmtCtx.AppendWarning(err)
-		return comment[:maxLen], nil
+		indexOption.Comment = indexOption.Comment[:maxLen]
 	}
-	return comment, nil
+	return indexOption.Comment, nil
 }
 
-func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	if meta.Partition.Type == model.PartitionTypeRange {
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -3313,6 +3427,11 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+		if len(part.Columns) > 0 {
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, part.Columns, clause.Exprs); err != nil {
+				return nil, err
+			}
+		}
 
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
@@ -3330,6 +3449,41 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, colNames []model.CIStr, exprs []ast.ExprNode) error {
+	// Validate() has already checked len(colNames) = len(exprs)
+	// create table ... partition by range columns (cols)
+	// partition p0 values less than (expr)
+	// check the type of cols[i] and expr is consistent.
+	for i, colExpr := range exprs {
+		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			continue
+		}
+
+		colName := colNames[i]
+		colInfo := getColumnInfoByName(meta, colName.L)
+		if colInfo == nil {
+			return errors.Trace(ErrFieldNotFoundPart)
+		}
+		colType := &colInfo.FieldType
+
+		val, err := expression.EvalAstExpr(ctx, colExpr)
+		if err != nil {
+			return err
+		}
+
+		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		switch colType.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			switch val.Kind() {
+			case types.KindString, types.KindBytes:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
 }
 
 // extractCollateFromOption take collates(may multiple) in option into consideration

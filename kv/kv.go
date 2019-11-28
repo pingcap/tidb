@@ -16,6 +16,7 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -73,9 +74,9 @@ var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
 	// TxnEntryCountLimit  is limit of number of entries in the MemBuffer.
-	TxnEntryCountLimit uint64 = 300 * 1000
+	TxnEntryCountLimit uint64 = config.DefTxnEntryCountLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit = 100 * 1024 * 1024
+	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -136,7 +137,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, forUpdateTS uint64, keys ...Key) error
+	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -156,6 +157,8 @@ type Transaction interface {
 	// SetAssertion sets an assertion for an operation on the key.
 	SetAssertion(key Key, assertion AssertionType)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	// Do not use len(value) == 0 or value == nil to represent non-exist.
+	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
 }
@@ -298,7 +301,15 @@ type Iterator interface {
 
 // SplitableStore is the kv store which supports split regions.
 type SplitableStore interface {
-	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
+
+// Used for pessimistic lock wait time
+// these two constants are special for lock protocol with tikv
+// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
+var (
+	LockAlwaysWait = int64(0)
+	LockNoWait     = int64(-1)
+)

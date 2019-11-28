@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -452,14 +453,14 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
-	dbName  string
-	tblInfo *model.TableInfo
-	indices []table.Index
-	srcs    []*IndexLookUpExecutor
-	done    bool
-	is      infoschema.InfoSchema
-	exitCh  chan struct{}
-	retCh   chan error
+	dbName     string
+	table      table.Table
+	indexInfos []*model.IndexInfo
+	srcs       []*IndexLookUpExecutor
+	done       bool
+	is         infoschema.InfoSchema
+	exitCh     chan struct{}
+	retCh      chan error
 }
 
 // Open implements the Executor Open interface.
@@ -487,7 +488,20 @@ func (e *CheckTableExec) Close() error {
 	return firstErr
 }
 
-func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
+func (e *CheckTableExec) checkTableIndexHandle(ctx context.Context, idxInfo *model.IndexInfo) error {
+	// For partition table, there will be multi same index indexLookUpReaders on different partitions.
+	for _, src := range e.srcs {
+		if src.index.Name.L == idxInfo.Name.L {
+			err := e.checkIndexHandle(ctx, src)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpExecutor) error {
 	cols := src.schema.Columns
 	retFieldTypes := make([]*types.FieldType, len(cols))
 	for i := range cols {
@@ -528,20 +542,19 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	idxNames := make([]string, 0, len(e.indices))
-	for _, idx := range e.indices {
-		idxNames = append(idxNames, idx.Meta().Name.O)
+	idxNames := make([]string, 0, len(e.indexInfos))
+	for _, idx := range e.indexInfos {
+		idxNames = append(idxNames, idx.Name.O)
 	}
-	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
+	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
-		tbl := e.srcs[idxOffset].table
 		if greater == admin.IdxCntGreater {
-			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(tbl, idxOffset)
+			err = e.checkTableRecord(idxOffset)
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 		}
 		return errors.Trace(err)
 	}
@@ -555,7 +568,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		go func(num int) {
 			defer wg.Done()
 			util.WithRecovery(func() {
-				err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
 					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
 				}
@@ -576,21 +589,24 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(tbl table.Table, idxOffset int) error {
-	idx := e.indices[idxOffset]
+func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
+	idxInfo := e.indexInfos[idxOffset]
+	// TODO: Fix me later, can not use genExprs in indexLookUpReader, because the schema of expression is different.
 	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	if tbl.Meta().GetPartitionInfo() == nil {
-		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
+	if e.table.Meta().GetPartitionInfo() == nil {
+		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx, genExprs)
 	}
 
-	info := tbl.Meta().GetPartitionInfo()
+	info := e.table.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := e.table.(table.PartitionedTable).GetPartition(pid)
+		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
 		}
@@ -703,7 +719,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(7, slow.User)
 		req.AppendString(8, slow.DB)
 		req.AppendString(9, slow.TableIDs)
-		req.AppendString(10, slow.IndexIDs)
+		req.AppendString(10, slow.IndexNames)
 		if slow.Internal {
 			req.AppendInt64(11, 1)
 		} else {
@@ -769,10 +785,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return doLockKeys(ctx, e.ctx, e.keys...)
+	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
+	return doLockKeys(ctx, e.ctx, lockWaitTime, e.keys...)
 }
 
-func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
@@ -780,7 +797,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) erro
 		return err
 	}
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, keys...)
+	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, lockWaitTime, keys...)
 }
 
 // LimitExec represents limit executor
@@ -1501,10 +1518,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 	vars.PreparedParams = vars.PreparedParams[:0]
-	if !vars.InRestrictedSQL {
-		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
-			sc.Priority = priority
-		}
+	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+		sc.Priority = priority
 	}
 	if vars.StmtCtx.LastInsertID > 0 {
 		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID

@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -629,7 +628,7 @@ func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a varchar(20) charset utf8)")
 	tk.MustExec("insert into t1 values (?)", "t1_value")
-
+	tk.MustExec("alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN")
 	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
 
@@ -639,34 +638,14 @@ func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
 
-	rs, err := tk.Exec("alter table t modify column a varchar(20) charset utf8")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8", mysql.ErrUnknown)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4", mysql.ErrUnknown)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8 collate utf8_bin", mysql.ErrUnknown)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci", mysql.ErrUnknown)
 
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8 collate utf8_bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
+	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin", mysql.ErrUnknownCollation)
+	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin", mysql.ErrConflictingDeclarations)
+	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin", mysql.ErrCollationCharsetMismatch)
 }
 
 func (s *testIntegrationSuite10) TestChangingTableCharset(c *C) {
@@ -997,6 +976,14 @@ func (s *testIntegrationSuite6) TestBitDefaultValue(c *C) {
 	tk.MustExec("insert into t_bit set c2=1;")
 	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
 	tk.MustExec("drop table t_bit")
+
+	tk.MustExec("create table t_bit (a int)")
+	tk.MustExec("insert into t_bit value (1)")
+	tk.MustExec("alter table t_bit add column c bit(16) null default b'1100110111001'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x19\xb9"))
+	tk.MustExec("update t_bit set c = b'11100000000111'")
+	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
+
 	tk.MustExec(`create table testalltypes1 (
     field_1 bit default 1,
     field_2 tinyint null default null
@@ -1139,19 +1126,14 @@ func (s *testIntegrationSuite4) TestMultiRegionGetTableEndHandle(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
-	maxID, emptyTable := s.getMaxTableRowID(testCtx)
+	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(999))
+	c.Assert(maxID, Equals, int64(1000))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
-
-	tk.MustExec("insert into t values(-1, 1000)")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
+	c.Assert(maxID, Equals, int64(1001))
 }
 
 type testMaxTableRowIDContext struct {
@@ -1168,105 +1150,22 @@ func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTable
 	}
 }
 
-func (s *testIntegrationSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
+func getMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage) (int64, bool) {
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
-	curVer, err := s.store.CurrentVersion()
+	curVer, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
 
-func (s *testIntegrationSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, expectEmpty bool, expectMaxID int64) {
+func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxID int64) {
 	c := ctx.c
-	maxID, emptyTable := s.getMaxTableRowID(ctx)
+	maxID, emptyTable := getMaxTableRowID(ctx, store)
 	c.Assert(emptyTable, Equals, expectEmpty)
 	c.Assert(maxID, Equals, expectMaxID)
-}
-
-func (s *testIntegrationSuite6) TestGetTableEndHandle(c *C) {
-	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	// Test PK is handle.
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-
-	is := s.dom.InfoSchema()
-	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
-	// test empty table
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	tk.MustExec("insert into t values(-1, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(-1))
-
-	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775806))
-
-	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("insert into t values(10, 1)")
-	tk.MustExec("insert into t values(102149142, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
-	}
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, false, int64(999))
-
-	// Test PK is not handle
-	tk.MustExec("create table t2(a varchar(255))")
-
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
-	}
-
-	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable := s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100000)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
 }
 
 func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
@@ -1556,11 +1455,15 @@ func (s *testIntegrationSuite4) TestAlterColumn(c *C) {
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
-	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
+	_, err = s.tk.Exec("alter table mc modify column a bigint") // Droppping auto_increment is not allow when @@tidb_allow_remove_auto_inc == 'off'
+	c.Assert(err, NotNil)
+	s.tk.MustExec("set @@tidb_allow_remove_auto_inc = on")
+	s.tk.MustExec("alter table mc modify column a bigint") // Dropping auto_increment is ok when @@tidb_allow_remove_auto_inc == 'on'
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
+
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
 
@@ -1578,6 +1481,14 @@ func (s *testIntegrationSuite4) TestAlterColumn(c *C) {
 	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+
+	s.tk.MustExec("drop table if exists multi_unique")
+	s.tk.MustExec("create table multi_unique (a int unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key primary key unique unique)")
+	s.tk.MustExec("drop table multi_unique")
+	s.tk.MustExec("create table multi_unique (a int key unique unique key unique)")
+	s.tk.MustExec("drop table multi_unique")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
@@ -1971,4 +1882,32 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
 	assertErrorCode(c, tk, dropIndexSQL, mysql.ErrWrongAutoKey)
+}
+
+func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
+	_, err := tk.Exec("create table test.t_parser_issue_284_2(id int not null primary key, c1 int not null, constraint foreign key (c1) references t_parser_issue_284(c1))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table test.t_parser_issue_284")
+	tk.MustExec("drop table test.t_parser_issue_284_2")
+}
+
+func (s *testIntegrationSuite3) TestForeignKeyOnUpdateOnDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_foreign_key_on_update")
+	tk.MustExec("use test_foreign_key_on_update")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("create table t3 (a int, b int)")
+	tk.MustExec("create table t4 (a int, b int)")
+	tk.MustExec("alter table t1 add constraint fk_a foreign key (b) references t (a) on update restrict")
+	tk.MustExec("alter table t2 add constraint fk_a foreign key (a) references t (a) on update set null")
+	tk.MustExec("alter table t3 add constraint fk_a foreign key (a) references t (a) on update cascade on delete set null")
+	tk.MustExec("alter table t4 add constraint fk_a foreign key (a) references t (a) on update restrict on delete set null")
+	tk.MustExec("create table t5 (a int, b int, foreign key (b) references t (a) on update restrict)")
+	tk.MustExec("create table t6 (a int, b int, foreign key (b) references t (a) on update restrict on delete restrict)")
 }

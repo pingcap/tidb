@@ -61,3 +61,8 @@ func (*testSysVarSuite) TestTxnMode(c *C) {
 	err = seVar.setTxnMode("something else")
 	c.Assert(err, NotNil)
 }
+
+func (*testSysVarSuite) TestBoolToInt32(c *C) {
+	c.Assert(BoolToInt32(true), Equals, int32(1))
+	c.Assert(BoolToInt32(false), Equals, int32(0))
+}

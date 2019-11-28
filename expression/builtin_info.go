@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -44,6 +45,7 @@ var (
 	_ functionClass = &rowCountFunctionClass{}
 	_ functionClass = &tidbVersionFunctionClass{}
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
+	_ functionClass = &tidbDecodePlanFunctionClass{}
 )
 
 var (
@@ -588,4 +590,36 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
 	return res, false, nil
+}
+
+type tidbDecodePlanFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	sig := &builtinTiDBDecodePlanSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBDecodePlanSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodePlanSig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodePlanSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, error) {
+	planString, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	planTree, err := plancodec.DecodePlan(planString)
+	return planTree, false, err
 }

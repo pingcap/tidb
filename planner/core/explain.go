@@ -141,6 +141,9 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	// The children can be inferred by the relation symbol.
+	if p.PushedLimit != nil {
+		return fmt.Sprintf("limit embedded(offset:%v, count:%v)", p.PushedLimit.Offset, p.PushedLimit.Count)
+	}
 	return ""
 }
 

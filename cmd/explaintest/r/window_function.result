@@ -6,8 +6,8 @@ explain select sum(a) over() from t;
 id	count	task	operator info
 Projection_7	10000.00	root	sum(a) over()
 └─Window_8	10000.00	root	sum(cast(test.t.a)) over()
-  └─TableReader_10	10000.00	root	data:TableScan_9
-    └─TableScan_9	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─IndexReader_10	10000.00	root	index:IndexScan_9
+    └─IndexScan_9	10000.00	cop	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	sum(a) over(partition by a)

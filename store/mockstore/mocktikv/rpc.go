@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -58,6 +59,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
 				TxnSize:     locked.TxnSize,
+				LockType:    locked.LockType,
 			},
 		}
 	}
@@ -310,8 +312,10 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	h.cluster.handleDelay(startTS, regionID)
 	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
 
-	// TODO: remove this when implement sever side wait.
-	h.simulateServerSideWaitLock(errs)
+	if req.WaitTimeout == kv.LockAlwaysWait {
+		// TODO: remove this when implement sever side wait.
+		h.simulateServerSideWaitLock(errs)
+	}
 	return &kvrpcpb.PessimisticLockResponse{
 		Errors: convertToKeyErrors(errs),
 	}
@@ -357,7 +361,7 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 		panic("KvCleanup: key not in region")
 	}
 	var resp kvrpcpb.CleanupResponse
-	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion())
+	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion(), req.GetCurrentTs())
 	if err != nil {
 		if commitTS, ok := errors.Cause(err).(ErrAlreadyCommitted); ok {
 			resp.CommitVersion = uint64(commitTS)
@@ -365,6 +369,19 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 			resp.Error = convertToKeyError(err)
 		}
 	}
+	return &resp
+}
+
+func (h *rpcHandler) handleTxnHeartBeat(req *kvrpcpb.TxnHeartBeatRequest) *kvrpcpb.TxnHeartBeatResponse {
+	if !h.checkKeyInRegion(req.PrimaryLock) {
+		panic("KvTxnHeartBeat: key not in region")
+	}
+	var resp kvrpcpb.TxnHeartBeatResponse
+	ttl, err := h.mvccStore.TxnHeartBeat(req.PrimaryLock, req.StartVersion, req.AdviseLockTtl)
+	if err != nil {
+		resp.Error = convertToKeyError(err)
+	}
+	resp.LockTtl = ttl
 	return &resp
 }
 
@@ -592,14 +609,25 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 }
 
 func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
-	key := NewMvccKey(req.GetSplitKey())
-	region, _ := h.cluster.GetRegionByKey(key)
-	if bytes.Equal(region.GetStartKey(), key) {
-		return &kvrpcpb.SplitRegionResponse{}
+	keys := req.GetSplitKeys()
+	resp := &kvrpcpb.SplitRegionResponse{Regions: make([]*metapb.Region, 0, len(keys)+1)}
+	for i, key := range keys {
+		k := NewMvccKey(key)
+		region, _ := h.cluster.GetRegionByKey(k)
+		if bytes.Equal(region.GetStartKey(), key) {
+			continue
+		}
+		if i == 0 {
+			// Set the leftmost region.
+			resp.Regions = append(resp.Regions, region)
+		}
+		newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
+		newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, k, newPeerIDs, newPeerIDs[0])
+		// The mocktikv should return a deep copy of meta info to avoid data race
+		metaCloned := proto.Clone(newRegion.Meta)
+		resp.Regions = append(resp.Regions, metaCloned.(*metapb.Region))
 	}
-	newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
-	newRegion := h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
-	return &kvrpcpb.SplitRegionResponse{Left: newRegion.Meta}
+	return resp
 }
 
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
@@ -608,17 +636,20 @@ type RPCClient struct {
 	Cluster       *Cluster
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
+	done          chan struct{}
 }
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
-	ch := make(chan *tikvrpc.Lease)
-	go tikvrpc.CheckStreamTimeoutLoop(ch)
+	ch := make(chan *tikvrpc.Lease, 1024)
+	done := make(chan struct{})
+	go tikvrpc.CheckStreamTimeoutLoop(ch, done)
 	return &RPCClient{
 		Cluster:       cluster,
 		MvccStore:     mvccStore,
 		streamTimeout: ch,
+		done:          done,
 	}
 }
 
@@ -657,6 +688,12 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("RPCClient.SendRequest", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -753,6 +790,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.Cleanup = handler.handleKvCleanup(r)
+	case tikvrpc.CmdTxnHeartBeat:
+		r := req.TxnHeartBeat
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.TxnHeartBeat = &kvrpcpb.TxnHeartBeatResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.TxnHeartBeat = handler.handleTxnHeartBeat(r)
 	case tikvrpc.CmdBatchGet:
 		r := req.BatchGet
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -937,14 +981,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				Value: strconv.Itoa(len(scanResp.Pairs)),
 			}}}
 	default:
-		return nil, errors.Errorf("unsupport this request type %v", req.Type)
+		return nil, errors.Errorf("unsupported this request type %v", req.Type)
 	}
 	return resp, nil
 }
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
-	close(c.streamTimeout)
+	close(c.done)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
 	}

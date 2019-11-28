@@ -56,6 +56,15 @@ type tikvSnapshot struct {
 	syncLog      bool
 	keyOnly      bool
 	vars         *kv.Variables
+
+	// Cache the result of BatchGet.
+	// The invariance is that calling BatchGet multiple times using the same start ts,
+	// the result should not change.
+	// NOTE: This representation here is different from the BatchGet API.
+	// cached use len(value)=0 to represent a key-value entry doesn't exist (a reliable truth from TiKV).
+	// In the BatchGet API, it use no key-value entry to represent non-exist.
+	// It's OK as long as there are no zero-byte values in the protocol.
+	cached map[string][]byte
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -68,6 +77,12 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	}
 }
 
+func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
+	// Invalidate cache if the snapshotTS change!
+	s.version.Ver = ts
+	s.cached = nil
+}
+
 func (s *tikvSnapshot) SetPriority(priority int) {
 	s.priority = pb.CommandPri(priority)
 }
@@ -75,7 +90,22 @@ func (s *tikvSnapshot) SetPriority(priority int) {
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	// Check the cached value first.
 	m := make(map[string][]byte)
+	if s.cached != nil {
+		tmp := keys[:0]
+		for _, key := range keys {
+			if val, ok := s.cached[string(key)]; ok {
+				if len(val) > 0 {
+					m[string(key)] = val
+				}
+			} else {
+				tmp = append(tmp, key)
+			}
+		}
+		keys = tmp
+	}
+
 	if len(keys) == 0 {
 		return m, nil
 	}
@@ -94,6 +124,7 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		if len(v) == 0 {
 			return
 		}
+
 		mu.Lock()
 		m[string(k)] = v
 		mu.Unlock()
@@ -107,11 +138,19 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// Update the cache.
+	if s.cached == nil {
+		s.cached = make(map[string][]byte, len(m))
+	}
+	for _, key := range keys {
+		s.cached[string(key)] = m[string(key)]
+	}
+
 	return m, nil
 }
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
-	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -234,6 +273,17 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
+	// Check the cached values first.
+	if s.cached != nil {
+		if value, ok := s.cached[string(k)]; ok {
+			return value, nil
+		}
+	}
+
+	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
+		panic("cache miss")
+	})
+
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
 	req := &tikvrpc.Request{
@@ -324,7 +374,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		return newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {
-		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable())
+		return kv.ErrTxnRetryable.GenWithStackByArgs("tikv restarts txn: " + keyErr.GetRetryable())
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())

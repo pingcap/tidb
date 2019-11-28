@@ -52,6 +52,11 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// Skip check for INFORMATION_SCHEMA database.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		switch priv {
+		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			return false
+		}
 		return true
 	}
 
@@ -134,7 +139,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
-		p.host = host
+		p.host = h
 		success = true
 		return
 	}
@@ -154,7 +159,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	p.user = user
-	p.host = host
+	p.host = h
 	success = true
 	return
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -35,6 +36,11 @@ type testCommitterSuite struct {
 }
 
 var _ = Suite(&testCommitterSuite{})
+
+func (s *testCommitterSuite) SetUpSuite(c *C) {
+	PessimisticLockTTL = 3000 // 3s
+	s.OneByOneSuite.SetUpSuite(c)
+}
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
@@ -506,7 +512,7 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	_, _ = txn.us.Get(key)
 	c.Assert(txn.Set(key, key), IsNil)
 	txn.DelOption(kv.PresumeKeyNotExists)
-	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	err := txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, key)
 	c.Assert(err, NotNil)
 	c.Assert(txn.Delete(key), IsNil)
 	key2 := kv.Key("key2")
@@ -518,9 +524,9 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
-	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	err := txn.LockKeys(context.Background(), nil, 100, kv.LockAlwaysWait, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	err = txn.LockKeys(context.Background(), nil, 100, kv.LockAlwaysWait, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
 	c.Assert(txn.lockKeys, HasLen, 2)
 }
@@ -530,18 +536,38 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	time.Sleep(time.Millisecond * 100)
-	err := txn.LockKeys(context.Background(), txn.startTS, key)
+	err := txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, key)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 100)
 	key2 := kv.Key("key2")
-	err = txn.LockKeys(context.Background(), txn.startTS, key2)
+	err = txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	elapsedTTL := lockInfo.LockTtl - PessimisticLockTTL
-	c.Assert(elapsedTTL, GreaterEqual, uint64(100))
-	c.Assert(elapsedTTL, Less, uint64(200))
-	lockInfo2 := s.getLockInfo(c, key2)
-	c.Assert(lockInfo2.LockTtl, Equals, lockInfo.LockTtl)
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
+	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
+
+	lr := newLockResolver(s.store)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, txn.startTS)
+	c.Assert(err, IsNil)
+	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
+
+	// Check primary lock TTL is auto increasing while the pessimistic txn is ongoing.
+	for i := 0; i < 50; i++ {
+		lockInfoNew := s.getLockInfo(c, key)
+		if lockInfoNew.LockTtl > lockInfo.LockTtl {
+			currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+			c.Assert(err, IsNil)
+			// Check that the TTL is update to a reasonable range.
+			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
+			now := oracle.ExtractPhysical(currentTS)
+			c.Assert(expire > now, IsTrue)
+			c.Assert(uint64(expire-now) <= PessimisticLockTTL, IsTrue)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(false, IsTrue, Commentf("update pessimistic ttl fail"))
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {

@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -39,6 +41,29 @@ func (s *testSuite1) TestTraceExec(c *C) {
 	// |   └─recordSet.Next        | 22:08:38.249340 | 155.317µs  |
 	// +---------------------------+-----------------+------------+
 	rows = tk.MustQuery("trace format='row' select * from trace where id = 0;").Rows()
-
 	c.Assert(len(rows) > 1, IsTrue)
+	c.Assert(rowsOrdered(rows), IsTrue)
+}
+
+func rowsOrdered(rows [][]interface{}) (ordered bool) {
+	for idx := range rows {
+		if idx == 0 || !isSibling(rows[idx-1][0].(string), rows[idx][0].(string)) {
+			continue
+		}
+
+		if rows[idx-1][1].(string) > rows[idx][1].(string) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSibling(x string, y string) bool {
+	indexF := func(c rune) bool {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+		return true
+	}
+	return strings.IndexFunc(x, indexF) == strings.IndexFunc(y, indexF)
 }

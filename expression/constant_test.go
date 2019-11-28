@@ -55,14 +55,22 @@ func newLonglong(value int64) *Constant {
 }
 
 func newDate(year, month, day int) *Constant {
+	return newTimeConst(year, month, day, 0, 0, 0, mysql.TypeDate)
+}
+
+func newTimestamp(yy, mm, dd, hh, min, ss int) *Constant {
+	return newTimeConst(yy, mm, dd, hh, min, ss, mysql.TypeTimestamp)
+}
+
+func newTimeConst(yy, mm, dd, hh, min, ss int, tp uint8) *Constant {
 	var tmp types.Datum
 	tmp.SetMysqlTime(types.Time{
-		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
-		Type: mysql.TypeDate,
+		Time: types.FromDate(yy, mm, dd, 0, 0, 0, 0),
+		Type: tp,
 	})
 	return &Constant{
 		Value:   tmp,
-		RetType: types.NewFieldType(mysql.TypeDate),
+		RetType: types.NewFieldType(tp),
 	}
 }
 
@@ -201,6 +209,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 	defer testleak.AfterTest(c)()
 	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
+	col2 := newColumnWithType(2, types.NewFieldType(mysql.TypeTimestamp))
 	tests := []struct {
 		solver     constraintSolver
 		conditions []Expression
@@ -263,6 +272,15 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			conditions: []Expression{
 				newFunction(ast.LT, col1, newDate(2018, 12, 11)),
 				newFunction(ast.GT, newFunction(ast.ToDays, col1), newLonglong(737999)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			// col2 > unixtimestamp('2008-05-01 00:00:00') and unixtimestamp(col2) < unixtimestamp('2008-04-01 00:00:00') => false
+			conditions: []Expression{
+				newFunction(ast.GT, col2, newTimestamp(2008, 5, 1, 0, 0, 0)),
+				newFunction(ast.LT, newFunction(ast.UnixTimestamp, col2), newLonglong(1206979200)),
 			},
 			result: "0",
 		},

@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -42,6 +42,8 @@ const (
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
 	DefaultQueryLogMaxLen = 2048
+	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
+	DefaultRecordPlanInSlowLog = 1
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -102,7 +104,7 @@ func (hook *contextHook) Fire(entry *log.Entry) error {
 		name := fu.Name()
 		if !isSkippedPackageName(name) {
 			file, line := fu.FileLine(pc[i] - 1)
-			entry.Data["file"] = path.Base(file)
+			entry.Data["file"] = filepath.Base(file)
 			entry.Data["line"] = line
 			break
 		}

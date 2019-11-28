@@ -105,6 +105,14 @@ var (
 			Name:      "worker_operation_total",
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
+
+	AddIndexTotalCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "add_index_total",
+			Help:      "Speed of add index",
+		}, []string{LblType})
 )
 
 // Label constants.

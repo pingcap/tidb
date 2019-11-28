@@ -412,7 +412,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 }
 
 func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc.CmdType) (*tikvrpc.Response, error) { // split the keys
-	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys)
+	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -570,7 +570,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	for i, key := range keys {
 		keyToValue[string(key)] = values[i]
 	}
-	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys)
+	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

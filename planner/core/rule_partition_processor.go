@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -89,7 +90,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr() *tables.PartitionExpr
+	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column) (*tables.PartitionExpr, error)
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -101,8 +102,12 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	var partitionExprs []expression.Expression
 	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {
-		partitionExprs = table.PartitionExpr().Ranges
-		col = table.PartitionExpr().Column
+		pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols)
+		if err != nil {
+			return nil, err
+		}
+		partitionExprs = pExpr.Ranges
+		col = pExpr.Column
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
@@ -114,7 +119,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
 		// If the select condition would never be satisified, prune that partition.
-		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
+		pruned, err := s.canBePruned(ds.context(), col, expr.Clone(), ds.allConds)
 		if err != nil {
 			return nil, err
 		}
@@ -130,9 +135,14 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 		// Not a deep copy.
 		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), TypeTableScan, &newDataSource)
+		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), plancodec.TypeTableScan, &newDataSource)
 		newDataSource.isPartition = true
 		newDataSource.physicalTableID = pi.Definitions[i].ID
+		newDataSource.possibleAccessPaths = make([]*accessPath, len(ds.possibleAccessPaths))
+		for i := range ds.possibleAccessPaths {
+			newPath := *ds.possibleAccessPaths[i]
+			newDataSource.possibleAccessPaths[i] = &newPath
+		}
 		// There are many expression nodes in the plan tree use the original datasource
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.

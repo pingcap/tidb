@@ -1,0 +1,93 @@
+[
+  {
+    "Name": "TestPushLimitDownIndexLookUpReader",
+    "Cases": null
+  },
+  {
+    "Name": "TestIsFromUnixtimeNullRejective",
+    "Cases": [
+      {
+        "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
+        "Plan": [
+          "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_12 9990.00 root data:Selection_11",
+          "│ └─Selection_11 9990.00 cop not(isnull(test.t1.a))",
+          "│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─Selection_13 7992.00 root from_unixtime(cast(test.t2.b))",
+          "  └─TableReader_16 9990.00 root data:Selection_15",
+          "    └─Selection_15 9990.00 cop not(isnull(test.t2.a))",
+          "      └─TableScan_14 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSimplifyOuterJoinWithCast",
+    "Cases": [
+      {
+        "SQL": "explain select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01'",
+        "Plan": [
+          "HashLeftJoin_8 10000.00 root left outer join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─Selection_9 8000.00 root ge(cast(test.t1.b), 2019-01-01 00:00:00.000000)",
+          "│ └─TableReader_11 10000.00 root data:TableScan_10",
+          "│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_13 10000.00 root data:TableScan_12",
+          "  └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPartitionTableStats",
+    "Cases": [
+      {
+        "SQL": "explain select * from t order by a",
+        "Result": [
+          "Sort_8 10005.00 root test.t.a:asc",
+          "└─Union_11 10005.00 root ",
+          "  ├─TableReader_13 10000.00 root data:TableScan_12",
+          "  │ └─TableScan_12 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  ├─TableReader_15 1.00 root data:TableScan_14",
+          "  │ └─TableScan_14 1.00 cop table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  └─TableReader_17 4.00 root data:TableScan_16",
+          "    └─TableScan_16 4.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t order by a",
+        "Result": [
+          "15 5",
+          "21 1",
+          "22 2",
+          "23 3",
+          "24 4"
+        ]
+      },
+      {
+        "SQL": "explain select * from t order by a limit 3",
+        "Result": [
+          "TopN_16 3.00 root test.t.a:asc, offset:0, count:3",
+          "└─Union_20 7.00 root ",
+          "  ├─TopN_21 3.00 root test.t.a:asc, offset:0, count:3",
+          "  │ └─TableReader_29 3.00 root data:TopN_28",
+          "  │   └─TopN_28 3.00 cop test.t.a:asc, offset:0, count:3",
+          "  │     └─TableScan_27 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  ├─TopN_34 1.00 root test.t.a:asc, offset:0, count:3",
+          "  │ └─TableReader_42 1.00 root data:TableScan_41",
+          "  │   └─TableScan_41 1.00 cop table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  └─TopN_45 3.00 root test.t.a:asc, offset:0, count:3",
+          "    └─TableReader_53 4.00 root data:TableScan_52",
+          "      └─TableScan_52 4.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t order by a limit 3",
+        "Result": [
+          "15 5",
+          "21 1",
+          "22 2"
+        ]
+      }
+    ]
+  }
+]

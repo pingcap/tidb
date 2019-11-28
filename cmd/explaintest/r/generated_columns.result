@@ -32,9 +32,9 @@ IndexReader_6	3323.33	root	index:IndexScan_5
 └─IndexScan_5	3323.33	cop	table:sgc, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where b < 3;
 id	count	task	operator info
-IndexLookUp_10	3323.33	root	
-├─IndexScan_8	3323.33	cop	table:sgc, index:b, range:[-inf,3), keep order:false, stats:pseudo
-└─TableScan_9	3323.33	cop	table:sgc, keep order:false, stats:pseudo
+IndexLookUp_7	3323.33	root	
+├─IndexScan_5	3323.33	cop	table:sgc, index:b, range:[-inf,3), keep order:false, stats:pseudo
+└─TableScan_6	3323.33	cop	table:sgc, keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where a < 3 and b < 3;
 id	count	task	operator info
 IndexReader_11	1104.45	root	index:Selection_10

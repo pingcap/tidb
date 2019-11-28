@@ -155,7 +155,7 @@ type clientConn struct {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
+	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
@@ -533,6 +533,20 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	return err
 }
 
+func (cc *clientConn) SessionStatusToString() string {
+	status := cc.ctx.Status()
+	inTxn, autoCommit := 0, 0
+	if status&mysql.ServerStatusInTrans > 0 {
+		inTxn = 1
+	}
+	if status&mysql.ServerStatusAutocommit > 0 {
+		autoCommit = 1
+	}
+	return fmt.Sprintf("inTxn:%d, autocommit:%d",
+		inTxn, autoCommit,
+	)
+}
+
 func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
@@ -667,6 +681,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			logutil.Logger(ctx).Warn("dispatch error",
 				zap.String("connInfo", cc.String()),
+				zap.String("command", mysql.Command2Str[data[0]]),
+				zap.String("status", cc.SessionStatusToString()),
 				zap.String("sql", queryStrForLog(string(data[1:]))),
 				zap.String("err", errStrForLog(err)),
 			)
@@ -1176,21 +1192,23 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	rs, err := cc.ctx.Execute(ctx, sql)
+	rss, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if status == connStatusShutdown || status == connStatusWaitShutdown {
-		killConn(cc)
-		return errors.New("killed by another connection")
+	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
+		for _, rs := range rss {
+			terror.Call(rs.Close)
+		}
+		return executor.ErrQueryInterrupted
 	}
-	if rs != nil {
-		if len(rs) == 1 {
-			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
+	if rss != nil {
+		if len(rss) == 1 {
+			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
-			err = cc.writeMultiResultset(ctx, rs, false)
+			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
@@ -1397,6 +1415,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if cl, ok := rs.(fetchNotifier); ok {
+		cl.OnFetchReturned()
 	}
 	return cc.writeEOF(serverStatus)
 }

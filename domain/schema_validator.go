@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -73,39 +75,49 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
 		isStarted:        true,
 		lease:            lease,
-		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
+		deltaSchemaInfos: make([]deltaSchemaInfo, 0, variable.DefTiDBMaxDeltaSchemaCount),
 	}
 }
 
 func (s *schemaValidator) IsStarted() bool {
-	s.mux.Lock()
+	s.mux.RLock()
 	isStarted := s.isStarted
-	s.mux.Unlock()
+	s.mux.RUnlock()
 	return isStarted
+}
+
+func (s *schemaValidator) LatestSchemaVersion() int64 {
+	s.mux.RLock()
+	latestSchemaVer := s.latestSchemaVer
+	s.mux.RUnlock()
+	return latestSchemaVer
 }
 
 func (s *schemaValidator) Stop() {
 	logutil.Logger(context.Background()).Info("the schema validator stops")
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorStop).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
 func (s *schemaValidator) Restart() {
 	logutil.Logger(context.Background()).Info("the schema validator restarts")
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorRestart).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
 }
 
 func (s *schemaValidator) Reset() {
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorReset).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
 	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, changedTableIDs []int64) {
@@ -147,13 +159,17 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
+		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheEmpty).Inc()
 		logutil.Logger(context.Background()).Info("schema change history is empty", zap.Int64("currVer", currVer))
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
-		logutil.Logger(context.Background()).Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
-			zap.Int64("latestSchemaVer", s.latestSchemaVer))
+		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheMiss).Inc()
+		logutil.Logger(context.Background()).Info("the schema version is much older than the latest version",
+			zap.Int64("currVer", currVer),
+			zap.Int64("latestSchemaVer", s.latestSchemaVer),
+			zap.Reflect("deltas", newerDeltas))
 		return true
 	}
 	for _, item := range newerDeltas {
@@ -209,8 +225,54 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 }
 
 func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	s.deltaSchemaInfos = append(s.deltaSchemaInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
-	if len(s.deltaSchemaInfos) > maxNumberOfDiffsToLoad {
+	maxCnt := int(variable.GetMaxDeltaSchemaCount())
+	if maxCnt <= 0 {
+		logutil.Logger(context.Background()).Info("the schema validator enqueue", zap.Int("delta max count", maxCnt))
+		return
+	}
+
+	delta := deltaSchemaInfo{schemaVersion, relatedTableIDs}
+	if len(s.deltaSchemaInfos) == 0 {
+		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+		return
+	}
+
+	lastOffset := len(s.deltaSchemaInfos) - 1
+	// The first item we needn't to merge, because we hope to cover more versions.
+	if lastOffset != 0 && ids(s.deltaSchemaInfos[lastOffset].relatedTableIDs).containIn(delta.relatedTableIDs) {
+		s.deltaSchemaInfos[lastOffset] = delta
+	} else {
+		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+	}
+
+	if len(s.deltaSchemaInfos) > maxCnt {
+		logutil.Logger(context.Background()).Info("the schema validator enqueue, queue is too long",
+			zap.Int("delta max count", maxCnt), zap.Int64("remove schema version", s.deltaSchemaInfos[0].schemaVersion))
 		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
 	}
+}
+
+type ids []int64
+
+// containIn is checks if a is included in b.
+func (a ids) containIn(b []int64) bool {
+	if len(a) > len(b) {
+		return false
+	}
+
+	var isEqual bool
+	for _, i := range a {
+		isEqual = false
+		for _, j := range b {
+			if i == j {
+				isEqual = true
+				break
+			}
+		}
+		if !isEqual {
+			return false
+		}
+	}
+
+	return true
 }

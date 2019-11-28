@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -44,10 +45,18 @@ var _ = Suite(&testRangerSuite{})
 
 type testRangerSuite struct {
 	*parser.Parser
+	testData testutil.TestData
 }
 
 func (s *testRangerSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "ranger_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testRangerSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
@@ -1100,20 +1109,18 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
 	testKit.MustExec("insert into t values(1,1,1,1,2),(2,1,2,1,0)")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
-		"Projection_11 2.00 root 9_aux_0",
-		"└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
-		"  ├─TableReader_15 2.00 root data:TableScan_14",
-		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
-		"  └─StreamAgg_20 1.00 root funcs:count(1)",
-		"    └─IndexJoin_32 2.00 root inner join, inner:TableReader_31, outer key:test.s.a, inner key:test.t1.a",
-		"      ├─IndexReader_27 2.00 root index:IndexScan_26",
-		"      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
-		"      └─TableReader_31 1.00 root data:TableScan_30",
-		"        └─TableScan_30 1.00 cop table:t1, range: decided by [test.s.a], keep order:false",
-	))
-	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
-		"1",
-		"1",
-	))
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
 }

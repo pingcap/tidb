@@ -36,6 +36,13 @@ var perfSchemaTables = []string{
 	tableStagesCurrent,
 	tableStagesHistory,
 	tableStagesHistoryLong,
+	tableEventsStatementsSummaryByDigest,
+	tableTiDBProfileCPU,
+	tableTiDBProfileMemory,
+	tableTiDBProfileMutex,
+	tableTiDBAllocsProfile,
+	tableTiDBProfileBlock,
+	tableTiDBProfileGoroutines,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -371,3 +378,71 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 	"WORK_ESTIMATED	BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_ID		BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
+
+// tableEventsStatementsSummaryByDigest contains the column name definitions for table
+// events_statements_summary_by_digest, same as MySQL.
+const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
+	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
+	"DIGEST VARCHAR(64) DEFAULT NULL," +
+	"DIGEST_TEXT LONGTEXT DEFAULT NULL," +
+	"EXEC_COUNT BIGINT(20) UNSIGNED NOT NULL," +
+	"SUM_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"MIN_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"SUM_ROWS_AFFECTED BIGINT(20) UNSIGNED NOT NULL," +
+	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
+	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
+	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
+
+// tableTiDBProfileCPU contains the columns name definitions for table events_cpu_profile_graph
+const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tableTiDBProfileMemory contains the columns name definitions for table events_memory_profile_graph
+const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMemory + " (" +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tableTiDBProfileMutex contains the columns name definitions for table events_mutex_profile_graph
+const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMutex + " (" +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tableTiDBAllocsProfile contains the columns name definitions for table events_allocs_profile_graph
+const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileAllocs + " (" +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tableTiDBProfileBlock contains the columns name definitions for table events_block_profile_graph
+const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileBlock + " (" +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tableTiDBProfileGoroutines contains the columns name definitions for table events_goroutine
+const tableTiDBProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileGoroutines + " (" +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"ID INT(8) NOT NULL," +
+	"STATE VARCHAR(16) NOT NULL," +
+	"LOCATION VARCHAR(512));"

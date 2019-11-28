@@ -381,6 +381,23 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
+
+	tk.MustExec("set @@tidb_record_plan_in_slow_log = 1")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("0"))
+
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_store_limit = 100")
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_store_limit = 0")
+
+	tk.MustExec("set global tidb_store_limit = 100")
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
@@ -482,6 +499,19 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.thread_pool_size=65")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
+	result = tk.MustQuery("select @@global.thread_pool_size;")
+	result.Check(testkit.Rows("64"))
+
+	tk.MustExec("set @@global.thread_pool_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '-1'"))
+	result = tk.MustQuery("select @@global.thread_pool_size;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.thread_pool_size='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.max_allowed_packet=-1")

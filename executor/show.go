@@ -274,7 +274,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-		row := pi.ToRow(e.Full)
+		row := pi.ToRowForShow(e.Full)
 		e.appendRow(row)
 	}
 	return nil
@@ -500,6 +500,10 @@ func (e *ShowExec) fetchShowIndex() error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
+			nullVal := "YES"
+			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+				nullVal = ""
+			}
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
@@ -510,7 +514,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				0,                      // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
-				"YES",                  // Null
+				nullVal,                // Null
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
@@ -664,8 +668,16 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset || col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
+			if col.Charset != tblCharset {
+				fmt.Fprintf(&buf, " CHARACTER SET %s", col.Charset)
+			}
+			if col.Collate != tblCollate {
+				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+			} else {
+				defcol, err := charset.GetDefaultCollation(col.Charset)
+				if err == nil && defcol != col.Collate {
+					fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+				}
 			}
 		}
 		if col.IsGenerated() {

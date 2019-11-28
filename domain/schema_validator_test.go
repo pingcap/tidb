@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -140,4 +141,62 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 			return
 		}
 	}
+}
+
+func (*testSuite) TestEnqueue(c *C) {
+	lease := 10 * time.Millisecond
+	originalCnt := variable.GetMaxDeltaSchemaCount()
+	defer variable.SetMaxDeltaSchemaCount(originalCnt)
+
+	validator := NewSchemaValidator(lease).(*schemaValidator)
+	c.Assert(validator.IsStarted(), IsTrue)
+	// maxCnt is 0.
+	variable.SetMaxDeltaSchemaCount(0)
+	validator.enqueue(1, []int64{11})
+	c.Assert(validator.deltaSchemaInfos, HasLen, 0)
+
+	// maxCnt is 10.
+	variable.SetMaxDeltaSchemaCount(10)
+	ds := []deltaSchemaInfo{
+		{0, []int64{1}},
+		{1, []int64{1}},
+		{2, []int64{1}},
+		{3, []int64{2, 2}},
+		{4, []int64{2}},
+		{5, []int64{1, 4}},
+		{6, []int64{1, 4}},
+		{7, []int64{3, 1, 3}},
+		{8, []int64{1, 2, 3}},
+		{9, []int64{1, 2, 3}},
+	}
+	for _, d := range ds {
+		validator.enqueue(d.schemaVersion, d.relatedTableIDs)
+	}
+	validator.enqueue(10, []int64{1})
+	ret := []deltaSchemaInfo{
+		{0, []int64{1}},
+		{2, []int64{1}},
+		{3, []int64{2, 2}},
+		{4, []int64{2}},
+		{6, []int64{1, 4}},
+		{9, []int64{1, 2, 3}},
+		{10, []int64{1}},
+	}
+	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
+	// The Items' relatedTableIDs have different order.
+	validator.enqueue(11, []int64{1, 2, 3, 4})
+	validator.enqueue(12, []int64{4, 1, 2, 3, 1})
+	validator.enqueue(13, []int64{4, 1, 3, 2, 5})
+	ret[len(ret)-1] = deltaSchemaInfo{13, []int64{4, 1, 3, 2, 5}}
+	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
+	// The length of deltaSchemaInfos is greater then maxCnt.
+	validator.enqueue(14, []int64{1})
+	validator.enqueue(15, []int64{2})
+	validator.enqueue(16, []int64{3})
+	validator.enqueue(17, []int64{4})
+	ret = append(ret, deltaSchemaInfo{14, []int64{1}})
+	ret = append(ret, deltaSchemaInfo{15, []int64{2}})
+	ret = append(ret, deltaSchemaInfo{16, []int64{3}})
+	ret = append(ret, deltaSchemaInfo{17, []int64{4}})
+	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret[1:])
 }

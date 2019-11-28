@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
+	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/twinj/uuid"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -229,6 +229,8 @@ var (
 	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
+	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
+	ErrWrongTypeColumnValue = terror.ClassDDL.New(codeWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -353,7 +355,8 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
-	id := uuid.NewV4().String()
+
+	id := uuid.New().String()
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
@@ -549,7 +552,7 @@ func (d *ddl) GetID() string {
 func checkJobMaxInterval(job *model.Job) time.Duration {
 	// The job of adding index takes more time to process.
 	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		return 3 * time.Second
 	}
 	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
@@ -564,7 +567,7 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 		return
 	}
 
-	if jobTp == model.ActionAddIndex {
+	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
 		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
 	} else {
 		asyncNotify(d.workers[generalWorker].ddlJobCh)
@@ -750,6 +753,7 @@ const (
 	codeSubpartition                           = terror.ErrCode(mysql.ErrSubpartition)
 	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
 	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
+	codeWrongTypeColumnValue                   = terror.ErrCode(mysql.ErrWrongTypeColumnValue)
 )
 
 func init() {
@@ -821,6 +825,7 @@ func init() {
 		codeSubpartition:                           mysql.ErrSubpartition,
 		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
 		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
+		codeWrongTypeColumnValue:                   mysql.ErrWrongTypeColumnValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

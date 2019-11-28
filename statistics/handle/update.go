@@ -230,7 +230,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.StatsCache.Load().(StatsCache)[id]
+	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -373,7 +373,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.Tp == statistics.PkType {
 			err = h.DumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.StatsCache.Load().(StatsCache)[fb.PhysicalID]
+			t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
 			if ok {
 				err = h.DumpFeedbackForIndex(fb, t)
 			}
@@ -452,7 +452,8 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 			newTblStats.Columns[fb.Hist.ID] = &newCol
 		}
-		h.UpdateTableStats([]*statistics.Table{newTblStats}, nil)
+		oldCache := h.statsCache.Load().(statsCache)
+		h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
 	}
 }
 
@@ -483,7 +484,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	h.UpdateTableStats(tbls, nil)
+	oldCache := h.statsCache.Load().(statsCache)
+	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -778,11 +780,11 @@ func formatBuckets(hg *statistics.Histogram, lowBkt, highBkt, idxCols int) strin
 		return hg.BucketToString(lowBkt, idxCols)
 	}
 	if lowBkt+1 == highBkt {
-		return fmt.Sprintf("%s, %s", hg.BucketToString(lowBkt, 0), hg.BucketToString(highBkt, 0))
+		return fmt.Sprintf("%s, %s", hg.BucketToString(lowBkt, idxCols), hg.BucketToString(highBkt, idxCols))
 	}
 	// do not care the middle buckets
-	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.BucketToString(lowBkt, 0),
-		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.BucketToString(highBkt, 0))
+	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.BucketToString(lowBkt, idxCols),
+		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.BucketToString(highBkt, idxCols))
 }
 
 func colRangeToStr(c *statistics.Column, ran *ranger.Range, actual int64, factor float64) string {
@@ -871,7 +873,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return
 	}
@@ -912,7 +914,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return nil
 	}
@@ -941,7 +943,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
+		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	if err != nil {

@@ -63,7 +63,7 @@ type AnalyzeExec struct {
 var (
 	// MaxSampleSize is the size of samples for once analyze.
 	// It's public for test.
-	MaxSampleSize = 10000
+	MaxSampleSize = int64(10000)
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
@@ -74,6 +74,7 @@ const (
 	maxSketchSize        = 10000
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
+	defaultNumTopN       = uint32(20)
 )
 
 // Next implements the Executor Next interface.
@@ -336,7 +337,8 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			}
 		}
 	}
-	return hist, cms, nil
+	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), defaultNumTopN)
+	return hist, cms, err
 }
 
 func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
@@ -464,7 +466,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: int64(MaxSampleSize),
+			MaxSampleSize: atomic.LoadInt64(&MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 		}
 	}
@@ -509,6 +511,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		cms = append(cms, nil)
 	}
 	for i, col := range e.colsInfo {
+		collectors[i].ExtractTopN(defaultNumTopN)
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
@@ -1015,14 +1018,13 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 			data[i] = append(data[i], sample.Value.GetBytes()[:preLen])
 		}
 	}
-	numTop := uint32(20)
-	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[0], numTop, uint64(rowCount))
+	cmSketch, ndv, scaleRatio := statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[0], defaultNumTopN, uint64(rowCount))
 	// Build CM Sketch for each prefix and merge them into one.
 	for i := 1; i < len(idxInfo.Columns); i++ {
 		var curCMSketch *statistics.CMSketch
 		// `ndv` should be the ndv of full index, so just rewrite it here.
-		curCMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[i], numTop, uint64(rowCount))
-		err := cmSketch.MergeCMSketch(curCMSketch, numTop)
+		curCMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data[i], defaultNumTopN, uint64(rowCount))
+		err := cmSketch.MergeCMSketch(curCMSketch, defaultNumTopN)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1081,7 +1083,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
 		collector.CalcTotalSize()
 		// Scale the total column size.
-		collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		if len(collector.Samples) > 0 {
+			collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		}
 		if i < hasPKInfo {
 			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {
@@ -1133,7 +1137,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	}
 
 	randPos := make([]uint64, 0, MaxSampleSize+1)
-	for i := 0; i < MaxSampleSize; i++ {
+	for i := 0; i < int(MaxSampleSize); i++ {
 		randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
 	}
 	sort.Slice(randPos, func(i, j int) bool { return randPos[i] < randPos[j] })
@@ -1183,7 +1187,7 @@ type analyzeIndexIncrementalExec struct {
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
-	values, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
+	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -1197,7 +1201,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	if idxExec.oldCMS != nil && cms != nil {
-		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS)
+		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS, defaultNumTopN)
 		if err != nil {
 			return analyzeResult{Err: err, job: idxExec.job}
 		}

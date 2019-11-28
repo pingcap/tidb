@@ -832,8 +832,8 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec("CREATE INDEX idx_s_a ON s(`a`)")
 	tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
 	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("-1327693824", "-277544960", "-277544960", "148307968"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960", "<nil>", "<nil>", "<nil>", "<nil>"))
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")
@@ -876,6 +876,33 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 		`1 0 0`,
 		`2 <nil> <nil>`,
 	))
+
+	tk.MustExec("drop table if exists t,s")
+	tk.MustExec("create table t(a int primary key auto_increment, b time)")
+	tk.MustExec("create table s(a int, b time)")
+	tk.MustExec("alter table s add index idx(a,b)")
+	tk.MustExec("set @@tidb_index_join_batch_size=4;set @@tidb_init_chunk_size=1;set @@tidb_max_chunk_size=32; set @@tidb_index_lookup_join_concurrency=15;")
+	// insert 64 rows into `t`
+	tk.MustExec("insert into t values(0, '01:01:01')")
+	for i := 0; i < 6; i++ {
+		tk.MustExec("insert into t select 0, b + 1 from t")
+	}
+	tk.MustExec("insert into s select a, b - 1 from t")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table s;")
+
+	tk.MustQuery("desc select  /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
+		"StreamAgg_11 1.00 root funcs:count(1)",
+		"└─IndexJoin_24 64.00 root inner join, inner:IndexReader_23, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
+		"  ├─TableReader_19 64.00 root data:Selection_18",
+		"  │ └─Selection_18 64.00 cop not(isnull(test.t.b))",
+		"  │   └─TableScan_17 64.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"  └─IndexReader_23 1.00 root index:Selection_22",
+		"    └─Selection_22 1.00 cop not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexScan_21 1.00 cop table:s, index:a, b, range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
+	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 }
 
 func (s *testSuite2) TestMergejoinOrder(c *C) {

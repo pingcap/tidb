@@ -36,11 +36,23 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testAnalyzeSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "analyze_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testAnalyzeSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
@@ -915,13 +927,13 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
 	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
 		"Projection_7 0.00 root test.t1.a, test.t1.b, test.t2.a, test.t2.b",
-		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(test.t2.b, test.t1.b)]",
-		"  ├─TableReader_12 0.00 root data:Selection_11",
+		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_12, equal:[eq(test.t2.b, test.t1.b)]",
+		"  ├─IndexReader_12 0.00 root index:Selection_11",
 		"  │ └─Selection_11 0.00 cop isnull(test.t2.b), not(isnull(test.t2.b))",
-		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"  └─TableReader_15 9990.00 root data:Selection_14",
+		"  │   └─IndexScan_10 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
+		"  └─IndexReader_15 9990.00 root index:Selection_14",
 		"    └─Selection_14 9990.00 cop not(isnull(test.t1.b))",
-		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"      └─IndexScan_13 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -999,98 +1011,29 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int not null, index idx_b(b))")
-	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
-	// Pseudo stats.
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 10.00 cop table:t, index:b, range:[2,2], keep order:false, stats:pseudo",
-	))
-	// Positive correlation.
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[2,2], keep order:false",
-	))
-	// Negative correlation.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[-inf,6], keep order:false",
-	))
-	// Outer plan of index join (to test that correct column ID is used).
-	tk.MustQuery("EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1").Check(testkit.Rows(
-		"Limit_17 1.00 root offset:0, count:1",
-		"└─IndexJoin_58 1.00 root left outer semi join, inner:IndexReader_57, outer key:test.t1.a, inner key:test.t2.b",
-		"  ├─TopN_23 1.00 root test.t1.a:asc, offset:0, count:1",
-		"  │ └─IndexReader_31 1.00 root index:TopN_30",
-		"  │   └─TopN_30 1.00 cop test.t1.a:asc, offset:0, count:1",
-		"  │     └─IndexScan_29 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
-		"  └─IndexReader_57 1.04 root index:IndexScan_56",
-		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false",
-	))
-	// Desc TableScan.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:desc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:desc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[1,1], keep order:false",
-	))
-	// Correlation threshold not met.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─TableReader_22 1.00 root data:Limit_21",
-		"  └─Limit_21 1.00 cop offset:0, count:1",
-		"    └─Selection_20 1.00 cop eq(test.t.b, 2)",
-		"      └─TableScan_19 4.17 cop table:t, range:[-inf,+inf], keep order:true",
-	))
-	tk.MustExec("set session tidb_opt_correlation_exp_factor = 1")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_16 1.00 root index:TopN_15",
-		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[2,2], keep order:false",
-	))
-	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
-	// TableScan has access conditions, but correlation is 1.
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_19 1.00 root index:TopN_18",
-		"  └─TopN_18 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─Selection_17 6.00 cop gt(test.t.a, 0)",
-		"      └─IndexScan_16 6.00 cop table:t, index:b, range:[2,2], keep order:false",
-	))
-	// Multi-column filter.
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
-	tk.MustExec("insert into t values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"TopN_9 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexLookUp_22 1.00 root ",
-		"  ├─IndexScan_18 6.00 cop table:t, index:b, range:[2,2], keep order:false",
-		"  └─TopN_21 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─Selection_20 6.00 cop gt(test.t.c, 0)",
-		"      └─TableScan_19 6.00 cop table:t, keep order:false",
-	))
+	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+	}
 }
 
 func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {

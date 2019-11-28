@@ -43,8 +43,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 const (
@@ -210,8 +211,13 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 		} else {
 			leftCond = append(leftCond, expr)
 		}
-	case SemiJoin, AntiSemiJoin, InnerJoin:
+	case SemiJoin, InnerJoin:
 		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
+	case AntiSemiJoin:
+		if filterCond {
+			leftCond = append(leftCond, expr)
+		}
 		rightCond = append(rightCond, expr)
 	}
 	return leftCond, rightCond
@@ -231,41 +237,36 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				var leftCol, rightCol *expression.Column
-				if left.Schema().Contains(arg0) && right.Schema().Contains(arg1) {
-					leftCol, rightCol = arg0, arg1
+				leftCol := left.Schema().RetrieveColumn(arg0)
+				rightCol := right.Schema().RetrieveColumn(arg1)
+				if leftCol == nil || rightCol == nil {
+					leftCol = left.Schema().RetrieveColumn(arg1)
+					rightCol = right.Schema().RetrieveColumn(arg0)
+					arg0, arg1 = arg1, arg0
 				}
-				if leftCol == nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
-					leftCol, rightCol = arg1, arg0
-				}
-				if leftCol != nil {
-					// Do not derive `is not null` for anti join, since it may cause wrong results.
-					// For example:
-					// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
-					// `select * from t t1 where t1.a not in (select a from t t2 where t1.b = t2.b` does not imply `t1.b is not null`,
-					// `select * from t t1 where not exists (select * from t t2 where t2.a = t1.a)` does not imply `t1.a is not null`,
-					if deriveLeft && p.JoinType != AntiSemiJoin {
+				if leftCol != nil && rightCol != nil {
+					if deriveLeft {
 						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
-					if deriveRight && p.JoinType != AntiSemiJoin {
+					if deriveRight {
 						if isNullRejected(ctx, right.Schema(), expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-				}
-				// For quries like `select a in (select a from s where s.b = t.b) from t`,
-				// if subquery is empty caused by `s.b = t.b`, the result should always be
-				// false even if t.a is null or s.a is null. To make this join "empty aware",
-				// we should differentiate `t.a = s.a` from other column equal conditions, so
-				// we put it into OtherConditions instead of EqualConditions of join.
-				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
-					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
-					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-					continue
+					// For queries like `select a in (select a from s where s.b = t.b) from t`,
+					// if subquery is empty caused by `s.b = t.b`, the result should always be
+					// false even if t.a is null or s.a is null. To make this join "empty aware",
+					// we should differentiate `t.a = s.a` from other column equal conditions, so
+					// we put it into OtherConditions instead of EqualConditions of join.
+					if binop.FuncName.L == ast.EQ && !arg0.InOperand && !arg1.InOperand {
+						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+						continue
+					}
 				}
 			}
 		}
@@ -479,7 +480,7 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -489,15 +490,20 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
-func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
+func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, joinTp ast.JoinType, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	if joinTp == ast.LeftJoin {
+		resetNotNullFlag(rsc, 0, rsc.Len())
+	} else if joinTp == ast.RightJoin {
+		resetNotNullFlag(lsc, 0, lsc.Len())
+	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
-	if rightJoin {
+	if joinTp == ast.RightJoin {
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
 
@@ -1255,7 +1261,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1290,7 +1296,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 && a.curClause != windowClause {
+			if index == -1 && a.curClause != fieldList {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1395,7 +1401,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 	}
-	extractor.curClause = windowClause
+	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
 		if !ast.HasWindowFlag(field.Expr) {
 			continue
@@ -1437,16 +1443,25 @@ type gbyResolver struct {
 	err     error
 	inExpr  bool
 	isParam bool
+
+	exprDepth int // exprDepth is the depth of current expression in expression tree.
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	g.exprDepth++
 	switch n := inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConstructPositionExpr(n)
 		g.isParam = true
-		return newNode, true
+		if g.exprDepth == 1 {
+			_, isNull, isExpectedType := getUintFromNode(g.ctx, n)
+			// For constant uint expression in top level, it should be treated as position expression.
+			if !isNull && isExpectedType {
+				return expression.ConstructPositionExpr(n), true
+			}
+		}
+		return n, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
@@ -2014,6 +2029,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if err != nil {
 		return nil, err
 	}
+	if b.capFlag&canExpandAST != 0 {
+		originalFields = sel.Fields.Fields
+	}
 
 	if sel.GroupBy != nil {
 		p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
@@ -2265,6 +2283,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
+		TblCols:             make([]*expression.Column, 0, len(columns)),
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2285,6 +2304,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			handleCol = newCol
 		}
 		schema.Append(newCol)
+		ds.TblCols = append(ds.TblCols, newCol)
 	}
 	ds.SetSchema(schema)
 
@@ -2296,6 +2316,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
+		ds.TblCols = append(ds.TblCols, handleCol)
 	}
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
@@ -2343,6 +2364,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+		err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		return nil, err
 	}
 
@@ -2362,25 +2384,48 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 	}
 
-	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
-	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
-	for i := range tableInfo.View.Cols {
-		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
-		if col == nil {
-			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
+		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	}
+
+	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
+}
+
+func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
+	columnInfo := tableInfo.Cols()
+	cols := selectLogicalPlan.Schema().Columns
+	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
+	// store the origin columns' names of the underlying SelectStmt used when
+	// creating the view.
+	if tableInfo.View.Cols != nil {
+		cols = cols[:0]
+		for _, info := range columnInfo {
+			col := selectLogicalPlan.Schema().FindColumnByName(info.Name.L)
+			if col == nil {
+				return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+			}
+			cols = append(cols, col)
+		}
+	}
+
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+	projExprs := make([]expression.Expression, 0, len(tableInfo.Columns))
+	for i, col := range cols {
+		origColName := col.ColName
+		if tableInfo.View.Cols != nil {
+			origColName = tableInfo.View.Cols[i]
 		}
 		projSchema.Append(&expression.Column{
 			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 			TblName:     col.TblName,
 			OrigTblName: col.OrigTblName,
-			ColName:     tableInfo.Cols()[i].Name,
-			OrigColName: tableInfo.View.Cols[i],
+			ColName:     columnInfo[i].Name,
+			OrigColName: origColName,
 			DBName:      col.DBName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
 	}
-
 	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
@@ -2452,6 +2497,11 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx)
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+	// Note that, tp can only be LeftOuterJoin or InnerJoin, so we don't consider other outer joins.
+	if tp == LeftOuterJoin {
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
+		resetNotNullFlag(ap.schema, outerPlan.Schema().Len(), ap.schema.Len())
+	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.schema.Columns[i].IsReferenced = true
 	}
@@ -2470,7 +2520,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	}
 
 	ap := &LogicalApply{LogicalJoin: *join}
-	ap.tp = TypeApply
+	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
 }
@@ -2575,11 +2625,19 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
+	oldSchema := p.Schema().Clone()
 	if sel.Where != nil {
-		p, err = b.buildSelection(ctx, p, sel.Where, nil)
+		p, err = b.buildSelection(ctx, p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
+	}
+	// TODO: expression rewriter should not change the output columns. We should cut the columns here.
+	if p.Schema().Len() != oldSchema.Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(oldSchema.Columns)}.Init(b.ctx)
+		proj.SetSchema(oldSchema)
+		proj.SetChildren(p)
+		p = proj
 	}
 	if sel.OrderBy != nil {
 		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, nil, nil)
@@ -2629,8 +2687,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
-	tableAsName := make(map[*model.TableInfo][]*model.CIStr)
-	extractTableAsNameForUpdate(p, tableAsName)
 
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
@@ -2646,12 +2702,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if _, ok := modifyColumns[columnFullName]; ok {
 				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
-			for _, asName := range tableAsName[tableInfo] {
-				virtualAssignments = append(virtualAssignments, &ast.Assignment{
-					Column: &ast.ColumnName{Table: *asName, Name: colInfo.Name},
-					Expr:   tableVal.Cols()[i].GeneratedExpr,
-				})
-			}
+			virtualAssignments = append(virtualAssignments, &ast.Assignment{
+				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+				Expr:   tableVal.Cols()[i].GeneratedExpr,
+			})
 		}
 	}
 
@@ -2708,47 +2762,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
 	return newList, p, nil
-}
-
-// extractTableAsNameForUpdate extracts tables' alias names for update.
-func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*model.CIStr) {
-	switch x := p.(type) {
-	case *DataSource:
-		alias := extractTableAlias(p)
-		if alias != nil {
-			if _, ok := asNames[x.tableInfo]; !ok {
-				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
-			}
-			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
-		}
-	case *LogicalProjection:
-		if !x.calculateGenCols {
-			return
-		}
-
-		ds, isDS := x.Children()[0].(*DataSource)
-		if !isDS {
-			// try to extract the DataSource below a LogicalUnionScan.
-			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
-				ds, isDS = us.Children()[0].(*DataSource)
-			}
-		}
-		if !isDS {
-			return
-		}
-
-		alias := extractTableAlias(x)
-		if alias != nil {
-			if _, ok := asNames[ds.tableInfo]; !ok {
-				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-			}
-			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
-		}
-	default:
-		for _, child := range p.Children() {
-			extractTableAsNameForUpdate(child, asNames)
-		}
-	}
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
@@ -3278,7 +3291,10 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.FromLast {
 			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
 		}
-		spec := f.Spec
+		spec := &f.Spec
+		if f.Spec.Name.L != "" {
+			spec = b.windowSpecs[f.Spec.Name.L]
+		}
 		if spec.Frame == nil {
 			continue
 		}
@@ -3292,15 +3308,18 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if end.Type == ast.Preceding && end.UnBounded {
 			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
-		if start.Type == ast.Following && end.Type == ast.Preceding {
+		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
+		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 
-		err := b.checkOriginWindowFrameBound(&start, &spec, orderByItems)
+		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
 		if err != nil {
 			return err
 		}
-		err = b.checkOriginWindowFrameBound(&end, &spec, orderByItems)
+		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
 		if err != nil {
 			return err
 		}
@@ -3408,7 +3427,6 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		windowFunc.Spec = *spec
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
@@ -3495,6 +3513,7 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
+				newTableName.Schema = model.NewCIStr("")
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)

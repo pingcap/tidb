@@ -307,7 +307,8 @@ func negOP(cmp string) string {
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
 var monotoneIncFuncs = map[string]struct{}{
-	ast.ToDays: {},
+	ast.ToDays:        {},
+	ast.UnixTimestamp: {},
 }
 
 // compareConstant compares two expressions. c1 and c2 should be constant with the same type.
