@@ -244,11 +244,13 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	return false
 }
 
+type DumpType bool
+
 const (
 	// DumpAll indicates dump all the delta info in to kv
-	DumpAll = true
+	DumpAll DumpType = true
 	// DumpDelta indicates dump part of the delta info in to kv.
-	DumpDelta = false
+	DumpDelta DumpType = false
 )
 
 // sweepList will loop over the list, merge each session's local stats into handle
@@ -279,11 +281,11 @@ func (h *Handle) sweepList() {
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
+func (h *Handle) DumpStatsDeltaToKV(dumpMode DumpType) error {
 	h.sweepList()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if !dumpMode && !needDumpStatsDelta(h, id, item, currentTime) {
+		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
