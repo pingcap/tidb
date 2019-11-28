@@ -236,7 +236,7 @@ func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchem
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = HasMaxOneRow(p, childMaxOneRow)
+	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
