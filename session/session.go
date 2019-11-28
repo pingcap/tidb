@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -367,7 +368,7 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	table, err := is.TableByName(dbName, tName)
@@ -799,6 +800,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	}
 	// Set snapshot.
 	if snapshot != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshot)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
 			return nil, nil, err
 		}
@@ -806,6 +811,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
+			se.sessionVars.SnapshotInfoschema = nil
 		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
@@ -1171,7 +1177,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTxnFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
+	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1198,7 +1204,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
@@ -1251,7 +1257,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil

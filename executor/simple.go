@@ -1024,7 +1024,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	if err != nil {
 		return err
 	}
-	return h.Update(GetInfoSchema(e.ctx))
+	return h.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

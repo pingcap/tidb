@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 var (
@@ -55,7 +53,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	infoSchema := GetInfoSchema(c.Ctx)
+	infoSchema := infoschema.GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, err
 	}
@@ -346,18 +344,4 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "CreateBinding"
 	}
 	return "other"
-}
-
-// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
-	sessVar := ctx.GetSessionVars()
-	var is infoschema.InfoSchema
-	if snap := sessVar.SnapshotInfoschema; snap != nil {
-		is = snap.(infoschema.InfoSchema)
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
-	} else {
-		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	}
-	return is
 }
