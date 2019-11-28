@@ -310,15 +310,13 @@ mysql> desc TIDB_CLUSTER_INFO;
 +----------------+---------------------+------+------+---------+-------+
 | Field          | Type                | Null | Key  | Default | Extra |
 +----------------+---------------------+------+------+---------+-------+
-| ID             | bigint(21) unsigned | YES  |      | NULL    |       |
 | TYPE           | varchar(64)         | YES  |      | NULL    |       |
-| NAME           | varchar(64)         | YES  |      | NULL    |       |
 | ADDRESS        | varchar(64)         | YES  |      | NULL    |       |
 | STATUS_ADDRESS | varchar(64)         | YES  |      | NULL    |       |
 | VERSION        | varchar(64)         | YES  |      | NULL    |       |
 | GIT_HASH       | varchar(64)         | YES  |      | NULL    |       |
 +----------------+---------------------+------+------+---------+-------+
-7 rows in set (0.00 sec)
+5 rows in set (0.00 sec)
 
 mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
 +------+-----------------+-----------------+-----------------------------------------------+
@@ -501,55 +499,55 @@ mysql> use information_schema;
 Database changed
 
 mysql> select * from tidb_cluster_config where `key` like 'log%';
-+------+------+--------+-----------------+-----------------------------+---------------+
-| ID   | TYPE | NAME   | ADDRESS         | KEY                         | VALUE         |
-+------+------+--------+-----------------+-----------------------------+---------------+
-|   21 | pd   | pd-0   | 127.0.0.1:2379  | log-file                    |               |
-|   22 | pd   | pd-0   | 127.0.0.1:2379  | log-level                   |               |
-|   23 | pd   | pd-0   | 127.0.0.1:2379  | log.development             | false         |
-|   24 | pd   | pd-0   | 127.0.0.1:2379  | log.disable-caller          | false         |
-|   25 | pd   | pd-0   | 127.0.0.1:2379  | log.disable-error-verbose   | true          |
-|   26 | pd   | pd-0   | 127.0.0.1:2379  | log.disable-stacktrace      | false         |
-|   27 | pd   | pd-0   | 127.0.0.1:2379  | log.disable-timestamp       | false         |
-|   28 | pd   | pd-0   | 127.0.0.1:2379  | log.file.filename           |               |
-|   29 | pd   | pd-0   | 127.0.0.1:2379  | log.file.log-rotate         | true          |
-|   30 | pd   | pd-0   | 127.0.0.1:2379  | log.file.max-backups        | 0             |
-|   31 | pd   | pd-0   | 127.0.0.1:2379  | log.file.max-days           | 0             |
-|   32 | pd   | pd-0   | 127.0.0.1:2379  | log.file.max-size           | 0             |
-|   33 | pd   | pd-0   | 127.0.0.1:2379  | log.format                  | text          |
-|   34 | pd   | pd-0   | 127.0.0.1:2379  | log.level                   |               |
-|   35 | pd   | pd-0   | 127.0.0.1:2379  | log.sampling                | <nil>         |
-|  114 | tidb | tidb-0 | 127.0.0.1:4000  | log.disable-error-stack     | <nil>         |
-|  115 | tidb | tidb-0 | 127.0.0.1:4000  | log.disable-timestamp       | <nil>         |
-|  116 | tidb | tidb-0 | 127.0.0.1:4000  | log.enable-error-stack      | <nil>         |
-|  117 | tidb | tidb-0 | 127.0.0.1:4000  | log.enable-timestamp        | <nil>         |
-|  118 | tidb | tidb-0 | 127.0.0.1:4000  | log.expensive-threshold     | 10000         |
-|  119 | tidb | tidb-0 | 127.0.0.1:4000  | log.file.filename           |               |
-|  120 | tidb | tidb-0 | 127.0.0.1:4000  | log.file.max-backups        | 0             |
-|  121 | tidb | tidb-0 | 127.0.0.1:4000  | log.file.max-days           | 0             |
-|  122 | tidb | tidb-0 | 127.0.0.1:4000  | log.file.max-size           | 300           |
-|  123 | tidb | tidb-0 | 127.0.0.1:4000  | log.format                  | text          |
-|  124 | tidb | tidb-0 | 127.0.0.1:4000  | log.level                   | info          |
-|  125 | tidb | tidb-0 | 127.0.0.1:4000  | log.query-log-max-len       | 4096          |
-|  126 | tidb | tidb-0 | 127.0.0.1:4000  | log.record-plan-in-slow-log | 1             |
-|  127 | tidb | tidb-0 | 127.0.0.1:4000  | log.slow-query-file         | tidb-slow.log |
-|  128 | tidb | tidb-0 | 127.0.0.1:4000  | log.slow-threshold          | 300           |
-|  213 | tikv | tikv-0 | 127.0.0.1:20160 | log-file                    |               |
-|  214 | tikv | tikv-0 | 127.0.0.1:20160 | log-level                   | info          |
-|  215 | tikv | tikv-0 | 127.0.0.1:20160 | log-rotation-timespan       | 1d            |
-+------+------+--------+-----------------+-----------------------------+---------------+
++------+-----------------+-----------------------------+---------------+
+| TYPE | ADDRESS         | KEY                         | VALUE         |
++------+-----------------+-----------------------------+---------------+
+| pd   | 127.0.0.1:2379  | log-file                    |               |
+| pd   | 127.0.0.1:2379  | log-level                   |               |
+| pd   | 127.0.0.1:2379  | log.development             | false         |
+| pd   | 127.0.0.1:2379  | log.disable-caller          | false         |
+| pd   | 127.0.0.1:2379  | log.disable-error-verbose   | true          |
+| pd   | 127.0.0.1:2379  | log.disable-stacktrace      | false         |
+| pd   | 127.0.0.1:2379  | log.disable-timestamp       | false         |
+| pd   | 127.0.0.1:2379  | log.file.filename           |               |
+| pd   | 127.0.0.1:2379  | log.file.log-rotate         | true          |
+| pd   | 127.0.0.1:2379  | log.file.max-backups        | 0             |
+| pd   | 127.0.0.1:2379  | log.file.max-days           | 0             |
+| pd   | 127.0.0.1:2379  | log.file.max-size           | 0             |
+| pd   | 127.0.0.1:2379  | log.format                  | text          |
+| pd   | 127.0.0.1:2379  | log.level                   |               |
+| pd   | 127.0.0.1:2379  | log.sampling                | <nil>         |
+| tidb | 127.0.0.1:4000  | log.disable-error-stack     | <nil>         |
+| tidb | 127.0.0.1:4000  | log.disable-timestamp       | <nil>         |
+| tidb | 127.0.0.1:4000  | log.enable-error-stack      | <nil>         |
+| tidb | 127.0.0.1:4000  | log.enable-timestamp        | <nil>         |
+| tidb | 127.0.0.1:4000  | log.expensive-threshold     | 10000         |
+| tidb | 127.0.0.1:4000  | log.file.filename           |               |
+| tidb | 127.0.0.1:4000  | log.file.max-backups        | 0             |
+| tidb | 127.0.0.1:4000  | log.file.max-days           | 0             |
+| tidb | 127.0.0.1:4000  | log.file.max-size           | 300           |
+| tidb | 127.0.0.1:4000  | log.format                  | text          |
+| tidb | 127.0.0.1:4000  | log.level                   | info          |
+| tidb | 127.0.0.1:4000  | log.query-log-max-len       | 4096          |
+| tidb | 127.0.0.1:4000  | log.record-plan-in-slow-log | 1             |
+| tidb | 127.0.0.1:4000  | log.slow-query-file         | tidb-slow.log |
+| tidb | 127.0.0.1:4000  | log.slow-threshold          | 300           |
+| tikv | 127.0.0.1:20160 | log-file                    |               |
+| tikv | 127.0.0.1:20160 | log-level                   | info          |
+| tikv | 127.0.0.1:20160 | log-rotation-timespan       | 1d            |
++------+-----------------+-----------------------------+---------------+
 33 rows in set (0.00 sec)
 
 mysql> select * from tidb_cluster_config where type='tikv' and `key` like 'raftdb.wal%';
-+------+------+--------+-----------------+---------------------------+--------+
-| ID   | TYPE | NAME   | ADDRESS         | KEY                       | VALUE  |
-+------+------+--------+-----------------+---------------------------+--------+
-|  292 | tikv | tikv-0 | 127.0.0.1:20160 | raftdb.wal-bytes-per-sync | 512KiB |
-|  293 | tikv | tikv-0 | 127.0.0.1:20160 | raftdb.wal-dir            |        |
-|  294 | tikv | tikv-0 | 127.0.0.1:20160 | raftdb.wal-recovery-mode  | 2      |
-|  295 | tikv | tikv-0 | 127.0.0.1:20160 | raftdb.wal-size-limit     | 0KiB   |
-|  296 | tikv | tikv-0 | 127.0.0.1:20160 | raftdb.wal-ttl-seconds    | 0      |
-+------+------+--------+-----------------+---------------------------+--------+
++------+-----------------+---------------------------+--------+
+| TYPE | ADDRESS         | KEY                       | VALUE  |
++------+-----------------+---------------------------+--------+
+| tikv | 127.0.0.1:20160 | raftdb.wal-bytes-per-sync | 512KiB |
+| tikv | 127.0.0.1:20160 | raftdb.wal-dir            |        |
+| tikv | 127.0.0.1:20160 | raftdb.wal-recovery-mode  | 2      |
+| tikv | 127.0.0.1:20160 | raftdb.wal-size-limit     | 0KiB   |
+| tikv | 127.0.0.1:20160 | raftdb.wal-ttl-seconds    | 0      |
++------+-----------------+---------------------------+--------+
 5 rows in set (0.01 sec)
 ```
 
