@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
-	"strconv"
 	"unicode/utf8"
 	"unsafe"
 
@@ -55,12 +54,6 @@ func (bj BinaryJSON) Type() string {
 	}
 }
 
-// Quote is for JSON_QUOTE
-func (bj BinaryJSON) Quote() string {
-	str := hack.String(bj.GetString())
-	return strconv.Quote(string(str))
-}
-
 // Unquote is for JSON_UNQUOTE.
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
@@ -73,7 +66,7 @@ func (bj BinaryJSON) Unquote() (string, error) {
 		head, tail := tmp[0], tmp[tlen-1]
 		if head == '"' && tail == '"' {
 			// Remove prefix and suffix '"' before unquoting
-			return unquoteString(tmp[1 : tlen-1])
+			return UnquoteString(tmp[1 : tlen-1])
 		}
 		// if value is not double quoted, do nothing
 		return tmp, nil
@@ -82,9 +75,9 @@ func (bj BinaryJSON) Unquote() (string, error) {
 	}
 }
 
-// unquoteString recognizes the escape sequences shown in:
+// UnquoteString recognizes the escape sequences shown in:
 // https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#json-unquote-character-escape-sequences
-func unquoteString(s string) (string, error) {
+func UnquoteString(s string) (string, error) {
 	ret := new(bytes.Buffer)
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' {

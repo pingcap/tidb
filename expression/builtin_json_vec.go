@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -304,21 +306,17 @@ func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendNull()
+			result.AppendString("NULL")
 			continue
 		}
-		jsonItem := buf.GetJSON(i)
-		if jsonItem.TypeCode != json.TypeCodeString {
-			return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
-		}
-		result.AppendString(jsonItem.Quote())
+		result.AppendString(strconv.Quote(buf.GetString(i)))
 	}
 	return nil
 }
@@ -749,21 +747,29 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
-			result.AppendNull()
+			result.AppendString("NULL")
 			continue
 		}
-		res, err := buf.GetJSON(i).Unquote()
-		if err != nil {
-			return err
+		str := buf.GetString(i)
+		tlen := len(str)
+		if tlen >= 2 {
+			head, tail := str[0], str[tlen-1]
+			if head == '"' && tail == '"' {
+				// Remove prefix and suffix '"' before unquoting
+				str, err = json.UnquoteString(str[1 : tlen-1])
+				if err != nil {
+					return err
+				}
+			}
 		}
-		result.AppendString(res)
+		result.AppendString(str)
 	}
 	return nil
 }

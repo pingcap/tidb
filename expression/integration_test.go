@@ -3886,37 +3886,73 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r := tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
 	r.Check(testkit.Rows("OBJECT OBJECT", "ARRAY ARRAY"))
 
-	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
-	r.Check(testkit.Rows("hello world"))
+	tk.MustGetErrCode("select json_quote();", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote('abc', 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
 
-	r = tk.MustQuery(`select
-		json_quote(''),
-		json_quote('""'),
-		json_quote('a'),
-		json_quote('3'),
-		json_quote('{"a": "b"}'),
-		json_quote('{"a":     "b"}'),
-		json_quote('hello,"quoted string",world'),
-		json_quote('hello,"宽字符",world'),
-		json_quote('Invalid Json string	is OK'),
-		json_quote('1\u2232\u22322')
-		json_quote(null)
-	`)
-	r.Check(testkit.Rows(
-		`"" "\"\"" "a" "3" "{\"a\": \"b\"}" "{\"a\":     \"b\"}" "hello,\"quoted string\",world" "hello,\"宽字符\",world" "Invalid Json string\tis OK" "1u2232u22322" "NULL"`,
-	))
+	tk.MustGetErrCode("select json_unquote();", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote('abc', 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
+
+	tk.MustQuery("select json_quote(NULL);").Check(testkit.Rows("NULL"))
+	tk.MustQuery("select json_unquote(NULL);").Check(testkit.Rows("NULL"))
+
+	tk.MustQuery("select json_quote('abc');").Check(testkit.Rows(`"abc"`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using ascii));`).Check(testkit.Rows(`"\"abc\""`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using latin1));`).Check(testkit.Rows(`"\"abc\""`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using utf8));`).Check(testkit.Rows(`"\"abc\""`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using utf8mb4));`).Check(testkit.Rows(`"\"abc\""`))
+
+	tk.MustQuery("select json_unquote('abc');").Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote('"abc"');`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using ascii));`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using latin1));`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using utf8));`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using utf8mb4));`).Check(testkit.Rows("abc"))
+
+	tk.MustQuery(`select json_quote('"');`).Check(testkit.Rows(`"\""`))
+	tk.MustQuery(`select json_unquote('"');`).Check(testkit.Rows(`"`))
+
+	tk.MustQuery(`select json_unquote('""');`).Check(testkit.Rows(``))
+	tk.MustQuery(`select char_length(json_unquote('""'));`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select json_unquote('"" ');`).Check(testkit.Rows(`"" `))
+	tk.MustQuery(`select json_unquote(cast(json_quote('abc') as json));`).Check(testkit.Rows("abc"))
+
+	tk.MustQuery(`select json_unquote(cast('{"abc": "foo"}' as json));`).Check(testkit.Rows(`{"abc": "foo"}`))
+	tk.MustQuery(`select json_unquote(json_extract(cast('{"abc": "foo"}' as json), '$.abc'));`).Check(testkit.Rows("foo"))
+	tk.MustQuery(`select json_unquote('["a", "b", "c"]');`).Check(testkit.Rows(`["a", "b", "c"]`))
+	tk.MustQuery(`select json_unquote(cast('["a", "b", "c"]' as json));`).Check(testkit.Rows(`["a", "b", "c"]`))
+	tk.MustQuery(`select json_quote(convert(X'e68891' using utf8));`).Check(testkit.Rows(`"我"`))
+	tk.MustQuery(`select json_quote(convert(X'e68891' using utf8mb4));`).Check(testkit.Rows(`"我"`))
+	tk.MustQuery(`select cast(json_quote(convert(X'e68891' using utf8)) as json);`).Check(testkit.Rows(`"我"`))
+	tk.MustQuery(`select json_unquote(convert(X'e68891' using utf8));`).Check(testkit.Rows("我"))
+
+	tk.MustQuery(`select json_quote(json_quote(json_quote('abc')));`).Check(testkit.Rows(`"\"\\\"abc\\\"\""`))
+	tk.MustQuery(`select json_unquote(json_unquote(json_unquote(json_quote(json_quote(json_quote('abc'))))));`).Check(testkit.Rows("abc"))
 
 	tk.MustGetErrCode("select json_quote(123)", mysql.ErrIncorrectType)
 	tk.MustGetErrCode("select json_quote(-100)", mysql.ErrIncorrectType)
 	tk.MustGetErrCode("select json_quote(123.123)", mysql.ErrIncorrectType)
 	tk.MustGetErrCode("select json_quote(-100.000)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(true));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(false));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(true);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(false);`, mysql.ErrIncorrectType)
 	tk.MustGetErrCode(`select json_quote(cast("{}" as JSON));`, mysql.ErrIncorrectType)
 	tk.MustGetErrCode(`select json_quote(cast("[]" as JSON));`, mysql.ErrIncorrectType)
 	tk.MustGetErrCode(`select json_quote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
 	tk.MustGetErrCode(`select json_quote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
 	tk.MustGetErrCode(`select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
+
+	tk.MustGetErrCode("select json_unquote(123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(-100)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(123.123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(-100.000)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(true);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(false);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
 
 	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))

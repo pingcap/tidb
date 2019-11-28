@@ -15,6 +15,7 @@ package expression
 
 import (
 	json2 "encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -186,7 +187,13 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	switch args[0].GetType().Tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull, mysql.TypeJSON,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+	default:
+		return nil, ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONUnquoteSig{bf}
@@ -194,14 +201,25 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var j json.BinaryJSON
-	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
-	if isNull || err != nil {
+func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
 		return "", isNull, err
+	} else if isNull {
+		return "NULL", false, err
 	}
-	res, err = j.Unquote()
-	return res, err != nil, err
+	tlen := len(str)
+	if tlen >= 2 {
+		head, tail := str[0], str[tlen-1]
+		if head == '"' && tail == '"' {
+			// Remove prefix and suffix '"' before unquoting
+			str, err = json.UnquoteString(str[1 : tlen-1])
+			if err != nil {
+				return "", false, err
+			}
+		}
+	}
+	return str, false, nil
 }
 
 type jsonSetFunctionClass struct {
@@ -1026,22 +1044,27 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	switch args[0].GetType().Tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+	default:
+		return nil, ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONQuoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil
 }
 
-func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var j json.BinaryJSON
-	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
-	if isNull || err != nil {
+func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
 		return "", isNull, err
-	} else if j.TypeCode != json.TypeCodeString {
-		return "", false, ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
+	} else if isNull {
+		return "NULL", false, err
 	}
-	return j.Quote(), false, nil
+	return strconv.Quote(str), false, nil
 }
 
 type jsonSearchFunctionClass struct {
