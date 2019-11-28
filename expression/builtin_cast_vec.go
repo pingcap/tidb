@@ -1427,11 +1427,11 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 	result.MergeNulls(buf)
 	res := result.Decimals()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	dec := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
+		dec := new(types.MyDecimal)
 		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && dec.IsNegative()) {
 			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
 				return err
