@@ -168,7 +168,15 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
-	err = sc.HandleTruncate(err)
+	if types.ErrTruncated.Equal(err) {
+		str, err1 := val.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+		}
+		err = sc.HandleTruncate(types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str))
+	} else {
+		err = sc.HandleTruncate(err)
+	}
 	if err != nil {
 		return casted, err
 	}
@@ -260,7 +268,7 @@ func NewColDesc(col *Column) *ColDesc {
 		defaultValue = col.GetDefaultValue()
 		if defaultValStr, ok := defaultValue.(string); ok {
 			if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) &&
-				strings.ToUpper(defaultValStr) == strings.ToUpper(ast.CurrentTimestamp) &&
+				strings.EqualFold(defaultValStr, ast.CurrentTimestamp) &&
 				col.Decimal > 0 {
 				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.Decimal)
 			}
@@ -395,7 +403,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	var needChangeTimeZone bool
 	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should use the time zone of the default value itself.
 	if col.Tp == mysql.TypeTimestamp {
-		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			needChangeTimeZone = true
 			originalTZ := sc.TimeZone
 			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.

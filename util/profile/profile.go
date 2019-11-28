@@ -33,7 +33,8 @@ var CPUProfileInterval = 30 * time.Second
 // Collector is used to collect the profile results
 type Collector struct{}
 
-func (c *Collector) profileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
+// ProfileReaderToDatums reads data from reader and returns the flamegraph which is organized by tree form.
+func (c *Collector) ProfileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
 	p, err := profile.Parse(f)
 	if err != nil {
 		return nil, err
@@ -65,7 +66,7 @@ func (c *Collector) cpuProfileGraph() ([][]types.Datum, error) {
 	}
 	time.Sleep(CPUProfileInterval)
 	pprof.StopCPUProfile()
-	return c.profileReaderToDatums(buffer)
+	return c.ProfileReaderToDatums(buffer)
 }
 
 // ProfileGraph returns the CPU/memory/mutex/allocs/block profile flamegraph which is organized by tree form
@@ -82,7 +83,7 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 	if err := p.WriteTo(buffer, 0); err != nil {
 		return nil, err
 	}
-	return c.profileReaderToDatums(buffer)
+	return c.ProfileReaderToDatums(buffer)
 }
 
 // Goroutines returns the groutine list which alive in runtime

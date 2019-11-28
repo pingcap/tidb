@@ -90,5 +90,5 @@ func (s *testDDLSuite) TestCallback(c *C) {
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
-	cb.OnWatched(nil)
+	cb.OnWatched(context.TODO())
 }
