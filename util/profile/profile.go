@@ -111,7 +111,6 @@ func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 
 		headers := strings.SplitN(strings.TrimSpace(goroutine[len("goroutine")+1:colIndex]), " ", 2)
 		if len(headers) != 2 {
-			fmt.Println(string(content))
 			return nil, errors.Errorf("incompatible goroutine headers: %s", goroutine[len("goroutine")+1:colIndex])
 		}
 		id, err := strconv.Atoi(strings.TrimSpace(headers[0]))

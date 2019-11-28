@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -127,9 +128,11 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableNameTiDBProfileGoroutines:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("goroutine")
 	case tableNameTiKVProfileCPU:
-		fullRows, err = dataForRemoteProfile(ctx, "tikv", "/debug/pprof/profile?seconds=30", false)
+		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
+		fullRows, err = dataForRemoteProfile(ctx, "tikv", "/debug/pprof/profile?seconds="+interval, false)
 	case tableNamePDProfileCPU:
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/profile?seconds=30", false)
+		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/profile?seconds="+interval, false)
 	case tableNamePDProfileMemory:
 		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/heap", false)
 	case tableNamePDProfileMutex:
@@ -180,7 +183,7 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	return nil
 }
 
-func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGroutine bool) ([][]types.Datum, error) {
+func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGoroutine bool) ([][]types.Datum, error) {
 	var (
 		servers []infoschema.ServerInfo
 		err     error
@@ -260,7 +263,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGrouti
 				}
 				collector := profile.Collector{}
 				var rows [][]types.Datum
-				if isGroutine {
+				if isGoroutine {
 					rows, err = collector.ParseGoroutines(resp.Body)
 				} else {
 					rows, err = collector.ProfileReaderToDatums(resp.Body)
