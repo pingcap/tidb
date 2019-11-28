@@ -2788,6 +2788,30 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	return date, false, nil
 }
 
+func (du *baseDateArithmitical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
+	dur, err := types.ExtractDurationValue(unit, interval)
+	if err != nil {
+		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
+	}
+	retDur, err := d.Add(dur)
+	if err != nil {
+		return types.ZeroDuration, true, err
+	}
+	return retDur, false, nil
+}
+
+func (du *baseDateArithmitical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
+	dur, err := types.ExtractDurationValue(unit, interval)
+	if err != nil {
+		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
+	}
+	retDur, err := d.Sub(dur)
+	if err != nil {
+		return types.ZeroDuration, true, err
+	}
+	return retDur, false, nil
+}
+
 func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
@@ -2823,30 +2847,6 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 	return date, false, nil
-}
-
-func (du *baseDateArithmitical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
-	dur, err := types.ExtractDurationValue(unit, interval)
-	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
-	}
-	retDur, err := d.Add(dur)
-	if err != nil {
-		return types.ZeroDuration, true, err
-	}
-	return retDur, false, nil
-}
-
-func (du *baseDateArithmitical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
-	dur, err := types.ExtractDurationValue(unit, interval)
-	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
-	}
-	retDur, err := d.Sub(dur)
-	if err != nil {
-		return types.ZeroDuration, true, err
-	}
-	return retDur, false, nil
 }
 
 func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {

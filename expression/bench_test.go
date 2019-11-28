@@ -1057,9 +1057,7 @@ func removeTestOptions(args []string) []string {
 	// args contains '-test.timeout=' option for example
 	// excluding it to be able to run all tests
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "builtin") {
-			argList = append(argList, arg)
-		} else if IsFunctionSupported(arg) {
+		if strings.HasPrefix(arg, "builtin") || IsFunctionSupported(arg) {
 			argList = append(argList, arg)
 		}
 	}
