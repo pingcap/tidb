@@ -1198,24 +1198,19 @@ func (b *builtinLocateBinary3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chu
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf2)
-	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+	// store positions in result
+	if err := b.args[2].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1, buf2)
-	ds := buf2.Int64s()
+	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		pos := ds[i]
+		pos := i64s[i]
+		// Transfer the argument which starts from 1 to real index which starts from 0.
 		pos--
 		subStr := buf0.GetString(i)
 		str := buf1.GetString(i)
