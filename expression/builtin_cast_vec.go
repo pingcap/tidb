@@ -1411,8 +1411,8 @@ func (b *builtinCastStringAsDecimalSig) vectorized() bool {
 }
 
 func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	if IsBinaryLiteral(b.args[0]){
-		return b.args[0].VecEvalDecimal(b.ctx,input,result)
+	if IsBinaryLiteral(b.args[0]) {
+		return b.args[0].VecEvalDecimal(b.ctx, input, result)
 	}
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
