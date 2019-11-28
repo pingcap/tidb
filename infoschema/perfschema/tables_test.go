@@ -210,17 +210,20 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	mockServer := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(mockServer.URL, "http://")
 
-	// mock tikv profile
-	router.HandleFunc("/debug/pprof/profile", func(w http.ResponseWriter, _ *http.Request) {
-		file, err := os.Open(filepath.Join(currentSourceDir(), "testdata/tikv.cpu.profile"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+	copyHandler := func(filename string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			file, err := os.Open(filepath.Join(currentSourceDir(), filename))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			defer func() { terror.Log(file.Close()) }()
+			_, err = io.Copy(w, file)
+			terror.Log(err)
 		}
-		defer func() { terror.Log(file.Close()) }()
-		_, err = io.Copy(w, file)
-		terror.Log(err)
-	})
+	}
+	// mock tikv profile
+	router.HandleFunc("/debug/pprof/profile", copyHandler("testdata/tikv.cpu.profile"))
 
 	// failpoint setting
 	servers := []string{
@@ -235,7 +238,12 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use performance_schema")
-	tk.MustQuery("select function, percent_abs, percent_rel from tikv_profile_cpu where depth < 3").Check(testkit.Rows(
+	result := tk.MustQuery("select function, percent_abs, percent_rel from tikv_profile_cpu where depth < 3")
+
+	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	result.Check(testkit.Rows(
 		"root 100% 100%",
 		"├─tikv::server::load_statistics::linux::ThreadLoadStatistics::record::h59facb8d680e7794 75.00% 75.00%",
 		"│ └─procinfo::pid::stat::stat_task::h69e1aa2c331aebb6 75.00% 100%",
@@ -286,7 +294,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	}
 
 	// mock PD profile
-	router.HandleFunc("/pd/api/v1/debug/pprof/profile", handlerFactory("profile"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("../../util/profile/testdata/test.pprof"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/heap", handlerFactory("heap"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/mutex", handlerFactory("mutex"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/allocs", handlerFactory("allocs"))
@@ -294,7 +302,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	router.HandleFunc("/pd/api/v1/debug/pprof/goroutine", handlerFactory("goroutine", 2))
 
 	tk.MustQuery("select * from pd_profile_cpu where depth < 3")
-	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
 
 	tk.MustQuery("select * from pd_profile_memory where depth < 3")

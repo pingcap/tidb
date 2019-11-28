@@ -15,7 +15,6 @@ package perfschema
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"sort"
 	"strings"
@@ -201,7 +200,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGrouti
 			servers = servers[:0]
 			for _, server := range strings.Split(s, ";") {
 				parts := strings.Split(server, ",")
-				if parts[1] != nodeType {
+				if parts[0] != nodeType {
 					continue
 				}
 				servers = append(servers, infoschema.ServerInfo{
@@ -256,11 +255,6 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGrouti
 					terror.Log(resp.Body.Close())
 				}()
 				if resp.StatusCode != http.StatusOK {
-					content, err := ioutil.ReadAll(resp.Body)
-					if err != nil {
-						panic(err)
-					}
-					fmt.Println("===>", string(content))
 					ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
 					return
 				}
