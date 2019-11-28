@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -68,6 +69,8 @@ type HashAggPartialWorker struct {
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
+
+	finishedCnt *int32
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
@@ -83,6 +86,8 @@ type HashAggFinalWorker struct {
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
+
+	mergeFinishedCnt *int32
 }
 
 // AfFinalResult indicates aggregation functions final result.
@@ -270,6 +275,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
+	partialFinishedCnt := int32(0)
+	finalFinishedCnt := int32(0)
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
@@ -283,6 +290,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupByItems:      e.GroupByItems,
 			chk:               newFirstChunk(e.children[0]),
 			groupKey:          make([][]byte, 0, 8),
+			finishedCnt:       &partialFinishedCnt,
 		}
 
 		e.partialWorkers[i] = w
@@ -304,6 +312,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 			groupKeys:           make([][]byte, 0, 8),
+			mergeFinishedCnt:    &finalFinishedCnt,
 		}
 	}
 }
@@ -334,6 +343,10 @@ func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
+		atomic.AddInt32(w.finishedCnt, 1)
+		if atomic.LoadInt32(w.finishedCnt) == int32(w.ctx.GetSessionVars().HashAggPartialConcurrency) {
+			logutil.BgLogger().Info("all partial worker finished")
+		}
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
@@ -466,6 +479,12 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 }
 
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
+	defer func() {
+		atomic.AddInt32(w.mergeFinishedCnt, 1)
+		if atomic.LoadInt32(w.mergeFinishedCnt) == int32(w.ctx.GetSessionVars().HashAggFinalConcurrency) {
+			logutil.BgLogger().Info("all final worker's partial merging finished")
+		}
+	}()
 	var (
 		input            *HashAggIntermData
 		ok               bool
@@ -502,6 +521,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			}
 		}
 	}
+	return nil
 }
 
 func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
