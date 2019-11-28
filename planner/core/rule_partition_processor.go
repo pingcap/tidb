@@ -93,6 +93,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
 	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+	FastGeneratePartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -101,13 +102,12 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		return ds, nil
 	}
 	partitionDefs := ds.table.Meta().Partition.Definitions
-
 	filterConds := ds.allConds
 
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash && len(filterConds) > 0 {
 		if table, ok := ds.table.(partitionTable); ok {
-			pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
+			pExpr, err := table.FastGeneratePartitionExpr(ds.ctx, ds.TblCols, ds.names)
 			if err != nil {
 				return nil, err
 			}
@@ -135,8 +135,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		}
 	}
 
-	// Rewrite data source to union all partitions, during which we may prune some
-	// partitions according to the filter conditions pushed to the DataSource.
 	var partitionExprs []expression.Expression
 	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {

@@ -142,6 +142,29 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 	panic("create table assert len(columns) = 1")
 }
 
+// FastGeneratePartitionExpr is used to rebuild partition expression.
+func (t *partitionedTable) FastGeneratePartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
+	tblInfo := t.meta
+	pi := tblInfo.GetPartitionInfo()
+	var column *expression.Column
+	schema := expression.NewSchema(columns...)
+	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	if err != nil {
+		// If it got an error here, ddl may hang forever, so this error log is important.
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
+	if col, ok := exprs[0].(*expression.Column); ok {
+		column = col
+	}
+	return &PartitionExpr{
+		Column: column,
+		Expr:   exprs[0],
+		Ranges: nil,
+	}, nil
+}
+
 func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	var column *expression.Column
