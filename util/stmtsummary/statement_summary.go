@@ -70,8 +70,8 @@ type stmtSummaryByDigestMap struct {
 		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
 		globalEnabled string
-		// XXXRefreshInterval indicates the refresh interval of summaries.
-		// It must be > 0.
+		// These variables indicate the refresh interval of summaries.
+		// They must be > 0.
 		sessionRefreshInterval string
 		globalRefreshInterval  string
 		// A cached result. It must be read atomically.
@@ -191,7 +191,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
-	// All times are count in seconds.
+	// All times are counted in seconds.
 	now := time.Now().Unix()
 
 	key := &stmtSummaryByDigestKey{
