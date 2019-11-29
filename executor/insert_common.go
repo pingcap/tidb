@@ -408,10 +408,9 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
-			}
-
-			if len(rows) > 3000 {
-				// As rows in memdb representation is smaller than []datum, this may reduce the footprint.
+			} else if len(rows) > 300 {
+				// As rows in memdb representation is smaller than in the []Datum format, this
+				// operation could reduce the memory footprint for the large transaction.
 				err = base.exec(ctx, rows)
 				if err != nil {
 					return err

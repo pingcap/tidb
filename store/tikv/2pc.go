@@ -438,9 +438,13 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		}
 		return errors.Trace(e)
 	}
-	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
-	if rateLim > 20 {
-		rateLim = 20
+	rateLim := len(batches)
+	// Set rateLim here for the large transaction.
+	// If the rate limit is too high, tikv will report service is busy.
+	// If the rate limit is too low, we can't full utilize the tikv's throughput.
+	// TODO: Find a self-adaptive way to control the rate limit here.
+	if rateLim > 32 {
+		rateLim = 32
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -532,7 +536,8 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			if bytes.Equal(c.primary(), batch.keys[0]) {
-				// After writing primary key, if the size of the transaction is large than 4M, start the ttlManager.
+				// After writing the primary key, if the size of the transaction is large than 4M,
+				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				if c.txnSize > 4*1024*1024 {
 					c.run(c, nil)
 				}

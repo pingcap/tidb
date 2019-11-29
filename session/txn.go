@@ -292,8 +292,11 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (st *TxnState) cleanup() {
-	const sz100M = 100 << 20
-	if st.buf.Size() > sz100M {
+	const sz4M = 4 << 20
+	if st.buf.Size() > sz4M {
+		// The memory footprint for the large transaction could be huge here.
+		// Each active session has its own buffer, we should free the buffer to
+		// avoid memory leak.
 		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	} else {
 		st.buf.Reset()
@@ -306,7 +309,7 @@ func (st *TxnState) cleanup() {
 		for i := 0; i < len(st.dirtyTableOP); i++ {
 			st.dirtyTableOP[i] = empty
 		}
-		if len(st.dirtyTableOP) > 200 {
+		if len(st.dirtyTableOP) > 256 {
 			// Reduce memory footprint for the large transaction.
 			st.dirtyTableOP = nil
 		} else {
