@@ -393,7 +393,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := types.CloneRow(innerChunkRow.GetDatumRow(fields))
+			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
 			row, err := e.getRow(ctx, innerRow)
 			if err != nil {
@@ -408,18 +408,16 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
-			} else if len(rows) > 300 {
-				// As rows in memdb representation is smaller than in the []Datum format, this
-				// operation could reduce the memory footprint for the large transaction.
-				err = base.exec(ctx, rows)
-				if err != nil {
-					return err
-				}
-				rows = rows[:0]
 			}
 		}
+
+		err = base.exec(ctx, rows)
+		if err != nil {
+			return err
+		}
+		rows = rows[:0]
 	}
-	return base.exec(ctx, rows)
+	return nil
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
