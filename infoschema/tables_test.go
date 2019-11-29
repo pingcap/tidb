@@ -72,9 +72,9 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	defer testleak.AfterTest(c)()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 type testClusterTableSuite struct {
@@ -158,7 +158,6 @@ func setUpMockPDHTTPSercer() (*httptest.Server, string) {
 }
 
 func (s *testClusterTableSuite) TearDownSuite(c *C) {
-	s.testTableSuite.TearDownSuite(c)
 	if s.rpcserver != nil {
 		s.rpcserver.Stop()
 		s.rpcserver = nil
@@ -166,6 +165,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
+	s.testTableSuite.TearDownSuite(c)
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
