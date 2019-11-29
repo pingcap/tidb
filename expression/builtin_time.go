@@ -2870,10 +2870,17 @@ func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 		if result.IsNull(i) {
 			continue
 		}
+
 		date, err := types.ParseTimeFromInt64(sc, i64s[i])
 		if err != nil {
-			return err
+			err = handleInvalidTimeError(b.ctx, err)
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
 		}
+
 		dateTp := mysql.TypeDate
 		if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || isClockUnit {
 			dateTp = mysql.TypeDatetime
