@@ -639,7 +639,7 @@ func (g *dateStrGener) gen() interface{} {
 }
 
 // timeStrGener is used to generate strings which are time format
-type timeStrGener struct{
+type timeStrGener struct {
 	nullRation float64
 }
 
