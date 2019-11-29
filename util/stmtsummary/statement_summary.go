@@ -553,10 +553,11 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
-		beginTime:  beginTime,
-		minLatency: sei.TotalLatency,
-		firstSeen:  sei.StartTime,
-		lastSeen:   sei.StartTime,
+		beginTime:    beginTime,
+		minLatency:   sei.TotalLatency,
+		firstSeen:    sei.StartTime,
+		lastSeen:     sei.StartTime,
+		backoffTypes: make(map[fmt.Stringer]int, 0),
 	}
 	ssElement.add(sei)
 	return ssElement
