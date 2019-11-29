@@ -64,10 +64,14 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	startTS := req.StartTs
+	if startTS == 0 {
+		startTS = analyzeReq.GetStartTsFallback()
+	}
 	e := &indexScanExec{
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
 		kvRanges:       ranges,
-		startTS:        analyzeReq.StartTs,
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
@@ -131,12 +135,16 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	startTS := req.StartTs
+	if startTS == 0 {
+		startTS = analyzeReq.GetStartTsFallback()
+	}
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
 			TableScan:      &tipb.TableScan{Columns: columns},
 			kvRanges:       ranges,
 			colIDs:         evalCtx.colIDs,
-			startTS:        analyzeReq.GetStartTs(),
+			startTS:        startTS,
 			isolationLevel: h.isolationLevel,
 			mvccStore:      h.mvccStore,
 			execDetail:     new(execDetail),
