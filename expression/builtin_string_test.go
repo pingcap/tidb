@@ -1813,7 +1813,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 			c.Assert(len(warnings), Equals, tt.warnings, Commentf("test %v", tt))
 			for i := 0; i < tt.warnings; i++ {
-				c.Assert(terror.ErrorEqual(types.ErrTruncated, warnings[i].Err), IsTrue, Commentf("test %v", tt))
+				c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), IsTrue, Commentf("test %v", tt))
 			}
 			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 		}
