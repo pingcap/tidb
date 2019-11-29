@@ -3954,33 +3954,8 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
 	newTableInfo.ID = oldTableInfo.ID
-	// If any old partitionInfo has lost, that means the partition ID lost too, so did the data, repair failed.
-	if newTableInfo.Partition != nil {
-		if oldTableInfo.Partition == nil {
-			return ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
-		}
-		if newTableInfo.Partition.Type != oldTableInfo.Partition.Type {
-			return ErrRepairTableFail.GenWithStackByArgs("Partition type should be same")
-		}
-		// Check whether partitionType is hash partition.
-		if newTableInfo.Partition.Type == model.PartitionTypeHash {
-			if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
-				return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be same")
-			}
-		}
-		for i, newOne := range newTableInfo.Partition.Definitions {
-			found := false
-			for _, oldOne := range oldTableInfo.Partition.Definitions {
-				if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
-					newTableInfo.Partition.Definitions[i].ID = oldOne.ID
-					found = true
-					break
-				}
-			}
-			if !found {
-				return ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
-			}
-		}
+	if err = checkAndOverridePartitionID(newTableInfo, oldTableInfo); err != nil {
+		return err
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
@@ -4028,23 +4003,6 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-func stringSliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	// Accelerate the compare by eliminate index bound check.
-	b = b[:len(a)]
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func columnSliceEqual(a, b []*model.IndexColumn) bool {
