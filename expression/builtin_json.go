@@ -187,8 +187,8 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	if !isAllowedType4JSONUnquote(args[0].GetType()) {
-		return nil, ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
+	if err := verifyArg4JSONUnquote(args[0]); err != nil {
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxFieldVarCharLength
@@ -198,13 +198,13 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func isAllowedType4JSONUnquote(t *types.FieldType) bool {
-	switch t.Tp {
+func verifyArg4JSONUnquote(arg Expression) error {
+	switch arg.GetType().Tp {
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull, mysql.TypeJSON,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-		return true
+		return nil
 	default:
-		return false
+		return ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
 	}
 }
 
@@ -1044,8 +1044,8 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	if !isAllowedType4JSONQuote(args[0].GetType()) {
-		return nil, ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
+	if err := verifyArg4JSONQuote(args[0]); err != nil {
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	DisableParseJSONFlag4Expr(args[0])
@@ -1054,13 +1054,13 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func isAllowedType4JSONQuote(t *types.FieldType) bool {
-	switch t.Tp {
+func verifyArg4JSONQuote(arg Expression) error {
+	switch arg.GetType().Tp {
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-		return true
+		return nil
 	default:
-		return false
+		return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
 	}
 }
 
