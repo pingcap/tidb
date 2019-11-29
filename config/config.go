@@ -700,6 +700,10 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
+
+	if c.Performance.TxnTotalSizeLimit > (10 << 30) {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
 	return nil
 }
 

@@ -70,7 +70,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64 = 20000 // 20s
+	ManagedLockTTL uint64 = 20000 // 20s
 )
 
 func (actionPrewrite) String() string {
@@ -538,7 +538,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			if bytes.Equal(c.primary(), batch.keys[0]) {
 				// After writing the primary key, if the size of the transaction is large than 4M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
-				if c.txnSize > 4*1024*1024 {
+				if c.txnSize > 32*1024*1024 {
 					c.run(c, nil)
 				}
 			}
@@ -613,8 +613,8 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	// Ticker is set to 1/2 of the PessimisticLockTTL.
-	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 2)
+	// Ticker is set to 1/2 of the ManagedLockTTL.
+	ticker := time.NewTicker(time.Duration(ManagedLockTTL) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -647,7 +647,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 
-			newTTL := uptime + PessimisticLockTTL
+			newTTL := uptime + ManagedLockTTL
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
@@ -683,7 +683,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + PessimisticLockTTL,
+		LockTtl:      elapsed + ManagedLockTTL,
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
