@@ -301,7 +301,7 @@ func (b *builtinJSONQuoteSig) vectorized() bool {
 
 func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -813,7 +813,7 @@ func (b *builtinJSONUnquoteSig) vectorized() bool {
 
 func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
@@ -828,17 +828,9 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		str := buf.GetString(i)
-		tlen := len(str)
-		if tlen >= 2 {
-			head, tail := str[0], str[tlen-1]
-			if head == '"' && tail == '"' {
-				// Remove prefix and suffix '"' before unquoting
-				str, err = json.UnquoteString(str[1 : tlen-1])
-				if err != nil {
-					return err
-				}
-			}
+		str, err := json.UnquoteString(buf.GetString(i))
+		if err != nil {
+			return err
 		}
 		result.AppendString(str)
 	}

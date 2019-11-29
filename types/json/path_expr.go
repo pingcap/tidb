@@ -208,7 +208,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 				pe.flags |= pathExpressionContainsAsterisk
 			} else if key[0] == '"' {
 				// We need unquote the origin string.
-				if key, err = UnquoteString(key[1 : len(key)-1]); err != nil {
+				if key, err = unquoteString(key[1 : len(key)-1]); err != nil {
 					err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 					return
 				}

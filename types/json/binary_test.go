@@ -435,7 +435,7 @@ func (s *testJSONSuite) TestCreateBinary(c *C) {
 func (s *testJSONSuite) TestFunctions(c *C) {
 	c.Parallel()
 	testByte := []byte{'\\', 'b', 'f', 'n', 'r', 't', 'u', 'z', '0'}
-	testOutput, err := UnquoteString(string(testByte))
+	testOutput, err := unquoteString(string(testByte))
 	c.Assert(testOutput, Equals, "\bfnrtuz0")
 	c.Assert(err, IsNil)
 	n, err := PeekBytesAsJSON(testByte)

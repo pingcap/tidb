@@ -58,26 +58,32 @@ func (bj BinaryJSON) Type() string {
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		tmp := string(hack.String(bj.GetString()))
-		tlen := len(tmp)
-		if tlen < 2 {
-			return tmp, nil
-		}
-		head, tail := tmp[0], tmp[tlen-1]
-		if head == '"' && tail == '"' {
-			// Remove prefix and suffix '"' before unquoting
-			return UnquoteString(tmp[1 : tlen-1])
-		}
-		// if value is not double quoted, do nothing
-		return tmp, nil
+		str := string(hack.String(bj.GetString()))
+		return UnquoteString(str)
 	default:
 		return bj.String(), nil
 	}
 }
 
-// UnquoteString recognizes the escape sequences shown in:
+// UnquoteString remove quotes in a string,
+// including the quotes at the head and tail of string.
+func UnquoteString(str string) (string, error) {
+	strLen := len(str)
+	if strLen < 2 {
+		return str, nil
+	}
+	head, tail := str[0], str[strLen-1]
+	if head == '"' && tail == '"' {
+		// Remove prefix and suffix '"' before unquoting
+		return unquoteString(str[1 : strLen-1])
+	}
+	// if value is not double quoted, do nothing
+	return str, nil
+}
+
+// unquoteString recognizes the escape sequences shown in:
 // https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#json-unquote-character-escape-sequences
-func UnquoteString(s string) (string, error) {
+func unquoteString(s string) (string, error) {
 	ret := new(bytes.Buffer)
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' {
@@ -104,6 +110,7 @@ func UnquoteString(s string) (string, error) {
 				if i+4 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
+				// PANIC 警告！
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
 					return "", errors.Trace(err)

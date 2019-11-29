@@ -187,10 +187,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	switch args[0].GetType().Tp {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull, mysql.TypeJSON,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-	default:
+	if !isAllowedType4JSONUnquote(args[0].GetType()) {
 		return nil, ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
@@ -201,23 +198,26 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
+func isAllowedType4JSONUnquote(t *types.FieldType) bool {
+	switch t.Tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull, mysql.TypeJSON,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	default:
+		return false
+	}
+}
+
 func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil {
 		return "", isNull, err
 	} else if isNull {
-		return "NULL", true, err
+		return "", true, err
 	}
-	tlen := len(str)
-	if tlen >= 2 {
-		head, tail := str[0], str[tlen-1]
-		if head == '"' && tail == '"' {
-			// Remove prefix and suffix '"' before unquoting
-			str, err = json.UnquoteString(str[1 : tlen-1])
-			if err != nil {
-				return "", false, err
-			}
-		}
+	str, err = json.UnquoteString(str)
+	if err != nil {
+		return "", false, err
 	}
 	return str, false, nil
 }
@@ -1044,10 +1044,7 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	switch args[0].GetType().Tp {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-	default:
+	if !isAllowedType4JSONQuote(args[0].GetType()) {
 		return nil, ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
@@ -1057,12 +1054,22 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
+func isAllowedType4JSONQuote(t *types.FieldType) bool {
+	switch t.Tp {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	default:
+		return false
+	}
+}
+
 func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil {
 		return "", isNull, err
 	} else if isNull {
-		return "NULL", true, err
+		return "", true, err
 	}
 	return strconv.Quote(str), false, nil
 }
