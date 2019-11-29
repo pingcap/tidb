@@ -571,7 +571,8 @@ func setupLog() {
 	terror.MustNil(err)
 	// Disable automaxprocs log
 	nopLog := func(string, ...interface{}) {}
-	maxprocs.Set(maxprocs.Logger(nopLog))
+	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
 }
 
 func printInfo() {
