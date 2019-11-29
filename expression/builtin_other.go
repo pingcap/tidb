@@ -144,7 +144,7 @@ type builtinInIntSig struct {
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -154,13 +154,13 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
@@ -249,7 +249,7 @@ type builtinInStringSig struct {
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[string]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -259,13 +259,13 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
 			b.hashSet[val] = true
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
@@ -329,7 +329,7 @@ type builtinInRealSig struct {
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[float64]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -339,13 +339,13 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
 			b.hashSet[val] = true
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
@@ -440,7 +440,7 @@ type builtinInTimeSig struct {
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[types.Time]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -450,13 +450,13 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
 			b.hashSet[val] = true
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
@@ -518,7 +518,7 @@ type builtinInDurationSig struct {
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[time.Duration]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -528,13 +528,13 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
 			b.hashSet[val.Duration] = true
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
@@ -596,7 +596,7 @@ type builtinInJSONSig struct {
 
 func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0].Clone())
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[string]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -606,7 +606,7 @@ func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
 			json, err := val.MarshalJSON()
@@ -616,7 +616,7 @@ func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 			b.hashSet[string(json)] = true
 			count++
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i].Clone())
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
 	if count < b.threshold {
