@@ -180,7 +180,7 @@ alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
-server-version = test_version
+server-version = "test_version"
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
