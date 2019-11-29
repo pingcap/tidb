@@ -894,11 +894,14 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(input *chunk.Chunk, res
 			continue
 		}
 		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, buf.GetString(i), int8(b.tp.Decimal))
-		if types.ErrTruncatedWrongVal.Equal(err) {
-			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-		}
 		if err != nil {
-			return err
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+			}
+			if dur == types.ZeroDuration {
+				result.SetNull(i, true)
+				return nil
+			}
 		}
 		ds[i] = dur.Duration
 	}
