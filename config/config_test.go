@@ -352,3 +352,18 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
 }
+
+func (s *testConfigSuite) TestServerVersionValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		serverVersion string
+		valid         bool
+	}{
+		{"test_version", true},
+		{"", false},
+	}
+	for _, tt := range tests {
+		c1.ServerVersion = tt.serverVersion
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
