@@ -257,26 +257,89 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftJoinKeys[i], p.RightJoinKeys[i]))
 	}
 }
+func (p *LogicalJoin) tryToGetHashJoins(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+	forced := false
+	innerBuild := p.preferJoinType&preferHashJoinInnerBuild > 0
+	innerProbe := p.preferJoinType&preferHashJoinInnerProbe > 0
+	forceHJ := p.preferJoinType&preferHashJoin > 0
+	defer func() {
+		// refine error message
+		if !forced && (innerBuild || innerProbe) {
+			// Construct warning message prefix.
+			var errMsg string
+			switch {
+			case innerBuild:
+				errMsg = "Optimizer Hint SWAP_JOIN_INPUTS is inapplicable"
+			case innerProbe:
+				errMsg = "Optimizer Hint NO_SWAP_JOIN_INPUTS is inapplicable"
+			case forceHJ:
+				errMsg = "Optimizer Hint HASH_JOIN is inapplicable"
+			}
+			if p.hintInfo != nil {
+				t := p.hintInfo.hashJoinHintTables
+				switch {
+				case len(t.hjBuildTables) != 0:
+					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintSJI, t.hjBuildTables))
+				case len(t.hjProbeTables) != 0:
+					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.hjProbeTables))
+				case len(t.hjTables) != 0:
+					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.hjTables))
+				}
+			}
 
-func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
+			// Append inapplicable reason.
+			if len(p.EqualConditions) == 0 {
+				errMsg += " without column equal ON condition"
+			}
+
+			// Generate warning message to client.
+			warning := ErrInternal.GenWithStack(errMsg)
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
+	}()
+
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
-		return nil
+		return nil, forced
 	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 1, true))
+		if innerBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+			forced = true
+		} else if innerProbe {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			forced = true
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+		}
 	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 0, false))
-		joins = append(joins, p.getHashJoin(prop, 0, true))
+		if innerBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+			forced = true
+		} else if innerProbe {
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+			forced = true
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+		}
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 0, false))
+		if innerBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+			forced = true
+		} else if innerProbe {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			forced = true
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		}
 	}
-	return joins
+	return joins, forced
 }
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
@@ -1318,8 +1381,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	}
 	joins = append(joins, indexJoins...)
 
-	hashJoins := p.getHashJoins(prop)
-	if (p.preferJoinType & preferHashJoin) > 0 {
+	hashJoins, forced := p.tryToGetHashJoins(prop)
+	if (p.preferJoinType&preferHashJoin) > 0 || forced {
 		return hashJoins
 	}
 	joins = append(joins, hashJoins...)

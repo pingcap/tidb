@@ -62,10 +62,16 @@ type indexNestedLoopJoinTables struct {
 	inlmjTables []hintTableInfo
 }
 
+type hashJoinHintTables struct {
+	hjTables      []hintTableInfo
+	hjBuildTables []hintTableInfo
+	hjProbeTables []hintTableInfo
+}
+
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
+	hashJoinHintTables
 	sortMergeJoinTables []hintTableInfo
-	hashJoinTables      []hintTableInfo
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
 	tikvTables          []hintTableInfo
@@ -112,7 +118,13 @@ func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool 
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.hashJoinTables)
+	return info.matchTableName(tableNames, info.hashJoinHintTables.hjTables)
+}
+func (info *tableHintInfo) ifPreferHashJoinBuild(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hashJoinHintTables.hjBuildTables)
+}
+func (info *tableHintInfo) ifPreferHashJoinProbe(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hashJoinHintTables.hjProbeTables)
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
