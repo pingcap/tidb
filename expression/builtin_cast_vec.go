@@ -900,7 +900,7 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(input *chunk.Chunk, res
 			}
 			if dur == types.ZeroDuration {
 				result.SetNull(i, true)
-				return nil
+				return err
 			}
 		}
 		ds[i] = dur.Duration
