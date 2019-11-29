@@ -155,7 +155,7 @@ func main() {
 	registerMetrics()
 	configWarning := loadConfig()
 	overrideConfig()
-	mysql.ServerVersion = cfg.ServerVersion
+
 	if err := cfg.Valid(); err != nil {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
@@ -360,6 +360,7 @@ func loadConfig() string {
 		if err == nil {
 			return ""
 		}
+		mysql.ServerVersion = cfg.ServerVersion
 
 		// Unused config item erro turns to warnings.
 		if tmp, ok := err.(*config.ErrConfigValidationFailed); ok {
