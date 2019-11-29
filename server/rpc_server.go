@@ -98,7 +98,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	}
 	defer se.Close()
 
-	h := executor.NewCoprocessorDAGHandler(se, resp)
+	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleRequest(ctx, req)
 }
 

@@ -39,15 +39,15 @@ type CoprocessorDAGHandler struct {
 }
 
 // NewCoprocessorDAGHandler creates a new CoprocessorDAGHandler.
-func NewCoprocessorDAGHandler(sctx sessionctx.Context, resp *coprocessor.Response) *CoprocessorDAGHandler {
+func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 	return &CoprocessorDAGHandler{
 		sctx:    sctx,
-		resp:    resp,
+		resp:    &coprocessor.Response{},
 		selResp: &tipb.SelectResponse{},
 	}
 }
 
-// HandleCopDAGRequest handles the coprocessor request.
+// HandleRequest handles the coprocessor request.
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
@@ -95,7 +95,16 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 		return nil, errors.Trace(err)
 	}
 	h.dagReq = dagReq
-	return h.buildDAG(dagReq.Executors)
+	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	// Build physical plan.
+	bp := core.NewPBPlanBuilder(h.sctx, is)
+	plan, err := bp.Build(dagReq.Executors)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Build executor.
+	b := newExecutorBuilder(h.sctx, is)
+	return b.build(plan), nil
 }
 
 func (h *CoprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
@@ -155,12 +164,13 @@ func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.
 func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) error {
 	colOrdinal := h.dagReq.OutputOffsets
 	chunks := h.selResp.Chunks
+	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	requestedRow := make([]byte, 0)
 	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
-			data, err := codec.EncodeValue(h.sctx.GetSessionVars().StmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			data, err := codec.EncodeValue(stmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
 			if err != nil {
 				return err
 			}

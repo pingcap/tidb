@@ -34,15 +34,15 @@ const (
 	clusterTableProcesslist = "TIDB_CLUSTER_PROCESSLIST"
 )
 
-// memTableToClusterTableMap means add memory table to cluster table.
-var memTableToClusterTableMap = map[string]string{
+// memTableToClusterTables means add memory table to cluster table.
+var memTableToClusterTables = map[string]string{
 	tableSlowLog:     clusterTableSlowLog,
 	tableProcesslist: clusterTableProcesslist,
 }
 
 func init() {
 	var addrCol = columnInfo{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil}
-	for memTableName, clusterMemTableName := range memTableToClusterTableMap {
+	for memTableName, clusterMemTableName := range memTableToClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
 			continue
