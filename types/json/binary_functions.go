@@ -110,7 +110,6 @@ func unquoteString(s string) (string, error) {
 				if i+4 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
-				// PANIC 警告！
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
 					return "", errors.Trace(err)
