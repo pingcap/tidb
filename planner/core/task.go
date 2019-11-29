@@ -393,13 +393,13 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 }
 
 func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
+	padChar := p.ctx.GetSessionVars().StmtCtx.PadCharToFullLength
 	if inner.statsInfo().HistColl != nil {
-		size = inner.statsInfo().HistColl.GetAvgRowSize(inner.Schema().Columns, false)
+		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns, padChar)
 	} else {
 		// Estimate using just the type info.
 		cols := inner.Schema().Columns
 		for _, col := range cols {
-			padChar := p.ctx.GetSessionVars().StmtCtx.PadCharToFullLength
 			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
 		}
 	}
@@ -451,7 +451,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 			numPairs = 0
 		}
 	}
-	// Cost of quering hash table is cheap actually, so we just compute the cost of
+	// Cost of querying hash table is cheap actually, so we just compute the cost of
 	// evaluating `OtherConditions` and joining row pairs.
 	probeCost := numPairs * sessVars.CPUFactor
 	probeDiskCost := numPairs * sessVars.DiskFactor * rowSize
@@ -460,8 +460,6 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 		// Input outer count for the above compution should be adjusted by selectionFactor.
 		probeCost *= selectionFactor
 		probeCost += probeCnt * sessVars.CPUFactor
-		probeDiskCost *= selectionFactor
-		probeDiskCost += probeCnt * sessVars.DiskFactor * rowSize
 	}
 	diskCost += probeDiskCost
 	probeCost /= float64(p.Concurrency)

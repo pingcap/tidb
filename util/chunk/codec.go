@@ -184,6 +184,12 @@ func getFixedLen(colType *types.FieldType) int {
 	}
 }
 
+// GetFixedLen get the memory size of a fixed-length type.
+// if colType is not fixed-length, it returns varElemLen, aka -1.
+func GetFixedLen(colType *types.FieldType) int {
+	return getFixedLen(colType)
+}
+
 // EstimateTypeWidth estimates the average width of values of the type.
 // This is used by the planner, which doesn't require absolutely correct results;
 // it's OK (and expected) to guess if we don't know for sure.
@@ -191,7 +197,7 @@ func getFixedLen(colType *types.FieldType) int {
 // mostly study from https://github.com/postgres/postgres/blob/REL_12_STABLE/src/backend/utils/cache/lsyscache.c#L2356
 func EstimateTypeWidth(padChar bool, colType *types.FieldType) int {
 	colLen := getFixedLen(colType)
-	// Easy if it's a fixed-witch type
+	// Easy if it's a fixed-width type
 	if colLen != varElemLen {
 		return colLen
 	}

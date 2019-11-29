@@ -140,6 +140,25 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 }
 
+// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
+// from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeListInDisk(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	histCount := c.TotalRowCount()
+	notNullRatio := 1.0
+	if histCount > 0 {
+		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+	}
+	size := chunk.GetFixedLen(c.Histogram.Tp)
+	if size != -1 {
+		return float64(size) * notNullRatio
+	}
+	// Keep two decimal place.
+	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
+}
+
 // AppendBucket appends a bucket into `hg`.
 func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
 	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat})

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
@@ -674,7 +675,11 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 
 // GetAvgRowSize computes average row size for given columns.
 func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool) (size float64) {
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
+	if coll.Pseudo || coll.Count == 0 {
+		for _, col := range cols {
+			size += float64(chunk.EstimateTypeWidth(false, col.GetType()))
+		}
+	} else if len(coll.Columns) == 0 {
 		size = pseudoColSize * float64(len(cols))
 	} else {
 		for _, col := range cols {
@@ -682,7 +687,7 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
-				size += pseudoColSize
+				size += float64(chunk.EstimateTypeWidth(false, col.GetType()))
 				continue
 			}
 			// We differentiate if the column is encoded as key or value, because the resulted size
@@ -692,6 +697,32 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 	}
 	// Add 1 byte for each column's flag byte. See `encode` for details.
 	return size + float64(len(cols))
+}
+
+// GetAvgRowSizeListInDisk computes average row size for given columns.
+func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column, padChar bool) (size float64) {
+	if coll.Pseudo || coll.Count == 0 {
+		for _, col := range cols {
+			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+		}
+	} else if len(coll.Columns) == 0 {
+		size = pseudoColSize * float64(len(cols))
+	} else {
+		for _, col := range cols {
+			colHist, ok := coll.Columns[col.UniqueID]
+			// Normally this would not happen, it is for compatibility with old version stats which
+			// does not include TotColSize.
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+				continue
+			}
+			// We differentiate if the column is encoded as key or value, because the resulted size
+			// is different.
+			size += colHist.AvgColSizeListInDisk(coll.Count)
+		}
+	}
+	// Add 8 byte for each column's size record. See `ListInDisk` for details.
+	return size + float64(8*len(cols))
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
