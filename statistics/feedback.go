@@ -901,7 +901,7 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 
 // recalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
-	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.tableID]
 	if !ok {
 		return nil
 	}
@@ -930,7 +930,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		expected *= idx.getIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount)
+		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount, true)
 		expected *= c.getIncreaseFactor(t.Count)
 	}
 	if err != nil {
@@ -1062,7 +1062,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 }
 
 func (q *QueryFeedback) logDetailedInfo(h *Handle) {
-	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.tableID]
 	if !ok {
 		return
 	}

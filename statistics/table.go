@@ -229,7 +229,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool) (*Table, error) {
-	table, ok := h.statsCache.Load().(statsCache)[physicalID]
+	table, ok := h.statsCache.Load().(statsCache).tables[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok {
@@ -415,7 +415,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
 	c := coll.Columns[colID]
-	result, err := c.getColumnRowCount(sc, intRanges, coll.ModifyCount)
+	result, err := c.getColumnRowCount(sc, intRanges, coll.ModifyCount, true)
 	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -427,7 +427,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 		return getPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
 	c := coll.Columns[colID]
-	result, err := c.getColumnRowCount(sc, colRanges, coll.ModifyCount)
+	result, err := c.getColumnRowCount(sc, colRanges, coll.ModifyCount, false)
 	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -546,6 +546,12 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
+		coverAll := len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal)
+		// // In this case, the row count is at most 1.
+		if coverAll && idx.Info.Unique {
+			totalCount += 1.0
+			continue
+		}
 		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.

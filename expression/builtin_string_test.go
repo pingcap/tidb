@@ -2069,7 +2069,7 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		{`萌萌哒(๑•ᴗ•๑)😊`, `'萌萌哒(๑•ᴗ•๑)😊'`},
 		{`㍿㌍㍑㌫`, `'㍿㌍㍑㌫'`},
 		{string([]byte{0, 26}), `'\0\Z'`},
-		{nil, nil},
+		{nil, "NULL"},
 	}
 
 	for _, t := range tbl {
