@@ -184,16 +184,13 @@ func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
 }
 
 func (c *jsonUnquoteFunctionClass) verifyArgs(args []Expression) error {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	switch args[0].GetType().Tp {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull, mysql.TypeJSON,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-		return nil
-	default:
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
 	}
+	return nil
 }
 
 func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1039,16 +1036,13 @@ func (b *builtinJSONQuoteSig) Clone() builtinFunc {
 }
 
 func (c *jsonQuoteFunctionClass) verifyArgs(args []Expression) error {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	switch args[0].GetType().Tp {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeNull,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-		return nil
-	default:
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString {
 		return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
 	}
+	return nil
 }
 
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
