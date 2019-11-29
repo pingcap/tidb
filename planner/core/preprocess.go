@@ -774,56 +774,32 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
-	dbMap := domainutil.RepairInfo.GetTablesInRepair()
-	var dbInfo *model.DBInfo
-	for _, v := range dbMap {
-		if v.Name.L == tn.Schema.L {
-			dbInfo = v
-			break
-		}
-	}
+	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
 	if dbInfo == nil {
 		return
 	}
-	for _, t := range dbInfo.Tables {
-		if t.Name.L == tn.Name.L {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L)
-			break
-		}
+	if tableInfo != nil {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
 	}
 }
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
 	if util.IsMemOrSysDB(tn.Schema.L) {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or System database is not for repair")
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}
-	dbMap := domainutil.RepairInfo.GetTablesInRepair()
+	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
 	// tableName here only has the schema rather than DBInfo.
-	var dbInfo *model.DBInfo
-	for _, v := range dbMap {
-		if v.Name.L == tn.Schema.L {
-			dbInfo = v
-			break
-		}
-	}
 	if dbInfo == nil {
 		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
 		return
 	}
-	var repairTable *model.TableInfo
-	for _, t := range dbInfo.Tables {
-		if t.Name.L == tn.Name.L {
-			repairTable = t
-			break
-		}
-	}
-	if repairTable == nil {
+	if tableInfo == nil {
 		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
 		return
 	}
-	p.ctx.SetValue(domainutil.RepairedTable, repairTable)
+	p.ctx.SetValue(domainutil.RepairedTable, tableInfo)
 	p.ctx.SetValue(domainutil.RepairedDatabase, dbInfo)
 }
 

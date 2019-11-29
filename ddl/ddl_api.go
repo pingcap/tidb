@@ -3960,17 +3960,11 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
 	for i, newOne := range newTableInfo.Indices {
-		found := false
-		for _, oldOne := range oldTableInfo.Indices {
-			if newOne.Name.L == oldOne.Name.L && columnSliceEqual(newOne.Columns, oldOne.Columns) {
-				newTableInfo.Indices[i].ID = oldOne.ID
-				found = true
-				break
-			}
-		}
-		if !found {
+		old := getIndexInfoByNameAndColumn(oldTableInfo, newOne)
+		if old == nil {
 			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
 		}
+		newTableInfo.Indices[i].ID = old.ID
 	}
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, newOne := range newTableInfo.Columns {
@@ -4003,21 +3997,4 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-func columnSliceEqual(a, b []*model.IndexColumn) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	// Accelerate the compare by eliminate index bound check.
-	b = b[:len(a)]
-	for i, v := range a {
-		if v.Name.L != b[i].Name.L {
-			return false
-		}
-	}
-	return true
 }

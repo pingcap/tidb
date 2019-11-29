@@ -192,31 +192,32 @@ func checkAddPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInf
 
 func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) error {
 	// If any old partitionInfo has lost, that means the partition ID lost too, so did the data, repair failed.
-	if newTableInfo.Partition != nil {
-		if oldTableInfo.Partition == nil {
-			return ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
+	if newTableInfo.Partition == nil {
+		return nil
+	}
+	if oldTableInfo.Partition == nil {
+		return ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
+	}
+	if newTableInfo.Partition.Type != oldTableInfo.Partition.Type {
+		return ErrRepairTableFail.GenWithStackByArgs("Partition type should be the same")
+	}
+	// Check whether partitionType is hash partition.
+	if newTableInfo.Partition.Type == model.PartitionTypeHash {
+		if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
+			return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be the same")
 		}
-		if newTableInfo.Partition.Type != oldTableInfo.Partition.Type {
-			return ErrRepairTableFail.GenWithStackByArgs("Partition type should be same")
-		}
-		// Check whether partitionType is hash partition.
-		if newTableInfo.Partition.Type == model.PartitionTypeHash {
-			if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
-				return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be same")
+	}
+	for i, newOne := range newTableInfo.Partition.Definitions {
+		found := false
+		for _, oldOne := range oldTableInfo.Partition.Definitions {
+			if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
+				newTableInfo.Partition.Definitions[i].ID = oldOne.ID
+				found = true
+				break
 			}
 		}
-		for i, newOne := range newTableInfo.Partition.Definitions {
-			found := false
-			for _, oldOne := range oldTableInfo.Partition.Definitions {
-				if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
-					newTableInfo.Partition.Definitions[i].ID = oldOne.ID
-					found = true
-					break
-				}
-			}
-			if !found {
-				return ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
-			}
+		if !found {
+			return ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
 		}
 	}
 	return nil

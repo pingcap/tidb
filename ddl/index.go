@@ -1507,3 +1507,12 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 	return nil
 }
+
+func getIndexInfoByNameAndColumn(oldTableInfo *model.TableInfo, newOne *model.IndexInfo) *model.IndexInfo {
+	for _, oldOne := range oldTableInfo.Indices {
+		if newOne.Name.L == oldOne.Name.L && columnSliceEqual(newOne.Columns, oldOne.Columns) {
+			return oldOne
+		}
+	}
+	return nil
+}
