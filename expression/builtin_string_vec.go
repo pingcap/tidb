@@ -658,11 +658,11 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		str := strings.Join(strs[i], seps[i])
-		// check whether the length of result is larger than Flen
-		if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
-			result.AppendNull()
-			continue
-		}
+		// todo check whether the length of result is larger than Flen
+		//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+		//	result.AppendNull()
+		//	continue
+		//}
 		result.AppendString(str)
 	}
 	return nil

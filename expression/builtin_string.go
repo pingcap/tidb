@@ -416,11 +416,11 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 		strs = append(strs, val)
 	}
 
-	// check whether the length of result is larger than Flen
 	str := strings.Join(strs, sep)
-	if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
-		return "", true, nil
-	}
+	// todo check whether the length of result is larger than Flen
+	//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+	//	return "", true, nil
+	//}
 	return str, false, nil
 }
 
