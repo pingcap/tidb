@@ -430,7 +430,7 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
 	} else {
 		// Take the hh:mm:ss part out to avoid handle month or day = 0.
 		hour, minute, second, microsecond := t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond()
-		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, gotime.Local)
+		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, sc.TimeZone)
 		t2 := roundTime(t1, fsp)
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
@@ -911,7 +911,7 @@ type Duration struct {
 
 //Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
-	if &v == nil {
+	if v == (Duration{}) {
 		return d, nil
 	}
 	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
@@ -926,7 +926,7 @@ func (d Duration) Add(v Duration) (Duration, error) {
 
 // Sub subtracts d to d, returns a duration value.
 func (d Duration) Sub(v Duration) (Duration, error) {
-	if &v == nil {
+	if v == (Duration{}) {
 		return d, nil
 	}
 	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
