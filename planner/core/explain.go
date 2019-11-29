@@ -271,7 +271,7 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements Plan interface.
 func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
