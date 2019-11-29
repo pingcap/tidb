@@ -703,9 +703,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	copReq := coprocessor.Request{
-		Tp:     worker.req.Tp,
-		Data:   worker.req.Data,
-		Ranges: task.ranges.toPBRanges(),
+		Tp:      worker.req.Tp,
+		StartTs: worker.req.StartTs,
+		Data:    worker.req.Data,
+		Ranges:  task.ranges.toPBRanges(),
 	}
 
 	var cacheKey []byte = nil
