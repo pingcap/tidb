@@ -99,9 +99,10 @@ const (
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
-	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
-	tableTiDBClusterLoad                    = "TIDB_CLUSTER_LOAD"
-	tableTiFlashReplica                     = "TIFLASH_REPLICA"
+	// TableTiDBClusterConfig is the string constant of cluster configuration memory table
+	TableTiDBClusterConfig = "TIDB_CLUSTER_CONFIG"
+	tableTiDBClusterLoad   = "TIDB_CLUSTER_LOAD"
+	tableTiFlashReplica    = "TIFLASH_REPLICA"
 )
 
 type columnInfo struct {
@@ -2328,7 +2329,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
-	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
+	TableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
 	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
@@ -2432,7 +2433,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
-	case tableTiDBClusterConfig:
+	case TableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
 	case tableTiDBClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)

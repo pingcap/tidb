@@ -36,8 +36,12 @@ func (s IntSet) Insert(val int) {
 type Int64Set map[int64]struct{}
 
 // NewInt64Set builds a Int64Set.
-func NewInt64Set() Int64Set {
-	return make(map[int64]struct{})
+func NewInt64Set(xs ...int64) Int64Set {
+	set := make(Int64Set)
+	for _, x := range xs {
+		set.Insert(x)
+	}
+	return set
 }
 
 // Exist checks whether `val` exists in `s`.

@@ -17,8 +17,12 @@ package set
 type StringSet map[string]struct{}
 
 // NewStringSet builds a float64 set.
-func NewStringSet() StringSet {
-	return make(map[string]struct{})
+func NewStringSet(ss ...string) StringSet {
+	set := make(StringSet)
+	for _, s := range ss {
+		set.Insert(s)
+	}
+	return set
 }
 
 // Exist checks whether `val` exists in `s`.
@@ -30,4 +34,15 @@ func (s StringSet) Exist(val string) bool {
 // Insert inserts `val` into `s`.
 func (s StringSet) Insert(val string) {
 	s[val] = struct{}{}
+}
+
+// Intersection returns the intersection of two sets
+func (s StringSet) Intersection(rhs StringSet) StringSet {
+	newSet := NewStringSet()
+	for elt := range s {
+		if rhs.Exist(elt) {
+			newSet.Insert(elt)
+		}
+	}
+	return newSet
 }
