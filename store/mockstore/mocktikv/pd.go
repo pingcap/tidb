@@ -88,6 +88,11 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.
 	return region, peer, nil
 }
 
+func (c *pdClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	regions, peers := c.cluster.ScanRegions(startKey, endKey, limit)
+	return regions, peers, nil
+}
+
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	select {
 	case <-ctx.Done():
@@ -111,10 +116,6 @@ func (c *pdClient) Close() {
 
 func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
-}
-
-func (c *pdClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
-	return nil, nil, nil
 }
 
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {

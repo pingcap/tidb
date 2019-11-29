@@ -161,6 +161,16 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.ScanRegions(ctx, startKey, endKey, limit)
+}
+
 func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -189,10 +199,6 @@ func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
-}
-
-func (c *mockPDClient) ScanRegions(ctx context.Context, key []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
-	return nil, nil, nil
 }
 
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {

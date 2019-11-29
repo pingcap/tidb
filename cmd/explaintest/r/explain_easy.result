@@ -345,7 +345,7 @@ Projection_11	10000.00	root	9_aux_0
       ├─IndexLookUp_29	9.99	root	
       │ ├─IndexScan_26	10.00	cop	table:s, index:b, range: decided by [eq(test.s.b, test.t.a)], keep order:false, stats:pseudo
       │ └─Selection_28	9.99	cop	not(isnull(test.s.c))
-      │   └─TableScan_27	10.00	cop	table:t, keep order:false, stats:pseudo
+      │   └─TableScan_27	10.00	cop	table:s, keep order:false, stats:pseudo
       └─TableReader_33	1.00	root	data:TableScan_32
         └─TableScan_32	1.00	cop	table:t1, range: decided by [test.s.c], keep order:false, stats:pseudo
 insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);
@@ -684,7 +684,7 @@ Projection_8	8320.83	root	test.t.a, test.t1.a
   └─UnionScan_14	6656.67	root	not(and(ge(test.t1.a, 1), le(test.t1.a, 2))), not(isnull(test.t1.a))
     └─TableReader_17	6656.67	root	data:Selection_16
       └─Selection_16	6656.67	cop	not(isnull(test.t1.a)), or(lt(test.t1.a, 1), gt(test.t1.a, 2))
-        └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+        └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
 drop table if exists t;
 create table t(a time, b date);

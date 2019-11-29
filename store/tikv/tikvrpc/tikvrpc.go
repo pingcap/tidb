@@ -169,6 +169,8 @@ type Request struct {
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 
+	ReplicaReadSeed uint32
+
 	Empty        *tikvpb.BatchCommandsEmptyRequest
 	TxnHeartBeat *kvrpcpb.TxnHeartBeatRequest
 }
