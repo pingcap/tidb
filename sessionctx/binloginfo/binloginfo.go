@@ -133,15 +133,25 @@ func IsBinlogSkipped() bool {
 var skippedCommitterCounter int32
 
 // WaitBinlogRecover returns when all committing transaction finished.
-func WaitBinlogRecover() {
+func WaitBinlogRecover(timeout time.Duration) error {
 	logutil.BgLogger().Warn("[binloginfo] start waiting for binlog recovering")
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
 	for {
-		time.Sleep(time.Second)
-		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-			break
+		select {
+		case <-ticker.C:
+			if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
+				logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+				return nil
+			}
+			if time.Since(start) > timeout {
+				logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+					zap.Duration("duration", timeout))
+				return errors.New("timeout")
+			}
 		}
 	}
-	logutil.BgLogger().Warn("[binloginfo] binlog recovered")
 }
 
 // SkippedCommitterCount returns the number of alive committers whick skipped the binlog writing.

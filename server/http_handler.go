@@ -81,6 +81,7 @@ const (
 	qTableID   = "table_id"
 	qLimit     = "limit"
 	qOperation = "op"
+	qSeconds   = "seconds"
 )
 
 const (
@@ -678,8 +679,18 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else if op == "nowait" {
 		binloginfo.DisableSkipBinlogFlag()
 	} else {
+		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
+		if sec <= 0 || err != nil {
+			sec = 1800
+		}
 		binloginfo.DisableSkipBinlogFlag()
-		binloginfo.WaitBinlogRecover()
+		timeout := time.Duration(sec) * time.Second
+		err = binloginfo.WaitBinlogRecover(timeout)
+		if err != nil {
+			writeError(w, err)
+		} else {
+			writeData(w, "success!")
+		}
 	}
 }
 
