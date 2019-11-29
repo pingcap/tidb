@@ -84,8 +84,8 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
-	// TypeTableGather is the type of TableGather.
-	TypeTableGather = "TableGather"
+	// TypeTiKVSingleGather is the type of TiKVSingleGather.
+	TypeTiKVSingleGather = "TiKVSingleGather"
 	// TypeIndexMerge is the type of IndexMergeReader
 	TypeIndexMerge = "IndexMerge"
 	// TypePointGet is the type of PointGetPlan.
@@ -132,7 +132,7 @@ const (
 	typeTableReaderID
 	typeIndexReaderID
 	typeWindowID
-	typeTableGatherID
+	typeTiKVSingleGatherID
 	typeIndexMergeID
 	typePointGet
 	typeShowDDLJobs
@@ -210,8 +210,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexReaderID
 	case TypeWindow:
 		return typeWindowID
-	case TypeTableGather:
-		return typeTableGatherID
+	case TypeTiKVSingleGather:
+		return typeTiKVSingleGatherID
 	case TypeIndexMerge:
 		return typeIndexMergeID
 	case TypePointGet:
@@ -296,8 +296,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexReader
 	case typeWindowID:
 		return TypeWindow
-	case typeTableGatherID:
-		return TypeTableGather
+	case typeTiKVSingleGatherID:
+		return TypeTiKVSingleGather
 	case typeIndexMergeID:
 		return TypeIndexMerge
 	case typePointGet:

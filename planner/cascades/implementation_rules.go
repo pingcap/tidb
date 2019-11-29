@@ -45,7 +45,7 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandIndexScan: {
 		&ImplIndexScan{},
 	},
-	memo.OperandTableGather: {
+	memo.OperandTiKVSingleGather: {
 		&ImplTiKVSingleReadGather{},
 	},
 	memo.OperandShow: {
@@ -120,7 +120,7 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 	return impl.NewProjectionImpl(proj), nil
 }
 
-// ImplTiKVSingleReadGather implements TableGather
+// ImplTiKVSingleReadGather implements TiKVSingleGather
 // as PhysicalTableReader or PhysicalIndexReader.
 type ImplTiKVSingleReadGather struct {
 }
@@ -133,13 +133,13 @@ func (r *ImplTiKVSingleReadGather) Match(expr *memo.GroupExpr, prop *property.Ph
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	tg := expr.ExprNode.(*plannercore.TableGather)
-	if tg.IsIndexGather {
-		reader := tg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-		return impl.NewIndexReaderImpl(reader, tg.Source.TblColHists), nil
+	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
+	if sg.IsIndexGather {
+		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		return impl.NewIndexReaderImpl(reader, sg.Source.TblColHists), nil
 	}
-	reader := tg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
+	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	return impl.NewTableReaderImpl(reader, sg.Source.TblColHists), nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.
@@ -172,7 +172,7 @@ type ImplIndexScan struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	is := expr.ExprNode.(*plannercore.LogicalIndexScan)
-	return prop.IsEmpty() || is.MatchIndexProp(prop)
+	return is.MatchIndexProp(prop)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.

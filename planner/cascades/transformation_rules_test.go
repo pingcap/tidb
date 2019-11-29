@@ -99,7 +99,7 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandSelection: {
 			NewRulePushSelDownTableScan(),
-			NewRulePushSelDownTableGather(),
+			NewRulePushSelDownTiKVSingleGather(),
 			NewRulePushSelDownSort(),
 			NewRulePushSelDownProjection(),
 			NewRulePushSelDownAggregation(),

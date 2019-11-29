@@ -55,8 +55,8 @@ const (
 	OperandLock
 	// OperandLimit is the operand for LogicalLimit.
 	OperandLimit
-	// OperandTableGather is the operand for TableGather.
-	OperandTableGather
+	// OperandTiKVSingleGather is the operand for TiKVSingleGather.
+	OperandTiKVSingleGather
 	// OperandTableScan is the operand for TableScan.
 	OperandTableScan
 	// OperandIndexScan is the operand for IndexScan.
@@ -98,8 +98,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandLock
 	case *plannercore.LogicalLimit:
 		return OperandLimit
-	case *plannercore.TableGather:
-		return OperandTableGather
+	case *plannercore.TiKVSingleGather:
+		return OperandTiKVSingleGather
 	case *plannercore.LogicalTableScan:
 		return OperandTableScan
 	case *plannercore.LogicalIndexScan:

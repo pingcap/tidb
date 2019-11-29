@@ -74,7 +74,7 @@ func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
 	if math.MaxFloat64/copIterWorkers < costLimit {
-		return costLimit
+		return math.MaxFloat64
 	}
 	return costLimit * copIterWorkers
 }
@@ -121,7 +121,7 @@ func (impl *IndexReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
 	if math.MaxFloat64/copIterWorkers < costLimit {
-		return costLimit
+		return math.MaxFloat64
 	}
 	return costLimit * copIterWorkers
 }

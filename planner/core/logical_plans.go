@@ -41,7 +41,7 @@ var (
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
-	_ LogicalPlan = &TableGather{}
+	_ LogicalPlan = &TiKVSingleGather{}
 	_ LogicalPlan = &LogicalTableScan{}
 	_ LogicalPlan = &LogicalIndexScan{}
 	_ LogicalPlan = &LogicalUnionAll{}
@@ -421,17 +421,16 @@ type DataSource struct {
 	preferStoreType int
 }
 
-// TableGather is a leaf logical operator of TiDB layer to gather
+// TiKVSingleGather is a leaf logical operator of TiDB layer to gather
 // tuples from TiKV regions.
-type TableGather struct {
+type TiKVSingleGather struct {
 	logicalSchemaProducer
 	Source *DataSource
-	// IsIndexGather marks if this TableGather gathers tuples from an IndexScan.
-	// TableGather and IndexGather are logically equivalent. So that we
-	// only need TableGather for the exploration phase. But in implementation
-	// phase, we need this flag to determine whether to generate PhysicalTableReader
-	// or PhysicalIndexReader.
+	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
+	// in implementation phase, we need this flag to determine whether to generate
+	// PhysicalTableReader or PhysicalIndexReader.
 	IsIndexGather bool
+	Index         *model.IndexInfo
 }
 
 // LogicalTableScan is the logical table scan operator for TiKV.
@@ -464,16 +463,17 @@ type LogicalIndexScan struct {
 
 // MatchIndexProp checks if the indexScan can match the required property.
 func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+	if prop.IsEmpty() {
+		return true
+	}
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
-	if !prop.IsEmpty() {
-		for i, col := range p.idxCols {
-			if col.Equal(nil, prop.Items[0].Col) {
-				return matchIndicesProp(p.idxCols[i:], p.idxColLens[i:], prop.Items)
-			} else if i >= p.EqCondCount {
-				break
-			}
+	for i, col := range p.idxCols {
+		if col.Equal(nil, prop.Items[0].Col) {
+			return matchIndicesProp(p.idxCols[i:], p.idxColLens[i:], prop.Items)
+		} else if i >= p.EqCondCount {
+			break
 		}
 	}
 	return false
@@ -519,10 +519,10 @@ func getTablePath(paths []*accessPath) *accessPath {
 func (ds *DataSource) buildTableGather() LogicalPlan {
 	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
-	tg := TableGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
-	tg.SetSchema(ds.Schema())
-	tg.SetChildren(ts)
-	return tg
+	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
+	sg.SetSchema(ds.Schema())
+	sg.SetChildren(ts)
+	return sg
 }
 
 func (ds *DataSource) buildIndexGather(path *accessPath) LogicalPlan {
@@ -536,13 +536,17 @@ func (ds *DataSource) buildIndexGather(path *accessPath) LogicalPlan {
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
 
-	tg := TableGather{Source: ds, IsIndexGather: true}.Init(ds.ctx, ds.blockOffset)
-	tg.SetSchema(ds.Schema())
-	tg.SetChildren(is)
-	return tg
+	sg := TiKVSingleGather{
+		Source:        ds,
+		IsIndexGather: true,
+		Index:         path.index,
+	}.Init(ds.ctx, ds.blockOffset)
+	sg.SetSchema(ds.Schema())
+	sg.SetChildren(is)
+	return sg
 }
 
-// Convert2Gathers builds logical TableGathers from DataSource.
+// Convert2Gathers builds logical TiKVSingleGathers from DataSource.
 func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
@@ -826,6 +830,9 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 }
 
 func (p *LogicalIndexScan) getPKIsHandleCol() *expression.Column {
+	// We cannot use p.Source.getPKIsHandleCol() here,
+	// Because we may re-prune p.Columns and p.schema during the transformation.
+	// That will make p.Columns different from p.Source.Columns.
 	return getPKIsHandleColFromSchema(p.Columns, p.schema, p.Source.tableInfo.PKIsHandle)
 }
 

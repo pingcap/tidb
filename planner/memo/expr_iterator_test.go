@@ -195,11 +195,11 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 	g2.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
 
-	flashGather := NewGroupExpr(plannercore.TableGather{}.Init(s.sctx, 0))
+	flashGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(s.sctx, 0))
 	flashGather.Children = append(flashGather.Children, g1)
 	g3 := NewGroupWithSchema(flashGather, nil).SetEngineType(EngineTiDB)
 
-	tikvGather := NewGroupExpr(plannercore.TableGather{}.Init(s.sctx, 0))
+	tikvGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(s.sctx, 0))
 	tikvGather.Children = append(tikvGather.Children, g2)
 	g3.Insert(tikvGather)
 
@@ -211,8 +211,8 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 	// Group 4
 	//     Join input:[Group3, Group3]
 	// Group 3
-	//     TableGather input:[Group2] EngineTiKV
-	//     TableGather input:[Group1] EngineTiFlash
+	//     TiKVSingleGather input:[Group2] EngineTiKV
+	//     TiKVSingleGather input:[Group1] EngineTiFlash
 	// Group 2
 	//     Selection
 	//     Projection
@@ -224,36 +224,36 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 	//     Limit
 	//     Limit
 
-	p0 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly))
+	p0 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly))
 	c.Assert(countMatchedIter(g3, p0), Equals, 2)
-	p1 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly))
+	p1 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly))
 	c.Assert(countMatchedIter(g3, p1), Equals, 2)
-	p2 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash))
+	p2 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash))
 	c.Assert(countMatchedIter(g3, p2), Equals, 4)
-	p3 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandSelection, EngineTiFlashOnly))
+	p3 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandSelection, EngineTiFlashOnly))
 	c.Assert(countMatchedIter(g3, p3), Equals, 1)
-	p4 := BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandProjection, EngineTiKVOnly))
+	p4 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandProjection, EngineTiKVOnly))
 	c.Assert(countMatchedIter(g3, p4), Equals, 1)
 
 	p5 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
-		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
-		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
 	)
 	c.Assert(countMatchedIter(g4, p5), Equals, 4)
 	p6 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
-		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly)),
-		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly)),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
 	)
 	c.Assert(countMatchedIter(g4, p6), Equals, 4)
 	p7 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
-		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
-		BuildPattern(OperandTableGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
 	)
 	c.Assert(countMatchedIter(g4, p7), Equals, 16)
 
@@ -263,8 +263,8 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 	p8 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
-		BuildPattern(OperandTableGather, EngineTiDBOnly),
-		BuildPattern(OperandTableGather, EngineTiDBOnly),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly),
+		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly),
 	)
 	c.Assert(countMatchedIter(g4, p8), Equals, 4)
 }

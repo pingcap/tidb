@@ -39,10 +39,10 @@ func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes TableGather.
-func (tg TableGather) Init(ctx sessionctx.Context, offset int) *TableGather {
-	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableGather, &tg, offset)
-	return &tg
+// Init initializes TiKVSingleGather.
+func (sg TiKVSingleGather) Init(ctx sessionctx.Context, offset int) *TiKVSingleGather {
+	sg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
+	return &sg
 }
 
 // Init initializes LogicalTableScan.
