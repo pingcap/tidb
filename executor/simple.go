@@ -135,7 +135,12 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 }
 
 func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
-	sqlExecutor := e.ctx.(sqlexec.SQLExecutor)
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return err
 	}
@@ -177,7 +182,13 @@ func (e *SimpleExec) setDefaultRoleRegular(s *ast.SetDefaultRoleStmt) error {
 			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", role.String())
 		}
 	}
-	sqlExecutor := e.ctx.(sqlexec.SQLExecutor)
+
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return err
 	}
@@ -291,7 +302,6 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 		return err
 	}
 	defer e.releaseSysSession(restrictedCtx)
-
 	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 
 	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
@@ -554,8 +564,15 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 		}
 	}
 
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+
 	// begin a transaction to insert role graph edges.
-	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return errors.Trace(err)
 	}
 	for _, user := range s.Users {
@@ -564,7 +581,7 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 			return errors.Trace(err)
 		}
 		if !exists {
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return errors.Trace(err)
 			}
 			return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", user.String())
@@ -574,22 +591,22 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 				role.Hostname = "%"
 			}
 			sql := fmt.Sprintf(`DELETE IGNORE FROM %s.%s WHERE FROM_HOST='%s' and FROM_USER='%s' and TO_HOST='%s' and TO_USER='%s'`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
-				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 					return errors.Trace(err)
 				}
 				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
 			sql = fmt.Sprintf(`DELETE IGNORE FROM %s.%s WHERE DEFAULT_ROLE_HOST='%s' and DEFAULT_ROLE_USER='%s' and HOST='%s' and USER='%s'`, mysql.SystemDB, mysql.DefaultRoleTable, role.Hostname, role.Username, user.Hostname, user.Username)
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
-				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 					return errors.Trace(err)
 				}
 				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
 		}
 	}
-	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+	if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
 		return err
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
@@ -770,28 +787,35 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 		}
 	}
 
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+
 	// begin a transaction to insert role graph edges.
-	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return err
 	}
 
 	for _, user := range s.Users {
 		for _, role := range s.Roles {
 			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
-			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 				failedUsers = append(failedUsers, user.String())
 				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 					return err
 				}
 				return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
 			}
 		}
 	}
-	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+	if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
 		return err
 	}
-	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
+	err = domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
 	return err
 }
 
