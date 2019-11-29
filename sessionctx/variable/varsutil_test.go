@@ -370,6 +370,16 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+
+	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -463,6 +473,11 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBEnableStmtSummary, "a", true},
+		{TiDBEnableStmtSummary, "-1", true},
+		{TiDBEnableStmtSummary, "", false},
+		{TiDBStmtSummaryRefreshInterval, "a", true},
+		{TiDBStmtSummaryRefreshInterval, "", false},
 	}
 
 	for _, t := range tests {

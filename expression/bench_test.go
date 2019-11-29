@@ -629,9 +629,14 @@ func (g *timeStrGener) gen() interface{} {
 }
 
 // dateStrGener is used to generate strings which are data format
-type dateStrGener struct{}
+type dateStrGener struct {
+	nullRation float64
+}
 
 func (g *dateStrGener) gen() interface{} {
+	if g.nullRation > 1e-6 && rand.Float64() < g.nullRation {
+		return nil
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
@@ -658,6 +663,13 @@ type randDurReal struct{}
 
 func (g *randDurReal) gen() interface{} {
 	return float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+type randDurDecimal struct{}
+
+func (g *randDurDecimal) gen() interface{} {
+	d := new(types.MyDecimal)
+	return d.FromFloat64(float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60)))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
