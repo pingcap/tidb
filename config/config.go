@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -445,7 +446,7 @@ var defaultConf = Config{
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
-	ServerVersion:       "",
+	ServerVersion:       "5.7.25-TiDB",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -639,6 +640,8 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
+	mysql.ServerVersion = c.ServerVersion
+
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -667,6 +670,9 @@ func (c *Config) Valid() error {
 	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	}
+	if c.ServerVersion == "" {
+		return fmt.Errorf("server-version need an assignment")
 	}
 	if _, ok := ValidStorage[c.Store]; !ok {
 		nameList := make([]string, 0, len(ValidStorage))
@@ -697,9 +703,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("txn-local-latches.capacity can not be 0")
 	}
 
-	if c.ServerVersion == "" {
-		return fmt.Errorf("server-version need an assignment")
-	}
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")

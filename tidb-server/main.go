@@ -79,7 +79,6 @@ const (
 	nmSocket           = "socket"
 	nmEnableBinlog     = "enable-binlog"
 	nmRunDDL           = "run-ddl"
-	nmServerVersion    = "server-version"
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
@@ -360,7 +359,6 @@ func loadConfig() string {
 		if err == nil {
 			return ""
 		}
-		mysql.ServerVersion = cfg.ServerVersion
 
 		// Unused config item erro turns to warnings.
 		if tmp, ok := err.(*config.ErrConfigValidationFailed); ok {
