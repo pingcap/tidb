@@ -15,6 +15,7 @@ package config
 
 import (
 	"encoding/json"
+	"github.com/pingcap/parser/mysql"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -222,7 +223,7 @@ max-sql-length=1024
 
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
-
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
