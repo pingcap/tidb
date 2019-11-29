@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -2380,11 +2381,51 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 }
 
 func (b *builtinTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	ds := result.GoDurations()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		fsp := 0
+		expr := buf.GetString(i)
+		if idx := strings.Index(expr, "."); idx != -1 {
+			fsp = len(expr) - idx - 1
+		}
+
+		var tmpFsp int8
+		if tmpFsp, err = types.CheckFsp(fsp); err != nil {
+			return err
+		}
+		fsp = int(tmpFsp)
+
+		res, err := types.ParseDuration(sc, expr, int8(fsp))
+		if types.ErrTruncatedWrongVal.Equal(err) {
+			err = sc.HandleTruncate(err)
+		}
+		if err != nil {
+			return err
+		}
+		ds[i] = res.Duration
+	}
+	return nil
 }
 
 func (b *builtinAddDateDatetimeIntSig) vectorized() bool {
