@@ -280,12 +280,12 @@ func (h *Handle) sweepList() {
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-// If the dumpMode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (h *Handle) DumpStatsDeltaToKV(dumpMode dumpMode) error {
+// If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
+func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
