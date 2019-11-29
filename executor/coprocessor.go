@@ -126,7 +126,7 @@ func (h *CoprocessorDAGHandler) appendChunk(chk *chunk.Chunk, tps []*types.Field
 	case tipb.EncodeType_TypeChunk:
 		err = h.encodeChunk(chk, tps)
 	default:
-		return errors.Errorf("unknown dag encode type, %v", h.dagReq.EncodeType)
+		return errors.Errorf("unknown DAG encode type: %v", h.dagReq.EncodeType)
 	}
 	return err
 }
