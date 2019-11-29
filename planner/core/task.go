@@ -459,6 +459,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		// Input outer count for the above compution should be adjusted by selectionFactor.
 		probeCost *= selectionFactor
+		probeDiskCost *= selectionFactor
 		probeCost += probeCnt * sessVars.CPUFactor
 	}
 	diskCost += probeDiskCost

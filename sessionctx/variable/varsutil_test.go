@@ -352,7 +352,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "1.0")
 	c.Assert(v.MemoryFactor, Equals, 1.0)
 
-	c.Assert(v.DiskFactor, Equals, 1.0)
+	c.Assert(v.DiskFactor, Equals, 1.5)
 	err = SetSessionSystemVar(v, TiDBOptDiskFactor, types.NewStringDatum("1.1"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptDiskFactor)

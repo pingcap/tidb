@@ -200,7 +200,7 @@ const (
 	TiDBOptSeekFactor = "tidb_opt_seek_factor"
 	// tidb_opt_memory_factor is the memory cost of storing one tuple.
 	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
-	// tidb_opt_disk_factor is the disk cost of storing one byte.
+	// tidb_opt_disk_factor is the IO cost of reading/writing one byte to temporary disk.
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
