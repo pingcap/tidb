@@ -37,36 +37,37 @@ import (
 )
 
 const (
-	tableNameGlobalStatus                    = "global_status"
-	tableNameSessionStatus                   = "session_status"
-	tableNameSetupActors                     = "setup_actors"
-	tableNameSetupObjects                    = "setup_objects"
-	tableNameSetupInstruments                = "setup_instruments"
-	tableNameSetupConsumers                  = "setup_consumers"
-	tableNameEventsStatementsCurrent         = "events_statements_current"
-	tableNameEventsStatementsHistory         = "events_statements_history"
-	tableNameEventsStatementsHistoryLong     = "events_statements_history_long"
-	tableNamePreparedStatementsInstances     = "prepared_statements_instances"
-	tableNameEventsTransactionsCurrent       = "events_transactions_current"
-	tableNameEventsTransactionsHistory       = "events_transactions_history"
-	tableNameEventsTransactionsHistoryLong   = "events_transactions_history_long"
-	tableNameEventsStagesCurrent             = "events_stages_current"
-	tableNameEventsStagesHistory             = "events_stages_history"
-	tableNameEventsStagesHistoryLong         = "events_stages_history_long"
-	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
-	tableNameTiDBProfileCPU                  = "tidb_profile_cpu"
-	tableNameTiDBProfileMemory               = "tidb_profile_memory"
-	tableNameTiDBProfileMutex                = "tidb_profile_mutex"
-	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
-	tableNameTiDBProfileBlock                = "tidb_profile_block"
-	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
-	tableNameTiKVProfileCPU                  = "tikv_profile_cpu"
-	tableNamePDProfileCPU                    = "pd_profile_cpu"
-	tableNamePDProfileMemory                 = "pd_profile_memory"
-	tableNamePDProfileMutex                  = "pd_profile_mutex"
-	tableNamePDProfileAllocs                 = "pd_profile_allocs"
-	tableNamePDProfileBlock                  = "pd_profile_block"
-	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
+	tableNameGlobalStatus                           = "global_status"
+	tableNameSessionStatus                          = "session_status"
+	tableNameSetupActors                            = "setup_actors"
+	tableNameSetupObjects                           = "setup_objects"
+	tableNameSetupInstruments                       = "setup_instruments"
+	tableNameSetupConsumers                         = "setup_consumers"
+	tableNameEventsStatementsCurrent                = "events_statements_current"
+	tableNameEventsStatementsHistory                = "events_statements_history"
+	tableNameEventsStatementsHistoryLong            = "events_statements_history_long"
+	tableNamePreparedStatementsInstances            = "prepared_statements_instances"
+	tableNameEventsTransactionsCurrent              = "events_transactions_current"
+	tableNameEventsTransactionsHistory              = "events_transactions_history"
+	tableNameEventsTransactionsHistoryLong          = "events_transactions_history_long"
+	tableNameEventsStagesCurrent                    = "events_stages_current"
+	tableNameEventsStagesHistory                    = "events_stages_history"
+	tableNameEventsStagesHistoryLong                = "events_stages_history_long"
+	tableNameEventsStatementsSummaryByDigest        = "events_statements_summary_by_digest"
+	tableNameEventsStatementsSummaryByDigestHistory = "events_statements_summary_by_digest_history"
+	tableNameTiDBProfileCPU                         = "tidb_profile_cpu"
+	tableNameTiDBProfileMemory                      = "tidb_profile_memory"
+	tableNameTiDBProfileMutex                       = "tidb_profile_mutex"
+	tableNameTiDBProfileAllocs                      = "tidb_profile_allocs"
+	tableNameTiDBProfileBlock                       = "tidb_profile_block"
+	tableNameTiDBProfileGoroutines                  = "tidb_profile_goroutines"
+	tableNameTiKVProfileCPU                         = "tikv_profile_cpu"
+	tableNamePDProfileCPU                           = "pd_profile_cpu"
+	tableNamePDProfileMemory                        = "pd_profile_memory"
+	tableNamePDProfileMutex                         = "pd_profile_mutex"
+	tableNamePDProfileAllocs                        = "pd_profile_allocs"
+	tableNamePDProfileBlock                         = "pd_profile_block"
+	tableNamePDProfileGoroutines                    = "pd_profile_goroutines"
 )
 
 var tableIDMap = map[string]int64{
@@ -163,7 +164,9 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
+	case tableNameEventsStatementsSummaryByDigestHistory:
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:
