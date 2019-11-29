@@ -95,7 +95,7 @@ type planDigester struct {
 	hasher       hash.Hash
 }
 
-// NormalizePlan is used to normalize the plan and generated plan digest.
+// NormalizePlan is used to normalize the plan and generate plan digest.
 func NormalizePlan(p Plan) (normalized, digest string) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
