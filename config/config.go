@@ -153,9 +153,9 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
-	switch v.(type) {
+	switch raw := v.(type) {
 	case bool:
-		*b = nullableBool{true, v.(bool)}
+		*b = nullableBool{true, raw}
 	default:
 		*b = nbUnset
 	}
@@ -635,10 +635,9 @@ func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{}
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
-	if c.TokenLimit <= 0 {
+	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
-
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -656,10 +655,14 @@ func (c *Config) Load(confFile string) error {
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
-		return fmt.Errorf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead", c.Log.EnableErrorStack, c.Log.DisableErrorStack)
+		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
+		// if two options conflict, we will use the value of EnableErrorStack
+		c.Log.DisableErrorStack = nbUnset
 	}
 	if c.Log.EnableTimestamp == c.Log.DisableTimestamp && c.Log.EnableTimestamp != nbUnset {
-		return fmt.Errorf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp)
+		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp))
+		// if two options conflict, we will use the value of EnableTimestamp
+		c.Log.DisableTimestamp = nbUnset
 	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")

@@ -46,6 +46,7 @@ var perfSchemaTables = []string{
 	tableTiDBAllocsProfile,
 	tableTiDBProfileBlock,
 	tableTiDBProfileGoroutines,
+	tableTiKVProfileCPU,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -385,20 +386,69 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.
 const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
+	"SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
+	"STMT_TYPE VARCHAR(64) NOT NULL," +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
-	"DIGEST VARCHAR(64) DEFAULT NULL," +
-	"DIGEST_TEXT LONGTEXT DEFAULT NULL," +
+	"DIGEST VARCHAR(64) NOT NULL," +
+	"DIGEST_TEXT LONGTEXT NOT NULL," +
+	"TABLE_NAMES TEXT DEFAULT NULL," +
+	"INDEX_NAMES TEXT DEFAULT NULL," +
+	"SAMPLE_USER VARCHAR(64) DEFAULT NULL," +
 	"EXEC_COUNT BIGINT(20) UNSIGNED NOT NULL," +
 	"SUM_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
 	"MAX_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
 	"MIN_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
 	"AVG_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"SUM_ROWS_AFFECTED BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_PARSE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_PARSE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_COMPILE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COMPILE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
+	"COP_TASK_NUM BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_COP_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COP_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COP_PROCESS_ADDRESS VARCHAR(256) DEFAULT NULL," +
+	"AVG_COP_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COP_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COP_WAIT_ADDRESS VARCHAR(256) DEFAULT NULL," +
+	"AVG_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_TOTAL_KEYS BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_TOTAL_KEYS BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_PROCESSED_KEYS BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_PROCESSED_KEYS BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_PREWRITE_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_PREWRITE_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_COMMIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COMMIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_GET_COMMIT_TS_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_GET_COMMIT_TS_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_COMMIT_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_COMMIT_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_RESOLVE_LOCK_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_RESOLVE_LOCK_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_LOCAL_LATCH_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_LOCAL_LATCH_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_WRITE_KEYS DOUBLE UNSIGNED NOT NULL," +
+	"MAX_WRITE_KEYS BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_WRITE_SIZE DOUBLE NOT NULL," +
+	"MAX_WRITE_SIZE BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_PREWRITE_REGIONS DOUBLE NOT NULL," +
+	"MAX_PREWRITE_REGIONS INT(11) UNSIGNED NOT NULL," +
+	"AVG_TXN_RETRY DOUBLE NOT NULL," +
+	"MAX_TXN_RETRY INT(11) UNSIGNED NOT NULL," +
+	"BACKOFF_TYPES VARCHAR(1024) DEFAULT NULL," +
+	"AVG_MEM BIGINT(20) UNSIGNED NOT NULL," +
+	"MAX_MEM BIGINT(20) UNSIGNED NOT NULL," +
+	"AVG_AFFECTED_ROWS DOUBLE UNSIGNED NOT NULL," +
 	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
-// tableTiDBProfileCPU contains the columns name definitions for table events_cpu_profile_graph
+// tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -407,7 +457,7 @@ const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfile
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMemory contains the columns name definitions for table events_memory_profile_graph
+// tableTiDBProfileMemory contains the columns name definitions for table tidb_profile_memory
 const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMemory + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -416,7 +466,7 @@ const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMutex contains the columns name definitions for table events_mutex_profile_graph
+// tableTiDBProfileMutex contains the columns name definitions for table tidb_profile_mutex
 const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMutex + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -425,7 +475,7 @@ const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBAllocsProfile contains the columns name definitions for table events_allocs_profile_graph
+// tableTiDBAllocsProfile contains the columns name definitions for table tidb_profile_allocs
 const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileAllocs + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -434,7 +484,7 @@ const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileBlock contains the columns name definitions for table events_block_profile_graph
+// tableTiDBProfileBlock contains the columns name definitions for table tidb_profile_block
 const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileBlock + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -443,9 +493,19 @@ const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileGoroutines contains the columns name definitions for table events_goroutine
+// tableTiDBProfileGoroutines contains the columns name definitions for table tidb_profile_goroutines
 const tableTiDBProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileGoroutines + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
 	"LOCATION VARCHAR(512));"
+
+	// tableTiKVProfileCPU contains the columns name definitions for table tikv_profile_cpu
+const tableTiKVProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiKVProfileCPU + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"

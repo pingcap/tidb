@@ -143,7 +143,6 @@ type batchExecutor struct {
 
 type mutationEx struct {
 	pb.Mutation
-	asserted          bool
 	isPessimisticLock bool
 }
 
@@ -283,27 +282,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return nil
 	}
 	c.txnSize = size
-
-	for _, pair := range txn.assertions {
-		mutation, ok := mutations[string(pair.key)]
-		if !ok {
-			// It's possible when a transaction inserted a key then deleted it later.
-			continue
-		}
-		// Only apply the first assertion!
-		if mutation.asserted {
-			continue
-		}
-		switch pair.assertion {
-		case kv.Exist:
-			mutation.Assertion = pb.Assertion_Exist
-		case kv.NotExist:
-			mutation.Assertion = pb.Assertion_NotExist
-		default:
-			mutation.Assertion = pb.Assertion_None
-		}
-		mutation.asserted = true
-	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)

@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -291,6 +292,10 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		}
 		e.taskCh = nil
 	}
+	if e.runtimeStats != nil {
+		concurrency := cap(e.joinChkResourceCh)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 	}
@@ -400,6 +405,17 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
+	}
+	if e.lastColHelper != nil {
+		// nextCwf.TmpConstant needs to be reset for every individual
+		// inner worker to avoid data race when the inner workers is running
+		// concurrently.
+		nextCwf := *e.lastColHelper
+		nextCwf.TmpConstant = make([]*expression.Constant, len(e.lastColHelper.TmpConstant))
+		for i := range e.lastColHelper.TmpConstant {
+			nextCwf.TmpConstant[i] = &expression.Constant{RetType: nextCwf.TargetCol.RetType}
+		}
+		iw.nextColCompareFilters = &nextCwf
 	}
 	return iw
 }

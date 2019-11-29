@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -40,6 +41,22 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSch
 		profile.Cardinality[i] = float64(p.RowCount)
 	}
 	p.stats = profile
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	statsTable := statistics.PseudoTable(p.tableInfo)
+	stats := &property.StatsInfo{
+		RowCount:     float64(statsTable.Count),
+		Cardinality:  make([]float64, len(p.tableInfo.Columns)),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.tableInfo.Columns, p.schema.Columns),
+		StatsVersion: statistics.PseudoVersion,
+	}
+	for i := range p.tableInfo.Columns {
+		stats.Cardinality[i] = float64(statsTable.Count)
+	}
+	p.stats = stats
 	return p.stats, nil
 }
 
@@ -180,19 +197,40 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().GetEnableIndexMerge() {
-		needConsiderIndexMerge := true
-		for i := 1; i < len(ds.possibleAccessPaths); i++ {
-			if len(ds.possibleAccessPaths[i].accessConds) != 0 {
-				needConsiderIndexMerge = false
-				break
-			}
-		}
-		if needConsiderIndexMerge {
-			ds.generateIndexMergeOrPaths()
+	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
+	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || ds.indexMergeHints != nil) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
+	// If there is an index path, we current do not consider `IndexMergePath`.
+	needConsiderIndexMerge := true
+	for i := 1; i < len(ds.possibleAccessPaths); i++ {
+		if len(ds.possibleAccessPaths[i].accessConds) != 0 {
+			needConsiderIndexMerge = false
+			break
 		}
 	}
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge {
+		ds.generateAndPruneIndexMergePath()
+	} else if ds.indexMergeHints != nil {
+		ds.indexMergeHints = nil
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+	}
 	return ds.stats, nil
+}
+
+func (ds *DataSource) generateAndPruneIndexMergePath() {
+	regularPathCount := len(ds.possibleAccessPaths)
+	ds.generateIndexMergeOrPaths()
+	// If without hints, it means that `enableIndexMerge` is true
+	if ds.indexMergeHints == nil {
+		return
+	}
+	// With hints and without generated IndexMerge paths
+	if regularPathCount == len(ds.possibleAccessPaths) {
+		ds.indexMergeHints = nil
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		return
+	}
+	// Do not need to consider the regular paths in find_best_task().
+	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -256,12 +294,31 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 	}
 }
 
+// isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
+func (ds *DataSource) isInIndexMergeHints(name string) bool {
+	if ds.indexMergeHints == nil ||
+		(len(ds.indexMergeHints) == 1 && ds.indexMergeHints[0].IndexNames == nil) {
+		return true
+	}
+	for _, hint := range ds.indexMergeHints {
+		for _, index := range hint.IndexNames {
+			if name == index.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // accessPathsForConds generates all possible index paths for conditions.
 func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*accessPath {
 	var results = make([]*accessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &accessPath{}
 		if ds.possibleAccessPaths[i].isTablePath {
+			if !ds.isInIndexMergeHints("primary") {
+				continue
+			}
 			path.isTablePath = true
 			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
@@ -276,6 +333,9 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 		} else {
 			path.index = ds.possibleAccessPaths[i].index
+			if !ds.isInIndexMergeHints(path.index.Name.L) {
+				continue
+			}
 			noIntervalRanges, err := ds.deriveIndexPathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))

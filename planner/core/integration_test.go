@@ -15,9 +15,11 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -155,7 +157,7 @@ func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit
 	}
 }
 
-func (s *testIntegrationSuite) TestApplyNotNullFlag(c *C) {
+func (s *testIntegrationSuite) TestJoinNotNullFlag(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -170,6 +172,8 @@ func (s *testIntegrationSuite) TestApplyNotNullFlag(c *C) {
 	tk.MustExec("insert into t2 values (1)")
 
 	tk.MustQuery("select IFNULL((select t1.x from t1 where t1.x = t2.x), 'xxx') as col1 from t2").Check(testkit.Rows("xxx"))
+	tk.MustQuery("select ifnull(t1.x, 'xxx') from t2 left join t1 using(x)").Check(testkit.Rows("xxx"))
+	tk.MustQuery("select ifnull(t1.x, 'xxx') from t2 natural left join t1").Check(testkit.Rows("xxx"))
 }
 
 func (s *testIntegrationSuite) TestAntiJoinConstProp(c *C) {
@@ -278,4 +282,13 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func (s *testIntegrationSuite) TestErrNoDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test")
+	_, err := tk.Exec("grant select on test1111 to test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	tk.MustExec("use test")
+	tk.MustExec("grant select on test1111 to test@'%'")
 }
