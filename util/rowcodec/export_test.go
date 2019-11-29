@@ -13,7 +13,37 @@
 
 package rowcodec
 
-var (
-	// EncodeFromOldRowForTest export encodeFromOldRow for test.
-	EncodeFromOldRowForTest = encodeFromOldRow
+import (
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
+
+// EncodeFromOldRow encodes a row from an old-format row.
+// this method will be used in test.
+func EncodeFromOldRow(encoder *Encoder, sc *stmtctx.StatementContext, oldRow, buf []byte) ([]byte, error) {
+	if len(oldRow) > 0 && oldRow[0] == CodecVer {
+		return oldRow, nil
+	}
+	encoder.reset()
+	for len(oldRow) > 1 {
+		var d types.Datum
+		var err error
+		oldRow, d, err = codec.DecodeOne(oldRow)
+		if err != nil {
+			return nil, err
+		}
+		colID := d.GetInt64()
+		oldRow, d, err = codec.DecodeOne(oldRow)
+		if err != nil {
+			return nil, err
+		}
+		encoder.appendColVal(colID, d)
+	}
+	numCols, notNullIdx := encoder.reformatCols()
+	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
+	if err != nil {
+		return nil, err
+	}
+	return encoder.row.toBytes(buf[:0]), nil
+}

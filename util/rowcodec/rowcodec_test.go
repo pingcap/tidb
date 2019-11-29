@@ -43,7 +43,7 @@ type testData struct {
 	ft     *types.FieldType
 	dt     types.Datum
 	bt     types.Datum
-	def    []byte
+	def    *types.Datum
 	handle bool
 }
 
@@ -69,12 +69,9 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 				Tp:         int32(t.ft.Tp),
 				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				DefaultValue: func() ([]byte, error) {
-					return t.def, nil
-				},
-				Flen:    t.ft.Flen,
-				Decimal: t.ft.Decimal,
-				Elems:   t.ft.Elems,
+				Flen:       t.ft.Flen,
+				Decimal:    t.ft.Decimal,
+				Elems:      t.ft.Elems,
 			})
 		}
 
@@ -84,9 +81,10 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		sc.TimeZone = time.UTC
 		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 		c.Assert(err, IsNil)
-		decoder := rowcodec.NewDecoder(cols, handleID, sc.TimeZone)
+
 		// decode to datum map.
-		dm, err := decoder.DecodeToDatumMap(newRow, handleValue, nil)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, -1, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, handleValue, nil)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]
@@ -95,8 +93,9 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		}
 
 		// decode to chunk.
+		cDecoder := rowcodec.NewChunkDecoder(cols, -1, nil, sc.TimeZone)
 		chk := chunk.New(fts, 1, 1)
-		err = decoder.DecodeToChunk(newRow, handleValue, chk)
+		err = cDecoder.DecodeToChunk(newRow, handleValue, chk)
 		c.Assert(err, IsNil)
 		chkRow := chk.GetRow(0)
 		cdt := chkRow.GetDatumRow(fts)
@@ -114,7 +113,8 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		for i, t := range testData {
 			colOffset[t.id] = i
 		}
-		oldRow, err := decoder.DecodeToBytes(colOffset, handleValue, newRow, nil)
+		bDecoder := rowcodec.NewByteDecoder(cols, -1, nil, nil)
+		oldRow, err := bDecoder.DecodeToBytes(colOffset, handleValue, newRow, nil)
 		c.Assert(err, IsNil)
 		for i, t := range testData {
 			remain, d, err := codec.DecodeOne(oldRow[i])
@@ -206,12 +206,9 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 				Tp:         int32(t.ft.Tp),
 				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				DefaultValue: func() ([]byte, error) {
-					return t.def, nil
-				},
-				Flen:    t.ft.Flen,
-				Decimal: t.ft.Decimal,
-				Elems:   t.ft.Elems,
+				Flen:       t.ft.Flen,
+				Decimal:    t.ft.Decimal,
+				Elems:      t.ft.Elems,
 			})
 		}
 
@@ -221,10 +218,10 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		sc.TimeZone = time.UTC
 		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 		c.Assert(err, IsNil)
-		decoder := rowcodec.NewDecoder(cols, -1, sc.TimeZone)
 
 		// decode to datum map.
-		dm, err := decoder.DecodeToDatumMap(newRow, -1, nil)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, -1, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, -1, nil)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]
@@ -233,8 +230,9 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		}
 
 		// decode to chunk.
+		cDecoder := rowcodec.NewChunkDecoder(cols, -1, nil, sc.TimeZone)
 		chk := chunk.New(fts, 1, 1)
-		err = decoder.DecodeToChunk(newRow, -1, chk)
+		err = cDecoder.DecodeToChunk(newRow, -1, chk)
 		c.Assert(err, IsNil)
 		chkRow := chk.GetRow(0)
 		cdt := chkRow.GetDatumRow(fts)
@@ -252,7 +250,8 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		for i, t := range testData {
 			colOffset[t.id] = i
 		}
-		oldRow, err := decoder.DecodeToBytes(colOffset, -1, newRow, nil)
+		bDecoder := rowcodec.NewByteDecoder(cols, -1, nil, nil)
+		oldRow, err := bDecoder.DecodeToBytes(colOffset, -1, newRow, nil)
 		c.Assert(err, IsNil)
 		for i, t := range testData {
 			remain, d, err := codec.DecodeOne(oldRow[i])
@@ -395,6 +394,14 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 			nil,
 			false,
 		},
+		{
+			119,
+			types.NewFieldType(mysql.TypeVarString),
+			types.NewBytesDatum([]byte("")),
+			types.NewBytesDatum([]byte("")),
+			nil,
+			false,
+		},
 	}
 
 	// test small
@@ -418,6 +425,8 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		dts := make([]types.Datum, 0, len(testData))
 		cols := make([]rowcodec.ColInfo, 0, len(testData))
 		fts := make([]*types.FieldType, 0, len(testData))
+		bdf := make([]func() ([]byte, error), 0, len(testData))
+		ddf := make([]func() (types.Datum, error), 0, len(testData))
 		for i := range testData {
 			t := testData[i]
 			if t.def == nil {
@@ -430,12 +439,23 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				Tp:         int32(t.ft.Tp),
 				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				DefaultValue: func() ([]byte, error) {
-					return t.def, nil
-				},
-				Flen:    t.ft.Flen,
-				Decimal: t.ft.Decimal,
-				Elems:   t.ft.Elems,
+				Flen:       t.ft.Flen,
+				Decimal:    t.ft.Decimal,
+				Elems:      t.ft.Elems,
+			})
+			bdf = append(bdf, func() ([]byte, error) {
+				if t.def == nil {
+					return nil, nil
+				}
+				return getOldDatumByte(*t.def), nil
+			})
+			ddf = append(ddf, func() (types.Datum, error) {
+				if t.def == nil {
+					var d types.Datum
+					d.SetNull()
+					return d, nil
+				}
+				return *t.def, nil
 			})
 		}
 
@@ -445,20 +465,26 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		sc.TimeZone = time.UTC
 		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 		c.Assert(err, IsNil)
-		decoder := rowcodec.NewDecoder(cols, -1, sc.TimeZone)
 
 		// decode to datum map.
-		dm, err := decoder.DecodeToDatumMap(newRow, -1, nil)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, -1, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, -1, nil)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]
-			c.Assert(exists, IsTrue)
-			c.Assert(d, DeepEquals, t.bt)
+			if t.def != nil {
+				// for datum should not fill default value.
+				c.Assert(exists, IsFalse)
+			} else {
+				c.Assert(exists, IsTrue)
+				c.Assert(d, DeepEquals, t.bt)
+			}
 		}
 
-		// decode to chunk.
+		//decode to chunk.
 		chk := chunk.New(fts, 1, 1)
-		err = decoder.DecodeToChunk(newRow, -1, chk)
+		cDecoder := rowcodec.NewChunkDecoder(cols, -1, ddf, sc.TimeZone)
+		err = cDecoder.DecodeToChunk(newRow, -1, chk)
 		c.Assert(err, IsNil)
 		chkRow := chk.GetRow(0)
 		cdt := chkRow.GetDatumRow(fts)
@@ -476,7 +502,8 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		for i, t := range testData {
 			colOffset[t.id] = i
 		}
-		oldRow, err := decoder.DecodeToBytes(colOffset, -1, newRow, nil)
+		bDecoder := rowcodec.NewByteDecoder(cols, -1, bdf, sc.TimeZone)
+		oldRow, err := bDecoder.DecodeToBytes(colOffset, -1, newRow, nil)
 		c.Assert(err, IsNil)
 		for i, t := range testData {
 			remain, d, err := codec.DecodeOne(oldRow[i])
@@ -488,11 +515,6 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				c.Assert(d, DeepEquals, t.bt)
 			}
 		}
-	}
-	getDatumByte := func(d types.Datum) []byte {
-		b, err := rowcodec.EncodeValueDatum(nil, d, nil)
-		c.Assert(err, IsNil)
-		return b
 	}
 	dtNilData := []testData{
 		{
@@ -508,66 +530,11 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 			withUnsigned(types.NewFieldType(mysql.TypeLonglong)),
 			types.NewUintDatum(1),
 			types.NewUintDatum(9),
-			getDatumByte(types.NewUintDatum(9)),
+			getDatumPoint(types.NewUintDatum(9)),
 			false,
 		},
 	}
 	encodeAndDecode(c, dtNilData)
-
-	dtNilCol := []testData{
-		{
-			1,
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewDatum(nil),
-			types.NewDatum(nil),
-			[]byte{},
-			false,
-		},
-	}
-	colIDs := make([]int64, 0, len(dtNilCol))
-	dts := make([]types.Datum, 0, len(dtNilCol))
-	cols := make([]rowcodec.ColInfo, 0, len(dtNilCol))
-	fts := make([]*types.FieldType, 0, len(dtNilCol))
-	for i := range dtNilCol {
-		t := dtNilCol[i]
-		if t.def == nil {
-			colIDs = append(colIDs, t.id)
-			dts = append(dts, t.dt)
-		}
-		fts = append(fts, t.ft)
-		cols = append(cols, rowcodec.ColInfo{
-			ID:         t.id,
-			Tp:         int32(t.ft.Tp),
-			Flag:       int32(t.ft.Flag),
-			IsPKHandle: t.handle,
-			DefaultValue: func() ([]byte, error) {
-				return t.def, nil
-			},
-			Flen:    t.ft.Flen,
-			Decimal: t.ft.Decimal,
-			Elems:   t.ft.Elems,
-		})
-	}
-	var encoder rowcodec.Encoder
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = time.UTC
-	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
-	c.Assert(err, IsNil)
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flag |= mysql.NotNullFlag
-	notExistButNotNilCol := rowcodec.ColInfo{
-		ID:           2,
-		Tp:           int32(tp.Tp),
-		Flag:         int32(tp.Flag),
-		IsPKHandle:   false,
-		DefaultValue: nil,
-	}
-	rd := rowcodec.NewDecoder(append(cols, notExistButNotNilCol), -1, nil)
-	colOffset := make(map[int64]int)
-	colOffset[1] = 0
-	colOffset[2] = 1
-	_, err = rd.DecodeToBytes(colOffset, -1, newRow, nil)
-	c.Assert(err.Error(), Equals, "Miss column 2")
 }
 
 func (s *testSuite) TestVarintCompatibility(c *C) {
@@ -587,12 +554,9 @@ func (s *testSuite) TestVarintCompatibility(c *C) {
 				Tp:         int32(t.ft.Tp),
 				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				DefaultValue: func() ([]byte, error) {
-					return t.def, nil
-				},
-				Flen:    t.ft.Flen,
-				Decimal: t.ft.Decimal,
-				Elems:   t.ft.Elems,
+				Flen:       t.ft.Flen,
+				Decimal:    t.ft.Decimal,
+				Elems:      t.ft.Elems,
 			})
 		}
 
@@ -602,7 +566,7 @@ func (s *testSuite) TestVarintCompatibility(c *C) {
 		sc.TimeZone = time.UTC
 		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 		c.Assert(err, IsNil)
-		decoder := rowcodec.NewDecoder(cols, -1, sc.TimeZone)
+		decoder := rowcodec.NewByteDecoder(cols, -1, nil, sc.TimeZone)
 		// decode to old row bytes.
 		colOffset := make(map[int64]int)
 		for i, t := range testData {
@@ -636,46 +600,6 @@ func (s *testSuite) TestVarintCompatibility(c *C) {
 		},
 	}
 	encodeAndDecodeByte(c, testDataValue)
-
-	testSigPK := []testData{
-		{
-			-1,
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewIntDatum(1),
-			types.NewIntDatum(1),
-			nil,
-			true,
-		},
-		{
-			2,
-			withUnsigned(types.NewFieldType(mysql.TypeLonglong)),
-			types.NewUintDatum(1),
-			types.NewUintDatum(1),
-			nil,
-			false,
-		},
-	}
-	encodeAndDecodeByte(c, testSigPK)
-
-	testUnsigPK := []testData{
-		{
-			-1,
-			withUnsigned(types.NewFieldType(mysql.TypeLonglong)),
-			types.NewUintDatum(1),
-			types.NewUintDatum(1),
-			nil,
-			true,
-		},
-		{
-			2,
-			withUnsigned(types.NewFieldType(mysql.TypeLonglong)),
-			types.NewUintDatum(1),
-			types.NewUintDatum(1),
-			nil,
-			false,
-		},
-	}
-	encodeAndDecodeByte(c, testUnsigPK)
 }
 
 func (s *testSuite) TestCodecUtil(c *C) {
@@ -692,7 +616,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 		rb     rowcodec.Encoder
 		newRow []byte
 	)
-	newRow, err = rowcodec.EncodeFromOldRowForTest(&rb, nil, oldRow, nil)
+	newRow, err = rowcodec.EncodeFromOldRow(&rb, nil, oldRow, nil)
 	c.Assert(err, IsNil)
 	c.Assert(rowcodec.IsNewFormat(newRow), IsTrue)
 	c.Assert(rowcodec.IsNewFormat(oldRow), IsFalse)
@@ -701,14 +625,13 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	var cols []rowcodec.ColInfo
 	for i, ft := range tps {
 		cols = append(cols, rowcodec.ColInfo{
-			ID:           colIDs[i],
-			Tp:           int32(ft.Tp),
-			Flag:         int32(ft.Flag),
-			IsPKHandle:   false,
-			DefaultValue: nil,
-			Flen:         ft.Flen,
-			Decimal:      ft.Decimal,
-			Elems:        ft.Elems,
+			ID:         colIDs[i],
+			Tp:         int32(ft.Tp),
+			Flag:       int32(ft.Flag),
+			IsPKHandle: false,
+			Flen:       ft.Flen,
+			Decimal:    ft.Decimal,
+			Elems:      ft.Elems,
 		})
 	}
 	d := rowcodec.NewDecoder(cols, -1, nil)
@@ -747,7 +670,7 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 		rb     rowcodec.Encoder
 		newRow []byte
 	)
-	newRow, err = rowcodec.EncodeFromOldRowForTest(&rb, nil, oldRow, nil)
+	newRow, err = rowcodec.EncodeFromOldRow(&rb, nil, oldRow, nil)
 	c.Check(err, IsNil)
 	cols := make([]rowcodec.ColInfo, len(tps))
 	for i, tp := range tps {
@@ -760,7 +683,7 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 			Elems:   tp.Elems,
 		}
 	}
-	rd := rowcodec.NewDecoder(cols, 0, time.Local)
+	rd := rowcodec.NewChunkDecoder(cols, 0, nil, time.Local)
 	chk := chunk.NewChunkWithCapacity(tps, 1)
 	err = rd.DecodeToChunk(newRow, -1, chk)
 	c.Assert(err, IsNil)
@@ -796,5 +719,15 @@ var (
 	getDuration = func(value string) types.Duration {
 		dur, _ := types.ParseDuration(nil, value, 0)
 		return dur
+	}
+	getOldDatumByte = func(d types.Datum) []byte {
+		b, err := tablecodec.EncodeValue(nil, nil, d)
+		if err != nil {
+			panic(err)
+		}
+		return b
+	}
+	getDatumPoint = func(d types.Datum) *types.Datum {
+		return &d
 	}
 )

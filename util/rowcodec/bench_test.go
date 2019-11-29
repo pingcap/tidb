@@ -50,7 +50,7 @@ func BenchmarkEncodeFromOldRow(b *testing.B) {
 	var xb rowcodec.Encoder
 	var buf []byte
 	for i := 0; i < b.N; i++ {
-		buf, err = rowcodec.EncodeFromOldRowForTest(&xb, nil, oldRowData, buf)
+		buf, err = rowcodec.EncodeFromOldRow(&xb, nil, oldRowData, buf)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func BenchmarkDecode(b *testing.B) {
 			Elems:   tp.Elems,
 		}
 	}
-	decoder := rowcodec.NewDecoder(cols, -1, time.Local)
+	decoder := rowcodec.NewChunkDecoder(cols, -1, nil, time.Local)
 	chk := chunk.NewChunkWithCapacity(tps, 1)
 	for i := 0; i < b.N; i++ {
 		chk.Reset()
