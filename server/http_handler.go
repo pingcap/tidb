@@ -688,10 +688,10 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
 			writeError(w, err)
-		} else {
-			writeData(w, "success!")
+			return
 		}
 	}
+	writeData(w, "success!")
 }
 
 type tableFlashReplicaInfo struct {
