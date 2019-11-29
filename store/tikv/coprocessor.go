@@ -53,6 +53,9 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	logutil.BgLogger().Info("copClient.Send()",
+		zap.Any("client", c.store))
+
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
@@ -216,6 +219,10 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
+	logutil.BgLogger().Info("buildCopTasks()",
+		zap.Any("ranges", ranges),
+		zap.Any("req", req))
+
 	start := time.Now()
 	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
@@ -651,6 +658,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
 func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+	logutil.BgLogger().Info("copIteratorWorker.handleTask()",
+		zap.Any("task.region", task.region.id),
+		zap.Any("task.ranges", task.ranges.String()),
+		zap.Any("task.storeAddr", task.storeAddr))
+
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -681,17 +693,44 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
+	logutil.BgLogger().Info("copIteratorWorker.handleTaskOnce()",
+		zap.Any("worker.store.coprCache", worker.store.coprCache))
+
 	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
 		}
 	})
 
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
+	copReq := coprocessor.Request{
 		Tp:     worker.req.Tp,
 		Data:   worker.req.Data,
 		Ranges: task.ranges.toPBRanges(),
-	}, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
+	}
+
+	var cacheKey []byte = nil
+	var cacheValue *CoprCacheValue = nil
+
+	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
+	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
+		copReq.IsCacheEnabled = true
+		cacheKey = coprCacheBuildKey(&copReq)
+		cacheValue = worker.store.coprCache.Get(cacheKey)
+		logutil.BgLogger().Info("Request can be cached",
+			zap.Any("key", cacheKey),
+			zap.Any("value", cacheValue),
+			zap.Any("task.region.id", task.region.id),
+			zap.Any("worker.req.startts", worker.req.StartTs))
+		if cacheValue != nil && cacheValue.RegionId == task.region.id && cacheValue.TimeStamp <= worker.req.StartTs {
+			logutil.BgLogger().Info("Request hit cache, check cache validity after receiving response")
+			// Append cache version to the request to skip Coprocessor computation if possible
+			// when request result is cached
+			copReq.CacheIfMatchVersion = cacheValue.RegionDataVersion
+		}
+	}
+
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
@@ -716,7 +755,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil, costTime)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
 }
 
 type minCommitTSPushed struct {
@@ -847,7 +886,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 		return nil, nil
 	}
 	for {
-		remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp}, task, ch, lastRange, costTime)
+		remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp}, nil, nil, task, ch, lastRange, costTime)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
@@ -879,7 +918,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 // returns more tasks when that happens, or handles the response if no error.
 // if we're handling streaming coprocessor response, lastRange is the range of last
 // successful response, otherwise it's nil.
-func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, cacheKey []byte, cacheValue *CoprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
@@ -934,6 +973,27 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				resp.detail.TotalKeys += scanDetail.Write.Total
 				resp.detail.ProcessedKeys += scanDetail.Write.Processed
 			}
+		}
+	}
+	if resp.pbResp.IsCacheHit && cacheValue != nil {
+		logutil.BgLogger().Info("Cache Hit")
+		// Cache hit and is valid: use cached data as response data and we don't update the cache.
+		resp.pbResp.Data = cacheValue.Data
+	} else {
+		logutil.BgLogger().Info("Cache Not Hit")
+		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
+		if cacheKey != nil && resp.pbResp.Data.Size() > 0 && resp.pbResp.CacheLastVersion > 0 {
+			// TODO: This copy might not be necessary.
+			d := make([]byte, len(resp.pbResp.Data))
+			copy(d, resp.pbResp.Data)
+			newCacheValue := CoprCacheValue{
+				Data:              d,
+				TimeStamp:         worker.req.StartTs,
+				RegionId:          task.region.id,
+				RegionDataVersion: resp.pbResp.CacheLastVersion,
+			}
+			logutil.BgLogger().Info("Put Cache Item", zap.Any("value", newCacheValue.String()))
+			worker.store.coprCache.Set(cacheKey, &newCacheValue)
 		}
 	}
 	worker.sendToRespCh(resp, ch, true)

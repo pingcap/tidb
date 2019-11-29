@@ -269,6 +269,8 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
+	Cacheable bool
 }
 
 // ResultSubset represents a result subset from a single storage unit.
