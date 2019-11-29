@@ -240,7 +240,6 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		}
 		q.Feedback[i+idx].Count += count
 	}
-	return
 }
 
 // BucketFeedback stands for all the feedback for a bucket.
