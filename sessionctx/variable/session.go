@@ -202,6 +202,10 @@ type SessionVars struct {
 	Users map[string]string
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// System variable "warning_count", because it is on the hot path, so we extract it from the systems
+	sysWarningCount string
+	// System variable "error_count", because it is on the hot path, so we extract it from the systems
+	sysErrorCount string
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -707,6 +711,17 @@ func (s *SessionVars) Location() *time.Location {
 
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	if name == WarningCount {
+		if len(s.sysWarningCount) > 0 {
+			return s.sysWarningCount, true
+		}
+		return "", false
+	} else if name == ErrorCount {
+		if len(s.sysErrorCount) > 0 {
+			return s.sysErrorCount, true
+		}
+		return "", false
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -767,6 +782,13 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
+	if name == WarningCount {
+		s.sysWarningCount = val
+		return nil
+	} else if name == ErrorCount {
+		s.sysErrorCount = val
+		return nil
+	}
 	switch name {
 	case TxnIsolationOneShot:
 		switch val {
