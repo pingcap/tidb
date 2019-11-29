@@ -780,6 +780,16 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
+func (s *SessionVars) SetSystemVarSkipCheck(name string, val string) {
+	if name == WarningCount {
+		s.sysWarningCount = val
+	} else if name == ErrorCount {
+		s.sysErrorCount = val
+	} else {
+		s.systems[name] = val
+	}
+}
+
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	if name == WarningCount {
