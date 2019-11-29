@@ -670,7 +670,7 @@ func (g *randDurDecimal) gen() interface{} {
 type randDurString struct{}
 
 func (g *randDurString) gen() interface{} {
-	return strconv.FormatFloat(float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60)), 'g', -1, 64)
+	return strconv.FormatFloat(float64(rand.Intn(types.TimeMaxHour)*10000+rand.Intn(60)*100+rand.Intn(60)), 'g', -1, 64)
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
