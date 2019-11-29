@@ -2426,11 +2426,17 @@ func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinTimeLiteralSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimeLiteralSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	d64s := result.GoDurations()
+	for i := 0; i < n; i++ {
+		d64s[i] = b.duration.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubDateDurationStringSig) vectorized() bool {

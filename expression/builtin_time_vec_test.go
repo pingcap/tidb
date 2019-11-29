@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -76,6 +77,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
 			constants: []*Constant{{Value: types.NewStringDatum("2019-11-11"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+	},
+	ast.TimeLiteral: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration},
+			constants: []*Constant{
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Hour + time.Second}),
+					RetType: types.NewFieldType(mysql.TypeDuration)}},
 		},
 	},
 	ast.DateDiff: {
