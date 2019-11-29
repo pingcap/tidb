@@ -541,6 +541,7 @@ var testFile = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, 
 package expression
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -578,6 +579,14 @@ func (g gener) gen() interface{} {
 	{{- end }}
 {{ end }}
 
+{{ define "intervalGener" }}
+	{{- if eq .TypeB.ETName "String" -}}
+		&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+	{{- else -}}
+		&defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2},
+	{{- end }}
+{{ end }}
+
 {{ define "addOrSubDateCases" }}
 	{{ range .Sigs }} // {{ .SigName }}
 		{
@@ -593,11 +602,11 @@ func (g gener) gen() interface{} {
 			geners: []dataGenerator{
 				{{- if eq .TestTypeA "" }}
 					{{- template "datetimeGener" . -}}
-					gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+					{{- template "intervalGener" . -}}
 					nil,
 				{{- else }}
 					{{- template "datetimeGener" . -}}
-					gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
+					{{- template "intervalGener" . -}}
 					nil,
 				{{- end }}
 			},
