@@ -899,7 +899,6 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(input *chunk.Chunk, res
 				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 			}
 			if dur == types.ZeroDuration {
-				result.SetNull(i, true)
 				return err
 			}
 		}
