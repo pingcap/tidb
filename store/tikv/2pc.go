@@ -48,7 +48,6 @@ type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
 type actionPessimisticLock struct {
-	killed       *uint32
 	lockWaitTime int64
 }
 type actionPessimisticRollback struct{}
@@ -147,7 +146,7 @@ type mutationEx struct {
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
-	return &twoPhaseCommitter{
+	c := &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
@@ -156,7 +155,12 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		ttlManager: ttlManager{
 			ch: make(chan struct{}),
 		},
-	}, nil
+	}
+	// In restricted SQL this may be nil.
+	if txn.ctx != nil {
+		c.ttlManager.killed = txn.ctx.Killed
+	}
+	return c, nil
 }
 
 func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, ttl uint64) (uint64, error) {
@@ -580,12 +584,11 @@ type ttlManager struct {
 	killed *uint32
 }
 
-func (tm *ttlManager) run(c *twoPhaseCommitter, killed *uint32) {
+func (tm *ttlManager) run(c *twoPhaseCommitter) {
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
 	}
-	tm.killed = killed
 	go tm.keepAlive(c)
 }
 
@@ -672,6 +675,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	lockWaitStartTime := time.Now()
+	var killed *uint32
+	if c.txn.ctx != nil {
+		killed = c.txn.ctx.Killed
+	}
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
 		if action.lockWaitTime > 0 {
@@ -695,7 +702,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.lockWaitTime, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -761,11 +768,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
-		if action.killed != nil {
+		if killed != nil {
 			// Do not reset the killed flag here!
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
-			if atomic.LoadUint32(action.killed) == 1 {
+			if atomic.LoadUint32(killed) == 1 {
 				return ErrQueryInterrupted
 			}
 		}
@@ -990,9 +997,9 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, lockWaitTime int64,
 	keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
+	return c.doActionOnKeys(bo, actionPessimisticLock{lockWaitTime}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {

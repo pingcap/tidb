@@ -1335,6 +1335,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
+		s.txn.SetOption(kv.TxnCtx, s.sessionVars.TxnCtx)
 	}
 	return &s.txn, nil
 }
@@ -1940,6 +1941,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
+		Killed:        &s.sessionVars.Killed,
 	}
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -66,13 +67,7 @@ type tikvTxn struct {
 	setCnt    int64
 	vars      *kv.Variables
 	committer *twoPhaseCommitter
-
-	// For data consistency check.
-	// assertions[:confirmed] is the assertion of current transaction.
-	// assertions[confirmed:len(assertions)] is the assertions of current statement.
-	// StmtCommit/StmtRollback may change the confirmed position.
-	assertions []assertionPair
-	confirmed  int
+	ctx       *variable.TransactionContext
 
 	valid bool
 	dirty bool
@@ -237,6 +232,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
+	case kv.TxnCtx:
+		txn.ctx = val.(*variable.TransactionContext)
 	}
 }
 
@@ -367,7 +364,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
-func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, lockWaitTime int64, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
@@ -406,12 +403,12 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err := txn.committer.pessimisticLockKeys(bo, killed, lockWaitTime, keys)
-		if killed != nil {
+		err := txn.committer.pessimisticLockKeys(bo, lockWaitTime, keys)
+		if txn.ctx != nil && txn.ctx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
 			// We need to reset the killed flag here.
-			atomic.CompareAndSwapUint32(killed, 1, 0)
+			atomic.CompareAndSwapUint32(txn.ctx.Killed, 1, 0)
 		}
 		if err != nil {
 			for _, key := range keys {
@@ -436,7 +433,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer, killed)
+			txn.committer.ttlManager.run(txn.committer)
 		}
 	}
 	txn.mu.Lock()

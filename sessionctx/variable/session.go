@@ -116,6 +116,8 @@ type TransactionContext struct {
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
+
+	Killed *uint32
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
