@@ -157,8 +157,8 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		},
 	}
 	// In restricted SQL this may be nil.
-	if txn.ctx != nil {
-		c.ttlManager.killed = txn.ctx.Killed
+	if txn.ctx() != nil {
+		c.ttlManager.killed = txn.ctx().Killed
 	}
 	return c, nil
 }
@@ -407,8 +407,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
 		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
-		if c.txn.ctx != nil {
-			secondaryBo = secondaryBo.WithVars(c.txn.ctx.KVVars)
+		if c.txn.ctx() != nil {
+			secondaryBo = secondaryBo.WithVars(c.txn.ctx().KVVars)
 		}
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
@@ -679,8 +679,8 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	lockWaitStartTime := time.Now()
 	var killed *uint32
-	if c.txn.ctx != nil {
-		killed = c.txn.ctx.Killed
+	if c.txn.ctx() != nil {
+		killed = c.txn.ctx().Killed
 	}
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
@@ -1033,8 +1033,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			go func() {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 				bo := NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff)
-				if c.txn.ctx != nil {
-					bo = bo.WithVars(c.txn.ctx.KVVars)
+				if c.txn.ctx() != nil {
+					bo = bo.WithVars(c.txn.ctx().KVVars)
 				}
 				err := c.cleanupKeys(bo, c.keys)
 				if err != nil {
@@ -1053,8 +1053,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff)
-	if c.txn.ctx != nil {
-		prewriteBo = prewriteBo.WithVars(c.txn.ctx.KVVars)
+	if c.txn.ctx() != nil {
+		prewriteBo = prewriteBo.WithVars(c.txn.ctx().KVVars)
 	}
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
@@ -1082,8 +1082,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	start = time.Now()
 	logutil.Event(ctx, "start get commit ts")
 	bo := NewBackoffer(ctx, tsoMaxBackoff)
-	if c.txn.ctx != nil {
-		bo = bo.WithVars(c.txn.ctx.KVVars)
+	if c.txn.ctx() != nil {
+		bo = bo.WithVars(c.txn.ctx().KVVars)
 	}
 	commitTS, err := c.store.getTimestampWithRetry(bo)
 	if err != nil {
@@ -1116,8 +1116,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff)
-	if c.txn.ctx != nil {
-		commitBo = commitBo.WithVars(c.txn.ctx.KVVars)
+	if c.txn.ctx() != nil {
+		commitBo = commitBo.WithVars(c.txn.ctx().KVVars)
 	}
 	err = c.commitKeys(commitBo, c.keys)
 	commitDetail.CommitTime = time.Since(start)

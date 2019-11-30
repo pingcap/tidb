@@ -66,7 +66,6 @@ type tikvTxn struct {
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
 	committer *twoPhaseCommitter
-	ctx       *variable.TransactionContext
 
 	valid bool
 	dirty bool
@@ -104,6 +103,10 @@ func (txn *tikvTxn) SetCap(cap int) {
 // Reset reset tikvTxn's membuf.
 func (txn *tikvTxn) Reset() {
 	txn.us.Reset()
+}
+
+func (txn *tikvTxn) ctx() *variable.TransactionContext {
+	return txn.snapshot.ctx
 }
 
 // Get implements transaction interface.
@@ -217,8 +220,7 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
 	case kv.TxnCtx:
-		txnCtx := val.(*variable.TransactionContext)
-		txn.ctx = txnCtx
+		txn.snapshot.ctx = val.(*variable.TransactionContext)
 	}
 }
 
@@ -384,19 +386,19 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, lockWaitTi
 		}
 
 		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff)
-		if txn.ctx != nil {
-			bo = bo.WithVars(txn.ctx.KVVars)
+		if txn.ctx() != nil {
+			bo = bo.WithVars(txn.ctx().KVVars)
 		}
 		txn.committer.forUpdateTS = forUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
 		err := txn.committer.pessimisticLockKeys(bo, lockWaitTime, keys)
-		if txn.ctx != nil && txn.ctx.Killed != nil {
+		if txn.ctx() != nil && txn.ctx().Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
 			// We need to reset the killed flag here.
-			atomic.CompareAndSwapUint32(txn.ctx.Killed, 1, 0)
+			atomic.CompareAndSwapUint32(txn.ctx().Killed, 1, 0)
 		}
 		if err != nil {
 			for _, key := range keys {

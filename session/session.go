@@ -1403,6 +1403,8 @@ func (s *session) NewTxn(ctx context.Context) error {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
+		Killed:        &s.sessionVars.Killed,
+		KVVars:        s.sessionVars.KVVars,
 	}
 	s.sessionVars.TxnCtx = txnCtx
 	s.txn.changeInvalidToValid(txn, txnCtx)
