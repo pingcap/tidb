@@ -59,98 +59,113 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 
 	parser := parser.New()
 	var cases = []struct {
-		sql       string
-		nodeTypes set.StringSet
-		addresses set.StringSet
+		sql         string
+		nodeTypes   set.StringSet
+		addresses   set.StringSet
+		skipRequest bool
 	}{
 		{
-			"select * from information_schema.tidb_cluster_config",
-			nil,
-			nil,
+			sql:       "select * from information_schema.tidb_cluster_config",
+			nodeTypes: nil,
+			addresses: nil,
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv'",
-			set.NewStringSet("tikv"),
-			set.NewStringSet(),
+			sql:       "select * from information_schema.tidb_cluster_config where type='tikv'",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet(),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd')",
-			set.NewStringSet("tikv", "pd"),
-			set.NewStringSet(),
+			sql:       "select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd')",
+			nodeTypes: set.NewStringSet("tikv", "pd"),
+			addresses: set.NewStringSet(),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd') and address='123.1.1.2:1234'",
-			set.NewStringSet("tikv", "pd"),
-			set.NewStringSet("123.1.1.2:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd') and address='123.1.1.2:1234'",
+			nodeTypes: set.NewStringSet("tikv", "pd"),
+			addresses: set.NewStringSet("123.1.1.2:1234"),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd') and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
-			set.NewStringSet("tikv", "pd"),
-			set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd') and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
+			nodeTypes: set.NewStringSet("tikv", "pd"),
+			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv' and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
-			set.NewStringSet("tikv"),
-			set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where type='tikv' and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv' and address='123.1.1.4:1234'",
-			set.NewStringSet("tikv"),
-			set.NewStringSet("123.1.1.4:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where type='tikv' and address='123.1.1.4:1234'",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv' and address='123.1.1.4:1234'",
-			set.NewStringSet("tikv"),
-			set.NewStringSet("123.1.1.4:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where type='tikv' and address='123.1.1.4:1234'",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv' and type='pd'",
-			set.NewStringSet(),
-			set.NewStringSet(),
+			sql:         "select * from information_schema.tidb_cluster_config where type='tikv' and type='pd'",
+			nodeTypes:   set.NewStringSet(),
+			addresses:   set.NewStringSet(),
+			skipRequest: true,
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv' and type in ('pd', 'tikv')",
-			set.NewStringSet("tikv"),
-			set.NewStringSet(),
+			sql:       "select * from information_schema.tidb_cluster_config where type='tikv' and type in ('pd', 'tikv')",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet(),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type='tikv' and type in ('pd', 'tidb')",
-			set.NewStringSet(),
-			set.NewStringSet(),
+			sql:         "select * from information_schema.tidb_cluster_config where type='tikv' and type in ('pd', 'tidb')",
+			nodeTypes:   set.NewStringSet(),
+			addresses:   set.NewStringSet(),
+			skipRequest: true,
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where type in ('tikv', 'tidb') and type in ('pd', 'tidb')",
-			set.NewStringSet("tidb"),
-			set.NewStringSet(),
+			sql:       "select * from information_schema.tidb_cluster_config where type in ('tikv', 'tidb') and type in ('pd', 'tidb')",
+			nodeTypes: set.NewStringSet("tidb"),
+			addresses: set.NewStringSet(),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where address='123.1.1.4:1234' and address='123.1.1.5:1234'",
-			set.NewStringSet(),
-			set.NewStringSet(),
+			sql:         "select * from information_schema.tidb_cluster_config where address='123.1.1.4:1234' and address='123.1.1.5:1234'",
+			nodeTypes:   set.NewStringSet(),
+			addresses:   set.NewStringSet(),
+			skipRequest: true,
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.4:1234')",
-			set.NewStringSet(),
-			set.NewStringSet("123.1.1.4:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.4:1234')",
+			nodeTypes: set.NewStringSet(),
+			addresses: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
-			set.NewStringSet(),
-			set.NewStringSet(),
+			sql:         "select * from information_schema.tidb_cluster_config where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
+			nodeTypes:   set.NewStringSet(),
+			addresses:   set.NewStringSet(),
+			skipRequest: true,
 		},
 		{
-			"select * from information_schema.tidb_cluster_config where address in ('123.1.1.5:1234', '123.1.1.4:1234') and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
-			set.NewStringSet(),
-			set.NewStringSet("123.1.1.5:1234"),
+			sql:       "select * from information_schema.tidb_cluster_config where address in ('123.1.1.5:1234', '123.1.1.4:1234') and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
+			nodeTypes: set.NewStringSet(),
+			addresses: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
-			`select * from information_schema.tidb_cluster_config 
+			sql: `select * from information_schema.tidb_cluster_config 
 				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and type in ('tikv', 'tidb')
 				  and type in ('pd', 'tidb')`,
-			set.NewStringSet("tidb"),
-			set.NewStringSet("123.1.1.5:1234"),
+			nodeTypes: set.NewStringSet("tidb"),
+			addresses: set.NewStringSet("123.1.1.5:1234"),
+		},
+		{
+			sql: `select * from information_schema.tidb_cluster_config 
+				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
+				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
+				  and address in ('123.1.1.6:1234', '123.1.1.7:1234')
+				  and address in ('123.1.1.7:1234', '123.1.1.8:1234')`,
+			nodeTypes:   set.NewStringSet(),
+			addresses:   set.NewStringSet(),
+			skipRequest: true,
 		},
 	}
 	for _, ca := range cases {
@@ -177,5 +192,6 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterConfigTableExtractor)
 		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.Addresses, DeepEquals, ca.addresses, Commentf("SQL: %v", ca.sql))
+		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 	}
 }

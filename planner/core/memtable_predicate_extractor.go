@@ -91,6 +91,9 @@ func (helper extractHelper) extractColEqConsExpr(extractCols map[int64]*types.Fi
 type ClusterConfigTableExtractor struct {
 	extractHelper
 
+	// SkipRequest means the where cluase always false, we don't need to request any component
+	SkipRequest bool
+
 	// NodeTypes represents all components types we should send request to.
 	// e.g:
 	// 1. SELECT * FROM tidb_cluster_config WHERE type='tikv'
@@ -143,6 +146,7 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 					// SELECT * FROM tidb_cluster_config WHERE type='a' AND type='b'
 					if len(e.NodeTypes) > 0 && !e.NodeTypes.Exist(tp) {
 						e.NodeTypes = set.NewStringSet()
+						e.SkipRequest = true
 						return nil
 					}
 					e.NodeTypes.Insert(tp)
@@ -151,6 +155,7 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 					// SELECT * FROM tidb_cluster_config WHERE address='a' AND address='b'
 					if len(e.Addresses) > 0 && !e.Addresses.Exist(addr) {
 						e.Addresses = set.NewStringSet()
+						e.SkipRequest = true
 						return nil
 					}
 					e.Addresses.Insert(addr)
@@ -166,6 +171,10 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 					}
 					if len(e.NodeTypes) > 0 {
 						e.NodeTypes = e.NodeTypes.Intersection(tmpNodeTypes)
+						if len(e.NodeTypes) == 0 {
+							e.SkipRequest = true
+							return nil
+						}
 					} else {
 						e.NodeTypes = tmpNodeTypes
 					}
@@ -176,6 +185,10 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 					}
 					if len(e.Addresses) > 0 {
 						e.Addresses = e.Addresses.Intersection(tmpAddresses)
+						if len(e.Addresses) == 0 {
+							e.SkipRequest = true
+							return nil
+						}
 					} else {
 						e.Addresses = tmpAddresses
 					}
