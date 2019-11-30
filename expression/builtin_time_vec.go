@@ -1262,11 +1262,68 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 }
 
 func (b *builtinSubDateAndStringSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinSubDateAndStringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	arg0s := buf0.GoDurations()
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		// get arg0 & arg1
+		arg0 := arg0s[i]
+		arg1 := buf1.GetString(i)
+
+		if !isDuration(arg1) {
+			result.AppendNull()
+			continue
+		}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		arg1Duration, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				result.AppendNull()
+				continue
+			}
+			return err
+		}
+
+		fsp0 := int8(b.args[0].GetType().Decimal)
+		res, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		if err != nil {
+			return err
+		}
+		result.AppendString(res.String())
+
+	}
+	return nil
 }
 
 func (b *builtinMinuteSig) vectorized() bool {
