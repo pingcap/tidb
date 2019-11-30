@@ -362,13 +362,6 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	return nil
 }
 
-func createOptions(tb *model.TableInfo) string {
-	if tb.GetPartitionInfo() != nil {
-		return "partitioned"
-	}
-	return ""
-}
-
 func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
 
@@ -503,6 +496,10 @@ func (e *ShowExec) fetchShowIndex() error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
+			nullVal := "YES"
+			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+				nullVal = ""
+			}
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
@@ -513,7 +510,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				0,                      // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
-				"YES",                  // Null
+				nullVal,                // Null
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment

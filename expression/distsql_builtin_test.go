@@ -796,21 +796,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 }
 
-func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
-	expr := new(tipb.Expr)
-	expr.Tp = tp
-	expr.Children = make([]*tipb.Expr, len(children))
-	for i, child := range children {
-		switch x := child.(type) {
-		case types.Datum:
-			expr.Children[i] = datumExpr(nil, x)
-		case *tipb.Expr:
-			expr.Children[i] = x
-		}
-	}
-	return expr
-}
-
 func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
@@ -849,7 +834,7 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime
 		var err error
-		expr.Val, err = codec.EncodeMySQLTime(nil, d, mysql.TypeUnspecified, nil)
+		expr.Val, err = codec.EncodeMySQLTime(nil, d.GetMysqlTime(), mysql.TypeUnspecified, nil)
 		c.Assert(err, IsNil)
 		expr.FieldType = ToPBFieldType(newDateFieldType())
 	default:

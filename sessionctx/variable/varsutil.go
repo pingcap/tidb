@@ -108,7 +108,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, UnknownSystemVar.GenWithStackByArgs(key)
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
 	// For virtual system variables:
 	switch sysVar.Name {
@@ -172,7 +172,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
 	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, UnknownSystemVar.GenWithStackByArgs(key)
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
 	if sysVar.Scope == ScopeNone {
 		return sysVar.Value, true, nil
@@ -188,7 +188,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
-		return UnknownSystemVar
+		return ErrUnknownSystemVar
 	}
 	sVal := ""
 	var err error
@@ -209,7 +209,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar, exists := SysVars[name]
 	if !exists {
-		return UnknownSystemVar.GenWithStackByArgs(name)
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
 	case ScopeGlobal, ScopeNone:
@@ -280,7 +280,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
 		}
-		return value, UnknownSystemVar.GenWithStackByArgs(name)
+		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch name {
 	case ConnectTimeout:
@@ -348,6 +348,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case TiDBStoreLimit:
+		return checkInt64SystemVar(name, value, 0, math.MaxInt64, vars)
 	case SyncBinlog:
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
@@ -521,14 +523,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaNestedLoopApply,
 		TiDBRetryLimit,
 		TiDBSlowLogThreshold,
-		TiDBQueryLogMaxLen:
+		TiDBQueryLogMaxLen,
+		TiDBEvolvePlanTaskMaxTime:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
 		}
 		return value, nil
-	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
-		v, err := setAnalyzeTime(vars, value)
+	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime, TiDBEvolvePlanTaskStartTime, TiDBEvolvePlanTaskEndTime:
+		v, err := setDayTime(vars, value)
 		if err != nil {
 			return "", err
 		}
@@ -608,7 +611,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines:
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil
@@ -626,6 +629,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBStmtSummaryRefreshInterval:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -742,23 +750,23 @@ func GoTimeToTS(t time.Time) uint64 {
 }
 
 const (
-	analyzeLocalTimeFormat = "15:04"
-	// AnalyzeFullTimeFormat is the full format of analyze start time and end time.
-	AnalyzeFullTimeFormat = "15:04 -0700"
+	localDayTimeFormat = "15:04"
+	// FullDayTimeFormat is the full format of analyze start time and end time.
+	FullDayTimeFormat = "15:04 -0700"
 )
 
-func setAnalyzeTime(s *SessionVars, val string) (string, error) {
+func setDayTime(s *SessionVars, val string) (string, error) {
 	var t time.Time
 	var err error
-	if len(val) <= len(analyzeLocalTimeFormat) {
-		t, err = time.ParseInLocation(analyzeLocalTimeFormat, val, s.TimeZone)
+	if len(val) <= len(localDayTimeFormat) {
+		t, err = time.ParseInLocation(localDayTimeFormat, val, s.TimeZone)
 	} else {
-		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
+		t, err = time.ParseInLocation(FullDayTimeFormat, val, s.TimeZone)
 	}
 	if err != nil {
 		return "", err
 	}
-	return t.Format(AnalyzeFullTimeFormat), nil
+	return t.Format(FullDayTimeFormat), nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

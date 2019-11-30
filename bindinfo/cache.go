@@ -31,6 +31,11 @@ const (
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
 	Invalid = "invalid"
+	// PendingVerify means the bind info needs to be verified.
+	PendingVerify = "pending verify"
+	// Rejected means that the bind has been rejected after verify process.
+	// We can retry it after certain time has passed.
+	Rejected = "rejected"
 )
 
 // Binding stores the basic bind hint info.
@@ -47,6 +52,7 @@ type Binding struct {
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *HintsSet
 	// id is the string form of all hints. It is used to uniquely identify different hints.
+	// It would be non-empty only when the status is `Using` or `PendingVerify`.
 	id string
 }
 
@@ -71,20 +77,20 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
-// FindUsingBinding find bindings with status `Using` in BindRecord.
-func (br *BindRecord) FindUsingBinding(hint string) *Binding {
+// FindBinding find bindings in BindRecord.
+func (br *BindRecord) FindBinding(hint string) *Binding {
 	for _, binding := range br.Bindings {
-		if binding.Status == Using && binding.id == hint {
+		if binding.id == hint {
 			return &binding
 		}
 	}
 	return nil
 }
 
-func (br *BindRecord) prepareHintsForUsing(sctx sessionctx.Context, is infoschema.InfoSchema) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
-		if bind.Status != Using || bind.Hint != nil {
+		if bind.Hint != nil || bind.id != "" {
 			continue
 		}
 		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
@@ -143,6 +149,16 @@ func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 		}
 	}
 	return result
+}
+
+func (br *BindRecord) removeDeletedBindings() *BindRecord {
+	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, Bindings: make([]Binding, 0, len(br.Bindings))}
+	for _, binding := range br.Bindings {
+		if binding.Status != deleted {
+			result.Bindings = append(result.Bindings, binding)
+		}
+	}
+	return &result
 }
 
 // shallowCopy shallow copies the BindRecord.
