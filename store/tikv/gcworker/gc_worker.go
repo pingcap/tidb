@@ -170,6 +170,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelGCWorker).Inc()
 		}
 	}()
+WaitingDone:
 	for {
 		select {
 		case <-ticker.C:
@@ -179,7 +180,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			w.lastFinish = time.Now()
 			if err != nil {
 				logutil.Logger(ctx).Error("[gc worker] runGCJob", zap.Error(err))
-				break
+				break WaitingDone
 			}
 		case <-ctx.Done():
 			logutil.Logger(ctx).Info("[gc worker] quit", zap.String("uuid", w.uuid))

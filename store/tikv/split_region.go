@@ -32,10 +32,7 @@ import (
 )
 
 func equalRegionStartKey(key, regionStartKey []byte) bool {
-	if bytes.Equal(key, regionStartKey) {
-		return true
-	}
-	return false
+	return bytes.Equal(key, regionStartKey)
 }
 
 func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {

@@ -819,8 +819,9 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 		return pb.CommandPri_Low
 	case kv.PriorityHigh:
 		return pb.CommandPri_High
+	default:
+		return pb.CommandPri_Normal
 	}
-	return pb.CommandPri_Normal
 }
 
 func (c *twoPhaseCommitter) setDetail(d *execdetails.CommitDetails) {

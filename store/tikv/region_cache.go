@@ -1150,7 +1150,6 @@ retry:
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
-	return
 }
 
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.
@@ -1304,7 +1303,6 @@ retryMarkResolved:
 	if !s.compareAndSwapState(oldState, newState) {
 		goto retryMarkResolved
 	}
-	return
 }
 
 func (s *Store) getResolveState() resolveState {
