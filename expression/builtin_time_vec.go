@@ -1526,7 +1526,6 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			if isNull {
 				result.SetNull(i, true)
 			}
-		
 		}
 	} else {
 		result.MergeNulls(timeBuf)
@@ -1546,7 +1545,6 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			Ts[i] = *tmp
 		}
 	}
-
 	return nil
 }
 
