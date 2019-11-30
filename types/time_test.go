@@ -841,18 +841,16 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"11:30:45.123456", 0},
 		{"1 11:30:45.999999", 0},
 	}
-
-	sc = mock.NewContext().GetSessionVars().StmtCtx
+	// test different time zone.
 	sc.TimeZone = time.UTC
 	for _, t := range tblDuration {
 		v, err := types.ParseDuration(sc, t.Input, t.Fsp)
 		c.Assert(err, IsNil)
-		year, month, day := time.Now().In(time.UTC).Date()
-		n := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+		year, month, day := time.Now().In(sc.TimeZone).Date()
+		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
 		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		// TODO: Consider time_zone variable.
-		t1, _ := t.Time.GoTime(time.UTC)
+		t1, _ := t.Time.GoTime(sc.TimeZone)
 		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
