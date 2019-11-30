@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -2212,109 +2211,6 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
-	serversInfo, err := GetClusterServerInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var finalRows [][]types.Datum
-	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
-	for i, srv := range serversInfo {
-		typ := srv.ServerType
-		address := srv.Address
-		statusAddr := srv.StatusAddr
-		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
-			continue
-		}
-
-		wg.Add(1)
-		go func(index int) {
-			util.WithRecovery(func() {
-				defer wg.Done()
-				var url string
-				switch typ {
-				case "pd":
-					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
-				case "tikv", "tidb":
-					url = fmt.Sprintf("http://%s/config", statusAddr)
-				default:
-					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
-					return
-				}
-				req, err := http.NewRequest(http.MethodGet, url, nil)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				req.Header.Add("PD-Allow-follower-handle", "true")
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				var nested map[string]interface{}
-				if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				terror.Log(resp.Body.Close())
-
-				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				// Sorts by keys and make the result stable
-				type item struct {
-					key string
-					val string
-				}
-				var items []item
-				for key, val := range data {
-					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
-				}
-				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
-				var rows [][]types.Datum
-				for _, item := range items {
-					rows = append(rows, types.MakeDatums(
-						typ,
-						address,
-						item.key,
-						item.val,
-					))
-				}
-				ch <- result{idx: index, rows: rows}
-			}, nil)
-		}(i)
-	}
-
-	wg.Wait()
-	close(ch)
-
-	// Keep the original order to make the result more stable
-	var results []result
-	for result := range ch {
-		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-			continue
-		}
-		results = append(results, result)
-	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
-}
-
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
@@ -2488,8 +2384,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
-	case TableTiDBClusterConfig:
-		fullRows, err = dataForClusterConfig(ctx)
 	case tableTiDBClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
