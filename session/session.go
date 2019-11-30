@@ -1317,7 +1317,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
-		if err := s.txn.changePendingToValid(txnCap); err != nil {
+		if err := s.txn.changePendingToValid(txnCap, s.sessionVars.TxnCtx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -1335,7 +1335,6 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
-		s.txn.SetOption(kv.TxnCtx, s.sessionVars.TxnCtx)
 	}
 	return &s.txn, nil
 }
@@ -1395,18 +1394,18 @@ func (s *session) NewTxn(ctx context.Context) error {
 		return err
 	}
 	txn.SetCap(s.getMembufCap())
-	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
+	txnCtx := &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 	}
+	s.sessionVars.TxnCtx = txnCtx
+	s.txn.changeInvalidToValid(txn, txnCtx)
 	return nil
 }
 
@@ -1942,6 +1941,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		Killed:        &s.sessionVars.Killed,
+		KVVars:        s.sessionVars.KVVars,
 	}
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
@@ -1983,7 +1983,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
-	s.txn.changeInvalidToValid(txn)
+	s.txn.changeInvalidToValid(txn, s.sessionVars.TxnCtx)
 	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {

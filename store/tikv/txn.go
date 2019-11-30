@@ -65,7 +65,6 @@ type tikvTxn struct {
 	lockedMap map[string]struct{}
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
-	vars      *kv.Variables
 	committer *twoPhaseCommitter
 	ctx       *variable.TransactionContext
 
@@ -94,22 +93,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uin
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
-		vars:      kv.DefaultVars,
 	}, nil
-}
-
-type assertionPair struct {
-	key       kv.Key
-	assertion kv.AssertionType
-}
-
-func (a assertionPair) String() string {
-	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
-}
-
-func (txn *tikvTxn) SetVars(vars *kv.Variables) {
-	txn.vars = vars
-	txn.snapshot.vars = vars
 }
 
 // SetCap sets the transaction's MemBuffer capability, to reduce memory allocations.
@@ -233,7 +217,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
 	case kv.TxnCtx:
-		txn.ctx = val.(*variable.TransactionContext)
+		txnCtx := val.(*variable.TransactionContext)
+		txn.ctx = txnCtx
 	}
 }
 
@@ -398,7 +383,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, lockWaitTi
 			assignedPrimaryKey = true
 		}
 
-		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
+		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff)
+		if txn.ctx != nil {
+			bo = bo.WithVars(txn.ctx.KVVars)
+		}
 		txn.committer.forUpdateTS = forUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.

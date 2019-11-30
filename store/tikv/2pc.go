@@ -406,7 +406,10 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
+		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
+		if c.txn.ctx != nil {
+			secondaryBo = secondaryBo.WithVars(c.txn.ctx.KVVars)
+		}
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
@@ -1029,7 +1032,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			c.cleanWg.Add(1)
 			go func() {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
+				bo := NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff)
+				if c.txn.ctx != nil {
+					bo = bo.WithVars(c.txn.ctx.KVVars)
+				}
+				err := c.cleanupKeys(bo, c.keys)
 				if err != nil {
 					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
@@ -1045,7 +1052,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}()
 
 	binlogChan := c.prewriteBinlog(ctx)
-	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
+	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	if c.txn.ctx != nil {
+		prewriteBo = prewriteBo.WithVars(c.txn.ctx.KVVars)
+	}
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
 	commitDetail := c.getDetail()
@@ -1071,7 +1081,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	start = time.Now()
 	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+	bo := NewBackoffer(ctx, tsoMaxBackoff)
+	if c.txn.ctx != nil {
+		bo = bo.WithVars(c.txn.ctx.KVVars)
+	}
+	commitTS, err := c.store.getTimestampWithRetry(bo)
 	if err != nil {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),
@@ -1101,7 +1115,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 
 	start = time.Now()
-	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
+	commitBo := NewBackoffer(ctx, CommitMaxBackoff)
+	if c.txn.ctx != nil {
+		commitBo = commitBo.WithVars(c.txn.ctx.KVVars)
+	}
 	err = c.commitKeys(commitBo, c.keys)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {

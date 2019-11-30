@@ -118,6 +118,7 @@ type TransactionContext struct {
 	IsPessimistic  bool
 
 	Killed *uint32
+	KVVars *kv.Variables
 }
 
 // UpdateDeltaForTable updates the delta info for some table.

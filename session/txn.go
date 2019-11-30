@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -110,7 +111,8 @@ func (st *TxnState) GoString() string {
 	return s.String()
 }
 
-func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
+func (st *TxnState) changeInvalidToValid(txn kv.Transaction, txnCtx *variable.TransactionContext) {
+	txn.SetOption(kv.TxnCtx, txnCtx)
 	st.Transaction = txn
 	st.txnFuture = nil
 }
@@ -120,7 +122,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid(txnCap int) error {
+func (st *TxnState) changePendingToValid(txnCap int, txnCtx *variable.TransactionContext) error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -134,6 +136,7 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 		return err
 	}
 	txn.SetCap(txnCap)
+	txn.SetOption(kv.TxnCtx, txnCtx)
 	st.Transaction = txn
 	return nil
 }
