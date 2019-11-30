@@ -289,6 +289,27 @@ func (g *constJSONGener) gen() interface{} {
 	return *j
 }
 
+type decimalJSONGener struct {
+	nullRation float64
+}
+
+func (g *decimalJSONGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+
+	var f float64
+	if rand.Float64() < 0.5 {
+		f = rand.Float64() * 100000
+	} else {
+		f = -rand.Float64() * 100000
+	}
+	if err := (&types.MyDecimal{}).FromFloat64(f); err != nil {
+		panic(err)
+	}
+	return json.CreateBinary(f)
+}
+
 type jsonStringGener struct{}
 
 func (g *jsonStringGener) gen() interface{} {
@@ -583,12 +604,17 @@ func (g *dateTimeStrGener) gen() interface{} {
 
 // timeStrGener is used to generate strings which are time format
 type timeStrGener struct {
-	Year  int
-	Month int
-	Day   int
+	Year       int
+	Month      int
+	Day        int
+	NullRation float64
 }
 
 func (g *timeStrGener) gen() interface{} {
+	if g.NullRation > 1e-6 && rand.Float64() < g.NullRation {
+		return nil
+	}
+
 	if g.Year == 0 {
 		g.Year = 1970 + rand.Intn(100)
 	}
@@ -603,9 +629,14 @@ func (g *timeStrGener) gen() interface{} {
 }
 
 // dateStrGener is used to generate strings which are data format
-type dateStrGener struct{}
+type dateStrGener struct {
+	nullRation float64
+}
 
 func (g *dateStrGener) gen() interface{} {
+	if g.nullRation > 1e-6 && rand.Float64() < g.nullRation {
+		return nil
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
@@ -626,6 +657,13 @@ type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+type randDurDecimal struct{}
+
+func (g *randDurDecimal) gen() interface{} {
+	d := new(types.MyDecimal)
+	return d.FromFloat64(float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60)))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
@@ -1015,6 +1053,23 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					AuthUsername: "tidb",
 				}
 			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+				}
+			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -1216,6 +1271,23 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					CurrentUser:  true,
 					AuthHostname: "localhost",
 					AuthUsername: "tidb",
+				}
+			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
