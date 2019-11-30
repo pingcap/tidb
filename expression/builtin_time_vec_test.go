@@ -158,10 +158,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&unitStrGener{}, nil, nil}},
 	},
 	ast.TimestampLiteral: {},
-	ast.SubDate: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
-	},
-	ast.AddDate: {},
+	ast.SubDate:          {},
+	ast.AddDate:          {},
 	ast.SubTime: {
 		{
 			retEvalType:   types.ETString,
@@ -175,6 +173,16 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{
 				&timeStrGener{},
 				&timeStrGener{},
+			},
+		},
+		// builtinSubDateAndDurationSig
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDuration},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 			},
 		},
 		// builtinSubTimeStringNullSig

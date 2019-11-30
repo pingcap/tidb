@@ -2177,6 +2177,8 @@ func (b *builtinSubDateAndDurationSig) vectorized() bool {
 	return true
 }
 
+// evalString evals a builtinSubDateAndDurationSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETDuration, n)
