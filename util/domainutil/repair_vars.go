@@ -32,6 +32,8 @@ var RepairInfo repairInfo
 
 // InRepairMode indicates whether TiDB is in repairMode.
 func (r *repairInfo) InRepairMode() bool {
+	r.RLock()
+	defer r.RUnlock()
 	return r.repairMode
 }
 
@@ -44,6 +46,8 @@ func (r *repairInfo) SetRepairMode(mode bool) {
 
 // GetRepairTableList gets repairing table list.
 func (r *repairInfo) GetRepairTableList() []string {
+	r.RLock()
+	defer r.RUnlock()
 	return r.repairTableList
 }
 
@@ -55,16 +59,6 @@ func (r *repairInfo) SetRepairTableList(list []string) {
 	r.Lock()
 	defer r.Unlock()
 	r.repairTableList = list
-}
-
-// GetTablesInRepair return the map of repaired table in repair.
-func (r *repairInfo) GetTablesInRepair() map[int64]*model.DBInfo {
-	return r.repairDBInfoMap
-}
-
-// GetRepairCleanFunc return a func for call back when repair action done.
-func (r *repairInfo) GetRepairCleanFunc() func(a, b string) {
-	return r.RemoveFromRepairInfo
 }
 
 // CheckAndFetchRepairedTable fetches the repairing table list from meta, true indicates fetch success.
