@@ -602,6 +602,8 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 func (s *testTimeSuite) TestToNumber(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	sc.TimeZone = losAngelesTz
 	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
@@ -620,7 +622,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := types.ParseTime(nil, test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -643,7 +645,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := types.ParseTime(nil, test.Input, mysql.TypeDate, 0)
+		t, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -803,6 +805,10 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestConvert(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	sc.TimeZone = losAngelesTz
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -819,7 +825,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := types.ParseTime(nil, t.Input, mysql.TypeDatetime, t.Fsp)
+		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, t.Fsp)
 		c.Assert(err, IsNil)
 		nv, err := v.ConvertToDuration()
 		c.Assert(err, IsNil)
@@ -836,7 +842,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"1 11:30:45.999999", 0},
 	}
 
-	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc = mock.NewContext().GetSessionVars().StmtCtx
 	sc.TimeZone = time.UTC
 	for _, t := range tblDuration {
 		v, err := types.ParseDuration(sc, t.Input, t.Fsp)
