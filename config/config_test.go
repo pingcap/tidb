@@ -100,11 +100,11 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 		_, err = f.WriteString(confStr)
 		c.Assert(err, IsNil)
 		c.Assert(conf.Load(configFile), IsNil)
+		c.Assert(conf.Valid(), valid)
 		c.Assert(conf.Log.EnableErrorStack, Equals, expectedEnableErrorStack)
 		c.Assert(conf.Log.DisableErrorStack, Equals, expectedDisableErrorStack)
 		c.Assert(conf.Log.EnableTimestamp, Equals, expectedEnableTimestamp)
 		c.Assert(conf.Log.DisableTimestamp, Equals, expectedDisableTimestamp)
-		c.Assert(conf.Valid(), valid)
 		c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }))
 		f.Truncate(0)
 		f.Seek(0, 0)
@@ -135,13 +135,13 @@ disable-timestamp = true
 [Log]
 enable-timestamp = true
 disable-timestamp = true
-`, nbUnset, nbUnset, nbTrue, nbTrue, false, true, NotNil)
+`, nbUnset, nbUnset, nbTrue, nbUnset, false, true, IsNil)
 
 	testLoad(`
 [Log]
 enable-error-stack = false
 disable-error-stack = false
-`, nbFalse, nbFalse, nbUnset, nbUnset, false, true, NotNil)
+`, nbFalse, nbUnset, nbUnset, nbUnset, false, true, IsNil)
 
 }
 

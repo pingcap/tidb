@@ -136,7 +136,7 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`DROP USER 'u_tp'@'localhost';`)
 }
 
-func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -170,7 +170,7 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 }
 
-func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
+func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -231,7 +231,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	c.Assert(planStr[0] < planStr[1], IsTrue, Commentf("plan 1: %v, plan 2: %v", planStr[0], planStr[1]))
 }
 
-func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
