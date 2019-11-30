@@ -1515,25 +1515,18 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 	}
 	defer b.bufAllocator.put(timeBuf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, timeBuf); err != nil {
-		var row chunk.Row
+		var isNull bool
+		var temp *types.MyDecimal
 		for i := 0; i < n; i++ {
-			row = input.GetRow(i)
-			val, isNull, err := b.args[0].EvalTime(b.ctx, row)
-			if isNull || err != nil {
-				Ts[i] = *new(types.MyDecimal)
-				result.SetNull(i, true)
-				continue
-			}
-			t, err := val.Time.GoTime(getTimeZone(b.ctx))
-			if err != nil {
-				Ts[i] = *new(types.MyDecimal)
-				continue
-			}
-			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			temp, isNull, err = b.evalDecimal(input.GetRow(i))
 			if err != nil {
 				return err
 			}
-			Ts[i] = *tmp
+			Ts[i] = *temp
+			if isNull {
+				result.SetNull(i, true)
+			}
+		
 		}
 	} else {
 		result.MergeNulls(timeBuf)
