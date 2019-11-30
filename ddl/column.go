@@ -626,20 +626,3 @@ func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnIn
 	}
 	return nil
 }
-
-func columnSliceEqual(a, b []*model.IndexColumn) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	// Accelerate the compare by eliminate index bound check.
-	b = b[:len(a)]
-	for i, v := range a {
-		if v.Name.L != b[i].Name.L {
-			return false
-		}
-	}
-	return true
-}

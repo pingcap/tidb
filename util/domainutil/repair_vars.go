@@ -15,15 +15,16 @@ package domainutil
 
 import (
 	"strings"
-	"sync/atomic"
+	"sync"
 
 	"github.com/pingcap/parser/model"
 )
 
 type repairInfo struct {
-	repairMode      atomic.Value
-	repairTableList atomic.Value
-	repairDBInfoMap atomic.Value
+	sync.RWMutex
+	repairMode      bool
+	repairTableList []string
+	repairDBInfoMap map[int64]*model.DBInfo
 }
 
 // RepairInfo indicates the repaired table info.
@@ -31,17 +32,19 @@ var RepairInfo repairInfo
 
 // InRepairMode indicates whether TiDB is in repairMode.
 func (r *repairInfo) InRepairMode() bool {
-	return r.repairMode.Load().(bool)
+	return r.repairMode
 }
 
 // SetRepairMode sets whether TiDB is in repairMode.
 func (r *repairInfo) SetRepairMode(mode bool) {
-	r.repairMode.Store(mode)
+	r.Lock()
+	defer r.Unlock()
+	r.repairMode = mode
 }
 
 // GetRepairTableList gets repairing table list.
 func (r *repairInfo) GetRepairTableList() []string {
-	return r.repairTableList.Load().([]string)
+	return r.repairTableList
 }
 
 // SetRepairTableList sets repairing table list.
@@ -49,27 +52,30 @@ func (r *repairInfo) SetRepairTableList(list []string) {
 	for i, one := range list {
 		list[i] = strings.ToLower(one)
 	}
-	r.repairTableList.Store(list)
+	r.Lock()
+	defer r.Unlock()
+	r.repairTableList = list
 }
 
 // GetTablesInRepair return the map of repaired table in repair.
 func (r *repairInfo) GetTablesInRepair() map[int64]*model.DBInfo {
-	return r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
+	return r.repairDBInfoMap
 }
 
 // GetRepairCleanFunc return a func for call back when repair action done.
 func (r *repairInfo) GetRepairCleanFunc() func(a, b string) {
-	return r.RemoveFromRepairList
+	return r.RemoveFromRepairInfo
 }
 
 // CheckAndFetchRepairedTable fetches the repairing table list from meta, true indicates fetch success.
 func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.TableInfo) bool {
-	if !r.repairMode.Load().(bool) {
+	r.Lock()
+	defer r.Unlock()
+	if !r.repairMode {
 		return false
 	}
 	isRepair := false
-	ls := r.repairTableList.Load().([]string)
-	for _, tn := range ls {
+	for _, tn := range r.repairTableList {
 		// Use dbName and tableName to specify a table.
 		if strings.ToLower(tn) == di.Name.L+"."+tbl.Name.L {
 			isRepair = true
@@ -77,18 +83,16 @@ func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.Tab
 		}
 	}
 	if isRepair {
-		mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
 		// Record the repaired table in Map.
-		if repairedDB, ok := mp[di.ID]; ok {
+		if repairedDB, ok := r.repairDBInfoMap[di.ID]; ok {
 			repairedDB.Tables = append(repairedDB.Tables, tbl)
 		} else {
 			// Shallow copy the DBInfo.
 			repairedDB := di.Copy()
 			// Clean the tables and set repaired table.
 			repairedDB.Tables = []*model.TableInfo{tbl}
-			mp[di.ID] = repairedDB
+			r.repairDBInfoMap[di.ID] = repairedDB
 		}
-		r.repairDBInfoMap.Store(mp)
 		return true
 	}
 	return false
@@ -96,8 +100,9 @@ func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.Tab
 
 // GetRepairedTableInfoByTableName is exported for test.
 func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLowerName string) (*model.TableInfo, *model.DBInfo) {
-	mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
-	for _, db := range mp {
+	r.RLock()
+	defer r.RUnlock()
+	for _, db := range r.repairDBInfoMap {
 		if db.Name.L != schemaLowerName {
 			continue
 		}
@@ -111,27 +116,20 @@ func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLower
 	return nil, nil
 }
 
-// RemoveFromRepairList remove the table from repair info when repaired.
-func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string) {
+// RemoveFromRepairInfo remove the table from repair info when repaired.
+func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string) {
 	repairedLowerName := schemaLowerName + "." + tableLowerName
 	// Remove from the repair list.
-	ls := r.repairTableList.Load().([]string)
-	lsCopy := make([]string, 0, len(ls))
-	copy(lsCopy, ls)
-	for i, rt := range lsCopy {
+	r.Lock()
+	defer r.Unlock()
+	for i, rt := range r.repairTableList {
 		if strings.ToLower(rt) == repairedLowerName {
-			lsCopy = append(lsCopy[:i], lsCopy[i+1:]...)
+			r.repairTableList = append(r.repairTableList[:i], r.repairTableList[i+1:]...)
 			break
 		}
 	}
-	r.repairTableList.Store(lsCopy)
 	// Remove from the repair map.
-	mp := r.repairDBInfoMap.Load().(map[int64]*model.DBInfo)
-	mpCopy := make(map[int64]*model.DBInfo, len(mp))
-	for i, db := range mp {
-		mpCopy[i] = db.Copy()
-	}
-	for _, db := range mpCopy {
+	for _, db := range r.repairDBInfoMap {
 		if db.Name.L == schemaLowerName {
 			for j, t := range db.Tables {
 				if t.Name.L == tableLowerName {
@@ -140,15 +138,14 @@ func (r *repairInfo) RemoveFromRepairList(schemaLowerName, tableLowerName string
 				}
 			}
 			if len(db.Tables) == 0 {
-				delete(mpCopy, db.ID)
+				delete(r.repairDBInfoMap, db.ID)
 			}
 			break
 		}
 	}
-	if len(mpCopy) == 0 {
-		r.repairMode.Store(false)
+	if len(r.repairDBInfoMap) == 0 {
+		r.repairMode = false
 	}
-	r.repairDBInfoMap.Store(mpCopy)
 }
 
 // repairKeyType is keyType for admin repair table.
@@ -173,7 +170,7 @@ func (t repairKeyType) String() (res string) {
 
 func init() {
 	RepairInfo = repairInfo{}
-	RepairInfo.repairMode.Store(false)
-	RepairInfo.repairTableList.Store([]string{})
-	RepairInfo.repairDBInfoMap.Store(make(map[int64]*model.DBInfo))
+	RepairInfo.repairMode = false
+	RepairInfo.repairTableList = []string{}
+	RepairInfo.repairDBInfoMap = make(map[int64]*model.DBInfo)
 }

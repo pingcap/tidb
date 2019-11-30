@@ -3958,21 +3958,27 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		return err
 	}
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
-	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
-	for i, newOne := range newTableInfo.Indices {
-		old := getIndexInfoByNameAndColumn(oldTableInfo, newOne)
-		if old == nil {
-			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
-		}
-		newTableInfo.Indices[i].ID = old.ID
-	}
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, newOne := range newTableInfo.Columns {
 		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
 		if old == nil {
 			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
 		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
+		}
 		newTableInfo.Columns[i].ID = old.ID
+	}
+	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
+	for i, newOne := range newTableInfo.Indices {
+		old := getIndexInfoByNameAndColumn(oldTableInfo, newOne)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " type should be the same")
+		}
+		newTableInfo.Indices[i].ID = old.ID
 	}
 
 	newTableInfo.State = model.StatePublic
@@ -3993,7 +3999,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		// Remove the old TableInfo from repairInfo before domain reload.
-		domainutil.RepairInfo.RemoveFromRepairList(oldDBInfo.Name.L, oldTableInfo.Name.L)
+		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)

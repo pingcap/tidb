@@ -2033,7 +2033,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: database test is not in repair")
 
 	// Test repair table when the table isn't in repairInfo.
-	s.tk.MustExec("CREATE TABLE other_table (a int, b varchar(1));")
+	s.tk.MustExec("CREATE TABLE other_table (a int, b varchar(1), key using hash(b));")
 	_, err = s.tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: table t is not in repair")
@@ -2053,10 +2053,20 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column c has lost")
 
+	// Test column type should be the same.
+	_, err = s.tk.Exec("admin repair table other_table CREATE TABLE other_table (a bigint, b varchar(1), key using hash(b));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column a type should be the same")
+
 	// Test index lost in repair table.
 	_, err = s.tk.Exec("admin repair table other_table CREATE TABLE other_table (a int unique);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index a has lost")
+
+	// Test index type should be the same.
+	_, err = s.tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, b varchar(2) unique)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index b type should be the same")
 
 	// Test sub create statement in repair statement with the same name.
 	_, err = s.tk.Exec("admin repair table other_table CREATE TABLE other_table (a int);")
@@ -2066,7 +2076,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
 	s.tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
-	_, err = s.tk.Exec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a float, b varchar(2));")
+	_, err = s.tk.Exec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
 	c.Assert(err, IsNil)
 	repairTable := testGetTableByName(c, s.s, "test", "otHeR_tAbLe")
 	c.Assert(repairTable.Meta().Name.O, Equals, "otHeR_tAbLe")
@@ -2112,7 +2122,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
-	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a float primary key, b varchar(5), c int auto_increment);")
+	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key, b varchar(5), c int auto_increment);")
 	c.Assert(repairErr, IsNil)
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
@@ -2127,14 +2137,14 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	c.Assert(repairTable.Meta().Indices[0].ID, Equals, originTableInfo.Columns[0].ID)
 	c.Assert(repairTable.Meta().AutoIncID, Equals, originTableInfo.AutoIncID)
 
-	c.Assert(repairTable.Meta().Columns[0].Tp, Equals, mysql.TypeFloat)
+	c.Assert(repairTable.Meta().Columns[0].Tp, Equals, mysql.TypeLong)
 	c.Assert(repairTable.Meta().Columns[1].Tp, Equals, mysql.TypeVarchar)
 	c.Assert(repairTable.Meta().Columns[1].Flen, Equals, 5)
 	c.Assert(repairTable.Meta().Columns[2].Tp, Equals, mysql.TypeLong)
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := s.tk.MustQuery("show create table origin")
-	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` float NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 
@@ -2194,7 +2204,7 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition pnew has lost")
 
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
-	s.tk.MustExec("admin repair table origin create table origin_rename (a bigint not null) partition by RANGE(a) (" +
+	s.tk.MustExec("admin repair table origin create table origin_rename (a int not null) partition by RANGE(a) (" +
 		"partition p10 values less than (10)," +
 		"partition p30 values less than (30)," +
 		"partition p50 values less than (50)," +
@@ -2213,15 +2223,15 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 	s.tk.MustExec("drop table if exists origin")
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.origin"})
-	s.tk.MustExec("create table origin (a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	s.tk.MustExec("create table origin (a varchar(1), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
 
 	// Test partition num in repair should be exactly same with old one, other wise will cause partition semantic problem.
-	_, err = s.tk.Exec("admin repair table origin create table origin (a bigint, b bigint not null, c int, key idx(c)) partition by hash(b) partitions 20")
+	_, err = s.tk.Exec("admin repair table origin create table origin (a varchar(2), b int not null, c int, key idx(c)) partition by hash(b) partitions 20")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Hash partition num should be the same")
 
 	originTableInfo, _ = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
-	s.tk.MustExec("admin repair table origin create table origin (a bigint, b bigint not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	s.tk.MustExec("admin repair table origin create table origin (a varchar(3), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
 	repairTable = testGetTableByName(c, s.s, "test", "origin")
 	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
 	c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 30)

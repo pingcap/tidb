@@ -1510,9 +1510,27 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 func getIndexInfoByNameAndColumn(oldTableInfo *model.TableInfo, newOne *model.IndexInfo) *model.IndexInfo {
 	for _, oldOne := range oldTableInfo.Indices {
-		if newOne.Name.L == oldOne.Name.L && columnSliceEqual(newOne.Columns, oldOne.Columns) {
+		if newOne.Name.L == oldOne.Name.L && indexColumnSliceEqual(newOne.Columns, oldOne.Columns) {
 			return oldOne
 		}
 	}
 	return nil
+}
+
+func indexColumnSliceEqual(a, b []*model.IndexColumn) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		logutil.BgLogger().Warn("[ddl] admin repair table : index's columns length equal to 0")
+		return true
+	}
+	// Accelerate the compare by eliminate index bound check.
+	b = b[:len(a)]
+	for i, v := range a {
+		if v.Name.L != b[i].Name.L {
+			return false
+		}
+	}
+	return true
 }
