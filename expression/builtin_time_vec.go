@@ -1704,10 +1704,8 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 	}
 	defer b.bufAllocator.put(timeBuf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, timeBuf); err != nil {
-		var isNull bool
-		var temp *types.MyDecimal
 		for i := 0; i < n; i++ {
-			temp, isNull, err = b.evalDecimal(input.GetRow(i))
+			temp, isNull, err := b.evalDecimal(input.GetRow(i))
 			if err != nil {
 				return err
 			}
