@@ -2661,11 +2661,92 @@ func (b *builtinUTCTimestampWithoutArgSig) vecEvalTime(input *chunk.Chunk, resul
 }
 
 func (b *builtinConvertTzSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	// fromTz
+	fromTzBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(fromTzBuf)
+	if err = b.args[1].VecEvalString(b.ctx, input, fromTzBuf); err != nil {
+		return err
+	}
+
+	// toTz
+	toTzBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(toTzBuf)
+	if err = b.args[2].VecEvalString(b.ctx, input, toTzBuf); err != nil {
+		return err
+	}
+
+	// dt
+	if err = b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(fromTzBuf, toTzBuf)
+	times := result.Times()
+	fsp := int8(b.tp.Decimal)
+	var fromTzMatched, toTzMatched bool
+	var fromTzStr, toTzStr string
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		fromTzStr = fromTzBuf.GetString(i)
+		toTzStr = toTzBuf.GetString(i)
+		fromTzMatched = b.timezoneRegex.MatchString(fromTzStr)
+		toTzMatched = b.timezoneRegex.MatchString(toTzStr)
+
+		if !fromTzMatched && !toTzMatched {
+			fromTz, err := time.LoadLocation(fromTzStr)
+			if err != nil {
+				result.SetNull(i, true)
+				continue
+			}
+
+			toTz, err := time.LoadLocation(toTzStr)
+			if err != nil {
+				result.SetNull(i, true)
+				continue
+			}
+
+			t, err := times[i].Time.GoTime(fromTz)
+			if err != nil {
+				result.SetNull(i, true)
+				continue
+			}
+
+			times[i] = types.Time{
+				Time: types.FromGoTime(t.In(toTz)),
+				Type: mysql.TypeDatetime,
+				Fsp:  fsp,
+			}
+		}
+		if fromTzMatched && toTzMatched {
+			t, err := times[i].Time.GoTime(time.Local)
+			if err != nil {
+				result.SetNull(i, true)
+				continue
+			}
+
+			times[i] = types.Time{
+				Time: types.FromGoTime(t.Add(timeZone2Duration(toTzStr) - timeZone2Duration(fromTzStr))),
+				Type: mysql.TypeDatetime,
+				Fsp:  fsp,
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {

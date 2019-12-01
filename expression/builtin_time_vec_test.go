@@ -72,6 +72,21 @@ func (g *dateTimeUnitStrGener) gen() interface{} {
 	return dateTimes[n]
 }
 
+// tzStrGener is used to generate strings which are timezones
+type tzStrGener struct{}
+
+func (g *tzStrGener) gen() interface{} {
+	tzs := []string{
+		"GMT",
+		"MET",
+		"+00:00",
+		"+10:00",
+	}
+
+	n := rand.Int() % len(tzs)
+	return tzs[n]
+}
+
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
@@ -329,6 +344,17 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Extract: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeUnitStrGener{}, nil}},
+	},
+	ast.ConvertTz: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.9}},
+				&tzStrGener{},
+				&tzStrGener{},
+			},
+		},
 	},
 }
 
