@@ -970,11 +970,64 @@ func (b *builtinAddDateDurationStringSig) vecEvalDuration(input *chunk.Chunk, re
 }
 
 func (b *builtinSubStringAndDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	arg1s := buf1.GoDurations()
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		arg0 := buf0.GetString(i)
+		arg1 := arg1s[i]
+
+		sc := b.ctx.GetSessionVars().StmtCtx
+		fsp1 := int8(b.args[1].GetType().Decimal)
+		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+
+		var output string
+		if isDuration(arg0) {
+			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			if err != nil {
+				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+					sc.AppendWarning(err)
+					result.AppendNull()
+					continue
+				}
+				return err
+			}
+		} else {
+			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			if err != nil {
+				return err
+			}
+		}
+		result.AppendString(output)
+
+	}
+	return nil
 }
 
 func (b *builtinFromDaysSig) vectorized() bool {

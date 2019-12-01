@@ -175,6 +175,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 				&timeStrGener{},
 			},
 		},
+		// builtinSubStringAndDurationSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
 		// builtinSubTimeStringNullSig
 		{
 			retEvalType:        types.ETString,
