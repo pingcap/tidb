@@ -14,6 +14,7 @@
 package server
 
 import (
+	"github.com/pingcap/tidb/util/mock"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -163,7 +164,12 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 
 	var d types.Datum
 
-	time, err := types.ParseTime(nil, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	sc.TimeZone = losAngelesTz
+
+	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
@@ -171,7 +177,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
 
-	duration, err := types.ParseDuration(nil, "11:30:45", 0)
+	duration, err := types.ParseDuration(sc, "11:30:45", 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
