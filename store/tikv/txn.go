@@ -289,7 +289,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}
 	defer committer.ttlManager.close()
-	if err := committer.initKeysAndMutations(); err != nil {
+	// TODO: make it as session variable
+	if err := committer.initKeysAndMutations(true); err != nil {
 		return errors.Trace(err)
 	}
 	if len(committer.keys) == 0 {
@@ -301,7 +302,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		if ctxValue != nil {
 			commitDetail := ctxValue.(**execdetails.CommitDetails)
 			if *commitDetail != nil {
-				(*commitDetail).TxnRetry += 1
+				(*commitDetail).TxnRetry++
 			} else {
 				*commitDetail = committer.getDetail()
 			}
