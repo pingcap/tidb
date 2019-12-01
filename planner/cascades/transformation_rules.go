@@ -634,3 +634,86 @@ func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	}
 	return finalGroupExprs, true, false, nil
 }
+
+// MergeAdjacentProjection merge the adjacent projection.
+type MergeAdjacentProjection struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentProjection creates a new Transformation MergeAdjacentProjection.
+// The pattern of this rule is `Projection -> Projection`.
+func NewRuleMergeAdjacentProjection() Transformation {
+	rule := &MergeAdjacentProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandProjection, memo.EngineAll),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `proj->proj->x` to `proj->x`
+// or just keep the selection unchanged.
+func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	if plannercore.ExprsHasSideEffects(child.Exprs) {
+		return nil, false, false, nil
+	}
+
+	replace := make(map[string]*expression.Column)
+	for i, col := range child.Schema().Columns {
+		if col1, ok := child.Exprs[i].(*expression.Column); ok {
+			replace[string(col.HashCode(nil))] = col1
+		} else {
+			return nil, false, false, nil
+		}
+	}
+
+	for i, expr := range proj.Exprs {
+		resolveExprAndReplace(expr, replace)
+		proj.Exprs[i] = replaceColumnOfExpr(proj.Exprs[i], child)
+	}
+
+	childGroup := old.Children[0].GetExpr().Children[0]
+	old.GetExpr().SetChildren(childGroup)
+	return nil, false, false, nil
+}
+
+func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
+	dst := replace[string(origin.HashCode(nil))]
+	if dst != nil {
+		retType, inOperand := origin.RetType, origin.InOperand
+		*origin = *dst
+		origin.RetType, origin.InOperand = retType, inOperand
+	}
+}
+
+func resolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
+	switch expr := origin.(type) {
+	case *expression.Column:
+		resolveColumnAndReplace(expr, replace)
+	case *expression.CorrelatedColumn:
+		resolveColumnAndReplace(&expr.Column, replace)
+	case *expression.ScalarFunction:
+		for _, arg := range expr.GetArgs() {
+			resolveExprAndReplace(arg, replace)
+		}
+	}
+}
+
+func replaceColumnOfExpr(expr expression.Expression, proj *plannercore.LogicalProjection) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		idx := proj.Schema().ColumnIndex(v)
+		if idx != -1 && idx < len(proj.Exprs) {
+			return proj.Exprs[idx]
+		}
+	case *expression.ScalarFunction:
+		for i := range v.GetArgs() {
+			v.GetArgs()[i] = replaceColumnOfExpr(v.GetArgs()[i], proj)
+		}
+	}
+	return expr
+}

@@ -51,6 +51,11 @@ func exprsHasSideEffects(exprs []expression.Expression) bool {
 	return false
 }
 
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []expression.Expression) bool {
+	return exprsHasSideEffects(exprs)
+}
+
 // exprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
 func exprHasSetVarOrSleep(expr expression.Expression) bool {
 	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
