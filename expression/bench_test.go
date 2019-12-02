@@ -669,6 +669,13 @@ func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
+type randDurDecimal struct{}
+
+func (g *randDurDecimal) gen() interface{} {
+	d := new(types.MyDecimal)
+	return d.FromFloat64(float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60)))
+}
+
 // locationGener is used to generate location for the built-in function GetFormat.
 type locationGener struct {
 	nullRation float64
