@@ -307,7 +307,7 @@
       "IndexReader(Index(t.e)[[NULL,+inf]])->HashAgg",
       "IndexReader(Index(t.e)[[-inf,10]]->StreamAgg)->StreamAgg",
       "IndexReader(Index(t.e)[[-inf,50]]->StreamAgg)->StreamAgg",
-      "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)]))->HashAgg",
+      "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->HashAgg)->HashAgg",
       "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
       "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
       "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
