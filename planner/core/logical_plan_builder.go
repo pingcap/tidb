@@ -450,7 +450,18 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			return
 		}
 		ds.preferStoreType |= preferTiFlash
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+		hasTiFlashPath := false
+		for _, path := range ds.possibleAccessPaths {
+			if path.storeType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
+		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
+		if !hasTiFlashPath {
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+		}
 	}
 }
 
