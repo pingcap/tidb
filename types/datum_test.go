@@ -390,8 +390,8 @@ func newMyDecimal(val string, c *C) *MyDecimal {
 
 func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
 	return &FieldType{
-		Tp: tp,
-		Flen: flen,
+		Tp:      tp,
+		Flen:    flen,
 		Decimal: decimal,
 	}
 }
@@ -402,9 +402,9 @@ func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
 	sc.OverflowAsWarning = true
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
-		a Datum
-		res Datum
-		retType *FieldType
+		a         Datum
+		res       Datum
+		retType   *FieldType
 		roundType RoundingType
 	}{
 		// int64 reserve to uint64
