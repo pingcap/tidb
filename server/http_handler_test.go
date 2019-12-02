@@ -379,6 +379,17 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1?decode=true"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data3 map[string]interface{}
+	err = decoder.Decode(&data3)
+	c.Assert(err, IsNil)
+	c.Assert(data3["key"], NotNil)
+	c.Assert(data3["info"], NotNil)
+	c.Assert(data3["data"], NotNil)
+	c.Assert(data3["decode_error"], IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -879,8 +890,20 @@ func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
 func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
+	resp, err := http.Get("http://127.0.0.1:10090/debug/zip?seconds=1")
 	c.Assert(err, IsNil)
-	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	out, err := os.Create("/tmp/tidb_debug.zip")
+	c.Assert(err, IsNil)
+	_, err = io.Copy(out, resp.Body)
+	c.Assert(err, IsNil)
+	fileInfo, err := out.Stat()
+	c.Assert(err, IsNil)
+	c.Assert(fileInfo.Size(), Greater, int64(0))
+	err = out.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove("/tmp/tidb_debug.zip")
+	c.Assert(err, IsNil)
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 }

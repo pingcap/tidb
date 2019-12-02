@@ -38,8 +38,6 @@ const (
 	NormalTable Type = iota
 	// VirtualTable , store no data, just extract data from the memory struct.
 	VirtualTable
-	// MemoryTable , store data only in local memory.
-	MemoryTable
 )
 
 const (
@@ -167,6 +165,9 @@ type Table interface {
 
 	// AllocHandle allocates a handle for a new row.
 	AllocHandle(ctx sessionctx.Context) (int64, error)
+
+	// AllocHandleIds allocates multiple handle for rows.
+	AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error)
 
 	// Allocator returns Allocator.
 	Allocator(ctx sessionctx.Context) autoid.Allocator

@@ -17,7 +17,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestSystimeMonitor(t *testing.T) {
 	var jumpForward int32

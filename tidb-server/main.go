@@ -60,7 +60,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/struCoder/pidusage"
-	_ "go.uber.org/automaxprocs"
+	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
 
@@ -429,6 +429,9 @@ func overrideConfig() {
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
+	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = cfg.Host
+	}
 	var err error
 	if actualFlags[nmPort] {
 		var p int
@@ -566,6 +569,10 @@ func setupLog() {
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
 }
 
 func printInfo() {
@@ -624,7 +631,8 @@ func updateCPUUsageMetrics() {
 
 func setupTracing() {
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
-	tracer, _, err := tracingCfg.New("TiDB")
+	tracingCfg.ServiceName = "TiDB"
+	tracer, _, err := tracingCfg.NewTracer()
 	if err != nil {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
