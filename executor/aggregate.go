@@ -949,64 +949,6 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	return nil
 }
 
-type groupChecker struct {
-	StmtCtx      *stmtctx.StatementContext
-	GroupByItems []expression.Expression
-	curGroupKey  []types.Datum
-	tmpGroupKey  []types.Datum
-}
-
-func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
-	return &groupChecker{
-		StmtCtx:      stmtCtx,
-		GroupByItems: items,
-	}
-}
-
-// meetNewGroup returns a value that represents if the new group is different from last group.
-// TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
-	if len(e.GroupByItems) == 0 {
-		return false, nil
-	}
-	e.tmpGroupKey = e.tmpGroupKey[:0]
-	matched, firstGroup := true, false
-	if len(e.curGroupKey) == 0 {
-		matched, firstGroup = false, true
-	}
-	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row)
-		if err != nil {
-			return false, err
-		}
-		if matched {
-			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
-			if err != nil {
-				return false, err
-			}
-			matched = c == 0
-		}
-		e.tmpGroupKey = append(e.tmpGroupKey, v)
-	}
-	if matched {
-		return false, nil
-	}
-	e.curGroupKey = e.curGroupKey[:0]
-	for _, v := range e.tmpGroupKey {
-		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
-	}
-	return !firstGroup, nil
-}
-
-func (e *groupChecker) reset() {
-	if e.curGroupKey != nil {
-		e.curGroupKey = e.curGroupKey[:0]
-	}
-	if e.tmpGroupKey != nil {
-		e.tmpGroupKey = e.tmpGroupKey[:0]
-	}
-}
-
 // vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
 // It is usually used for streamAgg
 type vecGroupChecker struct {
@@ -1036,7 +978,6 @@ type vecGroupChecker struct {
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
-
 	return &vecGroupChecker{
 		ctx:          ctx,
 		GroupByItems: items,

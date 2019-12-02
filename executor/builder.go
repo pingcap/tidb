@@ -2384,7 +2384,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 	return &WindowExec{baseExecutor: base,
 		processor:      processor,
-		groupChecker:   newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
