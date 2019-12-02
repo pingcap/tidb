@@ -391,12 +391,19 @@ func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession 
 	ssMap.sysVars.Unlock()
 
 	// Calculate the cached `refreshInterval`.
-	interval := 0
+	var interval int
+	var err error
 	if ssMap.isSet(sessionRefreshInterval) {
-		interval, _ = strconv.Atoi(sessionRefreshInterval)
+		interval, err = strconv.Atoi(sessionRefreshInterval)
+		if err != nil {
+			interval = 0
+		}
 	}
 	if interval <= 0 {
-		interval, _ = strconv.Atoi(globalRefreshInterval)
+		interval, err = strconv.Atoi(globalRefreshInterval)
+		if err != nil {
+			interval = 0
+		}
 	}
 	if interval > 0 {
 		atomic.StoreInt64(&ssMap.sysVars.refreshInterval, int64(interval))
@@ -421,12 +428,19 @@ func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool
 	ssMap.sysVars.Unlock()
 
 	// Calculate the cached `historySize`.
-	size := 0
+	var size int
+	var err error
 	if ssMap.isSet(sessionHistorySize) {
-		size, _ = strconv.Atoi(sessionHistorySize)
+		size, err = strconv.Atoi(sessionHistorySize)
+		if err != nil {
+			size = 0
+		}
 	}
 	if size <= 0 {
-		size, _ = strconv.Atoi(globalHistorySize)
+		size, err = strconv.Atoi(globalHistorySize)
+		if err != nil {
+			size = 0
+		}
 	}
 	if size > 0 {
 		atomic.StoreInt32(&ssMap.sysVars.historySize, int32(size))
