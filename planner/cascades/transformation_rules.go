@@ -60,6 +60,9 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
 	},
+	memo.OperandTopN: {
+		NewRulePushTopNDownProjection(),
+	},
 }
 
 type baseRule struct {
@@ -588,4 +591,44 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// PushTopNDownProjection pushes TopN to Projection.
+type PushTopNDownProjection struct {
+	baseRule
+}
+
+// NewRulePushTopNDownProjection creates a new Transformation PushTopNDownProjection.
+func NewRulePushTopNDownProjection() Transformation {
+	rule := &PushTopNDownProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the TopN through Projection.
+func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].GetExpr().Children[0]
+	for _, by := range topN.ByItems {
+		by.Expr = expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs)
+	}
+	// remove meaningless constant sort items.
+	for i := len(topN.ByItems) - 1; i >= 0; i-- {
+		switch topN.ByItems[i].Expr.(type) {
+		case *expression.Constant, *expression.CorrelatedColumn:
+			topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
+		}
+	}
+	projExpr := memo.NewGroupExpr(proj)
+	topNExpr := memo.NewGroupExpr(topN)
+	topNExpr.SetChildren(childGroup)
+	topNGroup := memo.NewGroupWithSchema(topNExpr, childGroup.Prop.Schema)
+	projExpr.SetChildren(topNGroup)
+	return []*memo.GroupExpr{projExpr}, true, false, nil
 }

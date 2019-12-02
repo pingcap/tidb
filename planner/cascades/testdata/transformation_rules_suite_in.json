@@ -25,7 +25,9 @@
     "name": "TestTopNRules",
     "cases": [
       "select b from t order by a limit 2",
-      "select a+b from t order by a limit 1 offset 2"
+      "select a+b from t order by a limit 1 offset 2",
+      "select c from t order by t.a limit 1",
+      "select c from t order by t.a + t.b limit 1"
     ]
   }
 ]
