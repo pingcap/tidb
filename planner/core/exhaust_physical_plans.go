@@ -306,26 +306,36 @@ func (p *LogicalJoin) tryToGetHashJoins(prop *property.PhysicalProperty) ([]Phys
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		if innerBuild {
-			joins = append(joins, p.getHashJoin(prop, 1, true))
-			forced = true
-		} else if innerProbe {
+		// TODO: support exchange the inner and the outer in CARTESIAN join
+		if len(p.EqualConditions) == 0 {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
-			forced = true
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 1, true))
+			if innerBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, true))
+				forced = true
+			} else if innerProbe {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+				forced = true
+			} else {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+				joins = append(joins, p.getHashJoin(prop, 1, true))
+			}
 		}
 	case RightOuterJoin:
-		if innerBuild {
+		// TODO: support exchange the inner and the outer in CARTESIAN join
+		if len(p.EqualConditions) == 0 {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
-			forced = true
-		} else if innerProbe {
-			joins = append(joins, p.getHashJoin(prop, 0, true))
-			forced = true
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 0, false))
-			joins = append(joins, p.getHashJoin(prop, 0, true))
+			if innerBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+				forced = true
+			} else if innerProbe {
+				joins = append(joins, p.getHashJoin(prop, 0, true))
+				forced = true
+			} else {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+				joins = append(joins, p.getHashJoin(prop, 0, true))
+			}
 		}
 	case InnerJoin:
 		if innerBuild {

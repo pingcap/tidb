@@ -68,7 +68,7 @@ const (
 	HintHJ = "hash_join"
 	// HintSJI is hint swap join inputs, i.e. label the build side
 	HintSJI = "swap_join_inputs"
-	// hintNSJI is hint no_swap_join_inputs, i.e. label the probe side
+	// HintNSJI is hint no_swap_join_inputs, i.e. label the probe side
 	HintNSJI = "no_swap_join_inputs"
 	// HintHashAgg is hint enforce hash aggregation.
 	HintHashAgg = "hash_agg"
