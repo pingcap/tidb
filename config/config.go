@@ -38,7 +38,7 @@ import (
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
 )
 
 // Valid config maps
@@ -699,6 +699,10 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+
+	if c.Performance.TxnTotalSizeLimit > (10 << 30) {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 	return nil
 }
