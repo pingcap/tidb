@@ -1469,8 +1469,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}
-		stmtHints.HasEnableIndexMergeHint = true
-		stmtHints.EnableIndexMerge = false
+		stmtHints.NoIndexMergeHint = true
 	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {

@@ -148,13 +148,12 @@ type StatementContext struct {
 type StmtHints struct {
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
-	HasEnableIndexMergeHint        bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 
 	// Hint Information
 	AllowInSubqToJoinAndAgg bool
-	EnableIndexMerge        bool
+	NoIndexMergeHint        bool
 	MemQuotaQuery           int64
 	ReplicaRead             byte
 }
