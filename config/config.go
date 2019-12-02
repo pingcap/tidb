@@ -385,16 +385,17 @@ type TiKVClient struct {
 	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 }
 
+// CoprocessorCache is the config for coprocessor cache.
 type CoprocessorCache struct {
 	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-	Enabled bool `toml:"enable" json:"enable"`
+	Enabled bool `toml:"enabled" json:"enabled"`
 	// The capacity in MB of the cache.
 	CapacityMb float64 `toml:"capacity-mb" json:"capacity-mb"`
-	// Only cache requests which response result size is small.
-	MaxCacheableSizeBytes uint64 `toml:"max-cacheable-size-bytes" json:"max-cacheable-size-bytes"`
-	// Only cache requests which scans large number of rows.
-	MinCacheableScanRows uint64 `toml:"min-cacheable-scan-rows" json:"min-cacheable-scan-rows"`
+	// Only cache requests whose result set is small.
+	AdmissionMaxResultBytes uint64 `toml:"admission-max-result-bytes" json:"admission-max-result-bytes"`
+	// Only cache requests takes notable time to process.
+	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
 }
 
 // Binlog is the config for binlog.
@@ -528,10 +529,10 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			Enabled:               true,
-			CapacityMb:            2000,
-			MaxCacheableSizeBytes: 1000,
-			MinCacheableScanRows:  1000,
+			Enabled:                 true,
+			CapacityMb:              2000,
+			AdmissionMaxResultBytes: 1000,
+			AdmissionMinProcessMs:   50,
 		},
 	},
 	Binlog: Binlog{

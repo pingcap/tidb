@@ -311,10 +311,10 @@ enabled = true
 # The capacity in MB of the cache.
 capacity-mb = 2000
 
-# Only cache requests which response result size is small.
-max-cacheable-size-bytes = 1000
-# Only cache requests which scans large number of rows.
-min-cacheable-scan-rows = 1000
+# Only cache requests whose result set is small.
+admission-max-result-bytes = 1000
+# Only cache requests takes notable time to process.
+admission-min-process-ms = 20
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
