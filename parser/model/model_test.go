@@ -48,6 +48,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
+		Hidden:       true,
 	}
 	column.Flag |= mysql.PriKeyFlag
 
@@ -94,6 +95,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	pkName := table.GetPkName()
 	c.Assert(pkName, Equals, NewCIStr("c"))
 	newColumn := table.GetPkColInfo()
+	c.Assert(newColumn.Hidden, Equals, true)
 	c.Assert(newColumn, DeepEquals, column)
 	inIdx := table.ColumnIsInIndex(column)
 	c.Assert(inIdx, Equals, true)
