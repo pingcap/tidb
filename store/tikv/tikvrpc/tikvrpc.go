@@ -656,6 +656,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		p = &kvrpcpb.TxnHeartBeatResponse{
 			RegionError: e,
 		}
+	case CmdCheckTxnStatus:
+		p = &kvrpcpb.CheckTxnStatusResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}

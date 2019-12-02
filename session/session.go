@@ -1772,9 +1772,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
-	storeBootstrappedLock.Lock()
-	storeBootstrapped[store.UUID()] = true
-	storeBootstrappedLock.Unlock()
+	setStoreBootstrapped(store.UUID())
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -1854,6 +1852,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,

@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1959,33 +1958,78 @@ func dataForServersInfo() ([][]types.Datum, error) {
 	return rows, nil
 }
 
-func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+// ServerInfo represents the basic server information of single cluster component
+type ServerInfo struct {
+	ServerType string
+	Address    string
+	StatusAddr string
+	Version    string
+	GitHash    string
+}
+
+// GetClusterServerInfo returns all components information of cluster
+func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
+		// The cluster topology is injected by `failpoint` expression and
+		// there is no extra checks for it. (let the test fail if the expression invalid)
+		if s := val.(string); len(s) > 0 {
+			var servers []ServerInfo
+			for _, server := range strings.Split(s, ";") {
+				parts := strings.Split(server, ",")
+				servers = append(servers, ServerInfo{
+					ServerType: parts[0],
+					Address:    parts[1],
+					StatusAddr: parts[2],
+					Version:    parts[3],
+					GitHash:    parts[4],
+				})
+			}
+			failpoint.Return(servers, nil)
+		}
+	})
+
+	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	var servers []ServerInfo
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetTiKVServerInfo} {
+		nodes, err := r(ctx)
+		if err != nil {
+			return nil, err
+		}
+		servers = append(servers, nodes...)
+	}
+	return servers, nil
+}
+
+// GetTiDBServerInfo returns all TiDB nodes information of cluster
+func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get TiDB servers info.
 	tidbNodes, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rows := make([][]types.Datum, 0, len(tidbNodes))
+	var servers []ServerInfo
 	for _, node := range tidbNodes {
-		addr := fmt.Sprintf("%s:%d", node.IP, node.Port)
-		statusAddr := fmt.Sprintf("%s:%d", node.IP, node.StatusPort)
-		row := types.MakeDatums(
-			"tidb",
-			addr,
-			statusAddr,
-			node.Version,
-			node.GitHash,
-		)
-		rows = append(rows, row)
+		servers = append(servers, ServerInfo{
+			ServerType: "tidb",
+			Address:    fmt.Sprintf("%s:%d", node.IP, node.Port),
+			StatusAddr: fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Version:    node.Version,
+			GitHash:    node.GitHash,
+		})
 	}
+	return servers, nil
+}
 
+// GetPDServerInfo returns all PD nodes information of cluster
+func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
 	store := ctx.GetStore()
 	etcd, ok := store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
+	var servers []ServerInfo
 	for _, addr := range etcd.EtcdAddrs() {
 		addr = strings.TrimSpace(addr)
 
@@ -2026,16 +2070,20 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		}
 		terror.Log(resp.Body.Close())
 
-		row := types.MakeDatums(
-			"pd",
-			addr,
-			addr,
-			version,
-			content.GitHash,
-		)
-		rows = append(rows, row)
+		servers = append(servers, ServerInfo{
+			ServerType: "pd",
+			Address:    addr,
+			StatusAddr: addr,
+			Version:    version,
+			GitHash:    content.GitHash,
+		})
 	}
+	return servers, nil
+}
 
+// GetTiKVServerInfo returns all TiKV nodes information of cluster
+func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	store := ctx.GetStore()
 	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
@@ -2050,13 +2098,32 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var servers []ServerInfo
 	for _, storeStat := range storesStat.Stores {
+		servers = append(servers, ServerInfo{
+			ServerType: "tikv",
+			Address:    storeStat.Store.Address,
+			StatusAddr: storeStat.Store.StatusAddress,
+			Version:    storeStat.Store.Version,
+			GitHash:    storeStat.Store.GitHash,
+		})
+	}
+	return servers, nil
+}
+
+func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	servers, err := GetClusterServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]types.Datum, 0, len(servers))
+	for _, server := range servers {
 		row := types.MakeDatums(
-			"tikv",
-			storeStat.Store.Address,
-			storeStat.Store.StatusAddress,
-			storeStat.Store.Version,
-			storeStat.Store.GitHash,
+			server.ServerType,
+			server.Address,
+			server.StatusAddr,
+			server.Version,
+			server.GitHash,
 		)
 		rows = append(rows, row)
 	}
@@ -2064,7 +2131,7 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
-	serversInfo, err := getClusterServerInfo(ctx)
+	serversInfo, err := GetClusterServerInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2072,10 +2139,10 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for _, srv := range serversInfo {
 		// TODO: remove this after PD/TiKV support diagnostic grpc service.
-		if srv.tp == "pd" || srv.tp == "tikv" {
+		if srv.ServerType == "pd" || srv.ServerType == "tikv" {
 			continue
 		}
-		addr := srv.statusAddr
+		addr := srv.StatusAddr
 		ip := addr
 		if idx := strings.Index(addr, ":"); idx != -1 {
 			ip = addr[:idx]
@@ -2084,11 +2151,11 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 			continue
 		}
 		ipMap[ip] = struct{}{}
-		items, err := getServerInfoByGRPC(srv.statusAddr, diagnosticspb.ServerInfoType_LoadInfo)
+		items, err := getServerInfoByGRPC(srv.StatusAddr, diagnosticspb.ServerInfoType_LoadInfo)
 		if err != nil {
 			return nil, err
 		}
-		partRows := serverInfoItemToRows(items, srv.tp, srv.statusAddr)
+		partRows := serverInfoItemToRows(items, srv.ServerType, srv.StatusAddr)
 		rows = append(rows, partRows...)
 	}
 	return rows, nil
@@ -2144,67 +2211,13 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-type serverInfo struct {
-	tp         string
-	address    string
-	statusAddr string
-}
-
-func getClusterServerInfo(ctx sessionctx.Context) ([]serverInfo, error) {
-	sql := "SELECT type, address, status_address FROM INFORMATION_SCHEMA.TIDB_CLUSTER_INFO ORDER BY type"
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
-		// The cluster topology is injected by `failpoint` expression and
-		// there is no extra checks for it. (let the test fail if the expression invalid)
-		if s := val.(string); len(s) > 0 {
-			var fields []*types.FieldType
-			for i := 0; i < 4; i++ {
-				fields = append(fields, &types.FieldType{
-					Charset: mysql.UTF8Charset,
-					Collate: mysql.UTF8DefaultCollation,
-					Tp:      mysql.TypeVarchar,
-					Flen:    64,
-					Flag:    64,
-				})
-			}
-			data := chunk.New(fields, 0, 3)
-			for _, row := range strings.Split(s, ";") {
-				for i, col := range strings.Split(row, ",") {
-					data.AppendString(i, col)
-				}
-			}
-			iter := chunk.NewIterator4Chunk(data)
-			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				rows = append(rows, r)
-			}
-			// erase the error message
-			err = nil
-		}
-	})
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	srvInfos := make([]serverInfo, 0, len(rows))
-	for _, row := range rows {
-		row.GetString(0)
-		srvInfos = append(srvInfos, serverInfo{
-			tp:         row.GetString(0),
-			address:    row.GetString(1),
-			statusAddr: row.GetString(2),
-		})
-	}
-	return srvInfos, nil
-}
-
 func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := getClusterServerInfo(ctx)
+	serversInfo, err := GetClusterServerInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2213,9 +2226,9 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
 	for i, srv := range serversInfo {
-		typ := srv.tp
-		address := srv.address
-		statusAddr := srv.statusAddr
+		typ := srv.ServerType
+		address := srv.Address
+		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
@@ -2289,7 +2302,7 @@ func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
 	var results []result
 	for result := range ch {
 		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 			continue
 		}
 		results = append(results, result)

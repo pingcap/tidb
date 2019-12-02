@@ -725,7 +725,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
-	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task)
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -800,13 +800,13 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
-func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, task *copTask) (*tikvrpc.Response, *RPCContext, string, error) {
+func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string) (*tikvrpc.Response, *RPCContext, string, error) {
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
-	if len(task.storeAddr) > 0 {
-		sender.storeAddr = task.storeAddr
+	if len(directStoreAddr) > 0 {
+		sender.storeAddr = directStoreAddr
 	}
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
-	resp, ctx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType)
+	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
 }
 

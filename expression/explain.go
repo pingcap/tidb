@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -62,15 +63,20 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(exprs []Expression) []byte {
-	buffer := bytes.NewBufferString("")
+func ExplainExpressionList(exprs []Expression, schema *Schema) string {
+	builder := &strings.Builder{}
 	for i, expr := range exprs {
-		buffer.WriteString(expr.ExplainInfo())
+		switch expr.(type) {
+		case *Column, *CorrelatedColumn:
+			builder.WriteString(expr.String())
+		default:
+			fmt.Fprintf(builder, "%v->%v", expr.String(), schema.Columns[i])
+		}
 		if i+1 < len(exprs) {
-			buffer.WriteString(", ")
+			builder.WriteString(", ")
 		}
 	}
-	return buffer.Bytes()
+	return builder.String()
 }
 
 // SortedExplainExpressionList generates explain information for a list of expressions in order.

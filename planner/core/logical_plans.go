@@ -388,7 +388,8 @@ type DataSource struct {
 	DBName     model.CIStr
 
 	TableAsName *model.CIStr
-
+	// indexMergeHints are the hint for indexmerge.
+	indexMergeHints []*ast.IndexHint
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
