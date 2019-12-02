@@ -3037,6 +3037,32 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].Tables[0].TableName.L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].TableName.L, Equals, "t4")
 
+	// Test HASH_JOIN with SWAP_JOIN_INPUTS/NO_SWAP_JOIN_INPUTS
+	// t1 for build, t4 for probe
+	stmt, _, err = parser.Parse("select /*+ HASH_JOIN(t1, T2), hash_join(t3, t4), SWAP_JOIN_INPUTS(t1), NO_SWAP_JOIN_INPUTS(t4)  */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	c.Assert(hints, HasLen, 4)
+	c.Assert(hints[0].HintName.L, Equals, "hash_join")
+	c.Assert(hints[0].Tables, HasLen, 2)
+	c.Assert(hints[0].Tables[0].TableName.L, Equals, "t1")
+	c.Assert(hints[0].Tables[1].TableName.L, Equals, "t2")
+
+	c.Assert(hints[1].HintName.L, Equals, "hash_join")
+	c.Assert(hints[1].Tables, HasLen, 2)
+	c.Assert(hints[1].Tables[0].TableName.L, Equals, "t3")
+	c.Assert(hints[1].Tables[1].TableName.L, Equals, "t4")
+
+	c.Assert(hints[2].HintName.L, Equals, "swap_join_inputs")
+	c.Assert(hints[2].Tables, HasLen, 1)
+	c.Assert(hints[2].Tables[0].TableName.L, Equals, "t1")
+
+	c.Assert(hints[3].HintName.L, Equals, "no_swap_join_inputs")
+	c.Assert(hints[3].Tables, HasLen, 1)
+	c.Assert(hints[3].Tables[0].TableName.L, Equals, "t4")
+
 	// Test MAX_EXECUTION_TIME
 	queries := []string{
 		"SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1",
