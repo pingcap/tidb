@@ -2714,9 +2714,7 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 	defer b.bufAllocator.put(fromTzBuf)
-	if err = b.args[1].VecEvalString(b.ctx, input, fromTzBuf); err != nil {
-		return err
-	}
+	errFromTz := b.args[1].VecEvalString(b.ctx, input, fromTzBuf)
 
 	// toTz
 	toTzBuf, err := b.bufAllocator.get(types.ETString, n)
@@ -2724,14 +2722,10 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 		return err
 	}
 	defer b.bufAllocator.put(toTzBuf)
-	if err = b.args[2].VecEvalString(b.ctx, input, toTzBuf); err != nil {
-		return err
-	}
+	errToTz := b.args[2].VecEvalString(b.ctx, input, toTzBuf)
 
 	// dt
-	if err = b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
-		return err
-	}
+	errDt := b.args[0].VecEvalTime(b.ctx, input, result)
 
 	result.MergeNulls(fromTzBuf, toTzBuf)
 	times := result.Times()
@@ -2745,6 +2739,12 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 
 		fromTzStr = fromTzBuf.GetString(i)
 		toTzStr = toTzBuf.GetString(i)
+		if errFromTz != nil || errToTz != nil || errDt != nil ||
+			fromTzStr == "" || toTzStr == "" {
+			result.SetNull(i, true)
+			continue
+		}
+
 		fromTzMatched = b.timezoneRegex.MatchString(fromTzStr)
 		toTzMatched = b.timezoneRegex.MatchString(toTzStr)
 
@@ -2786,7 +2786,9 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 				Type: mysql.TypeDatetime,
 				Fsp:  fsp,
 			}
+			continue
 		}
+		result.SetNull(i, true)
 	}
 	return nil
 }
