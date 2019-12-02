@@ -119,30 +119,23 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	}
 }
 
-type key string
-
-const (
-	x key = "x"
-	y key = "y"
-)
-
 func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	txn := s.beginTxn(c)
-	c.Assert(txn.Set(kv.Key(x), []byte(x)), IsNil)
-	c.Assert(txn.Delete(kv.Key(y)), IsNil) // store data is affected by other tests.
+	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
+	c.Assert(txn.Delete(kv.Key("y")), IsNil) // store data is affected by other tests.
 	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	txn = s.beginTxn(c)
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn.StartTS()}, 0)
-	_, err := snapshot.BatchGet(context.Background(), []kv.Key{kv.Key(x), kv.Key(y)})
+	_, err := snapshot.BatchGet(context.Background(), []kv.Key{kv.Key("x"), kv.Key("y")})
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
 	ctx := context.WithValue(context.Background(), "TestSnapshotCache", true)
-	_, err = snapshot.Get(ctx, kv.Key(x))
+	_, err = snapshot.Get(ctx, kv.Key("x"))
 	c.Assert(err, IsNil)
 
-	_, err = snapshot.Get(ctx, kv.Key(y))
+	_, err = snapshot.Get(ctx, kv.Key("y"))
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
