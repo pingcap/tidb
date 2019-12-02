@@ -42,6 +42,12 @@ import (
 
 var _ = Suite(&testAnalyzeSuite{})
 
+func init() {
+	// Init once here to avoid data race.
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+}
+
 type testAnalyzeSuite struct {
 	testData testutil.TestData
 }
@@ -556,9 +562,6 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
 
 	dom, err := session.BootstrapSession(store)
 	if err != nil {
