@@ -1897,6 +1897,7 @@ type ShowStmt struct {
 	User        *auth.UserIdentity   // Used for show grants/create user.
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
 	IfNotExists bool                 // Used for `show create database if not exists`
+	Extended    bool                 // Used for `show extended columns from ...`
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool
@@ -2085,6 +2086,9 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
 			} // TODO: remember to check this case
 		case ShowColumns: // equivalent to SHOW FIELDS
+			if n.Extended {
+				ctx.WriteKeyWord("EXTENDED ")
+			}
 			restoreOptFull()
 			ctx.WriteKeyWord("COLUMNS")
 			if n.Table != nil {
