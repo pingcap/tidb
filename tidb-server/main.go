@@ -646,7 +646,8 @@ func updateCPUUsageMetrics() {
 
 func setupTracing() {
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
-	tracer, _, err := tracingCfg.New("TiDB")
+	tracingCfg.ServiceName = "TiDB"
+	tracer, _, err := tracingCfg.NewTracer()
 	if err != nil {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
