@@ -871,8 +871,8 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {
 	uniqueIDMap := make(map[int64]string)
-	s.checkSystemSchemaTableID(c, "information_schema", autoid.SystemSchemaIDFlag|1, 10000, 20000, uniqueIDMap)
-	s.checkSystemSchemaTableID(c, "performance_schema", autoid.SystemSchemaIDFlag|2, 20000, 30000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "information_schema", autoid.SystemSchemaIDFlag|1, 1, 10000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "performance_schema", autoid.SystemSchemaIDFlag|10000, 10000, 20000, uniqueIDMap)
 }
 
 func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {

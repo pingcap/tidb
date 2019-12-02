@@ -39,12 +39,8 @@ const (
 	SystemSchemaIDFlag = 1 << 62
 	// InformationSchemaDBID is the information_schema schema id, it's exports for test.
 	InformationSchemaDBID int64 = SystemSchemaIDFlag | 1
-	// PerformanceSchemaDBID is the performance_schema schema id flag, it's exports for test.
-	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 2
-	// InformationSchemaTableIDStart is the information_schema tables start id, it's exports for test.
-	InformationSchemaTableIDStart int64 = SystemSchemaIDFlag | 10000
-	// PerformanceSchemaTableIDStart is the performance_schema tables start id, it's exports for test.
-	PerformanceSchemaTableIDStart int64 = SystemSchemaIDFlag | 20000
+	// PerformanceSchemaDBID is the performance_schema schema id, it's exports for test.
+	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
 )
 
 const (

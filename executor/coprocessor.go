@@ -107,17 +107,6 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	return b.build(plan), nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
-	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	bp := core.NewPBPlanBuilder(h.sctx, is)
-	plan, err := bp.Build(executors)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	b := newExecutorBuilder(h.sctx, is)
-	return b.build(plan), nil
-}
-
 func (h *CoprocessorDAGHandler) appendChunk(chk *chunk.Chunk, tps []*types.FieldType) error {
 	var err error
 	switch h.dagReq.EncodeType {
