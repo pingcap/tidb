@@ -88,40 +88,15 @@ type Group struct {
 	EngineType EngineType
 }
 
-// buildLogicalProperty builds a new LogicalProperty for the new GroupExpr.
-// it also builds the unique key info and max one row info.
-func buildLogicalProperty(e *GroupExpr, oldSchema *expression.Schema) *property.LogicalProperty {
-	prop := &property.LogicalProperty{}
-	if oldSchema == nil {
-		return prop
-	}
-	newSchema := expression.NewSchema(oldSchema.Columns...)
-	childSchema := make([]*expression.Schema, len(e.Children))
-	childMaxOneRow := make([]bool, len(e.Children))
-	for i := range e.Children {
-		childSchema[i] = e.Children[i].Prop.Schema
-		childMaxOneRow[i] = e.Children[i].Prop.MaxOneRow
-	}
-	if len(childSchema) == 1 {
-		// For UnaryPlan(such as Selection, Limit ...), we can set the child's unique key as its unique key.
-		// If the GroupExpr is a schemaProducer, schema.Keys will be reset below in `BuildKeyInfo()`.
-		newSchema.Keys = childSchema[0].Keys
-	}
-	e.ExprNode.BuildKeyInfo(newSchema, childSchema)
-	prop.Schema = newSchema
-	prop.MaxOneRow = e.ExprNode.MaxOneRow() || plannercore.HasMaxOneRow(e.ExprNode, childMaxOneRow)
-	return prop
-}
-
 // NewGroupWithSchema creates a new Group with given schema.
-// Must make sure the initial GroupExpr's children have been set.
 func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
+	prop := &property.LogicalProperty{Schema: expression.NewSchema(s.Columns...)}
 	g := &Group{
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string]*list.Element),
 		FirstExpr:    make(map[Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
-		Prop:         buildLogicalProperty(e, s),
+		Prop:         prop,
 		EngineType:   EngineTiDB,
 	}
 	g.Insert(e)
@@ -241,4 +216,25 @@ func Convert2Group(node plannercore.LogicalPlan) *Group {
 	g := NewGroupWithSchema(e, node.Schema())
 	// Stats property for `Group` would be computed after exploration phase.
 	return g
+}
+
+// BuildKeyInfo recursively builds UniqueKey and MaxOneRow info in the LogicalProperty.
+func (g *Group) BuildKeyInfo() {
+	e := g.Equivalents.Front().Value.(*GroupExpr)
+	for _, childGroup := range e.Children {
+		childGroup.BuildKeyInfo()
+	}
+	childSchema := make([]*expression.Schema, len(e.Children))
+	childMaxOneRow := make([]bool, len(e.Children))
+	for i := range e.Children {
+		childSchema[i] = e.Children[i].Prop.Schema
+		childMaxOneRow[i] = e.Children[i].Prop.MaxOneRow
+	}
+	if len(childSchema) == 1 {
+		// For UnaryPlan(such as Selection, Limit ...), we can set the child's unique key as its unique key.
+		// If the GroupExpr is a schemaProducer, schema.Keys will be reset below in `BuildKeyInfo()`.
+		g.Prop.Schema.Keys = childSchema[0].Keys
+	}
+	e.ExprNode.BuildKeyInfo(g.Prop.Schema, childSchema)
+	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || plannercore.HasMaxOneRow(e.ExprNode, childMaxOneRow)
 }

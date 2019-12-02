@@ -92,7 +92,26 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
-	testGroupToString(input, output, s, c)
+	for i, sql := range input {
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		logic, ok := p.(plannercore.LogicalPlan)
+		c.Assert(ok, IsTrue)
+		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
+		c.Assert(err, IsNil)
+		group := memo.Convert2Group(logic)
+		err = s.optimizer.onPhaseExploration(s.sctx, group)
+		c.Assert(err, IsNil)
+		// BuildKeyInfo here to test the KeyInfo for partialAgg.
+		group.BuildKeyInfo()
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Result = ToString(group)
+		})
+		c.Assert(ToString(group), DeepEquals, output[i].Result)
+	}
 }
 
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {

@@ -216,7 +216,8 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
 func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 	switch p.(type) {
-	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
+	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
+		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
 		if len(childMaxOneRow) == 1 {
 			return childMaxOneRow[0]
 		}

@@ -81,6 +81,7 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		group := memo.Convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)
+		group.BuildKeyInfo()
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
 			output[i].Result = ToString(group)

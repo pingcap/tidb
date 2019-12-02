@@ -37,8 +37,9 @@ var _ = Suite(&testMemoSuite{})
 
 type testMemoSuite struct {
 	*parser.Parser
-	is   infoschema.InfoSchema
-	sctx sessionctx.Context
+	is     infoschema.InfoSchema
+	schema *expression.Schema
+	sctx   sessionctx.Context
 }
 
 func (s *testMemoSuite) SetUpSuite(c *C) {
@@ -46,6 +47,7 @@ func (s *testMemoSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
+	s.schema = expression.NewSchema()
 }
 
 func (s *testMemoSuite) TearDownSuite(c *C) {
@@ -55,7 +57,7 @@ func (s *testMemoSuite) TearDownSuite(c *C) {
 func (s *testMemoSuite) TestNewGroup(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, nil)
+	g := NewGroupWithSchema(expr, s.schema)
 
 	c.Assert(g.Equivalents.Len(), Equals, 1)
 	c.Assert(g.Equivalents.Front().Value.(*GroupExpr), Equals, expr)
@@ -66,7 +68,7 @@ func (s *testMemoSuite) TestNewGroup(c *C) {
 func (s *testMemoSuite) TestGroupInsert(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, nil)
+	g := NewGroupWithSchema(expr, s.schema)
 	c.Assert(g.Insert(expr), IsFalse)
 	expr.selfFingerprint = "1"
 	c.Assert(g.Insert(expr), IsTrue)
@@ -75,7 +77,7 @@ func (s *testMemoSuite) TestGroupInsert(c *C) {
 func (s *testMemoSuite) TestGroupDelete(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, nil)
+	g := NewGroupWithSchema(expr, s.schema)
 	c.Assert(g.Equivalents.Len(), Equals, 1)
 
 	g.Delete(expr)
@@ -87,7 +89,7 @@ func (s *testMemoSuite) TestGroupDelete(c *C) {
 
 func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
 	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0))
-	g := NewGroupWithSchema(expr, nil)
+	g := NewGroupWithSchema(expr, s.schema)
 	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))), IsTrue)
 	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))), IsTrue)
 	c.Assert(g.Equivalents.Len(), Equals, 3)
@@ -103,7 +105,7 @@ func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
 func (s *testMemoSuite) TestGroupExists(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, nil)
+	g := NewGroupWithSchema(expr, s.schema)
 	c.Assert(g.Exists(expr), IsTrue)
 
 	g.Delete(expr)
@@ -117,7 +119,7 @@ func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
 	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
 	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
 
-	g := NewGroupWithSchema(expr0, nil)
+	g := NewGroupWithSchema(expr0, s.schema)
 	g.Insert(expr1)
 	g.Insert(expr2)
 	g.Insert(expr3)
@@ -140,7 +142,7 @@ func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan               { return 
 func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return nil }
 func (impl *fakeImpl) ScaleCostLimit(float64) float64                  { return 0 }
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
-	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), nil)
+	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), s.schema)
 	emptyProp := &property.PhysicalProperty{}
 	orderProp := &property.PhysicalProperty{Items: []property.Item{{Col: &expression.Column{}}}}
 
@@ -181,7 +183,7 @@ func (s *testMemoSuite) TestEngineTypeSet(c *C) {
 
 func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
 	oldExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
-	g := NewGroupWithSchema(oldExpr, nil)
+	g := NewGroupWithSchema(oldExpr, s.schema)
 	newExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
 	g.Insert(newExpr)
 	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
@@ -202,6 +204,7 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	logic1, ok := p1.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	group1 := Convert2Group(logic1)
+	group1.BuildKeyInfo()
 	c.Assert(group1.Prop.MaxOneRow, IsTrue)
 	c.Assert(len(group1.Prop.Schema.Keys), Equals, 1)
 
@@ -213,6 +216,7 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	logic2, ok := p2.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	group2 := Convert2Group(logic2)
+	group2.BuildKeyInfo()
 	c.Assert(group2.Prop.MaxOneRow, IsFalse)
 	c.Assert(len(group2.Prop.Schema.Keys), Equals, 1)
 
@@ -221,6 +225,7 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	newExpr1 := NewGroupExpr(newSel)
 	newExpr1.SetChildren(group2)
 	newGroup1 := NewGroupWithSchema(newExpr1, group2.Prop.Schema)
+	newGroup1.BuildKeyInfo()
 	c.Assert(len(newGroup1.Prop.Schema.Keys), Equals, 1)
 
 	// case 4: build maxOneRow for new Group
@@ -228,5 +233,6 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	newExpr2 := NewGroupExpr(newLimit)
 	newExpr2.SetChildren(group2)
 	newGroup2 := NewGroupWithSchema(newExpr2, group2.Prop.Schema)
+	newGroup2.BuildKeyInfo()
 	c.Assert(newGroup2.Prop.MaxOneRow, IsTrue)
 }

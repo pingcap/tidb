@@ -16,9 +16,9 @@
   {
     "name": "TestAggPushDownGather",
     "cases": [
-      "select a, sum(b) from t group by a",
-      "select a, sum(b) from t group by a+c, a",
-      "select a, sum(b) from t group by sin(a)+sin(c)"
+      "select b, sum(a) from t group by b",
+      "select b, sum(a) from t group by c, b",
+      "select b, sum(a) from t group by sin(b)+sin(c), b"
     ]
   },
   {

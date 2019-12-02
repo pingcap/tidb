@@ -42,7 +42,10 @@ func buildKeyInfo(lp LogicalPlan) {
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = nil
+	if la.IsPartialModeAgg() {
+		return
+	}
+	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	for _, key := range childSchema[0].Keys {
 		indices := selfSchema.ColumnsIndices(key)
 		if indices == nil {
