@@ -72,9 +72,9 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	defer testleak.AfterTest(c)()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 type testClusterTableSuite struct {
@@ -158,7 +158,6 @@ func setUpMockPDHTTPSercer() (*httptest.Server, string) {
 }
 
 func (s *testClusterTableSuite) TearDownSuite(c *C) {
-	s.testTableSuite.TearDownSuite(c)
 	if s.rpcserver != nil {
 		s.rpcserver.Stop()
 		s.rpcserver = nil
@@ -166,6 +165,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
+	s.testTableSuite.TearDownSuite(c)
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
@@ -741,9 +741,9 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	))
 
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr,
-		"tidb,127.0.0.1:11080," + mockAddr,
-		"tikv,127.0.0.1:11080," + mockAddr,
+		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
@@ -814,9 +814,9 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	mockAddr := "127.0.0.1:10080"
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr,
-		"tidb,127.0.0.1:11080," + mockAddr,
-		"tikv,127.0.0.1:11080," + mockAddr,
+		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)

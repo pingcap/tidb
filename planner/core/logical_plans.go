@@ -352,6 +352,22 @@ type LogicalTableDual struct {
 	RowCount int
 }
 
+// LogicalMemTable represents a memory table or virtual table
+// Some memory tables wants to take the ownership of some predications
+// e.g
+// SELECT * FROM tidb_cluster_log WHERE type='tikv' AND address='192.16.5.32'
+// Assume that the table `tidb_cluster_log` is a memory table, which is used
+// to retrieve logs from remote components. In the above situation we should
+// send log search request to the target TiKV (192.16.5.32) directly instead of
+// requesting all cluster components log search gRPC interface to retrieve
+// log message and filtering them in TiDB node.
+type LogicalMemTable struct {
+	logicalSchemaProducer
+
+	dbName    model.CIStr
+	tableInfo *model.TableInfo
+}
+
 // LogicalUnionScan is only used in non read-only txn.
 type LogicalUnionScan struct {
 	baseLogicalPlan
@@ -372,7 +388,8 @@ type DataSource struct {
 	DBName     model.CIStr
 
 	TableAsName *model.CIStr
-
+	// indexMergeHints are the hint for indexmerge.
+	indexMergeHints []*ast.IndexHint
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
