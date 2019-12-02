@@ -18,7 +18,9 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
@@ -46,7 +48,7 @@ type MergeJoinExec struct {
 	innerTable *mergeJoinInnerTable
 	outerTable *mergeJoinOuterTable
 
-	innerRows     []chunk.Row
+	innerRows     *chunk.RowContainer
 	innerIter4Row chunk.Iterator
 
 	childrenResults []*chunk.Chunk
@@ -77,7 +79,7 @@ type mergeJoinInnerTable struct {
 	ctx      context.Context
 
 	// for chunk executions
-	sameKeyRows    []chunk.Row
+	sameKeyRows    *chunk.RowContainer
 	keyCmpFuncs    []chunk.CompareFunc
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
@@ -109,16 +111,33 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	return err
 }
 
-func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
+func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.RowContainer, error) {
 	lastResultIdx := len(t.resultQueue) - 1
 	t.resourceQueue = append(t.resourceQueue, t.resultQueue[0:lastResultIdx]...)
 	t.resultQueue = t.resultQueue[lastResultIdx:]
+	if t.sameKeyRows == nil {
+		rc := chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curResult.Capacity())
+		rc.GetMemTracker().AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
+		rc.GetDiskTracker().AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
+		t.sameKeyRows = rc
+	} else {
+		err := t.sameKeyRows.Reset()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := t.sameKeyRows.ActionSpill()
+		ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
+	}
+
 	// no more data.
 	if t.firstRow4Key == t.curIter.End() {
-		return nil, nil
+		return t.sameKeyRows, nil
 	}
-	t.sameKeyRows = t.sameKeyRows[:0]
-	t.sameKeyRows = append(t.sameKeyRows, t.firstRow4Key)
+	if _, err := t.sameKeyRows.AppendRow(t.firstRow4Key); err != nil {
+		return t.sameKeyRows, err
+	}
 	for {
 		selectedRow, err := t.nextRow()
 		// error happens or no more data.
@@ -128,7 +147,10 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 		}
 		compareResult := compareChunkRow(t.keyCmpFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
 		if compareResult == 0 {
-			t.sameKeyRows = append(t.sameKeyRows, selectedRow)
+			_, err := t.sameKeyRows.AppendRow(selectedRow)
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			t.firstRow4Key = selectedRow
 			return t.sameKeyRows, nil
@@ -202,6 +224,11 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 func (e *MergeJoinExec) Close() error {
 	e.childrenResults = nil
 	e.memTracker = nil
+	if e.innerRows != nil {
+		if err := e.innerRows.Close(); err != nil {
+			return err
+		}
+	}
 
 	return e.baseExecutor.Close()
 }
@@ -292,7 +319,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		cmpResult := -1
-		if e.outerTable.selected[e.outerTable.row.Idx()] && len(e.innerRows) > 0 {
+		if e.outerTable.selected[e.outerTable.row.Idx()] && e.innerRows.NumRow() > 0 {
 			cmpResult, err = e.compare(e.outerTable.row, e.innerIter4Row.Current())
 			if err != nil {
 				return false, err
@@ -364,11 +391,17 @@ func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
 // fetchNextInnerRows fetches the next join group, within which all the rows
 // have the same join key, from the inner table.
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
-	e.innerRows, err = e.innerTable.rowsWithSameKey()
+	if e.innerRows != nil {
+		err = e.innerRows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	e.innerRows, err = e.innerTable.rowsWithSameKey(e.ctx)
 	if err != nil {
 		return err
 	}
-	e.innerIter4Row = chunk.NewIterator4Slice(e.innerRows)
+	e.innerIter4Row = chunk.NewIterator4RowContainer(e.innerRows)
 	e.innerIter4Row.Begin()
 	return nil
 }

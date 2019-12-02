@@ -116,6 +116,20 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	c.Assert(it.Current(), check.Equals, it.End())
 	c.Assert(it.Begin(), check.Equals, li2.GetRow(ptrs2[0]))
 
+	rc := &RowContainer{
+		records: li,
+	}
+	it = NewIterator4RowContainer(rc)
+	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
+		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
+		it.Next()
+	}
+	it.ReachEnd()
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+
 	it = NewIterator4Slice(nil)
 	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4Chunk(new(Chunk))
@@ -123,6 +137,11 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	it = NewIterator4List(new(List))
 	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4RowPtr(li, nil)
+	c.Assert(it.Begin(), check.Equals, it.End())
+	rc = &RowContainer{
+		records: NewList(fields, 1, 1),
+	}
+	it = NewIterator4RowContainer(rc)
 	c.Assert(it.Begin(), check.Equals, it.End())
 }
 

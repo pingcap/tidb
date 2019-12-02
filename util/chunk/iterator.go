@@ -18,6 +18,7 @@ var (
 	_ Iterator = (*iterator4RowPtr)(nil)
 	_ Iterator = (*iterator4List)(nil)
 	_ Iterator = (*iterator4Slice)(nil)
+	_ Iterator = (*iterator4RowContainer)(nil)
 )
 
 // Iterator is used to iterate a number of rows.
@@ -43,6 +44,9 @@ type Iterator interface {
 
 	// ReachEnd reaches the end of iterator.
 	ReachEnd()
+
+	// Error returns none-nil error if anything wrong happens during the iteration.
+	Error() error
 }
 
 // NewIterator4Slice returns a Iterator for Row slice.
@@ -96,6 +100,11 @@ func (it *iterator4Slice) ReachEnd() {
 // Len implements the Iterator interface.
 func (it *iterator4Slice) Len() int {
 	return len(it.rows)
+}
+
+// Error returns none-nil error if anything wrong happens during the iteration.
+func (it *iterator4Slice) Error() error {
+	return nil
 }
 
 // NewIterator4Chunk returns a iterator for Chunk.
@@ -157,6 +166,11 @@ func (it *Iterator4Chunk) Len() int {
 // GetChunk returns the chunk stored in the Iterator4Chunk
 func (it *Iterator4Chunk) GetChunk() *Chunk {
 	return it.chk
+}
+
+// Error returns none-nil error if anything wrong happens during the iteration.
+func (it *Iterator4Chunk) Error() error {
+	return nil
 }
 
 // NewIterator4List returns a Iterator for List.
@@ -231,6 +245,11 @@ func (it *iterator4List) Len() int {
 	return it.li.Len()
 }
 
+// Error returns none-nil error if anything wrong happens during the iteration.
+func (it *iterator4List) Error() error {
+	return nil
+}
+
 // NewIterator4RowPtr returns a Iterator for RowPtrs.
 func NewIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
 	return &iterator4RowPtr{li: li, ptrs: ptrs}
@@ -283,4 +302,73 @@ func (it *iterator4RowPtr) ReachEnd() {
 // Len implements the Iterator interface.
 func (it *iterator4RowPtr) Len() int {
 	return len(it.ptrs)
+}
+
+// Error returns none-nil error if anything wrong happens during the iteration.
+func (it *iterator4RowPtr) Error() error {
+	return nil
+}
+
+// NewIterator4RowContainer create a new iterator for RowContainer
+func NewIterator4RowContainer(c *RowContainer) *iterator4RowContainer {
+	return &iterator4RowContainer{c: c}
+}
+
+type iterator4RowContainer struct {
+	c      *RowContainer
+	chkIdx int
+	rowIdx int
+	err    error
+}
+
+func (it *iterator4RowContainer) Len() int {
+	return it.c.NumRow()
+}
+
+func (it *iterator4RowContainer) setNextPtr() {
+	it.rowIdx++
+	if it.rowIdx == it.c.NumRowsOfChunk(it.chkIdx) {
+		it.rowIdx = 0
+		it.chkIdx++
+	}
+}
+
+func (it *iterator4RowContainer) Begin() Row {
+	it.chkIdx, it.rowIdx = 0, -1
+	return it.Next()
+}
+
+func (it *iterator4RowContainer) Next() Row {
+	if it.chkIdx >= it.c.NumChunks() {
+		it.ReachEnd()
+		return it.End()
+	}
+	it.setNextPtr()
+	return it.Current()
+}
+
+func (it *iterator4RowContainer) Current() Row {
+	if it.rowIdx < 0 || it.chkIdx >= it.c.NumChunks() {
+		return it.End()
+	}
+	row, err := it.c.GetRow(RowPtr{uint32(it.chkIdx), uint32(it.rowIdx)})
+	if err != nil {
+		it.err = err
+		it.ReachEnd()
+		return it.End()
+	}
+	return row
+}
+
+func (it *iterator4RowContainer) End() Row {
+	return Row{}
+}
+
+func (it *iterator4RowContainer) ReachEnd() {
+	it.chkIdx, it.rowIdx = it.c.NumChunks(), 0
+}
+
+// Error returns none-nil error if anything wrong happens during the iteration.
+func (it *iterator4RowContainer) Error() error {
+	return it.err
 }
