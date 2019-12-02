@@ -290,5 +290,7 @@ func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	_, err := tk.Exec("grant select on test1111 to test@'%'")
 	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
 	tk.MustExec("use test")
+	tk.MustExec("create table test1111 (x int);")
 	tk.MustExec("grant select on test1111 to test@'%'")
+	tk.MustExec("drop table test1111;")
 }
