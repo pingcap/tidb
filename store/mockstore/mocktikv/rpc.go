@@ -258,7 +258,7 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 		panic("KvGet: key not in region")
 	}
 
-	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel)
+	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel, req.Context.GetResolvedLocks())
 	if err != nil {
 		return &kvrpcpb.GetResponse{
 			Error: convertToKeyError(err),
@@ -417,7 +417,7 @@ func (h *rpcHandler) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Bat
 			panic("KvBatchGet: key not in region")
 		}
 	}
-	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel)
+	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel, req.Context.GetResolvedLocks())
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
