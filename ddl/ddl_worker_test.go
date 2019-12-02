@@ -202,7 +202,7 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		Args:       []interface{}{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err.Error(), Equals, "[ddl:3]invalid ddl job type: none")
+	c.Assert(err.Error(), Equals, "[ddl:8204]invalid ddl job type: none")
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {
@@ -374,10 +374,11 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
-	addIndexFirstReorg := test.act == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0
+	addIndexFirstReorg := (test.act == model.ActionAddIndex || test.act == model.ActionAddPrimaryKey) &&
+		job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
-	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
+	if test.cancelState == job.SchemaState && !addIndexFirstReorg && !job.IsRollingback() {
 		errs, err := admin.CancelJobs(txn, test.jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
@@ -439,12 +440,27 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 28}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 28)}, cancelState: model.StatePublic},
 		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 30}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 31}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 31)}, cancelState: model.StatePublic},
+
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 32}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 33}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 34}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 35}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 35)}, cancelState: model.StatePublic},
+		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 36}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 37}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 37)}, cancelState: model.StateDeleteOnly},
 	}
 
 	return tests
 }
 
+func (s *testDDLSuite) checkDropIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
+	checkIdxExist(c, d, schemaID, tableID, idxName, !success)
+}
+
 func (s *testDDLSuite) checkAddIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
+	checkIdxExist(c, d, schemaID, tableID, idxName, success)
+}
+
+func checkIdxExist(c *C, d *ddl, schemaID int64, tableID int64, idxName string, expectedExist bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	var found bool
 	for _, idxInfo := range changedTable.Meta().Indices {
@@ -453,7 +469,7 @@ func (s *testDDLSuite) checkAddIdx(c *C, d *ddl, schemaID int64, tableID int64, 
 			break
 		}
 	}
-	c.Assert(found, Equals, success)
+	c.Assert(found, Equals, expectedExist)
 }
 
 func (s *testDDLSuite) checkAddColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
@@ -493,6 +509,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// create a partition table.
 	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
+	// Skip using sessPool. Make sure adding primary key can be successful.
+	partitionTblInfo.Columns[0].Flag |= mysql.NotNullFlag
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
 	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
@@ -790,6 +808,45 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbInfo.Charset, Equals, "utf8mb4")
 	c.Assert(dbInfo.Collate, Equals, "utf8mb4_bin")
+
+	// for adding primary key
+	tblInfo = changedTable.Meta()
+	updateTest(&tests[28])
+	idxOrigName = "primary"
+	validArgs = []interface{}{false, model.NewCIStr(idxOrigName),
+		[]*ast.IndexColName{{
+			Column: &ast.ColumnName{Name: model.NewCIStr("c1")},
+			Length: -1,
+		}}, nil}
+	cancelState = model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
+	updateTest(&tests[29])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
+	updateTest(&tests[30])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
+	updateTest(&tests[31])
+	testCreatePrimaryKey(c, ctx, d, dbInfo, tblInfo, "c1")
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
+
+	// for dropping primary key
+	updateTest(&tests[32])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropPrimaryKey, validArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
+	updateTest(&tests[33])
+	testDropIndex(c, ctx, d, dbInfo, tblInfo, idxOrigName)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

@@ -830,16 +830,17 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
-func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctx)
+func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
+	ctxForHandle.GetSessionVars().InRestrictedSQL = true
+	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
+	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
 	err := do.bindHandle.Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
 
 	do.globalBindHandleWorkerLoop()
-	do.handleInvalidBindTaskLoop()
+	do.handleEvolvePlanTasksLoop(ctxForEvolve)
 	return nil
 }
 
@@ -862,24 +863,32 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
 					continue
 				}
+				do.bindHandle.DropInvalidBindRecord()
 				do.bindHandle.CaptureBaselines()
+				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}
 	}()
 }
 
-func (do *Domain) handleInvalidBindTaskLoop() {
+func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
-		defer recoverInDomain("loadBindInfoLoop-dropInvalidBindInfo", false)
+		defer recoverInDomain("handleEvolvePlanTasksLoop", false)
+		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
 			case <-do.exit:
 				return
 			case <-time.After(bindinfo.Lease):
 			}
-			do.bindHandle.DropInvalidBindRecord()
+			if owner.IsOwner() {
+				err := do.bindHandle.HandleEvolvePlanTask(ctx)
+				if err != nil {
+					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
+				}
+			}
 		}
 	}()
 }
@@ -927,7 +936,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	if do.statsLease <= 0 {
 		return nil
 	}
-	owner := do.newStatsOwner()
+	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.wg.Add(1)
 	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
@@ -938,14 +947,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
-func (do *Domain) newStatsOwner() owner.Manager {
+func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
 		statsOwner = owner.NewMockManager(id, cancelFunc)
 	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, handle.StatsPrompt, id, handle.StatsOwnerKey, cancelFunc)
+		statsOwner = owner.NewOwnerManager(do.etcdClient, prompt, id, ownerKey, cancelFunc)
 	}
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)

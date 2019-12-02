@@ -22,11 +22,23 @@ import (
 )
 
 var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
-	ast.AesEncrypt: {},
+	ast.AesEncrypt: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, aesModes: "aes-128-ecb"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &constStrGener{"iv"}}, aesModes: "aes-128-ecb"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &randLenStrGener{16, 17}}, aesModes: "aes-128-cbc"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &randLenStrGener{16, 17}}, aesModes: "aes-128-ofb"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &randLenStrGener{16, 17}}, aesModes: "aes-128-cfb"},
+	},
 	ast.Uncompress: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.AesDecrypt: {},
+	ast.AesDecrypt: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, aesModes: "aes-128-ecb"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &constStrGener{"iv"}}, aesModes: "aes-128-ecb"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &randLenStrGener{16, 17}}, aesModes: "aes-128-cbc"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &randLenStrGener{16, 17}}, aesModes: "aes-128-ofb"},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{nil, nil, &randLenStrGener{16, 17}}, aesModes: "aes-128-cfb"},
+	},
 	ast.Compress: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},

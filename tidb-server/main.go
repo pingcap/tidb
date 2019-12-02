@@ -54,11 +54,13 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
+	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/struCoder/pidusage"
+	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
 
@@ -386,7 +388,7 @@ func loadConfig() string {
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
 	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "Log.QueryLogMaxLen",
-	"TiKVClient.EnableChunkRPC"}
+	"TiKVClient.EnableChunkRPC", "TiKVClient.StoreLimit"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -409,6 +411,9 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
+	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
+		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
+	}
 }
 
 func overrideConfig() {
@@ -423,6 +428,9 @@ func overrideConfig() {
 	}
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
+	}
+	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = cfg.Host
 	}
 	var err error
 	if actualFlags[nmPort] {
@@ -561,6 +569,10 @@ func setupLog() {
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
 }
 
 func printInfo() {
@@ -619,7 +631,8 @@ func updateCPUUsageMetrics() {
 
 func setupTracing() {
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
-	tracer, _, err := tracingCfg.New("TiDB")
+	tracingCfg.ServiceName = "TiDB"
+	tracer, _, err := tracingCfg.NewTracer()
 	if err != nil {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}

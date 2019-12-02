@@ -545,6 +545,9 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor {
 	b.isSelectForUpdate = true
+	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
+		return nil
+	}
 	// Build 'select for update' using the 'for update' ts.
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
@@ -669,6 +672,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	if v.SelectPlan != nil {
+		// Try to update the forUpdateTS for insert/replace into select statements.
+		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
+		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
+			return nil
+		}
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -688,7 +698,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		SetList:                   v.SetList,
-		GenColumns:                v.GenCols.Columns,
 		GenExprs:                  v.GenCols.Exprs,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
@@ -720,7 +729,6 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		Table:        tbl,
 		Columns:      v.Columns,
-		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
 	err := insertVal.initInsertColumns()
@@ -1003,33 +1011,46 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		joinType:          v.JoinType,
 		isOuterJoin:       v.JoinType.IsOuterJoin(),
 		buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
+		useOuterToBuild:   v.UseOuterToBuild,
 	}
-
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
-	if v.InnerChildIdx == 0 {
-		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
-			return nil
-		}
-		e.buildSideExec = leftExec
-		e.probeSideExec = rightExec
-		e.probeSideFilter = v.RightConditions
-		e.buildKeys = v.LeftJoinKeys
-		e.probeKeys = v.RightJoinKeys
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
-		}
-	} else {
+	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
-		e.buildSideExec = rightExec
-		e.probeSideExec = leftExec
-		e.probeSideFilter = v.LeftConditions
-		e.buildKeys = v.RightJoinKeys
-		e.probeKeys = v.LeftJoinKeys
+	} else {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
+	if v.UseOuterToBuild {
+		// update the buildSideEstCount due to changing the build side
+		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
+		if v.InnerChildIdx == 1 {
+			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
+			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
+			e.outerFilter = v.LeftConditions
+		} else {
+			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
+			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
+			e.outerFilter = v.RightConditions
+		}
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
+		}
+	} else {
+		if v.InnerChildIdx == 0 {
+			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
+			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
+			e.outerFilter = v.RightConditions
+		} else {
+			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
+			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
+			e.outerFilter = v.LeftConditions
+		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
@@ -1130,7 +1151,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 	}
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, v.GroupByItems),
+		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
@@ -1224,7 +1245,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	e := &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		t:              tb,
-		columns:        v.Columns,
+		columns:        v.Table.Columns,
 		seekHandle:     math.MinInt64,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
@@ -1363,6 +1384,9 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
+	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+		return nil
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -1385,6 +1409,9 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
+	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+		return nil
+	}
 	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -1399,6 +1426,20 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblColPosInfos: v.TblColPosInfos,
 	}
 	return deleteExec
+}
+
+// updateForUpdateTSIfNeeded updates the ForUpdateTS for a pessimistic transaction if needed.
+// PointGet executor will get conflict error if the ForUpdateTS is older than the latest commitTS,
+// so we don't need to update now for better latency.
+func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.PhysicalPlan) error {
+	txnCtx := b.ctx.GetSessionVars().TxnCtx
+	if !txnCtx.IsPessimistic {
+		return nil
+	}
+	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
+		return nil
+	}
+	return UpdateForUpdateTS(b.ctx, 0)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
@@ -1834,13 +1875,14 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			compareFuncs:  v.OuterCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
-			rowTypes:      innerTypes,
-			joinKeys:      v.InnerJoinKeys,
-			keyCols:       innerKeyCols,
-			compareFuncs:  v.CompareFuncs,
-			colLens:       v.IdxColLens,
-			desc:          v.Desc,
+			readerBuilder:           &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
+			rowTypes:                innerTypes,
+			joinKeys:                v.InnerJoinKeys,
+			keyCols:                 innerKeyCols,
+			compareFuncs:            v.CompareFuncs,
+			colLens:                 v.IdxColLens,
+			desc:                    v.Desc,
+			keyOff2KeyOffOrderByIdx: v.KeyOff2KeyOffOrderByIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
@@ -1906,6 +1948,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
 	}
+	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {

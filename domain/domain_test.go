@@ -147,7 +147,7 @@ func TestInfo(t *testing.T) {
 	<-dom.ddl.SchemaSyncer().Done()
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 200; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break
@@ -268,7 +268,7 @@ func (*testSuite) TestT(c *C) {
 	m, err := dom.GetSnapshotMeta(snapTS)
 	c.Assert(err, IsNil)
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(err.Error(), Equals, meta.ErrDBNotExists.Error())
+	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
 	c.Assert(tblInfo1, IsNil)
 	m, err = dom.GetSnapshotMeta(currSnapTS)
 	c.Assert(err, IsNil)
@@ -283,7 +283,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// for schemaValidator
-	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer
+	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts := ver.Ver

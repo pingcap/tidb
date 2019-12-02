@@ -760,7 +760,7 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 	return hasOldPartitionData
 }
 
-func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
+func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
@@ -1150,8 +1150,22 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }
 
+func (s *testIntegrationSuite2) TestPartitionDropPrimaryKey(c *C) {
+	idxName := "primary"
+	addIdxSQL := "alter table partition_drop_idx add primary key idx1 (c1);"
+	dropIdxSQL := "alter table partition_drop_idx drop primary key;"
+	testPartitionDropIndex(c, s.store, s.lease, idxName, addIdxSQL, dropIdxSQL)
+}
+
 func (s *testIntegrationSuite3) TestPartitionDropIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	idxName := "idx1"
+	addIdxSQL := "alter table partition_drop_idx add index idx1 (c1);"
+	dropIdxSQL := "alter table partition_drop_idx drop index idx1;"
+	testPartitionDropIndex(c, s.store, s.lease, idxName, addIdxSQL, dropIdxSQL)
+}
+
+func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, dropIdxSQL string) {
+	tk := testkit.NewTestKit(c, store)
 	done := make(chan error, 1)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists partition_drop_idx;")
@@ -1172,7 +1186,7 @@ func (s *testIntegrationSuite3) TestPartitionDropIndex(c *C) {
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into partition_drop_idx values (?, ?, ?)", i, i, i)
 	}
-	tk.MustExec("alter table partition_drop_idx add index idx1 (c1)")
+	tk.MustExec(addIdxSQL)
 
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -1181,15 +1195,15 @@ func (s *testIntegrationSuite3) TestPartitionDropIndex(c *C) {
 
 	var idx1 table.Index
 	for _, pidx := range t.Indices() {
-		if pidx.Meta().Name.L == "idx1" {
+		if pidx.Meta().Name.L == idxName {
 			idx1 = pidx
 			break
 		}
 	}
 	c.Assert(idx1, NotNil)
 
-	testutil.SessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
-	ticker := time.NewTicker(s.lease / 2)
+	testutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -1219,7 +1233,7 @@ LOOP:
 	var idxn table.Index
 	t.Indices()
 	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == "idx1" {
+		if idx.Meta().Name.L == idxName {
 			idxn = idx
 			break
 		}
@@ -1230,8 +1244,20 @@ LOOP:
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
-func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (s *testIntegrationSuite2) TestPartitionCancelAddPrimaryKey(c *C) {
+	idxName := "primary"
+	addIdxSQL := "alter table t1 add primary key c3_index (c1);"
+	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
+}
+
+func (s *testIntegrationSuite4) TestPartitionCancelAddIndex(c *C) {
+	idxName := "idx1"
+	addIdxSQL := "create unique index c3_index on t1 (c1)"
+	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
+}
+
+func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL string) {
+	tk := testkit.NewTestKit(c, store)
 
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1;")
@@ -1248,7 +1274,7 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	base := defaultBatchSize * 2
 	count := base
 	// add some rows
-	batchInsert(s.tk, "t1", 0, count)
+	batchInsert(tk, "t1", 0, count)
 
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
@@ -1256,16 +1282,17 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
+	ctx := tk.Se.(sessionctx.Context)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.ctx, hook)
-	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
+	originHook := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originHook)
+	d.(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
-	go backgroundExec(s.store, "create index c3_index on t1 (c3)", done)
+	go backgroundExec(store, addIdxSQL, done)
 
 	times := 0
-	ticker := time.NewTicker(s.lease / 2)
+	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -1273,7 +1300,7 @@ LOOP:
 		case err := <-done:
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
@@ -1292,7 +1319,7 @@ LOOP:
 		}
 	}
 
-	t := testGetTableByName(c, s.ctx, "test_db", "t1")
+	t := testGetTableByName(c, ctx, "test_db", "t1")
 	// Only one partition id test is taken here.
 	pid := t.Meta().Partition.Definitions[0].ID
 	for _, tidx := range t.Indices() {
@@ -1300,17 +1327,19 @@ LOOP:
 	}
 
 	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, s.ctx, idx)
+	checkDelRangeDone(c, ctx, idx)
 
 	tk.MustExec("drop table t1")
 }
 
-func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.Context, hook *ddl.TestDDLCallback) (func(*model.Job), *model.IndexInfo, error) {
+func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.Context, hook *ddl.TestDDLCallback, idxName string) (
+	func(*model.Job), *model.IndexInfo, error) {
 	var checkErr error
 	first := true
 	c3IdxInfo := &model.IndexInfo{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
-		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
+		addIndexNotFirstReorg := (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
@@ -1318,9 +1347,9 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 			if c3IdxInfo != nil {
 				return
 			}
-			t := testGetTableByName(c, ctx, "test", "t1")
+			t := testGetTableByName(c, ctx, "test_db", "t1")
 			for _, index := range t.WritableIndices() {
-				if index.Meta().Name.L == "c3_index" {
+				if index.Meta().Name.L == idxName {
 					c3IdxInfo = index.Meta()
 				}
 			}
@@ -1370,8 +1399,17 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
+func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	testPartitionAddIndexOrPK(c, tk, "primary key")
+}
+
 func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	testPartitionAddIndexOrPK(c, tk, "index")
+}
+
+func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -1385,7 +1423,7 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	partition p6 values less than (2012),
 	partition p7 values less than (2018)
 	);`)
-	testPartitionAddIndex(tk, c)
+	testPartitionAddIndex(tk, c, key)
 
 	// test hash partition table.
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -1394,32 +1432,53 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	id int not null,
 	hired date not null
 	) partition by hash( year(hired) ) partitions 4;`)
-	testPartitionAddIndex(tk, c)
+	testPartitionAddIndex(tk, c, key)
 
 	// Test hash partition for pr 10475.
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by hash(a) partitions 5;")
+	tk.MustExec("create table t1 (a int, b int, unique key(a)) partition by hash(a) partitions 5;")
 	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
-	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec(fmt.Sprintf("alter table t1 add %s idx(a)", key))
 	tk.MustExec("admin check table t1;")
 
 	// Test range partition for pr 10475.
 	tk.MustExec("drop table t1")
-	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec("create table t1 (a int, b int, unique key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
 	tk.MustExec("insert into t1 values (0,0);")
-	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec(fmt.Sprintf("alter table t1 add %s idx(a)", key))
 	tk.MustExec("admin check table t1;")
-
 }
 
-func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
-	for i := 0; i < 500; i++ {
-		tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
-	}
+func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
+	idxName1 := "idx1"
 
-	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
+	f := func(end int, isPK bool) string {
+		dml := fmt.Sprintf("insert into partition_add_idx values")
+		for i := 0; i < end; i++ {
+			dVal := 1988 + rand.Intn(30)
+			if isPK {
+				dVal = 1518 + i
+			}
+			dml += fmt.Sprintf("(%d, '%d-01-01')", i, dVal)
+			if i != end-1 {
+				dml += ","
+			}
+		}
+		return dml
+	}
+	var dml string
+	if key == "primary key" {
+		idxName1 = "primary"
+		// For the primary key, hired must be unique.
+		dml = f(500, true)
+	} else {
+		dml = f(500, false)
+	}
+	tk.MustExec(dml)
+
+	tk.MustExec(fmt.Sprintf("alter table partition_add_idx add %s idx1 (hired)", key))
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -1427,14 +1486,14 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
 	c.Assert(err, IsNil)
 	var idx1 table.Index
 	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == "idx1" {
+		if idx.Meta().Name.L == idxName1 {
 			idx1 = idx
 			break
 		}
 	}
 	c.Assert(idx1, NotNil)
 
-	tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
+	tk.MustQuery(fmt.Sprintf("select count(hired) from partition_add_idx use index(%s)", idxName1)).Check(testkit.Rows("500"))
 	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
 
 	tk.MustExec("admin check table partition_add_idx")
@@ -1688,9 +1747,9 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	`)
 
 	_, err := tk.Exec("alter table test_1465 truncate partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*can't run multi schema change")
+	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
 	_, err = tk.Exec("alter table test_1465 drop partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*can't run multi schema change")
+	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
 
 	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")

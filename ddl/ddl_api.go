@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -463,7 +463,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 		return defaultVal, nil
 	}
 	if vv, ok := defaultVal.(string); ok {
-		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
 				return defaultVal, errors.Trace(err)
@@ -1130,19 +1130,12 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
-			var col *table.Column
-			for _, key := range constr.Keys {
-				col = table.FindCol(cols, key.Column.Name.O)
-				if col == nil {
-					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
-				}
-				// Virtual columns cannot be used in primary key.
-				if col.IsGenerated() && !col.GeneratedStored {
-					return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
-				}
+			lastCol, err := checkPKOnGeneratedColumn(tbInfo, constr.Keys)
+			if err != nil {
+				return nil, err
 			}
-			if len(constr.Keys) == 1 {
-				switch col.Tp {
+			if len(constr.Keys) == 1 && !config.GetGlobalConfig().AlterPrimaryKey {
+				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 					tbInfo.PKIsHandle = true
@@ -1151,6 +1144,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 				}
 			}
 		}
+
 		if constr.Tp == ast.ConstraintFulltext {
 			sc := ctx.GetSessionVars().StmtCtx
 			sc.AppendWarning(ErrTableCantHandleFt)
@@ -1172,10 +1166,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 		}
 		// set index type.
 		if constr.Option != nil {
-			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(),
-				constr.Option.Comment,
-				maxCommentLength,
-				errTooLongIndexComment.GenWithStackByArgs(idxInfo.Name.String(), maxCommentLength))
+			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), constr.Option)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1318,7 +1309,11 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	tableCharset, tableCollate := findTableOptionCharsetAndCollate(s.Options)
+	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
+	if err != nil {
+		return nil, err
+	}
+
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, dbCharset, dbCollate)
 	if err != nil {
@@ -1335,6 +1330,8 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tbInfo.Collate = tableCollate
+	tbInfo.Charset = tableCharset
 
 	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
@@ -1357,7 +1354,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		tbInfo.Partition = pi
 	}
 
-	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1416,7 +1412,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		// do pre-split and scatter.
-		sp, ok := d.store.(kv.SplitableStore)
+		sp, ok := d.store.(kv.SplittableStore)
 		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			var (
 				preSplit      func()
@@ -1768,32 +1764,6 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, 
 	return
 }
 
-func findTableOptionCharsetAndCollate(options []*ast.TableOption) (tableCharset, tableCollate string) {
-	var findCnt int
-	for i := len(options) - 1; i >= 0; i-- {
-		op := options[i]
-		if len(tableCharset) == 0 && op.Tp == ast.TableOptionCharset {
-			// find the last one.
-			tableCharset = op.StrValue
-			findCnt++
-			if findCnt == 2 {
-				break
-			}
-			continue
-		}
-		if len(tableCollate) == 0 && op.Tp == ast.TableOptionCollate {
-			// find the last one.
-			tableCollate = op.StrValue
-			findCnt++
-			if findCnt == 2 {
-				break
-			}
-			continue
-		}
-	}
-	return tableCharset, tableCollate
-}
-
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1802,10 +1772,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
-		case ast.TableOptionCharset:
-			tbInfo.Charset = op.StrValue
-		case ast.TableOptionCollate:
-			tbInfo.Collate = op.StrValue
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
@@ -1824,7 +1790,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
 		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
 	}
-
 	return nil
 }
 
@@ -1838,40 +1803,37 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
-	charsets := make([]string, 0, len(options))
-	collates := make([]string, 0, len(options))
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			charsets = append(charsets, opt.StrValue)
+			info, err := charset.GetCharsetDesc(opt.StrValue)
+			if err != nil {
+				return "", "", err
+			}
+			if len(chs) == 0 {
+				chs = info.Name
+			} else if chs != info.Name {
+				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
+			}
+			if len(coll) == 0 {
+				coll = info.DefaultCollation
+			}
 		case ast.TableOptionCollate:
-			collates = append(collates, opt.StrValue)
-		}
-	}
-
-	if len(charsets) > 1 {
-		return "", "", ErrConflictingDeclarations.GenWithStackByArgs(charsets[0], charsets[1])
-	}
-	if len(charsets) == 1 {
-		if charsets[0] == "" {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
-		}
-		ca = charsets[0]
-	}
-	if len(collates) != 0 {
-		for i := range collates {
-			if collates[i] == "" {
-				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
+			info, err := charset.GetCollationByName(opt.StrValue)
+			if err != nil {
+				return "", "", err
 			}
-			if len(ca) != 0 && !charset.ValidCharsetAndCollation(ca, collates[i]) {
-				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(collates[i], ca)
+			if len(chs) == 0 {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
+			coll = info.Name
 		}
-		co = collates[len(collates)-1]
 	}
 	return
 }
@@ -1943,6 +1905,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
+		case ast.AlterTableDropPrimaryKey:
+			err = d.dropIndex(ctx, ident, true, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
@@ -1961,7 +1927,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				// so we just also ignore the `if not exists` check.
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
+				err = d.CreatePrimaryKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			default:
@@ -1980,10 +1946,6 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
-		case ast.AlterTableDropPrimaryKey:
-			err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("drop")
-		case ast.AlterTableRenameIndex:
-			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -2465,7 +2427,7 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 	if toCollate != origCollate {
-		msg := fmt.Sprintf("collate from %s to %s", origCollate, toCollate)
+		msg := fmt.Sprintf("change collate from %s to %s", origCollate, toCollate)
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 	return nil
@@ -2476,10 +2438,49 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
-	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
-		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	switch origin.Tp {
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		switch to.Tp {
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		default:
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch to.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		default:
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeEnum:
+		if origin.Tp != to.Tp {
+			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		if len(to.Elems) < len(origin.Elems) {
+			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		for index, originElem := range origin.Elems {
+			toElem := to.Elems[index]
+			if originElem != toElem {
+				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+		}
+	case mysql.TypeNewDecimal:
+		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
+			return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+		}
+	default:
+		if origin.Tp != to.Tp {
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	}
+
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -2488,53 +2489,16 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	if err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate); err != nil {
-		return errors.Trace(err)
-	}
 
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
-		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
+		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	switch origin.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch to.Tp {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return nil
-		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch to.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return nil
-		}
-	case mysql.TypeEnum:
-		if origin.Tp == to.Tp {
-			if len(to.Elems) < len(origin.Elems) {
-				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
-			for index, originElem := range origin.Elems {
-				toElem := to.Elems[index]
-				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
-					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-				}
-			}
-			return nil
-		}
-		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	default:
-		if origin.Tp == to.Tp {
-			return nil
-		}
-	}
-	msg := fmt.Sprintf("type %v not match origin %v", to.Tp, origin.Tp)
-	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+
+	err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate)
+	return errors.Trace(err)
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
@@ -2595,7 +2559,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedModifyColumn.GenWithStack("unsupported modify column constraint - %v", opt.Tp)
+			return errUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
@@ -2623,9 +2587,9 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionCollate:
 			col.Collate = opt.StrValue
 		case ast.ColumnOptionReference:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with references"))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with references"))
 		case ast.ColumnOptionFulltext:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("with full text"))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
 		default:
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
@@ -2736,17 +2700,17 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
 	}
 	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
 	if !ctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("to remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
 	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
+		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -2790,7 +2754,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 				break
 			}
 		}
-		if containColumn == false {
+		if !containColumn {
 			continue
 		}
 		if columns == nil {
@@ -3293,10 +3257,17 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
-		return errErrorOnRename.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)
+		return ErrErrorOnRename.GenWithStackByArgs(
+			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
+			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
+			168,
+			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -3325,6 +3296,68 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 		}
 	}
 	return indexName
+}
+
+func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
+	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
+	if !config.GetGlobalConfig().AlterPrimaryKey {
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
+	}
+
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = checkTooLongIndex(indexName); err != nil {
+		return ErrTooLongIdent.GenWithStackByArgs(mysql.PrimaryKeyName)
+	}
+
+	indexName = model.NewCIStr(mysql.PrimaryKeyName)
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+		return infoschema.ErrMultiplePriKey
+	}
+
+	tblInfo := t.Meta()
+	// Check before the job is put to the queue.
+	// This check is redundant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is super fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, err = checkPKOnGeneratedColumn(tblInfo, idxColNames); err != nil {
+		return err
+	}
+
+	if tblInfo.GetPartitionInfo() != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, true); err != nil {
+			return err
+		}
+	}
+
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	unique := true
+	sqlMode := ctx.GetSessionVars().SQLMode
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAddPrimaryKey,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{unique, indexName, idxColNames, indexOption, sqlMode},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
@@ -3360,7 +3393,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 
 	tblInfo := t.Meta()
 	// Check before the job is put to the queue.
-	// This check is redudant, but useful. If DDL check fail before the job is put
+	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
@@ -3369,20 +3402,13 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, false); err != nil {
 			return err
 		}
 	}
-
-	if indexOption != nil {
-		// May be truncate comment here, when index comment too long and sql_mode is't strict.
-		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),
-			indexOption.Comment,
-			maxCommentLength,
-			errTooLongIndexComment.GenWithStackByArgs(indexName.String(), maxCommentLength))
-		if err != nil {
-			return errors.Trace(err)
-		}
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -3538,6 +3564,10 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 }
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
+	return d.dropIndex(ctx, ti, false, indexName, ifExists)
+}
+
+func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexName model.CIStr, ifExists bool) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3549,6 +3579,19 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if isPK {
+		if !config.GetGlobalConfig().AlterPrimaryKey {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
+
+		}
+		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+		if indexInfo == nil && !t.Meta().PKIsHandle {
+			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+		}
+		if t.Meta().PKIsHandle {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+		}
+	}
 	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
@@ -3564,11 +3607,16 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(err)
 	}
 
+	jobTp := model.ActionDropIndex
+	if isPK {
+		jobTp = model.ActionDropPrimaryKey
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionDropIndex,
+		Type:       jobTp,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{indexName},
 	}
@@ -3607,15 +3655,21 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 // validateCommentLength checks comment length of table, column, index and partition.
 // If comment length is more than the standard length truncate it
 // and store the comment length upto the standard comment length size.
-func validateCommentLength(vars *variable.SessionVars, comment string, maxLen int, err error) (string, error) {
-	if len(comment) > maxLen {
+func validateCommentLength(vars *variable.SessionVars, indexName string, indexOption *ast.IndexOption) (string, error) {
+	if indexOption == nil {
+		return "", nil
+	}
+
+	maxLen := MaxCommentLength
+	if len(indexOption.Comment) > maxLen {
+		err := errTooLongIndexComment.GenWithStackByArgs(indexName, maxLen)
 		if vars.StrictSQLMode {
 			return "", err
 		}
 		vars.StmtCtx.AppendWarning(err)
-		return comment[:maxLen], nil
+		indexOption.Comment = indexOption.Comment[:maxLen]
 	}
-	return comment, nil
+	return indexOption.Comment, nil
 }
 
 func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
@@ -3865,7 +3919,7 @@ type lockTablesArg struct {
 // extractCollateFromOption take collates(may multiple) in option into consideration
 // when handle charset and collate of a column, rather than handling it separately.
 func extractCollateFromOption(def *ast.ColumnDef) []string {
-	specifiedCollates := make([]string, 0, 0)
+	var specifiedCollates []string
 	for i := 0; i < len(def.Options); i++ {
 		op := def.Options[i]
 		if op.Tp == ast.ColumnOptionCollate {

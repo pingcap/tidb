@@ -76,13 +76,14 @@ type outerMergeCtx struct {
 }
 
 type innerMergeCtx struct {
-	readerBuilder *dataReaderBuilder
-	rowTypes      []*types.FieldType
-	joinKeys      []*expression.Column
-	keyCols       []int
-	compareFuncs  []expression.CompareFunc
-	colLens       []int
-	desc          bool
+	readerBuilder           *dataReaderBuilder
+	rowTypes                []*types.FieldType
+	joinKeys                []*expression.Column
+	keyCols                 []int
+	compareFuncs            []expression.CompareFunc
+	colLens                 []int
+	desc                    bool
+	keyOff2KeyOffOrderByIdx []int
 }
 
 type lookUpMergeJoinTask struct {
@@ -223,17 +224,27 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	imw := &innerMergeWorker{
-		innerMergeCtx:         e.innerMergeCtx,
-		outerMergeCtx:         e.outerMergeCtx,
-		taskCh:                taskCh,
-		ctx:                   e.ctx,
-		indexRanges:           copiedRanges,
-		nextColCompareFilters: e.lastColHelper,
-		keyOff2IdxOff:         e.keyOff2IdxOff,
-		joiner:                e.joiners[workID],
-		joinChkResourceCh:     e.joinChkResourceCh[workID],
-		retFieldTypes:         e.retFieldTypes,
-		maxChunkSize:          e.maxChunkSize,
+		innerMergeCtx:     e.innerMergeCtx,
+		outerMergeCtx:     e.outerMergeCtx,
+		taskCh:            taskCh,
+		ctx:               e.ctx,
+		indexRanges:       copiedRanges,
+		keyOff2IdxOff:     e.keyOff2IdxOff,
+		joiner:            e.joiners[workID],
+		joinChkResourceCh: e.joinChkResourceCh[workID],
+		retFieldTypes:     e.retFieldTypes,
+		maxChunkSize:      e.maxChunkSize,
+	}
+	if e.lastColHelper != nil {
+		// nextCwf.TmpConstant needs to be reset for every individual
+		// inner worker to avoid data race when the inner workers is running
+		// concurrently.
+		nextCwf := *e.lastColHelper
+		nextCwf.TmpConstant = make([]*expression.Constant, len(e.lastColHelper.TmpConstant))
+		for i := range e.lastColHelper.TmpConstant {
+			nextCwf.TmpConstant[i] = &expression.Constant{RetType: nextCwf.TargetCol.RetType}
+		}
+		imw.nextColCompareFilters = &nextCwf
 	}
 	return imw
 }
@@ -423,15 +434,20 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		sort.Slice(task.outerOrderIdx, func(i, j int) bool {
 			idxI, idxJ := task.outerOrderIdx[i], task.outerOrderIdx[j]
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
-			for id, joinKey := range imw.outerMergeCtx.joinKeys {
-				cmp, _, err := imw.outerMergeCtx.compareFuncs[id](imw.ctx, joinKey, joinKey, rowI, rowJ)
+			var cmp int64
+			var err error
+			for _, keyOff := range imw.keyOff2KeyOffOrderByIdx {
+				joinKey := imw.outerMergeCtx.joinKeys[keyOff]
+				cmp, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
-				if cmp != 0 || imw.nextColCompareFilters == nil {
-					return cmp < 0
+				if cmp != 0 {
+					break
 				}
-				return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
 			}
-			return false
+			if cmp != 0 || imw.nextColCompareFilters == nil {
+				return cmp < 0
+			}
+			return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
@@ -571,8 +587,8 @@ func (imw *innerMergeWorker) fetchInnerRowsWithSameKey(ctx context.Context, task
 }
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
-	for i := 0; i < len(imw.outerMergeCtx.joinKeys); i++ {
-		cmp, _, err := imw.innerMergeCtx.compareFuncs[i](imw.ctx, imw.outerMergeCtx.joinKeys[i], imw.innerMergeCtx.joinKeys[i], outerRow, innerRow)
+	for _, keyOff := range imw.innerMergeCtx.keyOff2KeyOffOrderByIdx {
+		cmp, _, err := imw.innerMergeCtx.compareFuncs[keyOff](imw.ctx, imw.outerMergeCtx.joinKeys[keyOff], imw.innerMergeCtx.joinKeys[keyOff], outerRow, innerRow)
 		if err != nil || cmp != 0 {
 			return int(cmp), err
 		}
@@ -668,5 +684,9 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	}
 	e.joinChkResourceCh = nil
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		concurrency := cap(e.resultCh)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+	}
 	return e.baseExecutor.Close()
 }

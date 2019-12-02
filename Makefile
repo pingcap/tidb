@@ -1,5 +1,6 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
+P=8
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -12,15 +13,15 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p 8
+GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd" | grep -vE "test"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd"
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
@@ -32,7 +33,6 @@ LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git de
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
@@ -126,7 +126,13 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest gogenerate
+# Split tests for CI to run `make test` in parallel.
+test: test_part_1 test_part_2
+	@>&2 echo "Great, all tests passed."
+
+test_part_1: checklist explaintest
+
+test_part_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -155,7 +161,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=error; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
