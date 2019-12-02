@@ -60,7 +60,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/struCoder/pidusage"
-	_ "go.uber.org/automaxprocs"
+	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
 
@@ -568,6 +568,10 @@ func setupLog() {
 	terror.MustNil(err)
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
+	terror.MustNil(err)
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
 }
 

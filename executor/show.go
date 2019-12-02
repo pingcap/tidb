@@ -1204,7 +1204,7 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	if !ok {
 		return nil
 	}
-	splitStore, ok := store.(kv.SplitableStore)
+	splitStore, ok := store.(kv.SplittableStore)
 	if !ok {
 		return nil
 	}
@@ -1233,21 +1233,21 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	if info := tb.Meta().GetPartitionInfo(); info != nil {
 		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
 	}
 	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore, nil)
 }
 
-func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	if info := tb.Meta().GetPartitionInfo(); info != nil {
 		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
 	}
 	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore, nil)
 }
 
-func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(info.Definitions))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, def := range info.Definitions {
@@ -1263,7 +1263,7 @@ func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTa
 	return regions, nil
 }
 
-func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplitableStore) ([]regionMeta, error) {
+func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	var regions []regionMeta
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, def := range info.Definitions {
