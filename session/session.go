@@ -1099,6 +1099,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	compiler := executor.Compiler{Ctx: s}
+	multiQuery := len(stmtNodes) > 1
 	for _, stmtNode := range stmtNodes {
 		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
