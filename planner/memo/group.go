@@ -89,7 +89,7 @@ type Group struct {
 
 	// BuildKeyInfo is lazily called when a rule needs information of
 	// unique key or maxOneRow (in LogicalProp). For each Group, we only need
-	// to collect these information once. hashBuiltKeyInfo indicates whether
+	// to collect these information once. hasBuiltKeyInfo indicates whether
 	// this group has called `BuildKeyInfo`.
 	hasBuiltKeyInfo bool
 }
