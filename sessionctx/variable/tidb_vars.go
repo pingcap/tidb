@@ -418,7 +418,7 @@ const (
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
-	DefEnableVectorizedExpression      = true
+	DefEnableVectorizedExpression      = false
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
