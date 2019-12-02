@@ -815,8 +815,8 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 	if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
 		return err
 	}
-	err = domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
-	return err
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return nil
 }
 
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
