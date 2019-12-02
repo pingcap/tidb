@@ -1975,7 +1975,7 @@ func getDatumBound(retType *FieldType, rType RoundingType) Datum {
 	return GetMinValue(retType)
 }
 
-// The function is for expression's reverse evaluation.
+// ChangeReverseResultByUpperLowerBound is for expression's reverse evaluation.
 // Here is an example for what's effort for the function: CastRealAsInt(t.a),
 // 		if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
 // 		then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
