@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # This script is used to checkout a TiDB PR branch in a forked repo.
 if test -z $1; then
