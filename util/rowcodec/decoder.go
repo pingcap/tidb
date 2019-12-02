@@ -90,7 +90,7 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle int64, r
 			if err != nil {
 				return nil, err
 			}
-			row[col.ID] = *d
+			row[col.ID] = d
 			continue
 		}
 
@@ -104,7 +104,7 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle int64, r
 	return row, nil
 }
 
-func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (*types.Datum, error) {
+func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (types.Datum, error) {
 	var d types.Datum
 	switch byte(col.Tp) {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny, mysql.TypeYear:
@@ -116,13 +116,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (*t
 	case mysql.TypeFloat:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
-			return nil, err
+			return d, err
 		}
 		d.SetFloat32(float32(fVal))
 	case mysql.TypeDouble:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
-			return nil, err
+			return d, err
 		}
 		d.SetFloat64(fVal)
 	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
@@ -131,7 +131,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (*t
 	case mysql.TypeNewDecimal:
 		_, dec, _, _, err := codec.DecodeDecimal(colData)
 		if err != nil {
-			return nil, err
+			return d, err
 		}
 		d.SetMysqlDecimal(dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -140,12 +140,12 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (*t
 		t.Fsp = int8(col.Decimal)
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
-			return nil, err
+			return d, err
 		}
 		if byte(col.Tp) == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, decoder.loc)
 			if err != nil {
-				return nil, err
+				return d, err
 			}
 		}
 		d.SetMysqlTime(t)
@@ -164,7 +164,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (*t
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(col.Elems, decodeUint(colData))
 		if err != nil {
-			return nil, err
+			return d, err
 		}
 		d.SetMysqlSet(set)
 	case mysql.TypeBit:
@@ -176,9 +176,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (*t
 		j.Value = colData[1:]
 		d.SetMysqlJSON(j)
 	default:
-		return nil, errors.Errorf("unknown type %d", col.Tp)
+		return d, errors.Errorf("unknown type %d", col.Tp)
 	}
-	return &d, nil
+	return d, nil
 }
 
 // ChunkDecoder decodes the row to chunk.Chunk.
@@ -351,7 +351,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 	}
 	values := make([][]byte, len(outputOffset))
 	for i, col := range decoder.columns {
-		tp := fieldType2Flag(byte(col.Tp), uint(col.Flag))
+		tp := fieldType2Flag(byte(col.Tp), uint(col.Flag)&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
 		if col.IsPKHandle || colID == model.ExtraHandleID {
@@ -421,10 +421,10 @@ func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
 }
 
 // fieldType2Flag transforms field type into kv type flag.
-func fieldType2Flag(tp byte, f uint) (flag byte) {
+func fieldType2Flag(tp byte, signed bool) (flag byte) {
 	switch tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if f&mysql.UnsignedFlag == 0 {
+		if signed {
 			flag = IntFlag
 		} else {
 			flag = UintFlag
