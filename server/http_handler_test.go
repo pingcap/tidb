@@ -298,6 +298,11 @@ func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=status"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {

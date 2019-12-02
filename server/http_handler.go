@@ -674,11 +674,13 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	op := req.FormValue(qOperation)
-	if op == "reset" {
+	switch op {
+	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
-	} else if op == "nowait" {
+	case "nowait":
 		binloginfo.DisableSkipBinlogFlag()
-	} else {
+	case "status":
+	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
@@ -691,7 +693,7 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	writeData(w, "success!")
+	writeData(w, binloginfo.GetBinlogStatus())
 }
 
 type tableFlashReplicaInfo struct {

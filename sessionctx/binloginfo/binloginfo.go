@@ -130,6 +130,20 @@ func IsBinlogSkipped() bool {
 	return atomic.LoadUint32(&skipBinlog) > 0
 }
 
+// BinlogRecoverStatus is used for display the binlog recovered status after some operations.
+type BinlogRecoverStatus struct {
+	Skipped                 bool
+	SkippedCommitterCounter int32
+}
+
+// GetBinlogStatus returns the binlog recovered status.
+func GetBinlogStatus() *BinlogRecoverStatus {
+	return &BinlogRecoverStatus{
+		Skipped:                 IsBinlogSkipped(),
+		SkippedCommitterCounter: SkippedCommitterCount(),
+	}
+}
+
 var skippedCommitterCounter int32
 
 // WaitBinlogRecover returns when all committing transaction finished.
@@ -155,7 +169,6 @@ func WaitBinlogRecover(timeout time.Duration) error {
 }
 
 // SkippedCommitterCount returns the number of alive committers whick skipped the binlog writing.
-// NOTE: it is used *ONLY* for test.
 func SkippedCommitterCount() int32 {
 	return atomic.LoadInt32(&skippedCommitterCounter)
 }
