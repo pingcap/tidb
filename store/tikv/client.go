@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"google.golang.org/grpc/backoff"
 	"io"
 	"math"
 	"strconv"
@@ -132,7 +133,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
-			grpc.WithBackoffMaxDelay(time.Second*3),
+			grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: time.Second * 3}}),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:                time.Duration(keepAlive) * time.Second,
 				Timeout:             time.Duration(keepAliveTimeout) * time.Second,
