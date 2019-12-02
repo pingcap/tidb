@@ -1114,7 +1114,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}()
 	}
 	for _, stmtNode := range stmtNodes {
-		s.GetSessionVars().StartTime = time.Now()
+		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -1130,7 +1130,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("SQL", sql))
 			return nil, err
 		}
-		durCompile := time.Since(s.GetSessionVars().StartTime)
+		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
