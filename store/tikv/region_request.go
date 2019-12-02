@@ -15,13 +15,13 @@ package tikv
 
 import (
 	"context"
-	"google.golang.org/grpc/status"
 	"strconv"
 	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
