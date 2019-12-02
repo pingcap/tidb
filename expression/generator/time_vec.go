@@ -600,15 +600,9 @@ func (g gener) gen() interface{} {
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
 			{{- end }}
 			geners: []dataGenerator{
-				{{- if eq .TestTypeA "" }}
-					{{- template "datetimeGener" . -}}
-					{{- template "intervalGener" . -}}
-					nil,
-				{{- else }}
-					{{- template "datetimeGener" . -}}
-					{{- template "intervalGener" . -}}
-					nil,
-				{{- end }}
+				{{- template "datetimeGener" . -}}
+				{{- template "intervalGener" . -}}
+				nil,
 			},
 			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
