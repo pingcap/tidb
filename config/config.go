@@ -184,7 +184,6 @@ type Log struct {
 	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	MultiQueryThreshold uint64 `toml:"multi-query-threshold" json:"multi-query-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
@@ -453,7 +452,6 @@ var defaultConf = Config{
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
 		ExpensiveThreshold:  10000,
-		MultiQueryThreshold: 5,
 		DisableErrorStack:   nbUnset,
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,

@@ -189,8 +189,6 @@ store-limit=0
 [stmt-summary]
 max-stmt-count=1000
 max-sql-length=1024
-[log]
-multi-query-threshold = 100
 `)
 
 	c.Assert(err, IsNil)
@@ -217,7 +215,6 @@ multi-query-threshold = 100
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.EnableBatchDML, Equals, true)
-	c.Assert(conf.Log.MultiQueryThreshold, Equals, uint64(100))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

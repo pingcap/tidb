@@ -1099,20 +1099,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	compiler := executor.Compiler{Ctx: s}
-	multiQuery := len(stmtNodes) > 1
-	if multiQuery {
-		multiRunStartTime := time.Now()
-		defer func() {
-			multiQueryThreshold := time.Duration(config.GetGlobalConfig().Log.MultiQueryThreshold) * time.Second
-			multiDuration := durParse + time.Since(multiRunStartTime)
-			if multiDuration > multiQueryThreshold {
-				logutil.Logger(ctx).Warn("slow multi-query",
-					zap.Duration("duration", multiDuration),
-					zap.Int("number of statements", len(stmtNodes)),
-					zap.Stringer("SQL", executor.FormatSQL(sql, variable.PreparedParams{})))
-			}
-		}()
-	}
 	for _, stmtNode := range stmtNodes {
 		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
