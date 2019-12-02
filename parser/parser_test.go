@@ -92,7 +92,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
-		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
+		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "tablespace", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
@@ -866,6 +866,13 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show full columns
 		{"show columns in t;", true, "SHOW COLUMNS IN `t`"},
 		{"show full columns in t;", true, "SHOW FULL COLUMNS IN `t`"},
+		// for show extended columns
+		{`SHOW COLUMNS FROM City;`, true, "SHOW COLUMNS IN `City`"},
+		{`SHOW EXTENDED COLUMNS FROM City;`, true, "SHOW EXTENDED COLUMNS IN `City`"},
+		{`SHOW EXTENDED FIELDS FROM City;`, true, "SHOW EXTENDED COLUMNS IN `City`"},
+		// for show extended full columns
+		{`SHOW EXTENDED FULL COLUMNS FROM City;`, true, "SHOW EXTENDED FULL COLUMNS IN `City`"},
+		{`SHOW EXTENDED FULL FIELDS FROM City;`, true, "SHOW EXTENDED FULL COLUMNS IN `City`"},
 		// for show create table
 		{"show create table test.t", true, "SHOW CREATE TABLE `test`.`t`"},
 		{"show create table t", true, "SHOW CREATE TABLE `t`"},
