@@ -127,11 +127,8 @@ func (t *copTask) finishIndexPlan() {
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
 	// Network cost of transferring rows of index scan to TiDB.
-	if sessVars.EnableChunkRPC {
-		t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSizeChunkFormat(t.indexPlan.Schema().Columns)
-	} else {
-		t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
-	}
+	t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true)
+
 	if t.tablePlan == nil {
 		return
 	}
@@ -140,12 +137,7 @@ func (t *copTask) finishIndexPlan() {
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
-	var rowSize float64
-	if sessVars.EnableChunkRPC {
-		rowSize = t.tblColHists.GetIndexAvgRowSizeChunkFormat(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-	} else {
-		rowSize = t.tblColHists.GetIndexAvgRowSize(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-	}
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
 
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
@@ -572,11 +564,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		if sessVars.EnableChunkRPC {
-			t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSizeChunkFormat(t.tablePlan.Schema().Columns)
-		} else {
-			t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
-		}
+		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{

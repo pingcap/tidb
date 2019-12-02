@@ -160,15 +160,14 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	count	task	operator info
 Projection_10	428.32	root	Column#1, Column#2, Column#4, Column#5, Column#3, Column#24, Column#25, Column#26, Column#11, Column#12, Column#13, Column#14, Column#15, Column#16, Column#17
 └─Limit_13	428.32	root	offset:0, count:2000
-  └─IndexMergeJoin_26	428.32	root	inner join, inner:Projection_24, outer key:Column#2, Column#5, inner key:Column#21, Column#23
+  └─IndexJoin_19	428.32	root	inner join, inner:IndexLookUp_18, outer key:Column#2, Column#5, inner key:Column#21, Column#23
     ├─TableReader_43	428.32	root	data:Selection_42
     │ └─Selection_42	428.32	cop[tikv]	eq(Column#18, 0), eq(Column#4, "ios"), gt(Column#9, 1478185592), not(isnull(Column#5))
     │   └─TableScan_41	2000.00	cop[tikv]	table:dt, range:[0,+inf], keep order:false
-    └─Projection_24	0.48	root	Column#21, Column#22, Column#23, Column#24, Column#25, Column#26
-      └─IndexLookUp_23	0.48	root	
-        ├─IndexScan_20	1.00	cop[tikv]	table:rr, index:aid, dic, range: decided by [eq(Column#21, Column#2) eq(Column#23, Column#5)], keep order:true
-        └─Selection_22	0.48	cop[tikv]	eq(Column#22, "ios"), gt(Column#26, 1478185592)
-          └─TableScan_21	1.00	cop[tikv]	table:rr, keep order:false
+    └─IndexLookUp_18	0.48	root	
+      ├─IndexScan_15	1.00	cop[tikv]	table:rr, index:aid, dic, range: decided by [eq(Column#21, Column#2) eq(Column#23, Column#5)], keep order:false
+      └─Selection_17	0.48	cop[tikv]	eq(Column#22, "ios"), gt(Column#26, 1478185592)
+        └─TableScan_16	1.00	cop[tikv]	table:rr, keep order:false
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info
 Projection_5	207.86	root	Column#14, Column#16, Column#22, Column#23, Column#24

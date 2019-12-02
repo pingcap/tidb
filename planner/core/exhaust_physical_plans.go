@@ -684,12 +684,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	for i := range ds.stats.Cardinality {
 		ds.stats.Cardinality[i] = 1
 	}
-	var rowSize float64
-	if p.ctx.GetSessionVars().EnableChunkRPC {
-		rowSize = ds.TblColHists.GetTableAvgRowSizeChunkFormat(ds.TblCols, ts.StoreType, true)
-	} else {
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
-	}
+	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,

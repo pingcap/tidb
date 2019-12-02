@@ -549,12 +549,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	rowCount float64,
 	isCovered bool) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
-	var rowSize float64
-	if ds.ctx.GetSessionVars().EnableChunkRPC {
-		rowSize = ds.TblColHists.GetAvgRowSizeChunkFormat(ds.TblCols)
-	} else {
-		rowSize = ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
-	}
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
@@ -592,12 +587,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			}
 		}
 	}
-	var rowSize float64
-	if sessVars.EnableChunkRPC {
-		rowSize = ds.TblColHists.GetTableAvgRowSizeChunkFormat(ds.TblCols, ts.StoreType, true)
-	} else {
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
-	}
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	partialCost += totalRowCount * rowSize * sessVars.ScanFactor
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
@@ -722,16 +712,10 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	} else {
 		scanCols = is.schema.Columns
 	}
-	if is.ctx.GetSessionVars().EnableChunkRPC {
-		if isForScan {
-			return ds.TblColHists.GetIndexAvgRowSizeChunkFormat(scanCols, is.Index.Unique)
-		}
-		return ds.TblColHists.GetAvgRowSizeChunkFormat(scanCols)
-	}
 	if isForScan {
-		return ds.TblColHists.GetIndexAvgRowSize(scanCols, is.Index.Unique)
+		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 	}
-	return ds.TblColHists.GetAvgRowSize(scanCols, true)
+	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true)
 }
 
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
@@ -1107,22 +1091,12 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	var rowSize float64
-	if ds.ctx.GetSessionVars().EnableChunkRPC {
-		if ts.StoreType == kv.TiKV {
-			rowSize = ds.TblColHists.GetTableAvgRowSizeChunkFormat(ds.TblCols, ts.StoreType, true)
-		} else {
-			// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
-			// This logic can be ensured in column pruning.
-			rowSize = ds.TblColHists.GetTableAvgRowSizeChunkFormat(ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
-		}
+	if ts.StoreType == kv.TiKV {
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	} else {
-		if ts.StoreType == kv.TiKV {
-			rowSize = ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
-		} else {
-			// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
-			// This logic can be ensured in column pruning.
-			rowSize = ds.TblColHists.GetTableAvgRowSize(ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
-		}
+		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
+		// This logic can be ensured in column pruning.
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
