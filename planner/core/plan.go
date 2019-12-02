@@ -215,7 +215,10 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
 func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
-	switch p.(type) {
+	// The reason why we use the check `len(childMaxOneRow) == ?` below
+	// is that, this function is used both in planner/core and planner/cascades.
+	// In cascades planner, LogicalPlan may have no `children`.
+	switch x := p.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
 		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
 		if len(childMaxOneRow) == 1 {
@@ -224,8 +227,15 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 	case *LogicalMaxOneRow:
 		return true
 	case *LogicalJoin:
-		if len(childMaxOneRow) == 2 {
-			return childMaxOneRow[0] && childMaxOneRow[1]
+		switch x.JoinType {
+		case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+			if len(childMaxOneRow) == 1 {
+				return childMaxOneRow[0]
+			}
+		default:
+			if len(childMaxOneRow) == 2 {
+				return childMaxOneRow[0] && childMaxOneRow[1]
+			}
 		}
 	}
 	return false

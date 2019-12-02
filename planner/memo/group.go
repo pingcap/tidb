@@ -86,6 +86,12 @@ type Group struct {
 	Prop    *property.LogicalProperty
 
 	EngineType EngineType
+
+	// BuildKeyInfo is lazily called when a rule needs information of
+	// unique key or maxOneRow (in LogicalProp). For each Group, we only need
+	// to collect these information once. hashBuiltKeyInfo indicates whether
+	// this group has called `BuildKeyInfo`.
+	hasBuiltKeyInfo bool
 }
 
 // NewGroupWithSchema creates a new Group with given schema.
@@ -220,13 +226,16 @@ func Convert2Group(node plannercore.LogicalPlan) *Group {
 
 // BuildKeyInfo recursively builds UniqueKey and MaxOneRow info in the LogicalProperty.
 func (g *Group) BuildKeyInfo() {
-	e := g.Equivalents.Front().Value.(*GroupExpr)
-	for _, childGroup := range e.Children {
-		childGroup.BuildKeyInfo()
+	if g.hasBuiltKeyInfo {
+		return
 	}
+	g.hasBuiltKeyInfo = true
+
+	e := g.Equivalents.Front().Value.(*GroupExpr)
 	childSchema := make([]*expression.Schema, len(e.Children))
 	childMaxOneRow := make([]bool, len(e.Children))
 	for i := range e.Children {
+		e.Children[i].BuildKeyInfo()
 		childSchema[i] = e.Children[i].Prop.Schema
 		childMaxOneRow[i] = e.Children[i].Prop.MaxOneRow
 	}
