@@ -1895,3 +1895,182 @@ func CloneRow(dr []Datum) []Datum {
 	}
 	return c
 }
+
+// GetMaxValue returns the max value datum for each type.
+func GetMaxValue(ft *FieldType) (max Datum) {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.Flag) {
+			max.SetUint64(IntergerUnsignedUpperBound(ft.Tp))
+		} else {
+			max.SetInt64(IntergerSignedUpperBound(ft.Tp))
+		}
+	case mysql.TypeFloat:
+		max.SetFloat32(float32(GetMaxFloat(ft.Flen, ft.Decimal)))
+	case mysql.TypeDouble:
+		max.SetFloat64(GetMaxFloat(ft.Flen, ft.Decimal))
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		// codec.Encode KindMaxValue, to avoid import circle
+		bytes := []byte{250}
+		max.SetBytes(bytes)
+	case mysql.TypeNewDecimal:
+		max.SetMysqlDecimal(NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
+	case mysql.TypeDuration:
+		max.SetMysqlDuration(Duration{Duration: MaxTime})
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
+			max.SetMysqlTime(Time{Time: MaxDatetime, Type: ft.Tp})
+		} else {
+			max.SetMysqlTime(MaxTimestamp)
+		}
+	}
+	return
+}
+
+// GetMinValue returns the min value datum for each type.
+func GetMinValue(ft *FieldType) (min Datum) {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.Flag) {
+			min.SetUint64(0)
+		} else {
+			min.SetInt64(IntergerSignedLowerBound(ft.Tp))
+		}
+	case mysql.TypeFloat:
+		min.SetFloat32(float32(-GetMaxFloat(ft.Flen, ft.Decimal)))
+	case mysql.TypeDouble:
+		min.SetFloat64(-GetMaxFloat(ft.Flen, ft.Decimal))
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		// codec.Encode KindMinNotNull, to avoid import circle
+		bytes := []byte{1}
+		min.SetBytes(bytes)
+	case mysql.TypeNewDecimal:
+		min.SetMysqlDecimal(NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
+	case mysql.TypeDuration:
+		min.SetMysqlDuration(Duration{Duration: MinTime})
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
+			min.SetMysqlTime(Time{Time: MinDatetime, Type: ft.Tp})
+		} else {
+			min.SetMysqlTime(MinTimestamp)
+		}
+	}
+	return
+}
+
+// RoundingType is used to indicate the rounding type for reversing evaluation.
+type RoundingType uint8
+
+const (
+	// Ceiling means rounding up.
+	Ceiling RoundingType = iota
+	// Floor means rounding down.
+	Floor
+)
+
+func getDatumBound(retType *FieldType, rType RoundingType) Datum {
+	if rType == Ceiling {
+		return GetMaxValue(retType)
+	}
+	return GetMinValue(retType)
+}
+
+// The function is for expression's reverse evaluation.
+// Here is an example for what's effort for the function: CastRealAsInt(t.a),
+// 		if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
+// 		then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
+//      if the result is MaxInt64, and the rounding type is ceiling. Then we should get the MaxFloat64
+//      instead of float64(MaxInt64).
+// Another example: cast(1.1 as signed) = 1,
+// 		when we get the answer 1, we can only reversely evaluate 1.0 as the column value. So in this
+// 		case, we should judge whether the rounding type are ceiling. If it is, then we should plus one for
+// 		1.0 and get the reverse result 2.0.
+func ChangeReverseResultByUpperLowerBound(
+	sc *stmtctx.StatementContext,
+	retType *FieldType,
+	res Datum,
+	rType RoundingType) (Datum, error) {
+	d, err := res.ConvertTo(sc, retType)
+	if terror.ErrorEqual(err, ErrOverflow) {
+		return d, nil
+	}
+	if err != nil {
+		return d, err
+	}
+	resRetType := FieldType{}
+	switch res.Kind() {
+	case KindInt64:
+		resRetType.Tp = mysql.TypeLonglong
+	case KindUint64:
+		resRetType.Tp = mysql.TypeLonglong
+		resRetType.Flag |= mysql.UnsignedFlag
+	case KindFloat32:
+		resRetType.Tp = mysql.TypeFloat
+	case KindFloat64:
+		resRetType.Tp = mysql.TypeDouble
+	case KindMysqlDecimal:
+		resRetType.Tp = mysql.TypeNewDecimal
+		resRetType.Flen = int(res.GetMysqlDecimal().GetDigitsFrac() + res.GetMysqlDecimal().GetDigitsInt())
+		resRetType.Decimal = int(res.GetMysqlDecimal().GetDigitsInt())
+	}
+	bound := getDatumBound(&resRetType, rType)
+	cmp, err := d.CompareDatum(sc, &bound)
+	if err != nil {
+		return d, err
+	}
+	if cmp == 0 {
+		d = getDatumBound(retType, rType)
+	} else if rType == Ceiling {
+		switch retType.Tp {
+		case mysql.TypeShort:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				if d.GetUint64() != math.MaxUint16 {
+					d.SetUint64(d.GetUint64() + 1)
+				}
+			} else {
+				if d.GetInt64() != math.MaxInt16 {
+					d.SetInt64(d.GetInt64() + 1)
+				}
+			}
+		case mysql.TypeLong:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				if d.GetUint64() != math.MaxUint32 {
+					d.SetUint64(d.GetUint64() + 1)
+				}
+			} else {
+				if d.GetInt64() != math.MaxInt32 {
+					d.SetInt64(d.GetInt64() + 1)
+				}
+			}
+		case mysql.TypeLonglong:
+			if mysql.HasUnsignedFlag(retType.Flag) {
+				if d.GetUint64() != math.MaxUint64 {
+					d.SetUint64(d.GetUint64() + 1)
+				}
+			} else {
+				if d.GetInt64() != math.MaxInt64 {
+					d.SetInt64(d.GetInt64() + 1)
+				}
+			}
+		case mysql.TypeFloat:
+			if d.GetFloat32() != math.MaxFloat32 {
+				d.SetFloat32(d.GetFloat32() + 1.0)
+			}
+		case mysql.TypeDouble:
+			if d.GetFloat64() != math.MaxFloat64 {
+				d.SetFloat64(d.GetFloat64() + 1.0)
+			}
+		case mysql.TypeNewDecimal:
+			if d.GetMysqlDecimal().Compare(NewMaxOrMinDec(false, retType.Flen, retType.Decimal)) != 0 {
+				var decimalOne, newD MyDecimal
+				one := decimalOne.FromInt(1)
+				err = DecimalAdd(d.GetMysqlDecimal(), one, &newD)
+				if err != nil {
+					return d, err
+				}
+				d = NewDecimalDatum(&newD)
+			}
+		}
+	}
+	return d, nil
+}

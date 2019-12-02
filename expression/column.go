@@ -593,6 +593,6 @@ func (col *Column) SupportReverseEval() bool {
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
-	return changeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
+func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
 }

@@ -947,10 +947,10 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = statistics.GetMinValue(q.Hist.Tp)
+			ran.LowVal[0] = types.GetMinValue(q.Hist.Tp)
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = statistics.GetMaxValue(q.Hist.Tp)
+			ran.HighVal[0] = types.GetMaxValue(q.Hist.Tp)
 		}
 	}
 	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
