@@ -678,6 +678,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
+	case format == ast.ExplainFormatHint:
+		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -709,6 +711,8 @@ func (e *Explain) RenderResult() error {
 		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+	case ast.ExplainFormatHint:
+		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
