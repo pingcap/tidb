@@ -1770,7 +1770,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	argTp := args[0].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
+	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString || argTp == types.ETJson {
 		argTp = types.ETReal
 	}
 
@@ -1796,8 +1796,9 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDecimal:
 		sig = &builtinTruncateDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TruncateDecimal)
+	default:
+		return nil, fmt.Errorf("unsupport type in truncateFunctionClass")
 	}
-
 	return sig, nil
 }
 
