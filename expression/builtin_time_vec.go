@@ -2772,6 +2772,7 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 				Type: mysql.TypeDatetime,
 				Fsp:  fsp,
 			}
+			continue
 		}
 		if fromTzMatched && toTzMatched {
 			t, err := times[i].Time.GoTime(time.Local)
