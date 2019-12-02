@@ -629,6 +629,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBStmtSummaryRefreshInterval:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
