@@ -775,7 +775,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 		}
 	}
 
-	checkBtFuncToken, tokenStr := false, string(data)
+	checkBtFuncToken := false
 	if s.r.peek() == '(' {
 		checkBtFuncToken = true
 	} else if s.sqlMode.HasIgnoreSpaceMode() {
@@ -785,7 +785,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 		}
 	}
 	if checkBtFuncToken {
-		if tok := btFuncTokenMap[tokenStr]; tok != 0 {
+		if tok := btFuncTokenMap[string(data)]; tok != 0 {
 			return tok
 		}
 	}
