@@ -336,7 +336,7 @@ func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitt
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = c.initKeysAndMutations(); err != nil {
+	if err = c.initKeysAndMutations(false); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return c, nil

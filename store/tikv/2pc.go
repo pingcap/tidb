@@ -128,6 +128,7 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
+	isParallelCommit bool
 }
 
 // batchExecutor is txn controller providing rate control like utils
@@ -196,7 +197,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 	}
 }
 
-func (c *twoPhaseCommitter) initKeysAndMutations() error {
+func (c *twoPhaseCommitter) initKeysAndMutations(parallelCommit bool) error {
 	var (
 		keys    [][]byte
 		size    int
@@ -317,6 +318,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.priority = getTxnPriority(txn)
 	c.syncLog = getTxnSyncLog(txn)
 	c.setDetail(commitDetail)
+
+	// TODO: Make it configurable and remove primary key
+	const parallelCommitLimit = 64
+	if parallelCommit && len(keys) <= parallelCommitLimit {
+		mutations[string(c.primary())].SecondaryKeys = keys
+		c.isParallelCommit = true
+	}
 	return nil
 }
 
@@ -389,7 +397,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
 	_, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
-	if firstIsPrimary && (actionIsCommit || actionIsCleanup) {
+	// If it is parallel commit, the primary needn't be committed first.
+	if firstIsPrimary && ((actionIsCommit && !c.isParallelCommit) || actionIsCleanup) {
 		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
@@ -402,6 +411,16 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
+		//
+		// TODO: renmame
+		// Commit all keys asynchronously if it is parallel commit.
+		if c.isParallelCommit {
+			logutil.BgLogger().Debug("commit in parallel commit",
+				zap.Uint64("conn", c.connID),
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Uint64("txnCommitTS", c.commitTS),
+			)
+		}
 		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
@@ -433,6 +452,16 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				zap.Stringer("action type", action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", c.startTS))
+		}
+		if _, ok := action.(actionPrewrite); ok {
+			c.mu.Lock()
+			c.mu.committed = true
+			c.mu.Unlock()
+			logutil.BgLogger().Debug("prewrite successfully in parallel commit",
+				zap.Uint64("conn", c.connID),
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Uint64("txnCommitTS", c.commitTS),
+			)
 		}
 		return errors.Trace(e)
 	}
@@ -526,6 +555,18 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			if c.isParallelCommit {
+				maxReadTs := prewriteResp.GetMaxReadTs()
+				logutil.BgLogger().Debug("prewrite in parallel commit",
+					zap.Uint64("conn", c.connID),
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("maxReadTs", maxReadTs))
+				c.mu.Lock()
+				if maxReadTs+1 > c.commitTS {
+					c.commitTS = maxReadTs + 1
+				}
+				c.mu.Unlock()
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -859,7 +900,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
 	isPrimary := bytes.Equal(batch.keys[0], c.primary())
-	if isPrimary && sender.rpcError != nil {
+	if !c.isParallelCommit && isPrimary && sender.rpcError != nil {
 		c.setUndeterminedErr(errors.Trace(sender.rpcError))
 	}
 
@@ -885,7 +926,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	commitResp := resp.Resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So
 	// we can clean undetermined error.
-	if isPrimary {
+	if isPrimary && !c.isParallelCommit {
 		c.setUndeterminedErr(nil)
 	}
 	if keyErr := commitResp.GetError(); keyErr != nil {
@@ -1062,35 +1103,41 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	start = time.Now()
-	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
-	if err != nil {
-		logutil.Logger(ctx).Warn("2PC get commitTS failed",
-			zap.Error(err),
-			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
-	}
-	commitDetail.GetCommitTsTime = time.Since(start)
-	logutil.Event(ctx, "finish get commit ts")
-	logutil.SetTag(ctx, "commitTs", commitTS)
+	// CommitTs will be calculated in Prewrite if it is parallel commit.
+	if !c.isParallelCommit {
+		start = time.Now()
+		logutil.Event(ctx, "start get commit ts")
+		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+		if err != nil {
+			logutil.Logger(ctx).Warn("2PC get commitTS failed",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+			return errors.Trace(err)
+		}
+		commitDetail.GetCommitTsTime = time.Since(start)
+		logutil.Event(ctx, "finish get commit ts")
+		logutil.SetTag(ctx, "commitTs", commitTS)
 
-	// check commitTS
-	if commitTS <= c.startTS {
-		err = errors.Errorf("conn %d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
-			c.connID, c.startTS, commitTS)
-		logutil.BgLogger().Error("invalid transaction", zap.Error(err))
-		return errors.Trace(err)
+		// check commitTS
+		if commitTS <= c.startTS {
+			err = errors.Errorf("conn %d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+				c.connID, c.startTS, commitTS)
+			logutil.BgLogger().Error("invalid transaction", zap.Error(err))
+			return errors.Trace(err)
+		}
+
+		// Transaction is committed if it is parallel commit, so needn't check it.
+		if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
+			err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
+				c.connID, c.startTS, c.commitTS)
+			return err
+		}
+
+		c.commitTS = commitTS
 	}
-	c.commitTS = commitTS
+	// TODO: how to handle it?
 	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
-	}
-
-	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
-		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
-			c.connID, c.startTS, c.commitTS)
-		return err
 	}
 
 	start = time.Now()
@@ -1280,7 +1327,8 @@ func (batchExe *batchExecutor) process(batches []batchKeys) error {
 	// For prewrite, stop sending other requests after receiving first error.
 	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
-	if _, ok := batchExe.action.(actionPrewrite); ok {
+	_, actionIsPrewrite := batchExe.action.(actionPrewrite)
+	if actionIsPrewrite {
 		backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
@@ -1294,6 +1342,7 @@ func (batchExe *batchExecutor) process(batches []batchKeys) error {
 			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatches failed",
 				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
+				zap.Bool("parallel commit", batchExe.committer.isParallelCommit),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
@@ -1310,6 +1359,17 @@ func (batchExe *batchExecutor) process(batches []batchKeys) error {
 		}
 	}
 	close(exitCh)
+	if err == nil && actionIsPrewrite && batchExe.committer.isParallelCommit {
+		committer := batchExe.committer
+		committer.mu.Lock()
+		committer.mu.committed = true
+		committer.mu.Unlock()
+		logutil.BgLogger().Debug("prewrite successfully in parallel commit",
+			zap.Uint64("conn", committer.connID),
+			zap.Uint64("txnStartTS", committer.startTS),
+			zap.Uint64("txnCommitTS", committer.commitTS),
+		)
+	}
 	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration))
 	return err
 }
