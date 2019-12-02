@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"testing"
 
@@ -209,28 +210,40 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	mockServer := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(mockServer.URL, "http://")
 
-	// mock tikv profile
-	router.HandleFunc("/debug/pprof/profile", func(w http.ResponseWriter, _ *http.Request) {
-		file, err := os.Open(filepath.Join(currentSourceDir(), "testdata/tikv.cpu.profile"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+	copyHandler := func(filename string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			file, err := os.Open(filepath.Join(currentSourceDir(), filename))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			defer func() { terror.Log(file.Close()) }()
+			_, err = io.Copy(w, file)
+			terror.Log(err)
 		}
-		defer func() { terror.Log(file.Close()) }()
-		_, err = io.Copy(w, file)
-		terror.Log(err)
-	})
+	}
+	// mock tikv profile
+	router.HandleFunc("/debug/pprof/profile", copyHandler("testdata/tikv.cpu.profile"))
 
 	// failpoint setting
-	fpExpr := strings.Join([]string{"tikv", mockAddr, mockAddr}, ",")
-	fpName := "github.com/pingcap/tidb/infoschema/perfschema/mockTiKVNodeStatusAddress"
+	servers := []string{
+		strings.Join([]string{"tikv", mockAddr, mockAddr}, ","),
+		strings.Join([]string{"pd", mockAddr, mockAddr}, ","),
+	}
+	fpExpr := strings.Join(servers, ";")
+	fpName := "github.com/pingcap/tidb/infoschema/perfschema/mockRemoteNodeStatusAddress"
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use performance_schema")
-	tk.MustQuery("select function, percent_abs, percent_rel from tikv_profile_cpu where depth < 3").Check(testkit.Rows(
+	result := tk.MustQuery("select function, percent_abs, percent_rel from tikv_profile_cpu where depth < 3")
+
+	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	result.Check(testkit.Rows(
 		"root 100% 100%",
 		"├─tikv::server::load_statistics::linux::ThreadLoadStatistics::record::h59facb8d680e7794 75.00% 75.00%",
 		"│ └─procinfo::pid::stat::stat_task::h69e1aa2c331aebb6 75.00% 100%",
@@ -256,4 +269,61 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 		"│ └─core::iter::range::<impl core::iter::traits::iterator::Iterator for core::ops::range::Range<A>>::next::hdb23ceb766e7a91f 0.89% 100%",
 		"└─<hashbrown::raw::bitmask::BitMaskIter as core::iter::traits::iterator::Iterator>::next::he129c78b3deb639d 0.89% 0.89%",
 		"  └─Unknown 0.89% 100%"))
+
+	// We can use current processe profile to mock profile of PD because the PD has the
+	// same way of retrieving profile with TiDB. And the purpose of this test case is used
+	// to make sure all profile HTTP API have been accessed.
+	accessed := map[string]struct{}{}
+	handlerFactory := func(name string, debug ...int) func(w http.ResponseWriter, _ *http.Request) {
+		debugLevel := 0
+		if len(debug) > 0 {
+			debugLevel = debug[0]
+		}
+		return func(w http.ResponseWriter, _ *http.Request) {
+			profile := pprof.Lookup(name)
+			if profile == nil {
+				http.Error(w, fmt.Sprintf("profile %s not found", name), http.StatusBadRequest)
+				return
+			}
+			if err := profile.WriteTo(w, debugLevel); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			accessed[name] = struct{}{}
+		}
+	}
+
+	// mock PD profile
+	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("../../util/profile/testdata/test.pprof"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/heap", handlerFactory("heap"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/mutex", handlerFactory("mutex"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/allocs", handlerFactory("allocs"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/block", handlerFactory("block"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/goroutine", handlerFactory("goroutine", 2))
+
+	tk.MustQuery("select * from pd_profile_cpu where depth < 3")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	tk.MustQuery("select * from pd_profile_memory where depth < 3")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	tk.MustQuery("select * from pd_profile_mutex where depth < 3")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	tk.MustQuery("select * from pd_profile_allocs where depth < 3")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	tk.MustQuery("select * from pd_profile_block where depth < 3")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	tk.MustQuery("select * from pd_profile_goroutines")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expect no warnings, but found: %+v", warnings))
+
+	c.Assert(len(accessed), Equals, 5, Commentf("expect all HTTP API had been accessed, but found: %v", accessed))
 }
