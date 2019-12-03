@@ -626,11 +626,12 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	txn.startTS = oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1)
 	txn.SetOption(kv.Pessimistic, true)
 	time.Sleep(time.Millisecond * 100)
-	err := txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, key)
+	forUpdateTS := oracle.ComposeTS(oracle.ExtractPhysical(txn.startTS)+100, 1)
+	err := txn.LockKeys(context.Background(), nil, forUpdateTS, kv.LockAlwaysWait, key)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
 	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(120))
+	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(150))
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
