@@ -1152,7 +1152,7 @@ func (s *testStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	}(ddl.IsEmulatorGCEnable())
 
 	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
