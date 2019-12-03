@@ -219,33 +219,41 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}()
 
 	for _, t := range []struct {
-		args []types.Datum
-		ret  int64
+		args   []types.Datum
+		ret    int64
+		getErr bool
 	}{
-		{types.MakeDatums(nil, 1, 2), -1},
-		{types.MakeDatums(1, 2, 3), 0},
-		{types.MakeDatums(2, 1, 3), 1},
-		{types.MakeDatums(3, 1, 2), 2},
-		{types.MakeDatums(0, "b", "1", "2"), 1},
-		{types.MakeDatums("a", "b", "1", "2"), 1},
-		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4},
-		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2},
-		{types.MakeDatums(9007199254740992, 9007199254740993), 0},
-		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0},
-		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0},
-		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0},
-		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0},
-		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1},
-		{types.MakeDatums("9007199254740991", "9007199254740992"), 0},
+		{types.MakeDatums(nil, 1, 2), -1, false},
+		{types.MakeDatums(1, 2, 3), 0, false},
+		{types.MakeDatums(2, 1, 3), 1, false},
+		{types.MakeDatums(3, 1, 2), 2, false},
+		{types.MakeDatums(0, "b", "1", "2"), 1, false},
+		{types.MakeDatums("a", "b", "1", "2"), 1, false},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4, false},
+		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2, false},
+		{types.MakeDatums(9007199254740992, 9007199254740993), 0, false},
+		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0, false},
+		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0, false},
+		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0, false},
+		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0, false},
+		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
+		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
+		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
 
 		// tests for appropriate precision loss
-		{types.MakeDatums(9007199254740992, "9007199254740993"), 1},
-		{types.MakeDatums("9007199254740992", 9007199254740993), 1},
-		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
+		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
+		{types.MakeDatums("9007199254740992", 9007199254740993), 1, false},
+		{types.MakeDatums("9007199254740992", "9007199254740993"), 1, false},
 	} {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
+		if t.getErr {
+			v, err := evalBuiltinFunc(f, chunk.Row{})
+			c.Assert(err, NotNil)
+			c.Assert(v.GetInt64(), Equals, t.ret)
+			continue
+		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
