@@ -619,6 +619,20 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	c.Assert(false, IsTrue, Commentf("update pessimistic ttl fail"))
 }
 
+// TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
+func (s *testCommitterSuite) TestElapsedTTL(c *C) {
+	key := kv.Key("key")
+	txn := s.begin(c)
+	txn.startTS = oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1)
+	txn.SetOption(kv.Pessimistic, true)
+	time.Sleep(time.Millisecond * 100)
+	err := txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, key)
+	c.Assert(err, IsNil)
+	lockInfo := s.getLockInfo(c, key)
+	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))
+	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(120))
+}
+
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	txn := s.begin(c)
 	err := txn.Set(key, key)
