@@ -61,6 +61,7 @@ type TableReaderExecutor struct {
 	// kvRanges are only use for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
+	startTS  uint64
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -207,6 +208,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
