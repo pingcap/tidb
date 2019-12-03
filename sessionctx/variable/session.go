@@ -1187,8 +1187,8 @@ const (
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
 	SlowLogCopWaitAddr = "Cop_wait_addr"
-	// SlowLogBackoffPrefix contains backoff information.
-	SlowLogBackoffPrefix = "Backoff_"
+	// SlowLogCopBackoffPrefix contains backoff information.
+	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
@@ -1317,7 +1317,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
 				for _, backoff := range backoffs {
-					backoffPrefix := SlowLogBackoffPrefix + backoff + "_"
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
 					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v\n",
 						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
 						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
@@ -1335,7 +1335,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
 				for _, backoff := range backoffs {
-					backoffPrefix := SlowLogBackoffPrefix + backoff + "_"
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
 					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v %v%v%v %v%v%v\n",
 						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
 						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
