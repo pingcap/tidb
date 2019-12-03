@@ -77,8 +77,12 @@ const (
 )
 
 // For query string
-const qTableID = "table_id"
-const qLimit = "limit"
+const (
+	qTableID   = "table_id"
+	qLimit     = "limit"
+	qOperation = "op"
+	qSeconds   = "seconds"
+)
 
 const (
 	headerContentType = "Content-Type"
@@ -669,7 +673,27 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	binloginfo.DisableSkipBinlogFlag()
+	op := req.FormValue(qOperation)
+	switch op {
+	case "reset":
+		binloginfo.ResetSkippedCommitterCounter()
+	case "nowait":
+		binloginfo.DisableSkipBinlogFlag()
+	case "status":
+	default:
+		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
+		if sec <= 0 || err != nil {
+			sec = 1800
+		}
+		binloginfo.DisableSkipBinlogFlag()
+		timeout := time.Duration(sec) * time.Second
+		err = binloginfo.WaitBinlogRecover(timeout)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	writeData(w, binloginfo.GetBinlogStatus())
 }
 
 type tableFlashReplicaInfo struct {
