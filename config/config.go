@@ -641,10 +641,9 @@ func (c *Config) Load(confFile string) error {
 		c.TokenLimit = 1000
 	}
 	if c.ServerVersion == "" {
-		return fmt.Errorf("server-version need an assignment")
+		c.ServerVersion = mysql.ServerVersion
 	}
 	mysql.ServerVersion = c.ServerVersion
-
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()

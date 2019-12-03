@@ -75,7 +75,7 @@ split-region-max-num = 1000
 alter-primary-key = false
 
 # serverVersion is used to show the version of tidb when log in.
-server-version = "5.7.25-TiDB"
+server-version = ""
 
 [log]
 # Log level: debug, info, warn, error, fatal.
