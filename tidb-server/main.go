@@ -154,7 +154,6 @@ func main() {
 	registerMetrics()
 	configWarning := loadConfig()
 	overrideConfig()
-
 	if err := cfg.Valid(); err != nil {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)

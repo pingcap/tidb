@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/parser/mysql"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -30,6 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -446,7 +446,7 @@ var defaultConf = Config{
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
-	ServerVersion:       "5.7.25-TiDB",
+	ServerVersion:       "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -640,6 +640,9 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
+	if c.ServerVersion == "" {
+		return fmt.Errorf("server-version need an assignment")
+	}
 	mysql.ServerVersion = c.ServerVersion
 
 	// If any items in confFile file are not mapped into the Config struct, issue
@@ -670,9 +673,6 @@ func (c *Config) Valid() error {
 	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
-	}
-	if c.ServerVersion == "" {
-		return fmt.Errorf("server-version need an assignment")
 	}
 	if _, ok := ValidStorage[c.Store]; !ok {
 		nameList := make([]string, 0, len(ValidStorage))
