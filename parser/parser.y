@@ -253,6 +253,7 @@ import (
 	union			"UNION"
 	unlock			"UNLOCK"
 	unsigned		"UNSIGNED"
+	until			"UNTIL"
 	update			"UPDATE"
 	usage			"USAGE"
 	use			"USE"
@@ -540,6 +541,7 @@ import (
 	dateSub			"DATE_SUB"
 	exact 	 		"EXACT"
 	extract			"EXTRACT"
+	flashback		"FLASHBACK"
 	getFormat		"GET_FORMAT"
 	groupConcat		"GROUP_CONCAT"
 	next_row_id		"NEXT_ROW_ID"
@@ -743,6 +745,7 @@ import (
 	ExplainStmt			"EXPLAIN statement"
 	ExplainableStmt			"explainable statement"
 	FlushStmt			"Flush statement"
+	FlashbackTableStmt		"Flashback table statement"
 	GrantStmt			"Grant statement"
 	GrantRoleStmt			"Grant role statement"
 	InsertIntoStmt			"INSERT INTO statement"
@@ -1017,6 +1020,8 @@ import (
 	TimestampUnit		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	TimestampBound		"Timestamp bound for start transaction with timestamp mode"
 	LockType			"Table locks type"
+	FlashbackUntil			"Flashback until timestamp"
+	FlashbackToNewName		"Flashback to new name"
 
 	TransactionChar		"Transaction characteristic"
 	TransactionChars	"Transaction characteristic list"
@@ -2036,6 +2041,41 @@ RecoverTableStmt:
             JobNum: $4.(int64),
         }
     }
+
+/*******************************************************************
+ *
+ *  Flush Back Table Statement
+ *
+ *  Example:
+ *
+ *******************************************************************/
+ FlashbackTableStmt:
+ 	"FLASHBACK" "TABLE" TableName FlashbackUntil FlashbackToNewName
+ 	{
+		$$ = &ast.FlashBackTableStmt{
+			Table: $3.(*ast.TableName),
+			Timestamp: $4.(ast.ValueExpr),
+			NewName: $5.(string),
+		}
+ 	}
+
+FlashbackUntil:
+	"UNTIL" "TIMESTAMP" StringLiteral
+	{
+		$$ = $3
+	}
+
+ FlashbackToNewName:
+ 	{
+ 		$$ = ""
+ 	}
+ |	"TO" Identifier
+ 	{
+ 		$$ = $2
+ 	}
+
+
+
 
 /*******************************************************************
  *
@@ -4574,7 +4614,7 @@ NotKeywordToken:
 | "INPLACE" | "INSTANT" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM"
 | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VARIANCE" | "VAR_POP" | "VAR_SAMP"
 | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOKUDB_DEFAULT" | "TOKUDB_FAST" | "TOKUDB_LZMA" | "TOKUDB_QUICKLZ" | "TOKUDB_SNAPPY" | "TOKUDB_SMALL" | "TOKUDB_UNCOMPRESSED" | "TOKUDB_ZLIB" | "TOP" | "TRIM" | "NEXT_ROW_ID"
-| "EXPR_PUSHDOWN_BLACKLIST" | "OPT_RULE_BLACKLIST" | "BOUND" | "EXACT" | "STALENESS" | "STRONG"
+| "EXPR_PUSHDOWN_BLACKLIST" | "OPT_RULE_BLACKLIST" | "BOUND" | "EXACT" | "STALENESS" | "STRONG" | "FLASHBACK"
 
 /************************************************************************************
  *
@@ -8609,6 +8649,7 @@ Statement:
 |	DropStatsStmt
 |	DropBindingStmt
 |	FlushStmt
+|	FlashbackTableStmt
 |	GrantStmt
 |	GrantRoleStmt
 |	InsertIntoStmt

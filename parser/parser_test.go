@@ -71,7 +71,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "language",
+		"match", "language", "until",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -2572,6 +2572,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"recover table ", false, ""},
 		{"recover table t1 100", true, "RECOVER TABLE `t1` 100"},
 		{"recover table t1 abc", false, ""},
+
+		// for flashback table.
+		{"flashback table t until timestamp '2019-09-24 20:16:31.124 +0800 CST'", true, "FLASHBACK TABLE `t` UNTIL TIMESTAMP '2019-09-24 20:16:31.124 +0800 CST'"},
+		{"flashback table t until timestamp '2019-09-24 20:16:31.124 +0800 CST' TO t1", true, "FLASHBACK TABLE `t` UNTIL TIMESTAMP '2019-09-24 20:16:31.124 +0800 CST' TO `t1`"},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
