@@ -226,7 +226,7 @@ max-sql-length=1024
 
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
-	
+
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
