@@ -320,6 +320,16 @@ func (g *jsonStringGener) gen() interface{} {
 	return j.String()
 }
 
+type decimalStringGener struct{}
+
+func (g *decimalStringGener) gen() interface{} {
+	tempDecimal := new(types.MyDecimal)
+	if err := tempDecimal.FromFloat64(rand.Float64()); err != nil {
+		panic(err)
+	}
+	return tempDecimal.String()
+}
+
 type jsonTimeGener struct{}
 
 func (g *jsonTimeGener) gen() interface{} {
@@ -657,6 +667,12 @@ type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+type randDurReal struct{}
+
+func (g *randDurReal) gen() interface{} {
+	return float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 type randDurDecimal struct{}
