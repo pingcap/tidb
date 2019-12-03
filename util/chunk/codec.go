@@ -184,6 +184,50 @@ func getFixedLen(colType *types.FieldType) int {
 	}
 }
 
+// GetFixedLen get the memory size of a fixed-length type.
+// if colType is not fixed-length, it returns varElemLen, aka -1.
+func GetFixedLen(colType *types.FieldType) int {
+	return getFixedLen(colType)
+}
+
+// EstimateTypeWidth estimates the average width of values of the type.
+// This is used by the planner, which doesn't require absolutely correct results;
+// it's OK (and expected) to guess if we don't know for sure.
+//
+// mostly study from https://github.com/postgres/postgres/blob/REL_12_STABLE/src/backend/utils/cache/lsyscache.c#L2356
+func EstimateTypeWidth(padChar bool, colType *types.FieldType) int {
+	colLen := getFixedLen(colType)
+	// Easy if it's a fixed-width type
+	if colLen != varElemLen {
+		return colLen
+	}
+
+	colLen = colType.Flen
+	if colLen > 0 {
+		/*
+		 * If PAD_CHAR_TO_FULL_LENGTH is enabled, and type is CHAR,
+		 * the colType.Flen is also the only width.
+		 */
+		if padChar && colType.Tp == mysql.TypeString {
+			return colLen
+		}
+		if colLen <= 32 {
+			return colLen
+		}
+		if colLen < 1000 {
+			return 32 + (colLen-32)/2 // assume 50%
+		}
+		/*
+		 * Beyond 1000, assume we're looking at something like
+		 * "varchar(10000)" where the limit isn't actually reached often, and
+		 * use a fixed estimate.
+		 */
+		return 32 + (1000-32)/2
+	}
+	// Oops, we have no idea ... wild guess time.
+	return 32
+}
+
 func init() {
 	for i := 0; i < 128; i++ {
 		allNotNullBitmap[i] = 0xFF
