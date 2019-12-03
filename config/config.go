@@ -530,7 +530,7 @@ var defaultConf = Config{
 
 		CoprCache: CoprocessorCache{
 			Enabled:                 true,
-			CapacityMb:              2000,
+			CapacityMb:              10000,
 			AdmissionMaxResultBytes: 10000000,
 			AdmissionMinProcessMs:   20,
 		},

@@ -309,7 +309,7 @@ store-limit = 0
 enabled = true
 
 # The capacity in MB of the cache.
-capacity-mb = 2000
+capacity-mb = 10000
 
 # Only cache requests whose result set is small.
 admission-max-result-bytes = 10000000
