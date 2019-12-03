@@ -39,29 +39,33 @@ var _ = SerialSuites(&testPlanSerialSuite{})
 type testPlanSuiteBase struct {
 	*parser.Parser
 	is infoschema.InfoSchema
-
-	testData testutil.TestData
-}
-
-type testPlanSuite struct {
-	testPlanSuiteBase
-}
-
-type testPlanSerialSuite struct {
-	testPlanSuiteBase
 }
 
 func (s *testPlanSuiteBase) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
 	s.Parser.EnableWindowFunc(true)
+}
+
+type testPlanSerialSuite struct {
+	testPlanSuiteBase
+}
+
+type testPlanSuite struct {
+	testPlanSuiteBase
+
+	testData testutil.TestData
+}
+
+func (s *testPlanSuite) SetUpSuite(c *C) {
+	s.testPlanSuiteBase.SetUpSuite(c)
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")
 	c.Assert(err, IsNil)
 }
 
-func (s *testPlanSuiteBase) TearDownSuite(c *C) {
+func (s *testPlanSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
