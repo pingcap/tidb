@@ -33,8 +33,6 @@ type WindowExec struct {
 	groupChecker *vecGroupChecker
 	// childResult stores the child chunk
 	childResult *chunk.Chunk
-	// groupRows stores the rows which belong to the same group
-	groupRows []chunk.Row
 	// executed indicates the child executor is drained or something unexpected happened.
 	executed bool
 	// resultChunks stores the chunks to return
@@ -75,14 +73,14 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
-	e.groupRows = e.groupRows[:0]
+	var groupRows []chunk.Row
 	eof, err := e.fetchChild(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if eof {
 		e.executed = true
-		return e.consumeGroupRows(e.groupRows)
+		return e.consumeGroupRows(groupRows)
 	}
 	_, err = e.groupChecker.splitIntoGroups(e.childResult)
 	if err != nil {
@@ -90,7 +88,7 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 	}
 	begin, end := e.groupChecker.getNextGroup()
 	for i := begin; i < end; i++ {
-		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
+		groupRows = append(groupRows, e.childResult.GetRow(i))
 	}
 
 	for meetLastGroup := end == e.childResult.NumRows(); meetLastGroup; {
@@ -101,7 +99,7 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 		}
 		if eof {
 			e.executed = true
-			return e.consumeGroupRows(e.groupRows)
+			return e.consumeGroupRows(groupRows)
 		}
 
 		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
@@ -112,16 +110,16 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 		if isFirstGroupSameAsPrev {
 			begin, end = e.groupChecker.getNextGroup()
 			for i := begin; i < end; i++ {
-				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
+				groupRows = append(groupRows, e.childResult.GetRow(i))
 			}
 			meetLastGroup = end == e.childResult.NumRows()
 		}
 	}
-	return e.consumeGroupRows()
+	return e.consumeGroupRows(groupRows)
 }
 
-func (e *WindowExec) consumeGroupRows() (err error) {
-	remainingRowsInGroup := len(e.groupRows)
+func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
+	remainingRowsInGroup := len(groupRows)
 	if remainingRowsInGroup == 0 {
 		return nil
 	}
@@ -133,11 +131,11 @@ func (e *WindowExec) consumeGroupRows() (err error) {
 		// TODO: Combine these three methods.
 		// The old implementation needs the processor has these three methods
 		// but now it does not have to.
-		e.groupRows, err = e.processor.consumeGroupRows(e.ctx, e.groupRows)
+		groupRows, err = e.processor.consumeGroupRows(e.ctx, groupRows)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = e.processor.appendResult2Chunk(e.ctx, e.groupRows, e.resultChunks[i], remained)
+		_, err = e.processor.appendResult2Chunk(e.ctx, groupRows, e.resultChunks[i], remained)
 		if err != nil {
 			return errors.Trace(err)
 		}
