@@ -351,6 +351,7 @@ const (
 	version34 = 34
 	version35 = 35
 	version36 = 36
+	version37 = 37
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -553,6 +554,10 @@ func upgrade(s Session) {
 
 	if ver < version36 {
 		upgradeToVer36(s)
+	}
+
+	if ver < version37 {
+		upgradeToVer37(s)
 	}
 
 	updateBootstrapVer(s)
@@ -875,6 +880,13 @@ func upgradeToVer36(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	// A root user will have those privileges after upgrading.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' where User = 'root'")
+}
+
+func upgradeToVer37(s Session) {
+	// when upgrade from old tidb and no 'tidb_enable_window_function' in GLOBAL_VARIABLES, init it with 0.
+	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableWindowFunction, 0)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
