@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -552,7 +552,7 @@ func (d *ddl) GetID() string {
 func checkJobMaxInterval(job *model.Job) time.Duration {
 	// The job of adding index takes more time to process.
 	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		return 3 * time.Second
 	}
 	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
@@ -567,7 +567,7 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 		return
 	}
 
-	if jobTp == model.ActionAddIndex {
+	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
 		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
 	} else {
 		asyncNotify(d.workers[generalWorker].ddlJobCh)

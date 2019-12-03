@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/spaolacci/murmur3"
 )
 
 // SampleItem is an item of sampled column value.
@@ -256,4 +257,27 @@ func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)
 	}
 	return datums
+}
+
+// ExtractTopN extracts the topn from the CM Sketch.
+func (c *SampleCollector) ExtractTopN(numTop uint32) {
+	if numTop == 0 {
+		return
+	}
+	values := make([][]byte, 0, len(c.Samples))
+	for _, sample := range c.Samples {
+		values = append(values, sample.Value.GetBytes())
+	}
+	helper := newTopNHelper(values, numTop)
+	cms := c.CMSketch
+	cms.topN = make(map[uint64][]*TopNMeta)
+	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
+	// by small values.
+	for i := uint32(0); i < helper.actualNumTop; i++ {
+		data := helper.sorted[i].data
+		h1, h2 := murmur3.Sum128(data)
+		realCnt := cms.queryHashValue(h1, h2)
+		cms.subValue(h1, h2, realCnt)
+		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, data, realCnt})
+	}
 }
