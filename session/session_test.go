@@ -1788,7 +1788,6 @@ type testSchemaSuiteBase struct {
 	store     kv.Storage
 	lease     time.Duration
 	dom       *domain.Domain
-	checkLeak func()
 }
 
 type testSchemaSuite struct {

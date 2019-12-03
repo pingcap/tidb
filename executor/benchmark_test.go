@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -558,6 +559,7 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
 	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}}
 	tc.cols = cols
@@ -603,7 +605,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	}
 	t := memory.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), memLimit)
 	t.SetActionOnExceed(nil)
+	t2 := disk.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), -1)
 	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
+	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
 	return e
 }
 
@@ -865,6 +869,7 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	tc := &indexJoinTestCase{
 		outerRows:       100000,
 		innerRows:       variable.DefMaxChunkSize * 100,
