@@ -199,7 +199,7 @@ func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implement
 	return impl.cost
 }
 
-// NewMaxOneOrwImpl creates a new MaxOneRowImpl.
+// NewMaxOneRowImpl creates a new MaxOneRowImpl.
 func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
 	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
 }

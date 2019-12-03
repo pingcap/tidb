@@ -156,6 +156,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	}
 }
 
+// GetCost computes the cost of apply operator.
 func (p *PhysicalApply) GetCost(lCount float64, rCount float64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
