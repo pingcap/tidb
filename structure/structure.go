@@ -21,10 +21,10 @@ import (
 // structure error codes.
 const (
 	codeInvalidHashKeyFlag   terror.ErrCode = 1
-	codeInvalidHashKeyPrefix                = 2
-	codeInvalidListIndex                    = 3
-	codeInvalidListMetaData                 = 4
-	codeWriteOnSnapshot                     = 5
+	codeInvalidHashKeyPrefix terror.ErrCode = 2
+	codeInvalidListIndex     terror.ErrCode = 3
+	codeInvalidListMetaData  terror.ErrCode = 4
+	codeWriteOnSnapshot      terror.ErrCode = 5
 )
 
 var (
