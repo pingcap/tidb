@@ -513,7 +513,7 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	// It cannot choose table path although it has lowest cost.
+	// It cannot choose idx_c although it has lowest cost.
 	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
 	tk.MustExec("admin flush bindings")
