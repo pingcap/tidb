@@ -106,7 +106,7 @@ func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 		i64s[i] = i64s[i] - ((i64s[i] >> 1) & 0x5555555555555555)
 		i64s[i] = (i64s[i] & 0x3333333333333333) + ((i64s[i] >> 2) & 0x3333333333333333)
-		i64s[i] = (i64s[i]& 0x0f0f0f0f0f0f0f0f)+ ((i64s[i] >> 4) & 0x0f0f0f0f0f0f0f0f)
+		i64s[i] = (i64s[i] & 0x0f0f0f0f0f0f0f0f) + ((i64s[i] >> 4) & 0x0f0f0f0f0f0f0f0f)
 		i64s[i] = i64s[i] + (i64s[i] >> 8)
 		i64s[i] = i64s[i] + (i64s[i] >> 16)
 		i64s[i] = i64s[i] + (i64s[i] >> 32)
