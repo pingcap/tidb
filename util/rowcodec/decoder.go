@@ -26,17 +26,17 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// Decoder contains base util for decode row.
-type Decoder struct {
+// decoder contains base util for decode row.
+type decoder struct {
 	row
 	columns     []ColInfo
 	handleColID int64
 	loc         *time.Location
 }
 
-// NewDecoder creates a Decoder.
-func NewDecoder(columns []ColInfo, handleColID int64, loc *time.Location) *Decoder {
-	return &Decoder{
+// NewDecoder creates a decoder.
+func NewDecoder(columns []ColInfo, handleColID int64, loc *time.Location) *decoder {
+	return &decoder{
 		columns:     columns,
 		handleColID: handleColID,
 		loc:         loc,
@@ -57,12 +57,12 @@ type ColInfo struct {
 
 // DatumMapDecoder decodes the row to datum map.
 type DatumMapDecoder struct {
-	Decoder
+	decoder
 }
 
 // NewDatumMapDecoder creates a DatumMapDecoder.
 func NewDatumMapDecoder(columns []ColInfo, handleColID int64, loc *time.Location) *DatumMapDecoder {
-	return &DatumMapDecoder{Decoder{
+	return &DatumMapDecoder{decoder{
 		columns:     columns,
 		handleColID: handleColID,
 		loc:         loc,
@@ -183,14 +183,14 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 
 // ChunkDecoder decodes the row to chunk.Chunk.
 type ChunkDecoder struct {
-	Decoder
+	decoder
 	defDatum []func() (types.Datum, error)
 }
 
 // NewChunkDecoder creates a NewChunkDecoder.
 func NewChunkDecoder(columns []ColInfo, handleColID int64, defDatum []func() (types.Datum, error), loc *time.Location) *ChunkDecoder {
 	return &ChunkDecoder{
-		Decoder: Decoder{
+		decoder: decoder{
 			columns:     columns,
 			handleColID: handleColID,
 			loc:         loc,
@@ -215,7 +215,7 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
 		if !notFound && !isNil {
 			colData := decoder.getData(idx)
-			err := decoder.decodeColChunk(colIdx, &col, colData, chk)
+			err := decoder.decodeColToChunk(colIdx, &col, colData, chk)
 			if err != nil {
 				return err
 			}
@@ -248,7 +248,7 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 	return nil
 }
 
-func (decoder *ChunkDecoder) decodeColChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
+func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
 	switch byte(col.Tp) {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny, mysql.TypeYear:
 		if mysql.HasUnsignedFlag(uint(col.Flag)) {
@@ -326,14 +326,15 @@ func (decoder *ChunkDecoder) decodeColChunk(colIdx int, col *ColInfo, colData []
 
 // BytesDecoder decodes the row to old datums bytes.
 type BytesDecoder struct {
-	Decoder
+	decoder
 	defBytes []func() ([]byte, error)
 }
 
 // NewByteDecoder creates a BytesDecoder.
+// defBytes: provided default value bytes in old datum format(flag+colData).
 func NewByteDecoder(columns []ColInfo, handleColID int64, defBytes []func() ([]byte, error), loc *time.Location) *BytesDecoder {
 	return &BytesDecoder{
-		Decoder: Decoder{
+		decoder: decoder{
 			columns:     columns,
 			handleColID: handleColID,
 			loc:         loc,
@@ -391,10 +392,6 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 				}
 			}
 		}
-
-		//if mysql.HasNotNullFlag(uint(col.Flag)) {
-		//	return nil, errors.Errorf("Miss column %d", colID)
-		//}
 
 		values[offset] = []byte{NilFlag}
 	}
