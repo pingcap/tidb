@@ -1736,7 +1736,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version36
+	currentBootstrapVersion = version37
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1836,6 +1836,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptScanFactor,
 	variable.TiDBOptDescScanFactor,
 	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptDiskFactor,
 	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
