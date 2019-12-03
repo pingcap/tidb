@@ -248,6 +248,10 @@ func (txn *tikvTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
 }
 
+func (txn *tikvTxn) ParallelCommitEnabled() bool {
+	return txn.us.GetOption(kv.ParallelCommit) != nil
+}
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.Commit", opentracing.ChildOf(span.Context()))
@@ -290,7 +294,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer committer.ttlManager.close()
 	// TODO: make it as session variable
-	if err := committer.initKeysAndMutations(true); err != nil {
+	if err := committer.initKeysAndMutations(txn.ParallelCommitEnabled()); err != nil {
 		return errors.Trace(err)
 	}
 	if len(committer.keys) == 0 {

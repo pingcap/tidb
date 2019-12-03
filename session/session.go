@@ -1335,6 +1335,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
+		if s.sessionVars.EnableParallelCommit {
+			s.txn.SetOption(kv.ParallelCommit, true)
+		}
 	}
 	return &s.txn, nil
 }
@@ -1858,6 +1861,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBEnableParallelCommit,
 }
 
 var (

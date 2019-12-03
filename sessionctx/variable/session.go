@@ -455,6 +455,8 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	EnableParallelCommit bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -534,6 +536,7 @@ func NewSessionVars() *SessionVars {
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		EnableParallelCommit:        DefTiDBEnableParallelCommit,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -989,6 +992,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBEnableParallelCommit:
+		s.EnableParallelCommit = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
