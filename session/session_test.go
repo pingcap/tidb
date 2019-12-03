@@ -1788,7 +1788,6 @@ type testSchemaSuiteBase struct {
 	store     kv.Storage
 	lease     time.Duration
 	dom       *domain.Domain
-	checkLeak func()
 }
 
 type testSchemaSuite struct {
@@ -1902,9 +1901,9 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	session.SchemaChangedWithoutRetry = true
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	defer func() {
-		session.SchemaChangedWithoutRetry = false
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)
