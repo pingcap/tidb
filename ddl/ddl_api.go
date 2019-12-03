@@ -2372,10 +2372,49 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
-	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
-		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	switch origin.Tp {
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		switch to.Tp {
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		default:
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch to.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		default:
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeEnum:
+		if origin.Tp != to.Tp {
+			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		if len(to.Elems) < len(origin.Elems) {
+			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		for index, originElem := range origin.Elems {
+			toElem := to.Elems[index]
+			if originElem != toElem {
+				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+		}
+	case mysql.TypeNewDecimal:
+		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
+			return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+		}
+	default:
+		if origin.Tp != to.Tp {
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	}
+
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -2384,53 +2423,16 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	if err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate); err != nil {
-		return errors.Trace(err)
-	}
 
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
-		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
+		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	switch origin.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch to.Tp {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return nil
-		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch to.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return nil
-		}
-	case mysql.TypeEnum:
-		if origin.Tp == to.Tp {
-			if len(to.Elems) < len(origin.Elems) {
-				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
-			for index, originElem := range origin.Elems {
-				toElem := to.Elems[index]
-				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
-					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-				}
-			}
-			return nil
-		}
-		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	default:
-		if origin.Tp == to.Tp {
-			return nil
-		}
-	}
-	msg := fmt.Sprintf("type %v not match origin %v", to.Tp, origin.Tp)
-	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+
+	err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate)
+	return errors.Trace(err)
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
