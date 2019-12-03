@@ -45,6 +45,12 @@ const (
 	tableNameTiDBProfileBlock                = "tidb_profile_block"
 	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
 	tableNameTiKVProfileCPU                  = "tikv_profile_cpu"
+	tableNamePDProfileCPU                    = "pd_profile_cpu"
+	tableNamePDProfileMemory                 = "pd_profile_memory"
+	tableNamePDProfileMutex                  = "pd_profile_mutex"
+	tableNamePDProfileAllocs                 = "pd_profile_allocs"
+	tableNamePDProfileBlock                  = "pd_profile_block"
+	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -120,9 +126,23 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableNameTiDBProfileBlock:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("block")
 	case tableNameTiDBProfileGoroutines:
-		fullRows, err = (&profile.Collector{}).Goroutines()
+		fullRows, err = (&profile.Collector{}).ProfileGraph("goroutine")
 	case tableNameTiKVProfileCPU:
-		fullRows, err = dataForTiKVProfileCPU(ctx)
+		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
+		fullRows, err = dataForRemoteProfile(ctx, "tikv", "/debug/pprof/profile?seconds="+interval, false)
+	case tableNamePDProfileCPU:
+		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/profile?seconds="+interval, false)
+	case tableNamePDProfileMemory:
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/heap", false)
+	case tableNamePDProfileMutex:
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/mutex", false)
+	case tableNamePDProfileAllocs:
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/allocs", false)
+	case tableNamePDProfileBlock:
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/block", false)
+	case tableNamePDProfileGoroutines:
+		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
 	}
 	if err != nil {
 		return
@@ -163,15 +183,29 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	return nil
 }
 
-func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
-	servers, err := infoschema.GetTiKVServerInfo(ctx)
-	failpoint.Inject("mockTiKVNodeStatusAddress", func(val failpoint.Value) {
+func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGoroutine bool) ([][]types.Datum, error) {
+	var (
+		servers []infoschema.ServerInfo
+		err     error
+	)
+	switch nodeType {
+	case "tikv":
+		servers, err = infoschema.GetTiKVServerInfo(ctx)
+	case "pd":
+		servers, err = infoschema.GetPDServerInfo(ctx)
+	default:
+		return nil, errors.Errorf("%s does not support profile remote component", nodeType)
+	}
+	failpoint.Inject("mockRemoteNodeStatusAddress", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
 		// there is no extra checks for it. (let the test fail if the expression invalid)
 		if s := val.(string); len(s) > 0 {
 			servers = servers[:0]
 			for _, server := range strings.Split(s, ";") {
 				parts := strings.Split(server, ",")
+				if parts[0] != nodeType {
+					continue
+				}
 				servers = append(servers, infoschema.ServerInfo{
 					ServerType: parts[0],
 					Address:    parts[1],
@@ -205,13 +239,15 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 		go func(address string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				interval := int(profile.CPUProfileInterval / time.Second)
-				url := fmt.Sprintf("http://%s/debug/pprof/profile?seconds=%d", statusAddr, interval)
+				url := fmt.Sprintf("http://%s%s", statusAddr, uri)
 				req, err := http.NewRequest(http.MethodGet, url, nil)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
 				}
+				// Forbidden PD follower proxy
+				req.Header.Add("PD-Allow-follower-handle", "true")
+				// TiKV output svg format in default
 				req.Header.Add("Content-Type", "application/protobuf")
 				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
@@ -222,11 +258,16 @@ func dataForTiKVProfileCPU(ctx sessionctx.Context) ([][]types.Datum, error) {
 					terror.Log(resp.Body.Close())
 				}()
 				if resp.StatusCode != http.StatusOK {
-					ch <- result{err: errors.Errorf("request %s failed: %s", statusAddr, resp.Status)}
+					ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
 					return
 				}
 				collector := profile.Collector{}
-				rows, err := collector.ProfileReaderToDatums(resp.Body)
+				var rows [][]types.Datum
+				if isGoroutine {
+					rows, err = collector.ParseGoroutines(resp.Body)
+				} else {
+					rows, err = collector.ProfileReaderToDatums(resp.Body)
+				}
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
