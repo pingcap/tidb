@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -68,30 +69,60 @@ func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.Fi
 	return name.ColName.L, results
 }
 
-func (helper extractHelper) extractColEqConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, types.Datum) {
+func (helper extractHelper) extractColEqConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
-	col, isCol := args[0].(*expression.Column)
-	if !isCol {
-		return "", types.Datum{}
+	var col *expression.Column
+	var colIdx int
+	// c = 'rhs'
+	// 'lhs' = c
+	for i := 0; i < 2; i++ {
+		var isCol bool
+		col, isCol = args[i].(*expression.Column)
+		if isCol {
+			colIdx = i
+			break
+		}
 	}
+	if col == nil {
+		return "", nil
+	}
+
 	name, found := extractCols[col.UniqueID]
 	if !found {
-		return "", types.Datum{}
+		return "", nil
 	}
 	// The `rhs` of EQ expression must be a constant
 	// SELECT * FROM t1 WHERE c = 'rhs'
-	constant, ok := args[1].(*expression.Constant)
+	constant, ok := args[1-colIdx].(*expression.Constant)
 	if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
-		return "", types.Datum{}
+		return "", nil
 	}
-	return name.ColName.L, constant.Value
+	return name.ColName.L, []types.Datum{constant.Value}
+}
+
+func (helper extractHelper) intersection(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
+	tmpNodeTypes := set.NewStringSet()
+	for _, datum := range datums {
+		var s string
+		if toLower {
+			s = strings.ToLower(datum.GetString())
+		} else {
+			s = datum.GetString()
+		}
+		tmpNodeTypes.Insert(s)
+	}
+	if len(lhs) > 0 {
+		return lhs.Intersection(tmpNodeTypes)
+	} else {
+		return tmpNodeTypes
+	}
 }
 
 // ClusterConfigTableExtractor is used to extract some predicates of `TIDB_CLUSTER_CONFIG`
 type ClusterConfigTableExtractor struct {
 	extractHelper
 
-	// SkipRequest means the where cluase always false, we don't need to request any component
+	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
 
 	// NodeTypes represents all components types we should send request to.
@@ -129,76 +160,41 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 		panic(fmt.Sprintf("push down columns `type/address` not found in schema, got: %+v", extractCols))
 	}
 
-	e.NodeTypes = set.NewStringSet()
-	e.Addresses = set.NewStringSet()
+	skipRequest := false
+	nodeTypes := set.NewStringSet()
+	addresses := set.NewStringSet()
 
 	// We should use INTERSECTION of sets because of the predicates is CNF array
 	for _, expr := range predicates {
-		var extracted bool
+		var colName string
+		var datums []types.Datum
 		switch x := expr.(type) {
 		case *expression.ScalarFunction:
 			switch x.FuncName.L {
 			case ast.EQ:
-				colName, datum := e.extractColEqConsExpr(extractCols, x)
-				switch colName {
-				case ColNameType:
-					tp := datum.GetString()
-					// SELECT * FROM tidb_cluster_config WHERE type='a' AND type='b'
-					if len(e.NodeTypes) > 0 && !e.NodeTypes.Exist(tp) {
-						e.NodeTypes = set.NewStringSet()
-						e.SkipRequest = true
-						return nil
-					}
-					e.NodeTypes.Insert(tp)
-				case ColNameAddress:
-					addr := datum.GetString()
-					// SELECT * FROM tidb_cluster_config WHERE address='a' AND address='b'
-					if len(e.Addresses) > 0 && !e.Addresses.Exist(addr) {
-						e.Addresses = set.NewStringSet()
-						e.SkipRequest = true
-						return nil
-					}
-					e.Addresses.Insert(addr)
-				}
-				extracted = colName != ""
+				colName, datums = e.extractColEqConsExpr(extractCols, x)
 			case ast.In:
-				colName, datums := e.extractColInConsExpr(extractCols, x)
-				switch colName {
-				case ColNameType:
-					tmpNodeTypes := set.NewStringSet()
-					for _, datum := range datums {
-						tmpNodeTypes.Insert(datum.GetString())
-					}
-					if len(e.NodeTypes) > 0 {
-						e.NodeTypes = e.NodeTypes.Intersection(tmpNodeTypes)
-						if len(e.NodeTypes) == 0 {
-							e.SkipRequest = true
-							return nil
-						}
-					} else {
-						e.NodeTypes = tmpNodeTypes
-					}
-				case ColNameAddress:
-					tmpAddresses := set.NewStringSet()
-					for _, datum := range datums {
-						tmpAddresses.Insert(datum.GetString())
-					}
-					if len(e.Addresses) > 0 {
-						e.Addresses = e.Addresses.Intersection(tmpAddresses)
-						if len(e.Addresses) == 0 {
-							e.SkipRequest = true
-							return nil
-						}
-					} else {
-						e.Addresses = tmpAddresses
-					}
-				}
-				extracted = colName != ""
+				colName, datums = e.extractColInConsExpr(extractCols, x)
 			}
 		}
-		if !extracted {
+		switch colName {
+		case ColNameType:
+			nodeTypes = e.intersection(nodeTypes, datums, true)
+			skipRequest = len(nodeTypes) == 0
+		case ColNameAddress:
+			addresses = e.intersection(addresses, datums, false)
+			skipRequest = len(addresses) == 0
+		default:
 			remained = append(remained, expr)
 		}
+		// There are no data if the low-level executor skip request, so the filter can be droped
+		if skipRequest {
+			remained = remained[:0]
+			break
+		}
 	}
+	e.SkipRequest = skipRequest
+	e.NodeTypes = nodeTypes
+	e.Addresses = addresses
 	return remained
 }

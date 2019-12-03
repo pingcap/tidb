@@ -75,6 +75,16 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 			addresses: set.NewStringSet(),
 		},
 		{
+			sql:       "select * from information_schema.tidb_cluster_config where 'tikv'=type",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet(),
+		},
+		{
+			sql:       "select * from information_schema.tidb_cluster_config where 'TiKV'=type",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet(),
+		},
+		{
 			sql:       "select * from information_schema.tidb_cluster_config where type in ('tikv', 'pd')",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
 			addresses: set.NewStringSet(),
@@ -103,6 +113,16 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 			sql:       "select * from information_schema.tidb_cluster_config where type='tikv' and address='123.1.1.4:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
 			addresses: set.NewStringSet("123.1.1.4:1234"),
+		},
+		{
+			sql:       "select * from information_schema.tidb_cluster_config where type='tikv' and address='cNs2dm.tikv.pingcap.com:1234'",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
+		},
+		{
+			sql:       "select * from information_schema.tidb_cluster_config where type='TIKV' and address='cNs2dm.tikv.pingcap.com:1234'",
+			nodeTypes: set.NewStringSet("tikv"),
+			addresses: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
 		},
 		{
 			sql:         "select * from information_schema.tidb_cluster_config where type='tikv' and type='pd'",
