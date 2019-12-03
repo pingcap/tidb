@@ -2727,6 +2727,11 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 	// dt
 	errDt := b.args[0].VecEvalTime(b.ctx, input, result)
 
+	if errFromTz != nil || errToTz != nil || errDt != nil {
+		result.SetNulls(0, n, true)
+		return nil
+	}
+
 	result.MergeNulls(fromTzBuf, toTzBuf)
 	times := result.Times()
 	fsp := int8(b.tp.Decimal)
@@ -2739,8 +2744,7 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 
 		fromTzStr = fromTzBuf.GetString(i)
 		toTzStr = toTzBuf.GetString(i)
-		if errFromTz != nil || errToTz != nil || errDt != nil ||
-			fromTzStr == "" || toTzStr == "" {
+		if fromTzStr == "" || toTzStr == "" {
 			result.SetNull(i, true)
 			continue
 		}
