@@ -270,7 +270,8 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 		},
 		Client: s.client,
 	}
-	err := info.WriteBinlog(1)
+	binlogWR := info.WriteBinlog(1)
+	err := binlogWR.GetError()
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
