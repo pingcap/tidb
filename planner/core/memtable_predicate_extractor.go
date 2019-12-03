@@ -91,8 +91,9 @@ func (helper extractHelper) extractColEqConsExpr(extractCols map[int64]*types.Fi
 	if !found {
 		return "", nil
 	}
-	// The `rhs` of EQ expression must be a constant
-	// SELECT * FROM t1 WHERE c = 'rhs'
+	// The `lhs/rhs` of EQ expression must be a constant
+	// SELECT * FROM t1 WHERE c='rhs'
+	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
 	if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
 		return "", nil
@@ -113,9 +114,8 @@ func (helper extractHelper) intersection(lhs set.StringSet, datums []types.Datum
 	}
 	if len(lhs) > 0 {
 		return lhs.Intersection(tmpNodeTypes)
-	} else {
-		return tmpNodeTypes
 	}
+	return tmpNodeTypes
 }
 
 // ClusterConfigTableExtractor is used to extract some predicates of `TIDB_CLUSTER_CONFIG`
