@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -126,6 +127,7 @@ type StatementContext struct {
 	Priority         mysql.PriorityEnum
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
+	DiskTracker      *disk.Tracker
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexNames       []string

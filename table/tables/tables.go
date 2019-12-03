@@ -482,6 +482,9 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	sessVars := ctx.GetSessionVars()
 
 	rm, err := t.getRollbackableMemStore(ctx)
+	if err != nil {
+		return 0, err
+	}
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))

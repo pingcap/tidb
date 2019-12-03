@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -1148,11 +1149,62 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinStrToDateDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	bufStrings, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufStrings)
+	if err := b.args[0].VecEvalString(b.ctx, input, bufStrings); err != nil {
+		return err
+	}
+
+	bufFormats, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufFormats)
+	if err := b.args[1].VecEvalString(b.ctx, input, bufFormats); err != nil {
+		return err
+	}
+
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(bufStrings, bufFormats)
+	d64s := result.GoDurations()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		var t types.Time
+		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
+		if !succ {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		if hasNoZeroDateMode && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		t.Fsp = int8(b.tp.Decimal)
+		dur, err := t.ConvertToDuration()
+		if err != nil {
+			return err
+		}
+		d64s[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubTimeDateTimeNullSig) vectorized() bool {
@@ -2380,11 +2432,51 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 }
 
 func (b *builtinTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	ds := result.GoDurations()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		fsp := 0
+		expr := buf.GetString(i)
+		if idx := strings.Index(expr, "."); idx != -1 {
+			fsp = len(expr) - idx - 1
+		}
+
+		var tmpFsp int8
+		if tmpFsp, err = types.CheckFsp(fsp); err != nil {
+			return err
+		}
+		fsp = int(tmpFsp)
+
+		res, err := types.ParseDuration(sc, expr, int8(fsp))
+		if types.ErrTruncatedWrongVal.Equal(err) {
+			err = sc.HandleTruncate(err)
+		}
+		if err != nil {
+			return err
+		}
+		ds[i] = res.Duration
+	}
+	return nil
 }
 
 func (b *builtinAddDateDatetimeIntSig) vectorized() bool {
