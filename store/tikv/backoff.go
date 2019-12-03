@@ -253,6 +253,9 @@ type Backoffer struct {
 	types      []fmt.Stringer
 	vars       *kv.Variables
 	noop       bool
+
+	backoffSleepMS map[backoffType]int
+	backoffTimes   map[backoffType]int
 }
 
 // txnStartKey is a key for transaction start_ts info in context.Context.
@@ -333,6 +336,14 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	realSleep := f(b.ctx, maxSleepMs)
 	backoffDuration.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
+	if b.backoffSleepMS == nil {
+		b.backoffSleepMS = make(map[backoffType]int)
+	}
+	b.backoffSleepMS[typ] += realSleep
+	if b.backoffTimes == nil {
+		b.backoffTimes = make(map[backoffType]int)
+	}
+	b.backoffTimes[typ]++
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {

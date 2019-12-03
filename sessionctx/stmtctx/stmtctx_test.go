@@ -23,11 +23,18 @@ import (
 
 func TestCopTasksDetails(t *testing.T) {
 	ctx := new(StatementContext)
+	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
 			CalleeAddress: fmt.Sprintf("%v", i+1),
 			ProcessTime:   time.Second * time.Duration(i+1),
 			WaitTime:      time.Millisecond * time.Duration(i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+		}
+		for _, backoff := range backoffs {
+			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(i+1)
+			d.BackoffTimes[backoff] = i + 1
 		}
 		ctx.MergeExecDetails(d, nil)
 	}
@@ -42,5 +49,15 @@ func TestCopTasksDetails(t *testing.T) {
 		c.MaxWaitTime != time.Millisecond*100 ||
 		c.MaxWaitAddress != "100" {
 		t.Fatal(c)
+	}
+	for _, backoff := range backoffs {
+		if c.MaxBackoffAddress[backoff] != "100" ||
+			c.MaxBackoffTime[backoff] != 100*time.Millisecond*100 ||
+			c.P90BackoffTime[backoff] != time.Millisecond*100*91 ||
+			c.AvgBackoffTime[backoff] != time.Millisecond*100*101/2 ||
+			c.TotBackoffTimes[backoff] != 101*50 ||
+			c.TotBackoffTime[backoff] != 101*50*100*time.Millisecond {
+			t.Fatal(c)
+		}
 	}
 }

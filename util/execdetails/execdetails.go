@@ -35,6 +35,8 @@ type ExecDetails struct {
 	ProcessTime      time.Duration
 	WaitTime         time.Duration
 	BackoffTime      time.Duration
+	BackoffSleep     map[string]time.Duration
+	BackoffTimes     map[string]int
 	LockKeysDuration time.Duration
 	RequestCount     int
 	TotalKeys        int64
