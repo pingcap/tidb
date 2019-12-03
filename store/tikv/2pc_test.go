@@ -39,7 +39,7 @@ type testCommitterSuite struct {
 var _ = Suite(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
-	PessimisticLockTTL = 3000 // 3s
+	ManagedLockTTL = 3000 // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 }
 
@@ -611,7 +611,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= PessimisticLockTTL, IsTrue)
+			c.Assert(uint64(expire-now) <= ManagedLockTTL, IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
