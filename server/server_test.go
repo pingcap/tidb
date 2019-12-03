@@ -808,7 +808,7 @@ func runTestErrorCode(c *C) {
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
-		checkErrorCode(c, err, tmysql.ErrParse)
+		checkErrorCode(c, err, tmysql.ErrInvalidWildCard)
 		_, err = txn2.Exec("select row(1, 2) > 1;")
 		checkErrorCode(c, err, tmysql.ErrOperandColumns)
 		_, err = txn2.Exec("select * from test order by row(c, c);")

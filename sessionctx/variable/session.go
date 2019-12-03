@@ -308,6 +308,8 @@ type SessionVars struct {
 	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
+	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
+	DiskFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
 
@@ -517,6 +519,7 @@ func NewSessionVars() *SessionVars {
 		DescScanFactor:              DefOptDescScanFactor,
 		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
+		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
@@ -848,6 +851,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
+	case TiDBOptDiskFactor:
+		s.DiskFactor = tidbOptFloat64(val, DefOptDiskFactor)
 	case TiDBOptConcurrencyFactor:
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
