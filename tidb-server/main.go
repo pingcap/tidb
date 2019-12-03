@@ -684,9 +684,6 @@ func stringToList(repairString string) []string {
 		repairString = repairString[1 : len(repairString)-1]
 	}
 	return strings.FieldsFunc(repairString, func(r rune) bool {
-		if r == ',' || r == ' ' || r == '"' {
-			return true
-		}
-		return false
+		return r == ',' || r == ' ' || r == '"'
 	})
 }
