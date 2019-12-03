@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"context"
-	"google.golang.org/grpc/backoff"
 	"io"
 	"math"
 	"strconv"
@@ -39,6 +38,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/backoff"
 )
 
 // MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
