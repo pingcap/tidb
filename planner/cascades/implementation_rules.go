@@ -448,7 +448,7 @@ type ImplApply struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func  (r *ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
@@ -458,7 +458,7 @@ func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 	join := la.GetHashJoin(reqProp)
 	physicalApply := plannercore.PhysicalApply{
 		PhysicalHashJoin: *join,
-		OuterSchema: la.CorCols,
+		OuterSchema:      la.CorCols,
 	}.Init(
 		la.SCtx(),
 		la.Stats().ScaleByExpectCnt(reqProp.ExpectedCnt),
@@ -474,7 +474,7 @@ type ImplMaxOneRow struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func  (r *ImplMaxOneRow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplMaxOneRow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return prop.IsEmpty()
 }
 
