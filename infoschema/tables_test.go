@@ -742,7 +742,7 @@ func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
 
 func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	err := tk.QueryToErr("select * from information_schema.tidb_cluster_info")
+	err := tk.QueryToErr("select * from information_schema.cluster_info")
 	c.Assert(err, NotNil)
 	mockAddr := s.mockAddr
 	store := &mockStore{
@@ -750,7 +750,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		mockAddr,
 	}
 	tk = testkit.NewTestKit(c, store)
-	tk.MustQuery("select * from information_schema.tidb_cluster_info").Check(testkit.Rows(
+	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
 		"tidb :4000 :10080 5.7.25-TiDB-None None",
 		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
 		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
@@ -764,7 +764,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
-	tk.MustQuery("select * from information_schema.tidb_cluster_config").Check(testkit.Rows(
+	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
 		"pd 127.0.0.1:11080 key2.nest1 n-value1",
 		"pd 127.0.0.1:11080 key2.nest2 n-value2",
@@ -787,7 +787,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
 		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
 	))
-	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.tidb_cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
+	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
 		"pd key3.key4.nest4 n-value5",
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
@@ -838,7 +838,7 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
-	re := tk.MustQuery("select * from information_schema.TIDB_CLUSTER_LOAD;")
+	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
 	rows := re.Rows()
 	c.Assert(len(rows), Greater, 0)
 
@@ -896,17 +896,17 @@ func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, sta
 	}
 }
 
-func (s *testClusterTableSuite) TestSelectClusterMemTable(c *C) {
+func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(c, slowLogFileName)
 	defer os.Remove(slowLogFileName)
 	tk.MustExec("use information_schema")
-	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from `TIDB_CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `TIDB_CLUSTER_PROCESSLIST`").Check(testkit.Rows("1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0  :10080"))
-	tk.MustQuery("select query_time, conn_id from `TIDB_CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
-	tk.MustQuery("select digest, count(*) from `TIDB_CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery("select count(*) from `TIDB_CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0  :10080"))
+	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
+	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 }

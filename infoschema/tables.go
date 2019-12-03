@@ -98,9 +98,9 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
-	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
-	tableTiDBClusterLoad                    = "TIDB_CLUSTER_LOAD"
+	tableTiDBClusterInfo                    = "CLUSTER_INFO"
+	tableTiDBClusterConfig                  = "CLUSTER_CONFIG"
+	tableTiDBClusterLoad                    = "CLUSTER_LOAD"
 	tableTiFlashReplica                     = "TIFLASH_REPLICA"
 )
 

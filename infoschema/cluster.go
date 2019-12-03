@@ -28,10 +28,10 @@ import (
 
 // Cluster table list, attention:
 // 1. the table name should be upper case.
-// 2. clusterTableName should equal to "TIDB_CLUSTER_" + memTableTableName.
+// 2. clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
-	clusterTableSlowLog     = "TIDB_CLUSTER_SLOW_QUERY"
-	clusterTableProcesslist = "TIDB_CLUSTER_PROCESSLIST"
+	clusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
+	clusterTableProcesslist = "CLUSTER_PROCESSLIST"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
@@ -56,16 +56,21 @@ func init() {
 
 // isClusterTableByName used to check whether the table is a cluster memory table.
 func isClusterTableByName(dbName, tableName string) bool {
-	dbName = strings.ToLower(dbName)
+	dbName = strings.ToUpper(dbName)
 	switch dbName {
-	case util.InformationSchemaLowerName, util.PerformanceSchemaLowerName:
+	case util.InformationSchemaName, util.PerformanceSchemaName:
 		break
 	default:
 		return false
 	}
 	tableName = strings.ToUpper(tableName)
-	_, ok := tableNameToColumns[tableName]
-	return ok
+	for _, name := range memTableToClusterTables {
+		name = strings.ToUpper(name)
+		if name == tableName {
+			return true
+		}
+	}
+	return false
 }
 
 // IsClusterTable used to check whether the table is a cluster memory table.

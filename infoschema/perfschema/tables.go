@@ -93,6 +93,13 @@ var tableIDMap = map[string]int64{
 	tableNameTiDBProfileAllocs:               autoid.PerformanceSchemaDBID + 21,
 	tableNameTiDBProfileBlock:                autoid.PerformanceSchemaDBID + 22,
 	tableNameTiDBProfileGoroutines:           autoid.PerformanceSchemaDBID + 23,
+	tableNameTiKVProfileCPU:                  autoid.PerformanceSchemaDBID + 24,
+	tableNamePDProfileCPU:                    autoid.PerformanceSchemaDBID + 25,
+	tableNamePDProfileMemory:                 autoid.PerformanceSchemaDBID + 26,
+	tableNamePDProfileMutex:                  autoid.PerformanceSchemaDBID + 27,
+	tableNamePDProfileAllocs:                 autoid.PerformanceSchemaDBID + 28,
+	tableNamePDProfileBlock:                  autoid.PerformanceSchemaDBID + 29,
+	tableNamePDProfileGoroutines:             autoid.PerformanceSchemaDBID + 30,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
