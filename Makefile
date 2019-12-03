@@ -1,5 +1,6 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
+P=8
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -14,7 +15,7 @@ export PATH := $(path_to_add):$(PATH)
 GO              := GO111MODULE=on go
 GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p 8
+GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"

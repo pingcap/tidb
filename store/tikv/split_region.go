@@ -232,7 +232,7 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 	return nil
 }
 
-// WaitScatterRegionFinish implements SplitableStore interface.
+// WaitScatterRegionFinish implements SplittableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
 func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
