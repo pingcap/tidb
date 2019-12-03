@@ -358,7 +358,6 @@ func (t *txnExpireTime) update(lockExpire int64) {
 	if lockExpire < t.txnExpire {
 		t.txnExpire = lockExpire
 	}
-	return
 }
 
 func (t *txnExpireTime) value() int64 {
