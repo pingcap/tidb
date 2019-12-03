@@ -854,6 +854,10 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
+	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
+		return err
+	}
+
 	for _, user := range s.UserList {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
 		if err != nil {
@@ -861,20 +865,20 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 		if !exists {
 			notExistUsers = append(notExistUsers, user.String())
-			continue
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
+				return err
+			}
+			break
 		}
 
 		// begin a transaction to delete a user.
-		if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
-			return err
-		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
 		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
 
 		// delete privileges from mysql.db
@@ -884,7 +888,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
 
 		// delete privileges from mysql.tables_priv
@@ -894,7 +898,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
 
 		// delete relationship from mysql.role_edges
@@ -904,7 +908,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE FROM_HOST = '%s' and FROM_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
@@ -913,7 +917,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
 
 		// delete relationship from mysql.default_roles
@@ -923,7 +927,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE HOST = '%s' and USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
@@ -932,12 +936,14 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 				return err
 			}
-			continue
+			break
 		}
-
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
+	}
+
+	if len(notExistUsers) == 0 && len(failedUsers) == 0 {
 		if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
-			failedUsers = append(failedUsers, user.String())
+			return err
 		}
 	}
 
