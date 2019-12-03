@@ -3173,3 +3173,47 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	return v.Leave(n)
 }
+
+// FlashBackTableStmt is a statement to restore a dropped/truncate table.
+type FlashBackTableStmt struct {
+	ddlNode
+
+	Table     *TableName
+	Timestamp ValueExpr
+	NewName   string
+}
+
+// Restore implements Node interface.
+func (n *FlashBackTableStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("FLASHBACK TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
+	}
+	ctx.WriteKeyWord(" UNTIL TIMESTAMP ")
+	if err := n.Timestamp.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing FlashBackTableStmt Table")
+	}
+	if len(n.NewName) > 0 {
+		ctx.WriteKeyWord(" TO ")
+		ctx.WriteName(n.NewName)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FlashBackTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*FlashBackTableStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
