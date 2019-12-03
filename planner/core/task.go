@@ -150,14 +150,19 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: p.GetCost(lTask.count(), rTask.count()) + lTask.cost(),
+	}
+}
+
+func (p *PhysicalApply) GetCost(lCount float64, rCount float64) float64 {
 	var cpuCost float64
-	lCount := lTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	if len(p.LeftConditions) > 0 {
 		cpuCost += lCount * sessVars.CPUFactor
 		lCount *= selectionFactor
 	}
-	rCount := rTask.count()
 	if len(p.RightConditions) > 0 {
 		cpuCost += lCount * rCount * sessVars.CPUFactor
 		rCount *= selectionFactor
@@ -165,10 +170,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	if len(p.EqualConditions)+len(p.OtherConditions) > 0 {
 		cpuCost += lCount * rCount * sessVars.CPUFactor
 	}
-	return &rootTask{
-		p:   p,
-		cst: cpuCost + lTask.cost(),
-	}
+	return cpuCost
 }
 
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {

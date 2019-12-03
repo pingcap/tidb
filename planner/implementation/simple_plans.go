@@ -162,10 +162,44 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
 	// Children of UnionAll are executed in parallel.
 	impl.cost = selfCost + childMaxCost
-	return selfCost
+	return impl.cost
 }
 
 // NewUnionAllImpl creates a new UnionAllImpl.
 func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
 	return &UnionAllImpl{baseImpl{plan: union}}
+}
+
+// ApplyImpl is the implementation of PhysicalApply.
+type ApplyImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *ApplyImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	apply := impl.plan.(*plannercore.PhysicalApply)
+	selfCost := apply.GetCost(children[0].GetPlan().Stats().RowCount, children[1].GetPlan().Stats().RowCount)
+	impl.cost = selfCost + children[0].GetCost()
+	return impl.cost
+}
+
+// NewApplyImpl creates a new ApplyImpl.
+func NewApplyImpl(apply *plannercore.PhysicalApply) *ApplyImpl {
+	return &ApplyImpl{baseImpl{plan: apply}}
+}
+
+// MaxOneRowImpl is the implementation of PhysicalApply.
+type MaxOneRowImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	impl.cost = children[0].GetCost()
+	return impl.cost
+}
+
+// NewMaxOneOrwImpl creates a new MaxOneRowImpl.
+func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
+	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
 }

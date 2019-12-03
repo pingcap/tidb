@@ -365,5 +365,58 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestApply",
+    "Cases": [
+      {
+        "SQL": "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",
+        "Plan": [
+          "Projection_16 10000.00 root eq(test.t1.a, test.t2.a)->Column#5",
+          "└─Apply_18 10000.00 root CARTESIAN left outer join, inner:MaxOneRow_21",
+          "  ├─TableReader_19 10000.00 root data:TableScan_20",
+          "  │ └─TableScan_20 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─MaxOneRow_21 1.00 root ",
+          "    └─Limit_23 1.00 root offset:0, count:1",
+          "      └─Projection_28 1.00 root test.t2.a",
+          "        └─TableReader_29 1.00 root data:Selection_30",
+          "          └─Selection_30 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
+          "            └─TableScan_31 1.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "1",
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
+        "Plan": [
+          "Projection_26 1.00 root Column#3, test.t1.a, test.t1.b",
+          "└─Apply_28 1.00 root CARTESIAN left outer join, inner:MaxOneRow_44",
+          "  ├─Apply_30 1.00 root CARTESIAN left outer join, inner:MaxOneRow_38",
+          "  │ ├─HashAgg_35 1.00 root funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
+          "  │ │ └─TableReader_36 1.00 root data:HashAgg_37",
+          "  │ │   └─HashAgg_37 1.00 cop[tikv] funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
+          "  │ │     └─TableScan_33 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  │ └─MaxOneRow_38 1.00 root ",
+          "  │   └─Limit_39 1.00 root offset:0, count:1",
+          "  │     └─Projection_40 1.00 root test.t1.a",
+          "  │       └─TableReader_41 1.00 root data:Selection_42",
+          "  │         └─Selection_42 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
+          "  │           └─TableScan_43 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─MaxOneRow_44 1.00 root ",
+          "    └─Limit_45 1.00 root offset:0, count:1",
+          "      └─Projection_46 1.00 root test.t1.b",
+          "        └─TableReader_47 1.00 root data:Selection_48",
+          "          └─Selection_48 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
+          "            └─TableScan_49 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "6 1 11"
+        ]
+      }
+    ]
   }
 ]

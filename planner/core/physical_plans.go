@@ -257,7 +257,6 @@ type PhysicalApply struct {
 	PhysicalHashJoin
 
 	OuterSchema   []*expression.CorrelatedColumn
-	rightChOffset int
 }
 
 type basePhysicalJoin struct {

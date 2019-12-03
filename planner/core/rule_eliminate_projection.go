@@ -215,7 +215,7 @@ func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Col
 
 func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.replaceExprColumns(replace)
-	for _, coCol := range la.corCols {
+	for _, coCol := range la.CorCols {
 		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
 			coCol.Column = *dst

@@ -310,8 +310,8 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	la.corCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
-	for _, col := range la.corCols {
+	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
+	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 

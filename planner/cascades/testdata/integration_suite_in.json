@@ -47,5 +47,12 @@
       "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
       "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200"
     ]
+  },
+  {
+    "name": "TestApply",
+    "cases": [
+      "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",
+      "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2"
+    ]
   }
 ]
