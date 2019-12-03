@@ -740,7 +740,11 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraHandleID,
+			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }

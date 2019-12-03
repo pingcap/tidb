@@ -52,6 +52,7 @@ func init() {
 		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
 		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
+		mysql.ErrNotSupportedYet:                   mysql.ErrNotSupportedYet,
 		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
 		mysql.ErrZlibZBuf:                          mysql.ErrZlibZBuf,
 		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
