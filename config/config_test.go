@@ -351,3 +351,20 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
 }
+
+func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
+	conf := NewConfig()
+	tests := []struct {
+		limit uint64
+		valid bool
+	}{
+		{4 << 10, true},
+		{10 << 30, true},
+		{10<<30 + 1, false},
+	}
+
+	for _, tt := range tests {
+		conf.Performance.TxnTotalSizeLimit = tt.limit
+		c.Assert(conf.Valid() == nil, Equals, tt.valid)
+	}
+}
