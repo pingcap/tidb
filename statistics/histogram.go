@@ -146,15 +146,9 @@ func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	switch c.Histogram.Tp.Tp {
-	case mysql.TypeFloat:
-		return 4
-	case mysql.TypeTiny, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-		return 8
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 20
-	case mysql.TypeNewDecimal:
-		return types.MyDecimalStructSize
+	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
+	if fixedLen != -1 {
+		return float64(fixedLen)
 	}
 	// Keep two decimal place.
 	// Add 8 bytes for unfixed-len type's offsets.

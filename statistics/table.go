@@ -691,11 +691,15 @@ func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.C
 			// We differentiate if the column is encoded as key or value, because the resulted size
 			// is different.
 			if sessionVars.EnableChunkRPC {
-				size += colHist.AvgColSizeChunkFormat(coll.Count) + 1.0/8
+				size += colHist.AvgColSizeChunkFormat(coll.Count)
 			} else {
 				size += colHist.AvgColSize(coll.Count, isEncodedKey)
 			}
 		}
+	}
+	if sessionVars.EnableChunkRPC {
+		// Add 1/8 byte for each column's nullBitMap byte.
+		return size + float64(len(cols))/8
 	}
 	// Add 1 byte for each column's flag byte. See `encode` for details.
 	return size + float64(len(cols))

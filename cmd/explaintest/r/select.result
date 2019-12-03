@@ -267,30 +267,30 @@ insert t values(0,0,0);
 explain select distinct b from t group by a;
 id	count	task	operator info
 HashAgg_7	8000.00	root	group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b
-└─StreamAgg_22	8000.00	root	group by:test.t.a, funcs:firstrow(Column#9)->test.t.b
-  └─IndexReader_23	8000.00	root	index:StreamAgg_11
-    └─StreamAgg_11	8000.00	cop[tikv]	group by:test.t.a, funcs:firstrow(test.t.b)->Column#9
-      └─IndexScan_21	10000.00	cop[tikv]	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+└─HashAgg_15	8000.00	root	group by:test.t.a, funcs:firstrow(Column#6)->test.t.b
+  └─TableReader_16	8000.00	root	data:HashAgg_8
+    └─HashAgg_8	8000.00	cop[tikv]	group by:test.t.a, funcs:firstrow(test.t.b)->Column#6
+      └─TableScan_13	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 select distinct b from t group by a;
 b
 0
 explain select count(b) from t group by a;
 id	count	task	operator info
-StreamAgg_19	8000.00	root	group by:test.t.a, funcs:count(Column#10)->Column#5
-└─IndexReader_20	8000.00	root	index:StreamAgg_8
-  └─StreamAgg_8	8000.00	cop[tikv]	group by:test.t.a, funcs:count(test.t.b)->Column#10
-    └─IndexScan_18	10000.00	cop[tikv]	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+HashAgg_12	8000.00	root	group by:test.t.a, funcs:count(Column#7)->Column#5
+└─TableReader_13	8000.00	root	data:HashAgg_5
+  └─HashAgg_5	8000.00	cop[tikv]	group by:test.t.a, funcs:count(test.t.b)->Column#7
+    └─TableScan_10	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 select count(b) from t group by a;
 count(b)
 1
 insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
 explain select count(a) from t where b>0 group by a, b;
 id	count	task	operator info
-StreamAgg_25	2666.67	root	group by:test.t.a, test.t.b, funcs:count(Column#10)->Column#5
-└─IndexReader_26	2666.67	root	index:StreamAgg_9
-  └─StreamAgg_9	2666.67	cop[tikv]	group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#10
-    └─Selection_24	3333.33	cop[tikv]	gt(test.t.b, 0)
-      └─IndexScan_23	10000.00	cop[tikv]	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+HashAgg_15	2666.67	root	group by:test.t.a, test.t.b, funcs:count(Column#7)->Column#5
+└─TableReader_16	2666.67	root	data:HashAgg_6
+  └─HashAgg_6	2666.67	cop[tikv]	group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#7
+    └─Selection_12	3333.33	cop[tikv]	gt(test.t.b, 0)
+      └─TableScan_11	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 select count(a) from t where b>0 group by a, b;
 count(a)
 3

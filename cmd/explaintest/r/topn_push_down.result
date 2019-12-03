@@ -169,16 +169,17 @@ LIMIT 0, 5;
 id	count	task	operator info
 Projection_12	0.00	root	test.te.expect_time
 └─TopN_15	0.00	root	test.te.expect_time:asc, offset:0, count:5
-  └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:test.tr.id, inner key:test.te.trade_id
+  └─IndexMergeJoin_31	0.00	root	inner join, inner:Projection_29, outer key:test.tr.id, inner key:test.te.trade_id
     ├─IndexLookUp_67	0.00	root	
     │ ├─Selection_65	0.00	cop[tikv]	eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
     │ │ └─IndexScan_63	10.00	cop[tikv]	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
     │ └─Selection_66	0.00	cop[tikv]	eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
     │   └─TableScan_64	0.00	cop[tikv]	table:tr, keep order:false, stats:pseudo
-    └─IndexLookUp_23	0.03	root	
-      ├─IndexScan_20	1.25	cop[tikv]	table:te, index:trade_id, range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
-      └─Selection_22	0.03	cop[tikv]	ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
-        └─TableScan_21	1.25	cop[tikv]	table:te, keep order:false, stats:pseudo
+    └─Projection_29	0.03	root	test.te.trade_id, test.te.expect_time
+      └─IndexLookUp_28	0.03	root	
+        ├─IndexScan_25	1.25	cop[tikv]	table:te, index:trade_id, range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:true, stats:pseudo
+        └─Selection_27	0.03	cop[tikv]	ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
+          └─TableScan_26	1.25	cop[tikv]	table:te, keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	count	task	operator info
 Projection_6	1.00	root	1->Column#1
