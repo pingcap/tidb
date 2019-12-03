@@ -1836,6 +1836,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptScanFactor,
 	variable.TiDBOptDescScanFactor,
 	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptDiskFactor,
 	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,

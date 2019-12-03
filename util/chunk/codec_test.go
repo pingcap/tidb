@@ -77,6 +77,28 @@ func (s *testCodecSuite) TestCodec(c *check.C) {
 	}
 }
 
+func (s *testCodecSuite) TestEstimateTypeWidth(c *check.C) {
+	var colType *types.FieldType
+
+	colType = &types.FieldType{Tp: mysql.TypeLonglong}
+	c.Assert(EstimateTypeWidth(false, colType), check.Equals, 8) // fixed-witch type
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 100000}
+	c.Assert(EstimateTypeWidth(true, colType), check.Equals, 100000) // PAD_CHAR_TO_FULL_LENGTH
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 31}
+	c.Assert(EstimateTypeWidth(false, colType), check.Equals, 31) // colLen <= 32
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 999}
+	c.Assert(EstimateTypeWidth(false, colType), check.Equals, 515) // colLen < 1000
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 2000}
+	c.Assert(EstimateTypeWidth(false, colType), check.Equals, 516) // colLen < 1000
+
+	colType = &types.FieldType{Tp: mysql.TypeString}
+	c.Assert(EstimateTypeWidth(false, colType), check.Equals, 32) // value after guessing
+}
+
 func BenchmarkEncodeChunk(b *testing.B) {
 	numCols := 4
 	numRows := 1024
