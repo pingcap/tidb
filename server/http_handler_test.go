@@ -447,6 +447,17 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1?decode=true"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data3 map[string]interface{}
+	err = decoder.Decode(&data3)
+	c.Assert(err, IsNil)
+	c.Assert(data3["key"], NotNil)
+	c.Assert(data3["info"], NotNil)
+	c.Assert(data3["data"], NotNil)
+	c.Assert(data3["decode_error"], IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {

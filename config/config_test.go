@@ -100,11 +100,11 @@ func (s *testConfigSuite) TestLogConfig(c *C) {
 		_, err = f.WriteString(confStr)
 		c.Assert(err, IsNil)
 		c.Assert(conf.Load(configFile), IsNil)
+		c.Assert(conf.Valid(), valid)
 		c.Assert(conf.Log.EnableErrorStack, Equals, expectedEnableErrorStack)
 		c.Assert(conf.Log.DisableErrorStack, Equals, expectedDisableErrorStack)
 		c.Assert(conf.Log.EnableTimestamp, Equals, expectedEnableTimestamp)
 		c.Assert(conf.Log.DisableTimestamp, Equals, expectedDisableTimestamp)
-		c.Assert(conf.Valid(), valid)
 		c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }))
 		f.Truncate(0)
 		f.Seek(0, 0)
@@ -135,13 +135,13 @@ disable-timestamp = true
 [Log]
 enable-timestamp = true
 disable-timestamp = true
-`, nbUnset, nbUnset, nbTrue, nbTrue, false, true, NotNil)
+`, nbUnset, nbUnset, nbTrue, nbUnset, false, true, IsNil)
 
 	testLoad(`
 [Log]
 enable-error-stack = false
 disable-error-stack = false
-`, nbFalse, nbFalse, nbUnset, nbUnset, false, true, NotNil)
+`, nbFalse, nbUnset, nbUnset, nbUnset, false, true, IsNil)
 
 }
 
@@ -179,6 +179,7 @@ alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
+repair-mode = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -215,6 +216,7 @@ max-sql-length=1024
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.EnableBatchDML, Equals, true)
+	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -347,5 +349,22 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 	for _, tt := range tests {
 		c1.OOMAction = tt.oomAction
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
+
+func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
+	conf := NewConfig()
+	tests := []struct {
+		limit uint64
+		valid bool
+	}{
+		{4 << 10, true},
+		{10 << 30, true},
+		{10<<30 + 1, false},
+	}
+
+	for _, tt := range tests {
+		conf.Performance.TxnTotalSizeLimit = tt.limit
+		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
 }

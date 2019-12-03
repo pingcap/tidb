@@ -70,7 +70,7 @@ var (
 
 // Global variable set by config file.
 var (
-	PessimisticLockTTL uint64 = 20000 // 20s
+	ManagedLockTTL uint64 = 20000 // 20s
 )
 
 func (actionPrewrite) String() string {
@@ -111,6 +111,7 @@ type twoPhaseCommitter struct {
 	connID    uint64 // connID is used for log.
 	cleanWg   sync.WaitGroup
 	detail    unsafe.Pointer
+	txnSize   int
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -142,7 +143,6 @@ type batchExecutor struct {
 
 type mutationEx struct {
 	pb.Mutation
-	asserted          bool
 	isPessimisticLock bool
 }
 
@@ -281,27 +281,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	if len(keys) == 0 {
 		return nil
 	}
-
-	for _, pair := range txn.assertions {
-		mutation, ok := mutations[string(pair.key)]
-		if !ok {
-			// It's possible when a transaction inserted a key then deleted it later.
-			continue
-		}
-		// Only apply the first assertion!
-		if mutation.asserted {
-			continue
-		}
-		switch pair.assertion {
-		case kv.Exist:
-			mutation.Assertion = pb.Assertion_Exist
-		case kv.NotExist:
-			mutation.Assertion = pb.Assertion_NotExist
-		default:
-			mutation.Assertion = pb.Assertion_None
-		}
-		mutation.asserted = true
-	}
+	c.txnSize = size
 
 	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
@@ -458,7 +438,14 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		}
 		return errors.Trace(e)
 	}
-	rateLim := len(batches) // this will be used for LargeTxn, set rateLim here
+	rateLim := len(batches)
+	// Set rateLim here for the large transaction.
+	// If the rate limit is too high, tikv will report service is busy.
+	// If the rate limit is too low, we can't full utilize the tikv's throughput.
+	// TODO: Find a self-adaptive way to control the rate limit here.
+	if rateLim > 32 {
+		rateLim = 32
+	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
 	return errors.Trace(err)
@@ -548,6 +535,13 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			if bytes.Equal(c.primary(), batch.keys[0]) {
+				// After writing the primary key, if the size of the transaction is large than 4M,
+				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
+				if c.txnSize > 32*1024*1024 {
+					c.run(c, nil)
+				}
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -619,8 +613,8 @@ func (tm *ttlManager) close() {
 }
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
-	// Ticker is set to 1/2 of the PessimisticLockTTL.
-	ticker := time.NewTicker(time.Duration(PessimisticLockTTL) * time.Millisecond / 2)
+	// Ticker is set to 1/2 of the ManagedLockTTL.
+	ticker := time.NewTicker(time.Duration(ManagedLockTTL) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -653,7 +647,9 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 
-			newTTL := uptime + PessimisticLockTTL
+			newTTL := uptime + ManagedLockTTL
+			logutil.BgLogger().Info("send TxnHeartBeat",
+				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
@@ -681,15 +677,13 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		mutations[i] = mut
 	}
-
-	t0 := oracle.GetTimeFromTS(c.forUpdateTS)
-	elapsed := uint64(time.Since(t0) / time.Millisecond)
+	elapsed := uint64(time.Since(c.txn.startTime) / time.Millisecond)
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
 		Mutations:    mutations,
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + PessimisticLockTTL,
+		LockTtl:      elapsed + ManagedLockTTL,
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.lockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})

@@ -38,8 +38,6 @@ const (
 	NormalTable Type = iota
 	// VirtualTable , store no data, just extract data from the memory struct.
 	VirtualTable
-	// MemoryTable , store data only in local memory.
-	MemoryTable
 )
 
 const (

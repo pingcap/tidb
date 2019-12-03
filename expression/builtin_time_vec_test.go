@@ -78,7 +78,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			constants: []*Constant{{Value: types.NewStringDatum("2019-11-11"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
-	ast.DateDiff:   {},
+	ast.DateDiff: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}},
+	},
 	ast.DateFormat: {},
 	ast.Hour: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{0.2}}},
@@ -114,6 +116,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.CurrentTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
+	},
+	ast.Time: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateTimeStrGener)}},
 	},
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
@@ -285,6 +290,19 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&timeStrGener{}, nil},
 			// "%y%m%d" is wrong format, STR_TO_DATE should be failed for all rows
 			constants: []*Constant{nil, {Value: types.NewDatum("%y%m%d"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			constants:     []*Constant{nil, {Value: types.NewDatum("%H:%i:%s"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			// "%H%i%s" is wrong format, STR_TO_DATE should be failed for all rows
+			constants: []*Constant{nil, {Value: types.NewDatum("%H%i%s"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 	ast.GetFormat: {

@@ -51,6 +51,7 @@ func init() {
 		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
 		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
+		mysql.ErrNotSupportedYet:                   mysql.ErrNotSupportedYet,
 		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
 		mysql.ErrZlibZBuf:                          mysql.ErrZlibZBuf,
 		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
@@ -72,8 +73,8 @@ func init() {
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
-	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
-		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+	if err == nil || !(types.ErrWrongValue.Equal(err) ||
+		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err
 	}
