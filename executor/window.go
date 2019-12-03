@@ -74,17 +74,19 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 	var groupRows []chunk.Row
-	eof, err := e.fetchChild(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if eof {
-		e.executed = true
-		return e.consumeGroupRows(groupRows)
-	}
-	_, err = e.groupChecker.splitIntoGroups(e.childResult)
-	if err != nil {
-		return errors.Trace(err)
+	if e.groupChecker.isExhausted() {
+		eof, err := e.fetchChild(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if eof {
+			e.executed = true
+			return e.consumeGroupRows(groupRows)
+		}
+		_, err = e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	begin, end := e.groupChecker.getNextGroup()
 	for i := begin; i < end; i++ {
