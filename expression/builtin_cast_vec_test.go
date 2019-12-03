@@ -28,6 +28,7 @@ import (
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&decimalJSONGener{}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&decimalStringGener{}}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
@@ -48,6 +49,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{new(randDurReal)}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{new(randDurDecimal)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETJson}},

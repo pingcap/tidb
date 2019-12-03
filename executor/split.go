@@ -88,7 +88,7 @@ const checkScatterRegionFinishBackOff = 50
 // splitIndexRegion is used to split index regions.
 func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(kv.SplitableStore)
+	s, ok := store.(kv.SplittableStore)
 	if !ok {
 		return nil
 	}
@@ -359,7 +359,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 
 func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(kv.SplitableStore)
+	s, ok := store.(kv.SplittableStore)
 	if !ok {
 		return nil
 	}
@@ -387,7 +387,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	return nil
 }
 
-func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplitableStore, regionIDs []uint64, tableName, indexName string) int {
+func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplittableStore, regionIDs []uint64, tableName, indexName string) int {
 	remainMillisecond := 0
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
@@ -580,7 +580,7 @@ type regionMeta struct {
 	approximateKeys int64
 }
 
-func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -623,7 +623,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s kv.SplitableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -648,7 +648,7 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 	return indexRegions, nil
 }
 
-func checkRegionsStatus(store kv.SplitableStore, regions []regionMeta) error {
+func checkRegionsStatus(store kv.SplittableStore, regions []regionMeta) error {
 	for i := range regions {
 		scattering, err := store.CheckRegionInScattering(regions[i].region.Id)
 		if err != nil {
