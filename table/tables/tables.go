@@ -958,7 +958,7 @@ func (t *TableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return rowID, err
 }
 
-// AllocHandleIDs AllocHandle implements table.Table AllocHandle interface.
+// AllocHandleIDs implements table.Table AllocHandle interface.
 func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
 	base, maxID, err := t.Allocator(ctx).Alloc(t.tableID, n)
 	if err != nil {
