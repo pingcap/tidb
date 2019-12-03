@@ -373,8 +373,7 @@ func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum,
 	vals = vals[:needLength]
 	for i, ic := range c.idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
-			return nil, table.ErrIndexOutBound.GenWithStack("Index column %s offset out of bound, offset: %d, row: %v",
-				ic.Name, ic.Offset, r)
+			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
 		}
 		vals[i] = r[ic.Offset]
 	}
