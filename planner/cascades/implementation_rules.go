@@ -483,7 +483,7 @@ func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	mor := expr.ExprNode.(*plannercore.LogicalMaxOneRow)
 	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
-		expr.Group.Prop.Stats.ScaleByExpectCnt(2),
+		expr.Group.Prop.Stats,
 		mor.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: 2})
 	return impl.NewMaxOneRowImpl(physicalMaxOneRow), nil
