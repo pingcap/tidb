@@ -675,7 +675,7 @@ func (e *Explain) prepareSchema() error {
 	case format == ast.ExplainFormatROW && !e.Analyze:
 		fieldNames = []string{"id", "count", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory"}
+		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
@@ -819,9 +819,16 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 		}
 		row = append(row, analyzeInfo)
 
-		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
-		if tracker != nil {
-			row = append(row, tracker.BytesToString(tracker.MaxConsumed()))
+		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+		if memTracker != nil {
+			row = append(row, memTracker.BytesToString(memTracker.MaxConsumed()))
+		} else {
+			row = append(row, "N/A")
+		}
+
+		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+		if diskTracker != nil {
+			row = append(row, diskTracker.BytesToString(diskTracker.MaxConsumed()))
 		} else {
 			row = append(row, "N/A")
 		}
