@@ -15,13 +15,13 @@ package config
 
 import (
 	"encoding/json"
-	"github.com/pingcap/parser/mysql"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/parser/mysql"
 	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
