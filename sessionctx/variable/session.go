@@ -202,10 +202,10 @@ type SessionVars struct {
 	Users map[string]string
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
-	// System variable "warning_count", because it is on the hot path, so we extract it from the systems
-	sysWarningCount string
-	// System variable "error_count", because it is on the hot path, so we extract it from the systems
-	sysErrorCount string
+	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
+	SysWarningCount int
+	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
+	SysErrorCount uint16
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -712,15 +712,9 @@ func (s *SessionVars) Location() *time.Location {
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	if name == WarningCount {
-		if len(s.sysWarningCount) > 0 {
-			return s.sysWarningCount, true
-		}
-		return "", false
+		return strconv.Itoa(s.SysWarningCount), true
 	} else if name == ErrorCount {
-		if len(s.sysErrorCount) > 0 {
-			return s.sysErrorCount, true
-		}
-		return "", false
+		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
 	val, ok := s.systems[name]
 	return val, ok
@@ -780,24 +774,44 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
-// SetSystemVarWithoutCheck sets the value of a system variable without check.
-func (s *SessionVars) SetSystemVarWithoutCheck(name string, val string) {
+func (s *SessionVars) trySetWarningCountOrErrorCount(name string, val string) (bool, error) {
 	if name == WarningCount {
-		s.sysWarningCount = val
+		valNum, err := strconv.Atoi(val)
+		if err != nil {
+			return false, err
+		}
+		s.SysWarningCount = valNum
+		return true, nil
 	} else if name == ErrorCount {
-		s.sysErrorCount = val
-	} else {
+		valNum, err := strconv.Atoi(val)
+		if err != nil {
+			return false, err
+		}
+		s.SysErrorCount = uint16(valNum)
+		return true, nil
+	}
+	return false, nil
+}
+
+// SetSystemVarWithoutCheck sets the value of a system variable without check.
+func (s *SessionVars) SetSystemVarWithoutCheck(name string, val string) error {
+	done, err := s.trySetWarningCountOrErrorCount(name, val)
+	if err != nil {
+		return err
+	}
+	if !done {
 		s.systems[name] = val
 	}
+	return nil
 }
 
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
-	if name == WarningCount {
-		s.sysWarningCount = val
-		return nil
-	} else if name == ErrorCount {
-		s.sysErrorCount = val
+	done, err := s.trySetWarningCountOrErrorCount(name, val)
+	if err != nil {
+		return err
+	}
+	if done {
 		return nil
 	}
 	switch name {
