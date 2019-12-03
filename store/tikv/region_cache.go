@@ -82,9 +82,7 @@ type RegionStore struct {
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	storeFails := make([]uint32, len(r.stores))
-	for i, e := range r.storeFails {
-		storeFails[i] = e
-	}
+	copy(storeFails, r.storeFails)
 	return &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
 		workTiKVIdx:    r.workTiKVIdx,
@@ -1150,7 +1148,6 @@ retry:
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
-	return
 }
 
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.
@@ -1304,7 +1301,6 @@ retryMarkResolved:
 	if !s.compareAndSwapState(oldState, newState) {
 		goto retryMarkResolved
 	}
-	return
 }
 
 func (s *Store) getResolveState() resolveState {
