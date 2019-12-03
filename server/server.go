@@ -87,8 +87,8 @@ var (
 	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
 	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
 	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
-	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
+	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -617,21 +617,15 @@ func (s *Server) kickIdleConnection() {
 
 // Server error codes.
 const (
-	codeUnknownFieldType  = 1
-	codeInvalidPayloadLen = 2
-	codeInvalidSequence   = 3
-	codeInvalidType       = 4
-
-	codeNotAllowedCommand   = 1148
-	codeAccessDenied        = mysql.ErrAccessDenied
-	codeMaxExecTimeExceeded = mysql.ErrMaxExecTimeExceeded
+	codeUnknownFieldType = 1
+	codeInvalidSequence  = 3
+	codeInvalidType      = 4
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeNotAllowedCommand:   mysql.ErrNotAllowedCommand,
-		codeAccessDenied:        mysql.ErrAccessDenied,
-		codeMaxExecTimeExceeded: mysql.ErrMaxExecTimeExceeded,
+		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
+		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }
