@@ -901,13 +901,15 @@ func (b *builtinCastDurationAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 	ds := buf.GoDurations()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	fsp := int8(b.args[0].GetType().Decimal)
+	if fsp, err = types.CheckFsp(int(fsp)); err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		println(duration.Fsp)
 		res, err := types.ProduceDecWithSpecifiedTp(duration.ToNumber(), b.tp, sc)
 		if err != nil {
 			return err
