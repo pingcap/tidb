@@ -3969,6 +3969,9 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		if newOne.Tp != old.Tp {
 			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
 		}
+		if newOne.Flen != old.Flen {
+			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+		}
 		newTableInfo.Columns[i].ID = old.ID
 	}
 	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
