@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package core
 
 import (
@@ -11,18 +24,20 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-type pbPlanBuilder struct {
+// PBPlanBuilder uses to build physical plan from dag protocol buffers.
+type PBPlanBuilder struct {
 	sctx sessionctx.Context
 	tps  []*types.FieldType
 	is   infoschema.InfoSchema
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *pbPlanBuilder {
-	return &pbPlanBuilder{sctx: sctx, is: is}
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PBPlanBuilder {
+	return &PBPlanBuilder{sctx: sctx, is: is}
 }
 
-func (b *pbPlanBuilder) BuildPhysicalPlanFromPB(executors []*tipb.Executor) (p PhysicalPlan, err error) {
+// BuildPhysicalPlanFromPB builds physical plan from dag protocol buffers.
+func (b *PBPlanBuilder) BuildPhysicalPlanFromPB(executors []*tipb.Executor) (p PhysicalPlan, err error) {
 	var src PhysicalPlan
 	for i := 0; i < len(executors); i++ {
 		curr, err := b.PBToPhysicalPlan(executors[i])
@@ -35,7 +50,8 @@ func (b *pbPlanBuilder) BuildPhysicalPlanFromPB(executors []*tipb.Executor) (p P
 	return src, nil
 }
 
-func (b *pbPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
+// PBToPhysicalPlan builds physical plan from dag protocol buffers.
+func (b *PBPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
 	switch e.Tp {
 	case tipb.ExecType_TypeMemTableScan:
 		p, err = b.pbToMemTableScan(e)
@@ -56,7 +72,7 @@ func (b *pbPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 	return p, err
 }
 
-func (b *pbPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	memTbl := e.MemTblScan
 	if !infoschema.IsClusterMemTable(memTbl.DbName, memTbl.TableName) {
 		return nil, errors.Errorf("table %s is not a tidb memory table", memTbl.TableName)
@@ -80,7 +96,7 @@ func (b *pbPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error)
 	return p, nil
 }
 
-func (b *pbPlanBuilder) buildMemTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
+func (b *PBPlanBuilder) buildMemTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for _, col := range tblInfo.Columns {
 		for _, colInfo := range columns {
@@ -98,7 +114,7 @@ func (b *pbPlanBuilder) buildMemTableScanSchema(tblInfo *model.TableInfo, column
 	return schema
 }
 
-func (b *pbPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 	conds, err := expression.PBToExprs(e.Selection.Conditions, b.tps, b.sctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return nil, err
@@ -109,7 +125,7 @@ func (b *pbPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 	return p, nil
 }
 
-func (b *pbPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	topN := e.TopN
 	sc := b.sctx.GetSessionVars().StmtCtx
 	byItems := make([]*ByItems, 0, len(topN.OrderBy))
@@ -127,14 +143,14 @@ func (b *pbPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	return p, nil
 }
 
-func (b *pbPlanBuilder) pbToLimit(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (PhysicalPlan, error) {
 	p := PhysicalLimit{
 		Count: e.Limit.Limit,
 	}.Init(b.sctx, nil, 0)
 	return p, nil
 }
 
-func (b *pbPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPlan, error) {
 	aggFuncs, groupBys, err := b.getAggInfo(e)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -154,7 +170,7 @@ func (b *pbPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPla
 	return partialAgg, nil
 }
 
-func (b *pbPlanBuilder) buildAggSchema(aggFuncs []*aggregation.AggFuncDesc, groupBys []expression.Expression) *expression.Schema {
+func (b *PBPlanBuilder) buildAggSchema(aggFuncs []*aggregation.AggFuncDesc, groupBys []expression.Expression) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(groupBys))...)
 	for _, agg := range aggFuncs {
 		newCol := &expression.Column{
@@ -166,7 +182,7 @@ func (b *pbPlanBuilder) buildAggSchema(aggFuncs []*aggregation.AggFuncDesc, grou
 	return schema
 }
 
-func (b *pbPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggFuncDesc, []expression.Expression, error) {
+func (b *PBPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggFuncDesc, []expression.Expression, error) {
 	var err error
 	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(executor.Aggregation.AggFunc))
 	sc := b.sctx.GetSessionVars().StmtCtx
@@ -184,7 +200,7 @@ func (b *pbPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggF
 	return aggFuncs, groupBys, nil
 }
 
-func (b *pbPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb.MemTableScan) ([]*model.ColumnInfo, error) {
+func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb.MemTableScan) ([]*model.ColumnInfo, error) {
 	columns := make([]*model.ColumnInfo, 0, len(memTbl.Columns))
 	tps := make([]*types.FieldType, 0, len(memTbl.Columns))
 	for _, col := range memTbl.Columns {
