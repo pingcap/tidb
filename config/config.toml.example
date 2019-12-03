@@ -204,7 +204,7 @@ bind-info-lease = "3s"
 # If using TiKV as the storage, the entry represents a key/value pair.
 # WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
 # Please adjust this configuration carefully.
-txn-total-size-limit = 104857600
+txn-total-size-limit = 1073741824
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
