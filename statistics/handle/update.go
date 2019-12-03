@@ -244,11 +244,13 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	return false
 }
 
+type dumpMode bool
+
 const (
-	// DumpAll indicates dump all the delta info in to kv
-	DumpAll = true
+	// DumpAll indicates dump all the delta info in to kv.
+	DumpAll dumpMode = true
 	// DumpDelta indicates dump part of the delta info in to kv.
-	DumpDelta = false
+	DumpDelta dumpMode = false
 )
 
 // sweepList will loop over the list, merge each session's local stats into handle
@@ -278,12 +280,12 @@ func (h *Handle) sweepList() {
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-// If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
+// If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
+func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
@@ -717,7 +719,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			}
 		}
 	}
-	return
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string) bool {
