@@ -1412,7 +1412,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		// do pre-split and scatter.
-		sp, ok := d.store.(kv.SplitableStore)
+		sp, ok := d.store.(kv.SplittableStore)
 		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			var (
 				preSplit      func()
