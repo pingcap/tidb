@@ -312,7 +312,7 @@ enabled = true
 capacity-mb = 2000
 
 # Only cache requests whose result set is small.
-admission-max-result-bytes = 1000
+admission-max-result-bytes = 10000000
 # Only cache requests takes notable time to process.
 admission-min-process-ms = 20
 

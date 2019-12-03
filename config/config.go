@@ -531,8 +531,8 @@ var defaultConf = Config{
 		CoprCache: CoprocessorCache{
 			Enabled:                 true,
 			CapacityMb:              2000,
-			AdmissionMaxResultBytes: 1000,
-			AdmissionMinProcessMs:   50,
+			AdmissionMaxResultBytes: 10000000,
+			AdmissionMinProcessMs:   20,
 		},
 	},
 	Binlog: Binlog{
