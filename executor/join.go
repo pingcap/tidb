@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/bitmap"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -70,6 +71,7 @@ type HashJoinExec struct {
 	joinResultCh       chan *hashjoinWorkerResult
 
 	memTracker  *memory.Tracker // track memory usage.
+	diskTracker *disk.Tracker   // track disk usage.
 	prepared    bool
 	isOuterJoin bool
 
@@ -127,6 +129,10 @@ func (e *HashJoinExec) Close() error {
 		terror.Call(e.rowContainer.Close)
 	}
 
+	if e.runtimeStats != nil {
+		concurrency := cap(e.joiners)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+	}
 	err := e.baseExecutor.Close()
 	return err
 }
@@ -140,6 +146,9 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
@@ -673,6 +682,8 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
+	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)

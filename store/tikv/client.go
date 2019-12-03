@@ -288,7 +288,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	// TiDB RPC server not support stream now.
+	// TiDB RPC server not support batch RPC now.
 	// TODO: remove this store type check after TiDB RPC Server support stream.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.StoreTp != kv.TiDB {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {

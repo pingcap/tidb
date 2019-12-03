@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
 
@@ -348,12 +349,16 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 
 	// Initialize the information shema database and register the driver to `drivers`
-	dbID := autoid.GenLocalSchemaID()
+	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
-		tableInfo.ID = autoid.GenLocalSchemaID()
+		var ok bool
+		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
+		if !ok {
+			panic(fmt.Sprintf("get information_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
+		}
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
 		}

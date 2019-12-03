@@ -172,7 +172,6 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName  model.CIStr
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 }

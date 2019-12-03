@@ -70,6 +70,7 @@ type tableHintInfo struct {
 	tiflashTables       []hintTableInfo
 	tikvTables          []hintTableInfo
 	aggHints            aggHintInfo
+	indexMergeHintList  []indexHintInfo
 }
 
 type hintTableInfo struct {
@@ -604,9 +605,14 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*accessPath, error) {
+	tblInfo := tbl.Meta()
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
-	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiKV})
+	tp := kv.TiKV
+	if infoschema.IsClusterTable(tbl.Type()) {
+		tp = kv.TiDB
+	}
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
 	}
@@ -1606,6 +1612,11 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
+		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
+			if raw.Level.Level == ast.GrantLevelTable {
+				return nil, ErrNoDB
+			}
+		}
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")

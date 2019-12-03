@@ -675,7 +675,7 @@ func (e *Explain) prepareSchema() error {
 	case format == ast.ExplainFormatROW && !e.Analyze:
 		fieldNames = []string{"id", "count", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory"}
+		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	default:
@@ -739,16 +739,12 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	case *PhysicalTableReader:
 		var storeType string
 		switch x.StoreType {
-		case kv.TiKV:
-			storeType = kv.TiKV.Name()
-		case kv.TiFlash:
-			storeType = kv.TiFlash.Name()
-		case kv.TiDB:
-			storeType = kv.TiDB.Name()
+		case kv.TiKV, kv.TiFlash, kv.TiDB:
+			// expected do nothing
 		default:
-			err = errors.Errorf("the store type %v is unknown", x.StoreType)
-			return
+			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
+		storeType = x.StoreType.Name()
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
@@ -817,9 +813,16 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 		}
 		row = append(row, analyzeInfo)
 
-		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
-		if tracker != nil {
-			row = append(row, tracker.BytesToString(tracker.MaxConsumed()))
+		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+		if memTracker != nil {
+			row = append(row, memTracker.BytesToString(memTracker.MaxConsumed()))
+		} else {
+			row = append(row, "N/A")
+		}
+
+		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+		if diskTracker != nil {
+			row = append(row, diskTracker.BytesToString(diskTracker.MaxConsumed()))
 		} else {
 			row = append(row, "N/A")
 		}

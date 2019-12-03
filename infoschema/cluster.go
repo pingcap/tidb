@@ -21,30 +21,28 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 )
 
 // Cluster table list, attention:
 // 1. the table name should be upper case.
-// 2. clusterTableName should equal to "TIDB_CLUSTER_" + memTableTableName.
+// 2. clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
-	clusterTableSlowLog     = "TIDB_CLUSTER_SLOW_QUERY"
-	clusterTableProcesslist = "TIDB_CLUSTER_PROCESSLIST"
+	clusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
+	clusterTableProcesslist = "CLUSTER_PROCESSLIST"
 )
 
-// memTableToClusterTableMap means add memory table to cluster table.
-var memTableToClusterTableMap = map[string]string{
+// memTableToClusterTables means add memory table to cluster table.
+var memTableToClusterTables = map[string]string{
 	tableSlowLog:     clusterTableSlowLog,
 	tableProcesslist: clusterTableProcesslist,
 }
 
-// clusterTableMap is the cluster table map.
-// It will be initialized in `init` function.
-var clusterTableMap = map[string]struct{}{}
-
 func init() {
 	var addrCol = columnInfo{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil}
-	for memTableName, clusterMemTableName := range memTableToClusterTableMap {
+	for memTableName, clusterMemTableName := range memTableToClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
 			continue
@@ -53,18 +51,31 @@ func init() {
 		cols = append(cols, memTableCols...)
 		cols = append(cols, addrCol)
 		tableNameToColumns[clusterMemTableName] = cols
-		clusterTableMap[clusterMemTableName] = struct{}{}
 	}
 }
 
-// IsClusterMemTable used to check whether the table is a cluster memory table.
-func IsClusterMemTable(dbName, tableName string) bool {
-	if !IsMemoryDB(dbName) {
+// isClusterTableByName used to check whether the table is a cluster memory table.
+func isClusterTableByName(dbName, tableName string) bool {
+	dbName = strings.ToUpper(dbName)
+	switch dbName {
+	case util.InformationSchemaName, util.PerformanceSchemaName:
+		break
+	default:
 		return false
 	}
 	tableName = strings.ToUpper(tableName)
-	_, ok := clusterTableMap[tableName]
-	return ok
+	for _, name := range memTableToClusterTables {
+		name = strings.ToUpper(name)
+		if name == tableName {
+			return true
+		}
+	}
+	return false
+}
+
+// IsClusterTable used to check whether the table is a cluster memory table.
+func IsClusterTable(tp table.Type) bool {
+	return tp == table.ClusterTable
 }
 
 func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
@@ -80,10 +91,10 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 	if err != nil {
 		return nil, err
 	}
-	return appendClusterColumnsToRows(rows), nil
+	return appendHostInfoToRows(rows), nil
 }
 
-func appendClusterColumnsToRows(rows [][]types.Datum) [][]types.Datum {
+func appendHostInfoToRows(rows [][]types.Datum) [][]types.Datum {
 	serverInfo := infosync.GetServerInfo()
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
 	for i := range rows {

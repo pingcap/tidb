@@ -36,11 +36,11 @@ func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PBPlan
 	return &PBPlanBuilder{sctx: sctx, is: is}
 }
 
-// BuildPhysicalPlanFromPB builds physical plan from dag protocol buffers.
-func (b *PBPlanBuilder) BuildPhysicalPlanFromPB(executors []*tipb.Executor) (p PhysicalPlan, err error) {
+// Build builds physical plan from dag protocol buffers.
+func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err error) {
 	var src PhysicalPlan
 	for i := 0; i < len(executors); i++ {
-		curr, err := b.PBToPhysicalPlan(executors[i])
+		curr, err := b.pbToPhysicalPlan(executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -50,11 +50,10 @@ func (b *PBPlanBuilder) BuildPhysicalPlanFromPB(executors []*tipb.Executor) (p P
 	return src, nil
 }
 
-// PBToPhysicalPlan builds physical plan from dag protocol buffers.
-func (b *PBPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
+func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
 	switch e.Tp {
-	case tipb.ExecType_TypeMemTableScan:
-		p, err = b.pbToMemTableScan(e)
+	case tipb.ExecType_TypeTableScan:
+		p, err = b.pbToTableScan(e)
 	case tipb.ExecType_TypeSelection:
 		p, err = b.pbToSelection(e)
 	case tipb.ExecType_TypeTopN:
@@ -72,23 +71,22 @@ func (b *PBPlanBuilder) PBToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 	return p, err
 }
 
-func (b *PBPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error) {
-	memTbl := e.MemTblScan
-	if !infoschema.IsClusterMemTable(memTbl.DbName, memTbl.TableName) {
-		return nil, errors.Errorf("table %s is not a tidb memory table", memTbl.TableName)
+func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
+	tblScan := e.TblScan
+	tbl, ok := b.is.TableByID(tblScan.TableId)
+	if !ok {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblScan.TableId)
 	}
-	dbName := model.NewCIStr(memTbl.DbName)
-	tbl, err := b.is.TableByName(dbName, model.NewCIStr(memTbl.TableName))
+	// Currently only support cluster table.
+	if !infoschema.IsClusterTable(tbl.Type()) {
+		return nil, errors.Errorf("table %s is not a cluster table", tbl.Meta().Name.L)
+	}
+	columns, err := b.convertColumnInfo(tbl.Meta(), tblScan.Columns)
 	if err != nil {
 		return nil, err
 	}
-	columns, err := b.convertColumnInfo(tbl.Meta(), memTbl)
-	if err != nil {
-		return nil, err
-	}
-	schema := b.buildMemTableScanSchema(tbl.Meta(), columns)
+	schema := b.buildTableScanSchema(tbl.Meta(), columns)
 	p := PhysicalMemTable{
-		DBName:  dbName,
 		Table:   tbl.Meta(),
 		Columns: columns,
 	}.Init(b.sctx, nil, 0)
@@ -96,7 +94,7 @@ func (b *PBPlanBuilder) pbToMemTableScan(e *tipb.Executor) (PhysicalPlan, error)
 	return p, nil
 }
 
-func (b *PBPlanBuilder) buildMemTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
+func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for _, col := range tblInfo.Columns {
 		for _, colInfo := range columns {
@@ -200,10 +198,10 @@ func (b *PBPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggF
 	return aggFuncs, groupBys, nil
 }
 
-func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb.MemTableScan) ([]*model.ColumnInfo, error) {
-	columns := make([]*model.ColumnInfo, 0, len(memTbl.Columns))
-	tps := make([]*types.FieldType, 0, len(memTbl.Columns))
-	for _, col := range memTbl.Columns {
+func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []*tipb.ColumnInfo) ([]*model.ColumnInfo, error) {
+	columns := make([]*model.ColumnInfo, 0, len(pbColumns))
+	tps := make([]*types.FieldType, 0, len(pbColumns))
+	for _, col := range pbColumns {
 		found := false
 		for _, colInfo := range tblInfo.Columns {
 			if col.ColumnId == colInfo.ID {
@@ -214,7 +212,7 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, memTbl *tipb
 			}
 		}
 		if !found {
-			return nil, errors.Errorf("Column ID %v of table %v.%v not found", col.ColumnId, "information_schema", memTbl.TableName)
+			return nil, errors.Errorf("Column ID %v of table %v not found", col.ColumnId, tblInfo.Name.L)
 		}
 	}
 	b.tps = tps

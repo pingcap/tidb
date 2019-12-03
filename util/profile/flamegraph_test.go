@@ -34,7 +34,7 @@ func (s *profileInternalSuite) TestProfileToDatum(c *C) {
 	c.Assert(err, IsNil)
 	defer file.Close()
 
-	data, err := (&Collector{}).profileReaderToDatums(file)
+	data, err := (&Collector{}).ProfileReaderToDatums(file)
 	c.Assert(err, IsNil)
 
 	datums := [][]types.Datum{

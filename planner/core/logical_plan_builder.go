@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -81,6 +82,8 @@ const (
 	HintTiFlash = "tiflash"
 	// HintTiKV is a label represents the tikv storage type.
 	HintTiKV = "tikv"
+	// HintIndexMerge is a hint to enforce using some indexes at the same time.
+	HintIndexMerge = "use_index_merge"
 )
 
 const (
@@ -434,10 +437,10 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	} else {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
-	if hintInfo.ifPreferTiFlash(alias) {
-		ds.preferStoreType |= preferTiFlash
-	}
 	if hintInfo.ifPreferTiKV(alias) {
+		ds.preferStoreType |= preferTiKV
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
@@ -446,7 +449,19 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiKV
+		ds.preferStoreType |= preferTiFlash
+		hasTiFlashPath := false
+		for _, path := range ds.possibleAccessPaths {
+			if path.storeType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
+		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
+		if !hasTiFlashPath {
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+		}
 	}
 }
 
@@ -2127,7 +2142,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
-		indexHintList                                                         []indexHintInfo
+		indexHintList, indexMergeHintList                                     []indexHintInfo
 		tiflashTables, tikvTables                                             []hintTableInfo
 		aggHints                                                              aggHintInfo
 	)
@@ -2188,6 +2203,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			if hint.StoreType.L == HintTiKV {
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
+		case HintIndexMerge:
+			if len(hint.Tables) != 0 {
+				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2200,6 +2226,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
 		aggHints:                  aggHints,
+		indexMergeHintList:        indexMergeHintList,
 	})
 }
 
@@ -2421,6 +2448,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
 }
 
@@ -2477,7 +2505,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
-	if tbl.Type() == table.VirtualTable && !infoschema.IsClusterMemTable(dbName.L, tableInfo.Name.L) {
+	if tbl.Type() == table.VirtualTable {
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
@@ -2502,7 +2530,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tbl, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}
@@ -2529,6 +2557,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
+	// extract the IndexMergeHint
+	var indexMergeHints []*ast.IndexHint
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexMergeHintList {
+			if hint.tblName.L == tblName.L {
+				indexMergeHints = append(indexMergeHints, hint.indexHint)
+			}
+		}
+	}
 	ds := DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -2536,6 +2573,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,
 		indexHints:          tn.IndexHints,
+		indexMergeHints:     indexMergeHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
@@ -2545,7 +2583,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
-	for _, col := range columns {
+	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -2558,6 +2596,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
 			RetType:  &col.FieldType,
+			OrigName: names[i].String(),
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {

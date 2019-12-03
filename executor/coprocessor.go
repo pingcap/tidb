@@ -39,24 +39,24 @@ type CoprocessorDAGHandler struct {
 }
 
 // NewCoprocessorDAGHandler creates a new CoprocessorDAGHandler.
-func NewCoprocessorDAGHandler(sctx sessionctx.Context, resp *coprocessor.Response) *CoprocessorDAGHandler {
+func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 	return &CoprocessorDAGHandler{
 		sctx:    sctx,
-		resp:    resp,
+		resp:    &coprocessor.Response{},
 		selResp: &tipb.SelectResponse{},
 	}
 }
 
-// HandleCopDAGRequest handles the coprocessor request.
-func (h *CoprocessorDAGHandler) HandleCopDAGRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+// HandleRequest handles the coprocessor request.
+func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
-		return h.buildResp(err)
+		return h.buildResponse(err)
 	}
 
 	err = e.Open(ctx)
 	if err != nil {
-		return h.buildResp(err)
+		return h.buildResponse(err)
 	}
 
 	chk := newFirstChunk(e)
@@ -70,12 +70,12 @@ func (h *CoprocessorDAGHandler) HandleCopDAGRequest(ctx context.Context, req *co
 		if chk.NumRows() == 0 {
 			break
 		}
-		err = h.fillUpData4SelectResponse(chk, tps)
+		err = h.appendChunk(chk, tps)
 		if err != nil {
 			break
 		}
 	}
-	return h.buildResp(err)
+	return h.buildResponse(err)
 }
 
 func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
@@ -88,31 +88,26 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 		return nil, errors.Trace(err)
 	}
 
-	h.sctx.GetSessionVars().StmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
-	h.sctx.GetSessionVars().StmtCtx.TimeZone, err = timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	stmtCtx := h.sctx.GetSessionVars().StmtCtx
+	stmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
+	stmtCtx.TimeZone, err = timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	h.dagReq = dagReq
-	e, err := h.buildDAG(dagReq.Executors)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return e, nil
-}
-
-func (h *CoprocessorDAGHandler) buildDAG(executors []*tipb.Executor) (Executor, error) {
 	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	// Build physical plan.
 	bp := core.NewPBPlanBuilder(h.sctx, is)
-	plan, err := bp.BuildPhysicalPlanFromPB(executors)
+	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Build executor.
 	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil
 }
 
-func (h *CoprocessorDAGHandler) fillUpData4SelectResponse(chk *chunk.Chunk, tps []*types.FieldType) error {
+func (h *CoprocessorDAGHandler) appendChunk(chk *chunk.Chunk, tps []*types.FieldType) error {
 	var err error
 	switch h.dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
@@ -120,25 +115,24 @@ func (h *CoprocessorDAGHandler) fillUpData4SelectResponse(chk *chunk.Chunk, tps 
 	case tipb.EncodeType_TypeChunk:
 		err = h.encodeChunk(chk, tps)
 	default:
-		return errors.Errorf("unknown dag encode type, %v", h.dagReq.EncodeType)
+		return errors.Errorf("unknown DAG encode type: %v", h.dagReq.EncodeType)
 	}
-	h.selResp.EncodeType = h.dagReq.EncodeType
 	return err
 }
 
-func (h *CoprocessorDAGHandler) buildResp(err error) *coprocessor.Response {
-	resp := h.resp
+func (h *CoprocessorDAGHandler) buildResponse(err error) *coprocessor.Response {
 	if err != nil {
-		resp.OtherError = err.Error()
-		return resp
+		h.resp.OtherError = err.Error()
+		return h.resp
 	}
+	h.selResp.EncodeType = h.dagReq.EncodeType
 	data, err := proto.Marshal(h.selResp)
 	if err != nil {
-		resp.OtherError = err.Error()
-		return resp
+		h.resp.OtherError = err.Error()
+		return h.resp
 	}
-	resp.Data = data
-	return resp
+	h.resp.Data = data
+	return h.resp
 }
 
 func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) error {
@@ -159,11 +153,13 @@ func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.
 func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) error {
 	colOrdinal := h.dagReq.OutputOffsets
 	chunks := h.selResp.Chunks
+	stmtCtx := h.sctx.GetSessionVars().StmtCtx
+	requestedRow := make([]byte, 0)
 	for i := 0; i < chk.NumRows(); i++ {
-		requestedRow := make([]byte, 0)
+		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
-			data, err := codec.EncodeValue(h.sctx.GetSessionVars().StmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			data, err := codec.EncodeValue(stmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
 			if err != nil {
 				return err
 			}

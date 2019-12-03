@@ -532,7 +532,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
@@ -594,11 +594,8 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+// GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
-	if s.StmtCtx.HasEnableIndexMergeHint {
-		return s.StmtCtx.EnableIndexMerge
-	}
 	return s.enableIndexMerge
 }
 
@@ -988,6 +985,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
 				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			case kv.TiDB.Name():
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
