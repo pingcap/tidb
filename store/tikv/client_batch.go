@@ -491,7 +491,6 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 
 	cli.send(req, entries)
-	return
 }
 
 func (c *batchCommandsClient) initBatchClient() error {

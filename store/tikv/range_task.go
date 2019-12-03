@@ -267,12 +267,11 @@ type rangeTaskWorker struct {
 // run starts the worker. It collects all objects from `w.taskCh` and process them one by one.
 func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 	defer w.wg.Done()
-
 	for r := range w.taskCh {
 		select {
 		case <-ctx.Done():
 			w.err = ctx.Err()
-			break
+			return
 		default:
 		}
 
