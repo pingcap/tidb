@@ -125,7 +125,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.HintedSel != nil {
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
-	case *ast.RecoverTableStmt:
+	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
