@@ -425,8 +425,6 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		dts := make([]types.Datum, 0, len(testData))
 		cols := make([]rowcodec.ColInfo, 0, len(testData))
 		fts := make([]*types.FieldType, 0, len(testData))
-		bdf := make([]func() ([]byte, error), 0, len(testData))
-		ddf := make([]func() (types.Datum, error), 0, len(testData))
 		for i := range testData {
 			t := testData[i]
 			if t.def == nil {
@@ -443,22 +441,23 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				Decimal:    t.ft.Decimal,
 				Elems:      t.ft.Elems,
 			})
-			bdf = append(bdf, func() ([]byte, error) {
-				if t.def == nil {
-					return nil, nil
-				}
-				return getOldDatumByte(*t.def), nil
-			})
-			ddf = append(ddf, func() (types.Datum, error) {
-				if t.def == nil {
-					var d types.Datum
-					d.SetNull()
-					return d, nil
-				}
-				return *t.def, nil
-			})
 		}
-
+		ddf := func(i int) (types.Datum, error) {
+			t := testData[i]
+			if t.def == nil {
+				var d types.Datum
+				d.SetNull()
+				return d, nil
+			}
+			return *t.def, nil
+		}
+		bdf := func(i int) ([]byte, error) {
+			t := testData[i]
+			if t.def == nil {
+				return nil, nil
+			}
+			return getOldDatumByte(*t.def), nil
+		}
 		// test encode input.
 		var encoder rowcodec.Encoder
 		sc := new(stmtctx.StatementContext)

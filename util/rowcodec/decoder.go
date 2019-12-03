@@ -184,11 +184,11 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 // ChunkDecoder decodes the row to chunk.Chunk.
 type ChunkDecoder struct {
 	decoder
-	defDatum []func() (types.Datum, error)
+	defDatum func(i int) (types.Datum, error)
 }
 
 // NewChunkDecoder creates a NewChunkDecoder.
-func NewChunkDecoder(columns []ColInfo, handleColID int64, defDatum []func() (types.Datum, error), loc *time.Location) *ChunkDecoder {
+func NewChunkDecoder(columns []ColInfo, handleColID int64, defDatum func(i int) (types.Datum, error), loc *time.Location) *ChunkDecoder {
 	return &ChunkDecoder{
 		decoder: decoder{
 			columns:     columns,
@@ -232,13 +232,7 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 			continue
 		}
 
-		defVal := decoder.defDatum[colIdx]
-		if defVal == nil {
-			chk.AppendNull(colIdx)
-			continue
-		}
-
-		defDatum, err := defVal()
+		defDatum, err := decoder.defDatum(colIdx)
 		if err != nil {
 			return err
 		}
@@ -327,12 +321,12 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 // BytesDecoder decodes the row to old datums bytes.
 type BytesDecoder struct {
 	decoder
-	defBytes []func() ([]byte, error)
+	defBytes func(i int) ([]byte, error)
 }
 
 // NewByteDecoder creates a BytesDecoder.
 // defBytes: provided default value bytes in old datum format(flag+colData).
-func NewByteDecoder(columns []ColInfo, handleColID int64, defBytes []func() ([]byte, error), loc *time.Location) *BytesDecoder {
+func NewByteDecoder(columns []ColInfo, handleColID int64, defBytes func(i int) ([]byte, error), loc *time.Location) *BytesDecoder {
 	return &BytesDecoder{
 		decoder: decoder{
 			columns:     columns,
@@ -381,15 +375,13 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 		}
 
 		if decoder.defBytes != nil {
-			if defByte := decoder.defBytes[i]; defByte != nil {
-				defVal, err := defByte()
-				if err != nil {
-					return nil, err
-				}
-				if len(defVal) > 0 {
-					values[offset] = defVal
-					continue
-				}
+			defVal, err := decoder.defBytes(i)
+			if err != nil {
+				return nil, err
+			}
+			if len(defVal) > 0 {
+				values[offset] = defVal
+				continue
 			}
 		}
 
