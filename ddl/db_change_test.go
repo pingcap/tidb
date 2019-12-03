@@ -45,6 +45,11 @@ import (
 )
 
 var _ = Suite(&testStateChangeSuite{})
+var _ = SerialSuites(&serialTestStateChangeSuite{})
+
+type serialTestStateChangeSuite struct {
+	testStateChangeSuite
+}
 
 type testStateChangeSuite struct {
 	lease  time.Duration
@@ -1140,7 +1145,7 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 }
 
 // TestParallelFlashbackTable tests parallel flashback table.
-func (s *testStateChangeSuite) TestParallelFlashbackTable(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func(originGC bool) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
