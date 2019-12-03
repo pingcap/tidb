@@ -53,6 +53,8 @@ const (
 	SnapshotTS
 	// Set replica read
 	ReplicaRead
+
+	ParallelCommit
 )
 
 // Priority value for transaction priority.

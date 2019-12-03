@@ -324,6 +324,10 @@ func (c *twoPhaseCommitter) initKeysAndMutations(parallelCommit bool) error {
 	if parallelCommit && len(keys) <= parallelCommitLimit {
 		mutations[string(c.primary())].SecondaryKeys = keys
 		c.isParallelCommit = true
+		logutil.BgLogger().Debug("Init parallelCommit txn",
+			zap.Uint64("conn", c.connID),
+			zap.Uint64("txnStartTS", txn.startTS),
+			zap.Int("key count", len(keys)))
 	}
 	return nil
 }
@@ -453,7 +457,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				zap.Error(e),
 				zap.Uint64("txnStartTS", c.startTS))
 		}
-		if _, ok := action.(actionPrewrite); ok {
+		if _, ok := action.(actionPrewrite); ok && c.isParallelCommit {
 			c.mu.Lock()
 			c.mu.committed = true
 			c.mu.Unlock()
@@ -1140,6 +1144,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	// TODO: immediately asynchronously commit when in parallel commit
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)

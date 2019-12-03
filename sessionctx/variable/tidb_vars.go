@@ -163,6 +163,8 @@ const (
 	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
 	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
 	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
+
+	TiDBEnableParallelCommit = "tidb_enable_parallel_commit"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -437,6 +439,7 @@ const (
 	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
 	DefInnodbLockWaitTimeout           = 50 // 50s
 	DefTiDBStoreLimit                  = 0
+	DefTiDBEnableParallelCommit        = false
 )
 
 // Process global variables.
