@@ -33,6 +33,8 @@ type WindowExec struct {
 	groupChecker *vecGroupChecker
 	// childResult stores the child chunk
 	childResult *chunk.Chunk
+	// groupRows stores the rows which belong to the same group
+	groupRows []chunk.Row
 	// executed indicates the child executor is drained or something unexpected happened.
 	executed bool
 	// resultChunks stores the chunks to return
@@ -73,56 +75,53 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
-	var groupRows []chunk.Row
-	for {
+	e.groupRows = e.groupRows[:0]
+	eof, err := e.fetchChild(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if eof {
+		e.executed = true
+		return e.consumeGroupRows(e.groupRows)
+	}
+	_, err = e.groupChecker.splitIntoGroups(e.childResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	begin, end := e.groupChecker.getNextGroup()
+	for i := begin; i < end; i++ {
+		e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
+	}
+
+	for meetLastGroup := end == e.childResult.NumRows(); meetLastGroup; {
+		meetLastGroup = false
 		eof, err := e.fetchChild(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if eof {
 			e.executed = true
-			return e.consumeGroupRows(groupRows)
+			return e.consumeGroupRows(e.groupRows)
 		}
-		_, err = e.groupChecker.splitIntoGroups(e.childResult)
+
+		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		begin, end := e.groupChecker.getNextGroup()
-		for i := begin; i < end; i++ {
-			groupRows = append(groupRows, e.childResult.GetRow(i))
+
+		if isFirstGroupSameAsPrev {
+			begin, end = e.groupChecker.getNextGroup()
+			for i := begin; i < end; i++ {
+				e.groupRows = append(e.groupRows, e.childResult.GetRow(i))
+			}
+			meetLastGroup = end == e.childResult.NumRows()
 		}
-
-		for meetLastGroup := end == e.childResult.NumRows(); meetLastGroup; {
-			meetLastGroup = false
-			eof, err := e.fetchChild(ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if eof {
-				e.executed = true
-				return e.consumeGroupRows(groupRows)
-			}
-
-			isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if isFirstGroupSameAsPrev {
-				begin, end = e.groupChecker.getNextGroup()
-				for i := begin; i < end; i++ {
-					groupRows = append(groupRows, e.childResult.GetRow(i))
-				}
-				meetLastGroup = end == e.childResult.NumRows()
-			}
-		}
-
-		return e.consumeGroupRows(groupRows)
 	}
+	return e.consumeGroupRows()
 }
 
-func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
-	remainingRowsInGroup := len(groupRows)
+func (e *WindowExec) consumeGroupRows() (err error) {
+	remainingRowsInGroup := len(e.groupRows)
 	if remainingRowsInGroup == 0 {
 		return nil
 	}
@@ -134,11 +133,11 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 		// TODO: Combine these three methods.
 		// The old implementation needs the processor has these three methods
 		// but now it does not have to.
-		groupRows, err = e.processor.consumeGroupRows(e.ctx, groupRows)
+		e.groupRows, err = e.processor.consumeGroupRows(e.ctx, e.groupRows)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = e.processor.appendResult2Chunk(e.ctx, groupRows, e.resultChunks[i], remained)
+		_, err = e.processor.appendResult2Chunk(e.ctx, e.groupRows, e.resultChunks[i], remained)
 		if err != nil {
 			return errors.Trace(err)
 		}
