@@ -367,17 +367,12 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
-		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
-)
-
-const (
-	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
+	ErrForUpdateCantRetry = terror.ClassSession.New(mysql.ErrForUpdateCantRetry, mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 
 func init() {
 	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
+		mysql.ErrForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }

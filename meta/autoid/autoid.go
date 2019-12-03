@@ -250,7 +250,7 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	}
 }
 
-//codeInvalidTableID is the code of autoid error.
+// codeInvalidTableID is the code of autoid error.
 const codeInvalidTableID terror.ErrCode = 1
 
 var localSchemaID = int64(math.MaxInt64)
