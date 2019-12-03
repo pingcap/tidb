@@ -449,7 +449,7 @@ type ImplApply struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	return true
+	return prop.AllColsFromSchema(expr.Children[0].Prop.Schema)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface
@@ -461,11 +461,11 @@ func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 		OuterSchema:      la.CorCols,
 	}.Init(
 		la.SCtx(),
-		la.Stats().ScaleByExpectCnt(reqProp.ExpectedCnt),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		la.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: reqProp.Items},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
-	physicalApply.SetSchema(la.Schema())
+	physicalApply.SetSchema(expr.Group.Prop.Schema)
 	return impl.NewApplyImpl(physicalApply), nil
 }
 
@@ -483,7 +483,7 @@ func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	mor := expr.ExprNode.(*plannercore.LogicalMaxOneRow)
 	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
-		mor.Stats(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(2),
 		mor.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: 2})
 	return impl.NewMaxOneRowImpl(physicalMaxOneRow), nil
