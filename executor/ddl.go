@@ -111,6 +111,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeUnlockTables(x)
 	case *ast.CleanupTableLockStmt:
 		err = e.executeCleanupTableLock(x)
+	case *ast.RepairTableStmt:
+		err = e.executeRepairTable(x)
 
 	}
 	if err != nil {
@@ -507,6 +509,9 @@ func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
 }
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
-	return err
+	return domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
+}
+
+func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
+	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
 }

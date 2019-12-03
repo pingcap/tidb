@@ -18,26 +18,15 @@ import (
 	"github.com/pingcap/parser/terror"
 )
 
-// Error codes that are not mapping to mysql error codes.
-const (
-	codeUnknownPlan = iota
-	codePrepareMulti
-	codePrepareDDL
-	codeResultIsEmpty
-	codeErrBuildExec
-	codeBatchInsertFail
-	codeGetStartTS
-)
-
 // Error instances.
 var (
-	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
-	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements with parameters")
-	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
-	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
-	ErrBatchInsertFail = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
+	ErrGetStartTS      = terror.ClassExecutor.New(mysql.ErrGetStartTS, mysql.MySQLErrName[mysql.ErrGetStartTS])
+	ErrUnknownPlan     = terror.ClassExecutor.New(mysql.ErrUnknownPlan, mysql.MySQLErrName[mysql.ErrUnknownPlan])
+	ErrPrepareMulti    = terror.ClassExecutor.New(mysql.ErrPrepareMulti, mysql.MySQLErrName[mysql.ErrPrepareMulti])
+	ErrPrepareDDL      = terror.ClassExecutor.New(mysql.ErrPrepareDDL, mysql.MySQLErrName[mysql.ErrPrepareDDL])
+	ErrResultIsEmpty   = terror.ClassExecutor.New(mysql.ErrResultIsEmpty, mysql.MySQLErrName[mysql.ErrResultIsEmpty])
+	ErrBuildExecutor   = terror.ClassExecutor.New(mysql.ErrBuildExecutor, mysql.MySQLErrName[mysql.ErrBuildExecutor])
+	ErrBatchInsertFail = terror.ClassExecutor.New(mysql.ErrBatchInsertFail, mysql.MySQLErrName[mysql.ErrBatchInsertFail])
 
 	ErrCantCreateUserWithGrant     = terror.ClassExecutor.New(mysql.ErrCantCreateUserWithGrant, mysql.MySQLErrName[mysql.ErrCantCreateUserWithGrant])
 	ErrPasswordNoMatch             = terror.ClassExecutor.New(mysql.ErrPasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])
@@ -58,9 +47,17 @@ var (
 func init() {
 	// Map error codes to mysql error codes.
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrGetStartTS:      mysql.ErrGetStartTS,
+		mysql.ErrUnknownPlan:     mysql.ErrUnknownPlan,
+		mysql.ErrPrepareMulti:    mysql.ErrPrepareMulti,
+		mysql.ErrPrepareDDL:      mysql.ErrPrepareDDL,
+		mysql.ErrResultIsEmpty:   mysql.ErrResultIsEmpty,
+		mysql.ErrBuildExecutor:   mysql.ErrBuildExecutor,
+		mysql.ErrBatchInsertFail: mysql.ErrBatchInsertFail,
+
+		mysql.ErrCantCreateUserWithGrant:     mysql.ErrCantCreateUserWithGrant,
 		mysql.ErrPasswordNoMatch:             mysql.ErrPasswordNoMatch,
 		mysql.ErrCannotUser:                  mysql.ErrCannotUser,
-		mysql.ErrWrongValueCountOnRow:        mysql.ErrWrongValueCountOnRow,
 		mysql.ErrPasswordFormat:              mysql.ErrPasswordFormat,
 		mysql.ErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
 		mysql.ErrPsManyParam:                 mysql.ErrPsManyParam,
@@ -69,8 +66,10 @@ func init() {
 		mysql.ErrTableaccessDenied:           mysql.ErrTableaccessDenied,
 		mysql.ErrBadDB:                       mysql.ErrBadDB,
 		mysql.ErrWrongObject:                 mysql.ErrWrongObject,
+		mysql.ErrRoleNotGranted:              mysql.ErrRoleNotGranted,
 		mysql.ErrLockDeadlock:                mysql.ErrLockDeadlock,
 		mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
+		mysql.ErrWrongValueCountOnRow:        mysql.ErrWrongValueCountOnRow,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
