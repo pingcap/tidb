@@ -120,12 +120,12 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 }
 
 // GetServerInfo gets self server static information.
-func GetServerInfo() *ServerInfo {
+func GetServerInfo() (*ServerInfo, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return is.info
+	return is.info, nil
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
