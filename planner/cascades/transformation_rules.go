@@ -623,9 +623,12 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 		Count:  topN.Count,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 
-	newTopN.ByItems = append(newTopN.ByItems, topN.ByItems...)
-	for _, by := range newTopN.ByItems {
-		by.Expr = expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs)
+	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	for _, by := range topN.ByItems {
+		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{
+			Expr: expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
+			Desc: by.Desc,
+		})
 	}
 
 	// remove meaningless constant sort items.
