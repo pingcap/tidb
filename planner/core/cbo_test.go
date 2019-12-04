@@ -94,7 +94,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
 	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
-		c.Assert(len(row), Equals, 6)
+		c.Assert(len(row), Equals, 7)
 		execInfo := row[4].(string)
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
@@ -131,6 +131,8 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"  └─Selection_14 5.99 cop[tikv] not(isnull(test.t2.a))",
 		"    └─TableScan_13 6.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
+		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))
 }
 
 func (s *testAnalyzeSuite) TestStraightJoin(c *C) {

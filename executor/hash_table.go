@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -88,7 +89,8 @@ type hashRowContainer struct {
 	// memTracker is the reference of records.GetMemTracker().
 	// records would be set to nil for garbage collection when spilling is activated
 	// so we need this reference.
-	memTracker *memory.Tracker
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
 
 	// records stores the chunks in memory.
 	records *chunk.List
@@ -122,9 +124,10 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		sc:   sCtx.GetSessionVars().StmtCtx,
 		hCtx: hCtx,
 
-		hashTable:  newRowHashMap(estCount),
-		memTracker: initList.GetMemTracker(),
-		records:    initList,
+		hashTable:   newRowHashMap(estCount),
+		memTracker:  initList.GetMemTracker(),
+		diskTracker: disk.NewTracker(stringutil.StringerStr("hashRowContainer"), -1),
+		records:     initList,
 	}
 
 	return c
@@ -174,6 +177,7 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 func (c *hashRowContainer) spillToDisk() (err error) {
 	N := c.records.NumChunks()
 	c.recordsInDisk = chunk.NewListInDisk(c.hCtx.allTypes)
+	c.recordsInDisk.GetDiskTracker().AttachTo(c.diskTracker)
 	for i := 0; i < N; i++ {
 		chk := c.records.GetChunk(i)
 		err = c.recordsInDisk.Add(chk)
@@ -271,7 +275,7 @@ func (c *hashRowContainer) Close() error {
 func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
 
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.recordsInDisk.GetDiskTracker() }
+func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.diskTracker }
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {

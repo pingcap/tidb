@@ -187,8 +187,8 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName: p.dbName,
-		Table:  p.tableInfo,
+		Table:   p.tableInfo,
+		Columns: p.tableInfo.Columns,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil
@@ -740,7 +740,11 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraHandleID,
+			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
@@ -960,8 +964,8 @@ func (ds *DataSource) crossEstimateRowCount(path *accessPath, expectedCnt float6
 	return scanCount, true, 0
 }
 
-// GetPhysicalScan returns PhysicalTableScan for the logical TableScan.
-func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
+// GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
+func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -983,6 +987,28 @@ func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.S
 		}
 	}
 	return ts
+}
+
+// GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
+func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+	ds := s.Source
+	is := PhysicalIndexScan{
+		Table:            ds.tableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          s.Columns,
+		Index:            s.Index,
+		IdxCols:          s.idxCols,
+		IdxColLens:       s.idxColLens,
+		AccessCondition:  s.AccessConds,
+		Ranges:           s.Ranges,
+		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
+	}.Init(ds.ctx, ds.blockOffset)
+	is.stats = stats
+	is.initSchema(s.Index, s.fullIdxCols, s.IsDoubleRead)
+	return is
 }
 
 // convertToTableScan converts the DataSource to table scan.

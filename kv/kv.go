@@ -226,12 +226,16 @@ const (
 	TiKV StoreType = iota
 	// TiFlash means the type of a store is TiFlash.
 	TiFlash
+	// TiDB means the type of a store is TiDB.
+	TiDB
 )
 
 // Name returns the name of store type.
 func (t StoreType) Name() string {
 	if t == TiFlash {
 		return "tiflash"
+	} else if t == TiDB {
+		return "tidb"
 	}
 	return "tikv"
 }

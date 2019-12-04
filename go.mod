@@ -34,13 +34,13 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20191121022655-4c654046831d
+	github.com/pingcap/kvproto v0.0.0-20191202044712-32be31591b03
 	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
-	github.com/pingcap/parser v0.0.0-20191120165920-d5c49d11cc64
+	github.com/pingcap/parser v0.0.0-20191203075000-55f02bc42e92
 	github.com/pingcap/pd v1.1.0-beta.0.20190923032047-5c648dc365e0
 	github.com/pingcap/sysutil v0.0.0-20191126040022-986c5b3ed9a3
 	github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible
-	github.com/pingcap/tipb v0.0.0-20191127084114-0820b784842f
+	github.com/pingcap/tipb v0.0.0-20191203131953-a35f738b4796
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
@@ -60,9 +60,9 @@ require (
 	go.uber.org/atomic v1.5.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.12.0
-	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
+	golang.org/x/crypto v0.0.0-20191122220453-ac88ee75c92c // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c
+	golang.org/x/sys v0.0.0-20191128015809-6d18c012aee9
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	golang.org/x/tools v0.0.0-20191107010934-f79515f33823

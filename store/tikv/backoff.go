@@ -250,6 +250,9 @@ type Backoffer struct {
 	types      []fmt.Stringer
 	vars       *kv.Variables
 	noop       bool
+
+	backoffSleepMS map[backoffType]int
+	backoffTimes   map[backoffType]int
 }
 
 type txnStartCtxKeyType struct{}
@@ -332,6 +335,14 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	realSleep := f(b.ctx, maxSleepMs)
 	backoffDuration.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
+	if b.backoffSleepMS == nil {
+		b.backoffSleepMS = make(map[backoffType]int)
+	}
+	b.backoffSleepMS[typ] += realSleep
+	if b.backoffTimes == nil {
+		b.backoffTimes = make(map[backoffType]int)
+	}
+	b.backoffTimes[typ]++
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {

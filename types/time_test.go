@@ -439,26 +439,6 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 }
 
-func (s *testTimeSuite) getLocation(c *C) *time.Location {
-	locations := []string{"Asia/Shanghai", "Europe/Berlin"}
-	timeFormat := "Jan 2, 2006 at 3:04pm (MST)"
-
-	z, err := time.LoadLocation(locations[0])
-	c.Assert(err, IsNil)
-
-	t1, err := time.ParseInLocation(timeFormat, "Jul 9, 2012 at 5:02am (CEST)", z)
-	c.Assert(err, IsNil)
-	t2, err := time.Parse(timeFormat, "Jul 9, 2012 at 5:02am (CEST)")
-	c.Assert(err, IsNil)
-
-	if t1.Equal(t2) {
-		z, err = time.LoadLocation(locations[1])
-		c.Assert(err, IsNil)
-	}
-
-	return z
-}
-
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 
