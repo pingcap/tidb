@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -218,7 +218,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
 		return errTiDBShuttingDown
 	}
-	if grpc.Code(errors.Cause(err)) == codes.Canceled {
+	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {
 		case <-bo.ctx.Done():
 			return errors.Trace(err)
