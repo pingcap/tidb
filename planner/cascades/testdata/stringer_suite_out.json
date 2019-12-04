@@ -285,6 +285,21 @@
           "Group#16 Schema:[test.t.b]",
           "    TableScan_24 table:t"
         ]
+      },
+      {
+        "SQL": "select * from t where t.b = 2 and t.a = 1 order by t.b",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    Sort_4 input:[Group#1], test.t.b:asc",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    Projection_3 input:[Group#2], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    TiKVSingleGather_6 input:[Group#3], table:t",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    Selection_27 input:[Group#4], eq(test.t.b, 2)",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    TableScan_26 table:t, pk col:test.t.a, cond:[eq(test.t.a, 1)]"
+        ]
       }
     ]
   }
