@@ -43,23 +43,30 @@ var perfSchemaTables = []string{
 	tableTiDBProfileCPU,
 	tableTiDBProfileMemory,
 	tableTiDBProfileMutex,
-	tableTiDBAllocsProfile,
+	tableTiDBProfileAllocs,
 	tableTiDBProfileBlock,
 	tableTiDBProfileGoroutines,
+	tableTiKVProfileCPU,
+	tablePDProfileCPU,
+	tablePDProfileMemory,
+	tablePDProfileMutex,
+	tablePDProfileAllocs,
+	tablePDProfileBlock,
+	tablePDProfileGoroutines,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
-const tableGlobalStatus = "CREATE TABLE performance_schema.global_status(" +
+const tableGlobalStatus = "CREATE TABLE performance_schema." + tableNameGlobalStatus + " (" +
 	"VARIABLE_NAME VARCHAR(64) not null," +
 	"VARIABLE_VALUE VARCHAR(1024));"
 
 // tableSessionStatus contains the column name definitions for table session_status, same as MySQL.
-const tableSessionStatus = "CREATE TABLE performance_schema.session_status(" +
+const tableSessionStatus = "CREATE TABLE performance_schema." + tableNameSessionStatus + " (" +
 	"VARIABLE_NAME VARCHAR(64) not null," +
 	"VARIABLE_VALUE VARCHAR(1024));"
 
 // tableSetupActors contains the column name definitions for table setup_actors, same as MySQL.
-const tableSetupActors = "CREATE TABLE if not exists performance_schema.setup_actors (" +
+const tableSetupActors = "CREATE TABLE if not exists performance_schema." + tableNameSetupActors + " (" +
 	"HOST			CHAR(60) NOT NULL  DEFAULT '%'," +
 	"USER			CHAR(32) NOT NULL  DEFAULT '%'," +
 	"ROLE			CHAR(16) NOT NULL  DEFAULT '%'," +
@@ -67,7 +74,7 @@ const tableSetupActors = "CREATE TABLE if not exists performance_schema.setup_ac
 	"HISTORY		ENUM('YES','NO') NOT NULL  DEFAULT 'YES');"
 
 // tableSetupObjects contains the column name definitions for table setup_objects, same as MySQL.
-const tableSetupObjects = "CREATE TABLE if not exists performance_schema.setup_objects (" +
+const tableSetupObjects = "CREATE TABLE if not exists performance_schema." + tableNameSetupObjects + " (" +
 	"OBJECT_TYPE		ENUM('EVENT','FUNCTION','TABLE') NOT NULL  DEFAULT 'TABLE'," +
 	"OBJECT_SCHEMA		VARCHAR(64)  DEFAULT '%'," +
 	"OBJECT_NAME		VARCHAR(64) NOT NULL  DEFAULT '%'," +
@@ -75,18 +82,18 @@ const tableSetupObjects = "CREATE TABLE if not exists performance_schema.setup_o
 	"TIMED			ENUM('YES','NO') NOT NULL  DEFAULT 'YES');"
 
 // tableSetupInstruments contains the column name definitions for table setup_instruments, same as MySQL.
-const tableSetupInstruments = "CREATE TABLE if not exists performance_schema.setup_instruments (" +
+const tableSetupInstruments = "CREATE TABLE if not exists performance_schema." + tableNameSetupInstruments + " (" +
 	"NAME			VARCHAR(128) NOT NULL," +
 	"ENABLED		ENUM('YES','NO') NOT NULL," +
 	"TIMED			ENUM('YES','NO') NOT NULL);"
 
 // tableSetupConsumers contains the column name definitions for table setup_consumers, same as MySQL.
-const tableSetupConsumers = "CREATE TABLE if not exists performance_schema.setup_consumers (" +
+const tableSetupConsumers = "CREATE TABLE if not exists performance_schema." + tableNameSetupConsumers + " (" +
 	"NAME			VARCHAR(64) NOT NULL," +
 	"ENABLED			ENUM('YES','NO') NOT NULL);"
 
 // tableStmtsCurrent contains the column name definitions for table events_statements_current, same as MySQL.
-const tableStmtsCurrent = "CREATE TABLE if not exists performance_schema.events_statements_current (" +
+const tableStmtsCurrent = "CREATE TABLE if not exists performance_schema." + tableNameEventsStatementsCurrent + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -130,7 +137,7 @@ const tableStmtsCurrent = "CREATE TABLE if not exists performance_schema.events_
 	"NESTING_EVENT_LEVEL		INT(11));"
 
 // tableStmtsHistory contains the column name definitions for table events_statements_history, same as MySQL.
-const tableStmtsHistory = "CREATE TABLE if not exists performance_schema.events_statements_history (" +
+const tableStmtsHistory = "CREATE TABLE if not exists performance_schema." + tableNameEventsStatementsHistory + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID		BIGINT(20) UNSIGNED," +
@@ -174,7 +181,7 @@ const tableStmtsHistory = "CREATE TABLE if not exists performance_schema.events_
 	"NESTING_EVENT_LEVEL		INT(11));"
 
 // tableStmtsHistoryLong contains the column name definitions for table events_statements_history_long, same as MySQL.
-const tableStmtsHistoryLong = "CREATE TABLE if not exists performance_schema.events_statements_history_long (" +
+const tableStmtsHistoryLong = "CREATE TABLE if not exists performance_schema." + tableNameEventsStatementsHistoryLong + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -218,7 +225,7 @@ const tableStmtsHistoryLong = "CREATE TABLE if not exists performance_schema.eve
 	"NESTING_EVENT_LEVEL		INT(11));"
 
 // tablePreparedStmtsInstances contains the column name definitions for table prepared_statements_instances, same as MySQL.
-const tablePreparedStmtsInstances = "CREATE TABLE if not exists performance_schema.prepared_statements_instances (" +
+const tablePreparedStmtsInstances = "CREATE TABLE if not exists performance_schema." + tableNamePreparedStatementsInstances + " (" +
 	"OBJECT_INSTANCE_BEGIN	BIGINT(20) UNSIGNED NOT NULL," +
 	"STATEMENT_ID	BIGINT(20) UNSIGNED NOT NULL," +
 	"STATEMENT_NAME	VARCHAR(64)," +
@@ -256,7 +263,7 @@ const tablePreparedStmtsInstances = "CREATE TABLE if not exists performance_sche
 	"SUM_NO_GOOD_INDEX_USED	BIGINT(20) UNSIGNED NOT NULL);"
 
 // tableTransCurrent contains the column name definitions for table events_transactions_current, same as MySQL.
-const tableTransCurrent = "CREATE TABLE if not exists performance_schema.events_transactions_current (" +
+const tableTransCurrent = "CREATE TABLE if not exists performance_schema." + tableNameEventsTransactionsCurrent + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -284,7 +291,7 @@ const tableTransCurrent = "CREATE TABLE if not exists performance_schema.events_
 
 // tableTransHistory contains the column name definitions for table events_transactions_history, same as MySQL.
 //
-const tableTransHistory = "CREATE TABLE if not exists performance_schema.events_transactions_history (" +
+const tableTransHistory = "CREATE TABLE if not exists performance_schema." + tableNameEventsTransactionsHistory + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -311,7 +318,7 @@ const tableTransHistory = "CREATE TABLE if not exists performance_schema.events_
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // tableTransHistoryLong contains the column name definitions for table events_transactions_history_long, same as MySQL.
-const tableTransHistoryLong = "CREATE TABLE if not exists performance_schema.events_transactions_history_long (" +
+const tableTransHistoryLong = "CREATE TABLE if not exists performance_schema." + tableNameEventsTransactionsHistoryLong + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -338,7 +345,7 @@ const tableTransHistoryLong = "CREATE TABLE if not exists performance_schema.eve
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // tableStagesCurrent contains the column name definitions for table events_stages_current, same as MySQL.
-const tableStagesCurrent = "CREATE TABLE if not exists performance_schema.events_stages_current (" +
+const tableStagesCurrent = "CREATE TABLE if not exists performance_schema." + tableNameEventsStagesCurrent + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -353,7 +360,7 @@ const tableStagesCurrent = "CREATE TABLE if not exists performance_schema.events
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // tableStagesHistory contains the column name definitions for table events_stages_history, same as MySQL.
-const tableStagesHistory = "CREATE TABLE if not exists performance_schema.events_stages_history (" +
+const tableStagesHistory = "CREATE TABLE if not exists performance_schema." + tableNameEventsStagesHistory + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -368,7 +375,7 @@ const tableStagesHistory = "CREATE TABLE if not exists performance_schema.events
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // tableStagesHistoryLong contains the column name definitions for table events_stages_history_long, same as MySQL.
-const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.events_stages_history_long (" +
+const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema." + tableNameEventsStagesHistoryLong + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"END_EVENT_ID	BIGINT(20) UNSIGNED," +
@@ -384,7 +391,8 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema.ev
 
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.
-const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_statements_summary_by_digest (" +
+const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigest + " (" +
+	"SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
 	"STMT_TYPE VARCHAR(64) NOT NULL," +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
 	"DIGEST VARCHAR(64) NOT NULL," +
@@ -446,7 +454,7 @@ const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists events_
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
-// tableTiDBProfileCPU contains the columns name definitions for table events_cpu_profile_graph
+// tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -455,7 +463,7 @@ const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfile
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMemory contains the columns name definitions for table events_memory_profile_graph
+// tableTiDBProfileMemory contains the columns name definitions for table tidb_profile_memory
 const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMemory + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -464,7 +472,7 @@ const tableTiDBProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileMutex contains the columns name definitions for table events_mutex_profile_graph
+// tableTiDBProfileMutex contains the columns name definitions for table tidb_profile_mutex
 const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileMutex + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -473,8 +481,8 @@ const tableTiDBProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBAllocsProfile contains the columns name definitions for table events_allocs_profile_graph
-const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileAllocs + " (" +
+// tableTiDBProfileAllocs contains the columns name definitions for table tidb_profile_allocs
+const tableTiDBProfileAllocs = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileAllocs + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
 	"PERCENT_REL VARCHAR(8) NOT NULL," +
@@ -482,7 +490,7 @@ const tableTiDBAllocsProfile = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProf
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileBlock contains the columns name definitions for table events_block_profile_graph
+// tableTiDBProfileBlock contains the columns name definitions for table tidb_profile_block
 const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileBlock + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"PERCENT_ABS VARCHAR(8) NOT NULL," +
@@ -491,9 +499,77 @@ const tableTiDBProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfi
 	"DEPTH INT(8) NOT NULL," +
 	"FILE VARCHAR(512) NOT NULL);"
 
-// tableTiDBProfileGoroutines contains the columns name definitions for table events_goroutine
+// tableTiDBProfileGoroutines contains the columns name definitions for table tidb_profile_goroutines
 const tableTiDBProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileGoroutines + " (" +
 	"FUNCTION VARCHAR(512) NOT NULL," +
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
-	"LOCATION VARCHAR(512));"
+	"LOCATION VARCHAR(512) NOT NULL);"
+
+// tableTiKVProfileCPU contains the columns name definitions for table tikv_profile_cpu
+const tableTiKVProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiKVProfileCPU + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tablePDProfileCPU contains the columns name definitions for table pd_profile_cpu
+const tablePDProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNamePDProfileCPU + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tablePDProfileMemory contains the columns name definitions for table pd_profile_cpu_memory
+const tablePDProfileMemory = "CREATE TABLE IF NOT EXISTS " + tableNamePDProfileMemory + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tablePDProfileMutex contains the columns name definitions for table pd_profile_mutex
+const tablePDProfileMutex = "CREATE TABLE IF NOT EXISTS " + tableNamePDProfileMutex + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tablePDProfileAllocs contains the columns name definitions for table pd_profile_allocs
+const tablePDProfileAllocs = "CREATE TABLE IF NOT EXISTS " + tableNamePDProfileAllocs + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tablePDProfileBlock contains the columns name definitions for table pd_profile_block
+const tablePDProfileBlock = "CREATE TABLE IF NOT EXISTS " + tableNamePDProfileBlock + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"PERCENT_ABS VARCHAR(8) NOT NULL," +
+	"PERCENT_REL VARCHAR(8) NOT NULL," +
+	"ROOT_CHILD INT(8) NOT NULL," +
+	"DEPTH INT(8) NOT NULL," +
+	"FILE VARCHAR(512) NOT NULL);"
+
+// tablePDProfileGoroutines contains the columns name definitions for table pd_profile_goroutines
+const tablePDProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNamePDProfileGoroutines + " (" +
+	"ADDRESS VARCHAR(64) NOT NULL," +
+	"FUNCTION VARCHAR(512) NOT NULL," +
+	"ID INT(8) NOT NULL," +
+	"STATE VARCHAR(16) NOT NULL," +
+	"LOCATION VARCHAR(512) NOT NULL);"

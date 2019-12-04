@@ -121,6 +121,7 @@ type testChunkSizeControlSuite struct {
 }
 
 func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
+	c.Skip("not stable because coprocessor may result in goroutine leak")
 	tableSQLs := map[string]string{}
 	tableSQLs["Limit&TableScan"] = "create table t (a int, primary key (a))"
 	tableSQLs["Limit&IndexScan"] = "create table t (a int, index idx_a(a))"
@@ -161,7 +162,6 @@ func (s *testChunkSizeControlSuite) getKit(name string) (
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
-	c.Skip("not stable because coprocessor may result in goroutine leak")
 	_, dom, tk, client, cluster := s.getKit("Limit&TableScan")
 	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -193,7 +193,6 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
-	c.Skip("not stable because coprocessor may result in goroutine leak")
 	_, dom, tk, client, cluster := s.getKit("Limit&IndexScan")
 	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

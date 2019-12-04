@@ -27,7 +27,7 @@ func queryMetric(sctx sessionctx.Context, addr string, def metricTableDef, query
 	ctx, cancel := context.WithTimeout(context.Background(), promReadTimeout)
 	defer cancel()
 
-	promQL := def.genPromQL(sctx,nil)
+	promQL := def.genPromQL(sctx, nil)
 	return queryRangePromQL(ctx, promQLAPI, promQL, queryRange)
 }
 

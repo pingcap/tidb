@@ -16,12 +16,14 @@ var once sync.Once
 // Init register the METRIC_DB virtual tables.
 func Init() {
 	initOnce := func() {
-		dbID := autoid.GenLocalSchemaID()
+		dbID := autoid.MetricSchemaDBID
+		tableID := dbID + 1
 		metricTables := make([]*model.TableInfo, 0)
 		for name, def := range metricTableMap {
 			cols := def.genColumnInfos()
 			tableInfo := buildTableMeta(name, cols)
-			tableInfo.ID = autoid.GenLocalSchemaID()
+			tableInfo.ID = tableID
+			tableID++
 			for i, c := range tableInfo.Columns {
 				c.ID = int64(i) + 1
 			}

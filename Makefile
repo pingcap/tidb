@@ -1,5 +1,6 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
+P=8
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -14,7 +15,7 @@ export PATH := $(path_to_add):$(PATH)
 GO              := GO111MODULE=on go
 GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p 8
+GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
@@ -125,8 +126,9 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-# Split tests for CI to run `make test` parallelly.
+# Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
+	@>&2 echo "Great, all tests passed."
 
 test_part_1: checklist explaintest
 

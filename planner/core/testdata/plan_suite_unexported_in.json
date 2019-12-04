@@ -276,5 +276,187 @@
       "select f from t having sum(a) > 0",
       "select * from t t1 left join t t2 on t1.a = t2.a"
     ]
+  },
+  {
+    "name": "TestAggPrune",
+    "cases": [
+      "select a, count(b) from t group by a",
+      "select sum(b) from t group by c, d, e",
+      "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
+      "select count(1) from (select count(1), a as b from t group by a) tt group by b",
+      "select a, count(b) from t group by a",
+      "select a, count(distinct a, b) from t group by a"
+    ]
+  },
+  {
+    "name": "TestColumnPruning",
+    "cases": [
+      "select count(*) from t group by a",
+      "select count(*) from t",
+      "select count(*) from t a join t b where a.a < 1",
+      "select count(*) from t a join t b on a.a = b.d",
+      "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
+      "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
+      "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
+      "select (select count(a) from t where b = k.a) from t k",
+      "select exists (select count(*) from t where b = k.a) from t k",
+      "select b = (select count(*) from t where b = k.a) from t k",
+      "select exists (select count(a) from t where b = k.a group by b) from t k",
+      "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
+      "select a from t where b < any (select c from t)",
+      "select a from t where (b,a) != all (select c,d from t)",
+      "select a from t where (b,a) in (select c,d from t)",
+      "select a from t where a in (select a from t s group by t.b)",
+      "select t01.a from (select a from t t21 union all select a from t t22) t2 join t t01 on 1 left outer join t t3 on 1 join t t4 on 1",
+      "select 1 from (select count(b) as cnt from t) t1",
+      "select count(1) from (select count(b) as cnt from t) t1",
+      "select count(1) from (select count(b) as cnt from t group by c) t1"
+    ]
+  },
+  {
+    "name": "TestDeriveNotNullConds",
+    "cases": [
+      "select * from t t1 inner join t t2 on t1.e = t2.e",
+      "select * from t t1 inner join t t2 on t1.e > t2.e",
+      "select * from t t1 inner join t t2 on t1.e = t2.e and t1.e is not null",
+      "select * from t t1 left join t t2 on t1.e = t2.e",
+      "select * from t t1 left join t t2 on t1.e > t2.e",
+      "select * from t t1 left join t t2 on t1.e = t2.e and t2.e is not null",
+      "select * from t t1 right join t t2 on t1.e = t2.e and t1.e is not null",
+      "select * from t t1 inner join t t2 on t1.e <=> t2.e",
+      "select * from t t1 left join t t2 on t1.e <=> t2.e",
+      // Not deriving if column has NotNull flag already.
+      "select * from t t1 inner join t t2 on t1.b = t2.b",
+      "select * from t t1 left join t t2 on t1.b = t2.b",
+      "select * from t t1 left join t t2 on t1.b > t2.b",
+      "select * from t t1 where not exists (select * from t t2 where t2.e = t1.e)"
+    ]
+  },
+  {
+    "name": "TestTablePartition",
+    "cases": [
+      {
+        "SQL":   "select * from t",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn < 31",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn < 61",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn > 17 and t.ptn < 61",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn < 8",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn > 128",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn > 128",
+        "IsIdx": 1
+      },
+      {
+        // NULL will be located in the first partition.
+        "SQL":   "select * from t where t.ptn is null",
+        "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn is null or t.ptn > 70",
+        "IsIdx": 1
+      }
+    ]
+  },
+  {
+    "name": "TestJoinPredicatePushDown",
+    "cases": [
+      // issue #7628, inner join
+      "select * from t as t1 join t as t2 on t1.b = t2.b where t1.a > t2.a",
+      "select * from t as t1 join t as t2 on t1.b = t2.b where t1.a=1 or t2.a=1",
+      "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)",
+      "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
+      "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4)))",
+      "select * from t as t1 join t as t2 on t1.b = t2.b where (t1.a>1 and t1.a < 3 and t2.a=1) or (t1.a=2 and t2.a=2)",
+      "select * from t as t1 join t as t2 on t1.b = t2.b and ((t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2))",
+      // issue #7628, left join
+      "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2))",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b and t1.a > t2.a",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b and (t1.a=1 or t2.a=1)",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2))",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t2.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2))",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b and ((t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a=2))",
+      // Duplicate condition would be removed.
+      "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1"
+    ]
+  },
+  {
+    "name": "TestJoinReOrder",
+    "cases": [
+      "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d",
+      "select * from t t1, t t2, t t3, t t4, t t5, t t6, t t7, t t8 where t1.a = t8.a",
+      "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
+      "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
+      "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
+      "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)"
+    ]
+  },
+  {
+    "name": "TestOuterJoinEliminator",
+    "cases": [
+      // Test left outer join + distinct
+      "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
+      // Test right outer join + distinct
+      "select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b",
+      // Test duplicate agnostic agg functions on join
+      "select max(t1.a), min(test.t1.b) from t t1 left join t t2 on t1.b = t2.b",
+      "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
+      "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+      // Test left outer join
+      "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
+      // Test right outer join
+      "select t2.b from t t1 right outer join t t2 on t1.a = t2.a",
+      // For complex join query
+      "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
+      "select t1.a ta, t1.b tb from t t1 left join t t2 on t1.a = t2.a",
+      // Because the `order by` uses t2.a, the `join` can't be eliminated.
+      "select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a",
+      // For issue 11167
+      "select a.a from t a natural left join t b natural left join t c"
+    ]
+  },
+  {
+    "name": "TestSimplifyOuterJoin",
+    "cases": [
+      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 or t2.c > 1;",
+      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 and t2.c > 1;",
+      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 or t2.c > 1);",
+      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1);",
+      "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c;",
+      "select * from t t1 left join t t2 on true where t1.b <=> t2.b;"
+    ]
+  },
+  {
+    "name": "TestOuterWherePredicatePushDown",
+    "cases": [
+      // issue #7628, left join with where condition
+      "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a is null) or (t1.a=2 and t2.a=2)",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and (t1.a=3 or t2.a=3)) or (t1.a=2 and t2.a=2)",
+      "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a is null)"
+    ]
   }
 ]
